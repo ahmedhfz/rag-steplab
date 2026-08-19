@@ -1,0 +1,5 @@
+fastapi==0.139.2
+pydantic>=2.12,<3
+python-multipart>=0.0.20,<1
+uvicorn[standard]>=0.37,<1
+docling==2.117.0
