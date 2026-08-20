@@ -1,9 +1,10 @@
-# RAG StepLab local backend
+# RAG StepLab backend
 
-Bu backend yalnızca `POST /documents/parse` akışını sağlar:
+Backend gerçek ve kalıcı RAG learning pipeline'ını sağlar:
 
 ```text
-PDF upload → FastAPI doğrulaması → Docling → normalize edilmiş parse response
+PDF → private Storage → Docling → chunking → Gemini embeddings → pgvector/FTS
+→ retrieval/reranking → context → grounded generation/citations → evaluation
 ```
 
 ## Çalıştırma
@@ -16,10 +17,13 @@ Backend'i tek başına çalıştırmak için PowerShell:
 cd backend
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.venv\Scripts\python.exe -m alembic -c alembic.ini upgrade head
 .venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
 ```
 
-Frontend varsayılan olarak `http://127.0.0.1:8000` adresini kullanır. Farklı bir adres için frontend build/dev işleminden önce `NEXT_PUBLIC_API_BASE_URL` tanımlanabilir.
+Environment isimleri repository kökündeki `.env.example` dosyasında tanımlıdır. `rag_lab` şeması, `extensions.vector` ve private `rag-documents` bucket'ı Alembic öncesinde Supabase'te hazır olmalıdır. Secret değerleri source control'a eklenmez.
+
+Frontend varsayılan olarak `http://127.0.0.1:8000` adresini kullanır. Farklı bir adres için frontend build/dev işleminden önce `NEXT_PUBLIC_API_BASE_URL` tanımlanabilir. Hosted kurulum için `docs/deployment.md` canonical kaynaktır.
 
 ## Test
 

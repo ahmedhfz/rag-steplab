@@ -19,31 +19,34 @@ Amaç yalnızca sonuç üretmek değil; kullanılan ayarların, ara çıktılar�
 
 ## Mevcut durum
 
-Frontend learning UI ve ilk gerçek parsing backend'i hazırdır:
+İlk uçtan uca, gerçek ve kalıcı learning pipeline hazırdır:
 
-- **Overview / Pipeline:** RAG akışının adımlarını ve durumlarını gösterir.
-- **Documents / Parsed Content / Chunks:** PDF seçildikten ve parse tamamlandıktan sonra gerçek Docling structured, Markdown ve JSON çıktısını gösterir; chunk ekranı sonraki aşama için kilitlidir.
-- **Retrieval Playground:** Retrieval parametrelerini hazırlayan, sonuç/answer/trace alanlarını gerçek entegrasyona kadar boş tutan arayüzdür.
-- **Evaluation:** Gerçek evaluation dataset ve sonuçları için empty-state foundation sağlar.
-- **Settings:** İngilizce / Türkçe dil, teknik detay seviyesi ve öğrenme ipuçlarını yönetir.
+- PDF dosyası private Supabase Storage'a yüklenir; Docling çıktısı canonical normalized element olarak PostgreSQL'e yazılır.
+- `fixed_token`, `recursive_token` ve `structure_aware` chunking gerçek provenance ile çalışır.
+- Gemini Embedding 2 vektörleri pgvector'da saklanır; dense, PostgreSQL FTS keyword ve RRF hybrid retrieval kullanılabilir.
+- Optional Gemini reranking, görünür context construction, grounded generation ve backend-doğrulamalı citations çalışır.
+- Golden evaluation dataset'leri Hit@K, Recall@K, Precision@K, MRR, citation validity ve groundedness ölçümleri üretir.
+- Parse/chunk/embedding/experiment geçmişi yenilemeden sonra geri yüklenir; reparse ve rechunk eski downstream run'ları stale yapar.
 
-Uygulama sahte doküman, chunk, retrieval sonucu, skor, cevap veya evaluation metriği göstermez. PDF seçimi frontend'de doğrulanır; **Parse Document** gerçek `FastAPI → Docling` endpoint'ine gönderir. Backend yalnızca Document → Parse aşamasını kapsar; database, chunking, embeddings ve sonraki RAG aşamaları henüz uygulanmamıştır.
+Uygulama sahte doküman, chunk, skor, cevap veya evaluation metriği göstermez. Auth ve multi-tenancy bilinçli olarak kapsam dışıdır; kişisel veya hassas PDF'ler public deployment'a yüklenmemelidir.
 
-## Local parse backend
+## Backend
 
-Backend `backend/` altında bulunur ve `POST /documents/parse` endpoint'ini sağlar. Kurulum ve çalıştırma adımları için [backend/README.md](backend/README.md) dosyasına bakın.
+Backend `backend/` altında FastAPI, Docling, SQLAlchemy 2, psycopg 3 ve Alembic kullanır. Kurulum, environment ve migration adımları için [backend/README.md](backend/README.md) dosyasına bakın.
 
 ```text
-PDF upload → FastAPI validation → Docling conversion → normalized response
+PDF → Storage → Parse → Chunk → Embed → Retrieve → Rerank → Context → Generate → Evaluate
 ```
 
-Backend virtual environment bir kez kurulduktan sonra proje kökünde tek komut yeterlidir:
+Backend virtual environment ve `.env` hazırlandıktan sonra proje kökünde tek komut yeterlidir:
 
 ```powershell
 npm run dev
 ```
 
 Bu komut Next.js'i `http://localhost:3000`, FastAPI'yi `http://127.0.0.1:8000` üzerinde birlikte başlatır. Yalnız frontend gerektiğinde `npm run dev:frontend` kullanılabilir.
+
+Hosted Supabase → Render → Vercel akışı, environment contract, Free plan sınırları ve full RAG smoke adımları için [deployment dokümantasyonuna](docs/deployment.md) bakın.
 
 ## Learning roadmap
 

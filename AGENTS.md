@@ -19,8 +19,8 @@ Auth, billing, multi-tenancy, müşteri kurulumu, enterprise deployment veya act
 ## Current State
 
 ```text
-Phase 1 — RAG Fundamentals
-Status: Frontend learning UI + local Document → Parse backend ready
+Phase 1–7 — First Complete Learning Pipeline
+Status: Persistent Document → Parse → Chunk → Retrieve → Generate → Evaluate flow ready
 ```
 
 Şu anda:
@@ -31,20 +31,22 @@ Status: Frontend learning UI + local Document → Parse backend ready
 - Retrieval Playground ekranı vardır.
 - Evaluation ve Settings ekranları vardır.
 - Gerçek veri bulunmayan alanlar sahte sonuç üretmeden empty state gösterir.
-- Lokal PDF seçimi, drag-and-drop, dosya tipi ve boyut doğrulaması frontend seviyesinde çalışır; Parse Document seçildiğinde PDF local FastAPI backend'ine gönderilir.
+- Lokal PDF seçimi, drag-and-drop, dosya tipi ve boyut doğrulaması frontend seviyesinde çalışır; Parse Document seçildiğinde PDF FastAPI backend'ine gönderilir.
 - İngilizce / Türkçe arayüz ve frontend öğrenme tercihleri tarayıcıda lokal olarak saklanır.
 - `POST /documents/parse`, PDF'i Docling ile parse eder ve normalized structured, Markdown, JSON ve summary response döndürür.
+- PDF, private Supabase Storage'da; parse/chunk/embedding/experiment/evaluation lineage'ı PostgreSQL'de kalıcıdır.
+- Üç gerçek chunking stratejisi, Gemini Embedding 2 + pgvector, PostgreSQL FTS, RRF hybrid retrieval ve optional Gemini reranking çalışır.
+- Context construction, grounded generation, backend-doğrulamalı citations ve ölçülebilir evaluation sonuçları UI'da görünürdür.
+- Refresh persistence ile reparse/rechunk stale invalidation davranışı uygulanmıştır.
 
 Henüz:
 
-- database yoktur,
-- chunking yoktur,
-- gerçek embedding, indexing veya retrieval yoktur,
-- gerçek LLM generation veya evaluation yoktur.
+- auth, billing ve multi-tenancy yoktur; bunlar learning roadmap'inin parçası değildir,
+- queue/worker veya yüksek trafik ölçekleme katmanı yoktur,
+- ANN/HNSW, semantic/parent-child chunking ve advanced RAG experiment'leri henüz yoktur,
+- kapsamlı tracing/telemetry persistence henüz yoktur.
 
-Document → Parse akışı gerçek backend kullanır; chunking ve sonraki backend gerektiren aksiyonlar fake processing çalıştırmamalı, açıkça disabled olmalı ve neden kullanılamadığı kullanıcıya gösterilmelidir.
-
-Sonraki ana geliştirme chunking milestone'udur; açık bir task olmadan embeddings, vector search veya generation kapsamına geçilmemelidir.
+Hiçbir aşama fake processing, fake score veya fake answer çalıştırmamalıdır. Gerekli aktif upstream lineage yoksa aksiyon açıkça disabled olmalı ve neden kullanılamadığı kullanıcıya gösterilmelidir.
 
 ## Learning Roadmap
 
@@ -85,7 +87,7 @@ Gemini API / Google GenAI SDK
 pytest
 ```
 
-Backend ve RAG teknolojileri henüz kurulmuş değildir. İlgili milestone gelmeden dependency, service, config veya skeleton eklenmemelidir. Her teknoloji, bu laboratuvarda hangi öğrenme veya deney problemini çözdüğü açıklanabiliyorsa kullanılmalıdır.
+Backend ve RAG teknolojileri ilk complete pipeline için kurulmuştur. Yeni dependency veya servis yalnız bu laboratuvarda hangi öğrenme veya deney problemini çözdüğü açıklanabiliyorsa eklenmelidir.
 
 ## Architecture Direction
 

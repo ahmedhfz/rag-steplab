@@ -6,11 +6,14 @@ import { ArrowUpRight, FileText } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
+import { ChunksPipeline } from "@/components/chunks-pipeline";
+import { DocumentLibrary } from "@/components/document-library";
 import { usePreferences } from "@/components/preferences-provider";
 import { Button } from "@/components/ui/button";
 import { type AppCopy, type DocumentViewKey, UI_COPY } from "@/lib/copy";
 import { formatDocumentFileSize } from "@/lib/document-file";
 import type { DocumentParseResponse, ParsedElement, ParsedPage } from "@/lib/document-parse-types";
+import type { PersistedDocument } from "@/lib/rag-api-types";
 import { cn } from "@/lib/utils";
 
 export type DocumentView = DocumentViewKey;
@@ -69,26 +72,29 @@ function SummaryGrid({ copy, result }: { copy: AppCopy["documents"]; result: Doc
   );
 }
 
-function DocumentOverviewTab({ copy, selectedFile, result }: { copy: AppCopy["documents"]; selectedFile: File | null; result: DocumentParseResponse | null }) {
+function DocumentOverviewTab({ copy, selectedFile, persistedDocument, result, locale }: { copy: AppCopy["documents"]; selectedFile: File | null; persistedDocument: PersistedDocument | null; result: DocumentParseResponse | null; locale: "en" | "tr" }) {
+  const fileName = selectedFile?.name ?? persistedDocument?.fileName;
+  const sizeBytes = selectedFile?.size ?? persistedDocument?.sizeBytes;
+  const pageCount = result?.document.pageCount ?? persistedDocument?.pageCount;
   return (
     <div className="grid border-t lg:grid-cols-2">
       <section className="p-4 sm:p-7 lg:border-r">
         <h2 className="text-sm font-semibold">{copy.document}</h2>
         <div className="mt-5">
-          {selectedFile ? (
+          {fileName ? (
             <dl className="grid gap-3 border-y px-4 py-5 text-sm">
               <div className="flex items-center justify-between gap-4">
                 <dt className="text-slate-500">{copy.fileName}</dt>
-                <dd className="max-w-[65%] truncate font-medium" title={selectedFile.name}>{selectedFile.name}</dd>
+                <dd className="max-w-[65%] truncate font-medium" title={fileName}>{fileName}</dd>
               </div>
               <div className="flex items-center justify-between gap-4">
                 <dt className="text-slate-500">{copy.size}</dt>
-                <dd>{formatDocumentFileSize(selectedFile.size, "en")}</dd>
+                <dd>{formatDocumentFileSize(sizeBytes ?? 0, locale)}</dd>
               </div>
-              {result && (
+              {pageCount !== undefined && (
                 <div className="flex items-center justify-between gap-4">
                   <dt className="text-slate-500">{copy.pages}</dt>
-                  <dd>{result.document.pageCount}</dd>
+                  <dd>{pageCount}</dd>
                 </div>
               )}
             </dl>
@@ -247,23 +253,16 @@ function ParsedContentTab({ copy, result }: { copy: AppCopy["documents"]; result
   );
 }
 
-function ChunksTab({ copy }: { copy: AppCopy["documents"] }) {
-  return (
-    <section className="border-t p-4 sm:p-7">
-      <h2 className="text-sm font-semibold">{copy.chunks}</h2>
-      <div className="mt-4"><EmptyState>{copy.noChunks}</EmptyState></div>
-    </section>
-  );
-}
-
 export function DocumentsScreen({ view }: { view: DocumentView }) {
   const { preferences } = usePreferences();
-  const { selectedFile, parseResult } = useDocumentPipeline();
+  const { selectedFile, parseResult, activeDocument } = useDocumentPipeline();
   const copy = UI_COPY[preferences.locale];
   const current = copy.documents.views[view];
-  const documentTitle = selectedFile?.name ?? copy.documents.noDocumentTitle;
+  const documentTitle = selectedFile?.name ?? activeDocument?.fileName ?? copy.documents.noDocumentTitle;
   const documentMetadata = parseResult
-    ? `${parseResult.document.pageCount} ${copy.documents.pages.toLowerCase()} • ${formatDocumentFileSize(selectedFile?.size ?? 0, preferences.locale)}`
+    ? `${parseResult.document.pageCount} ${copy.documents.pages.toLowerCase()} • ${formatDocumentFileSize(selectedFile?.size ?? parseResult.document.sizeBytes, preferences.locale)}`
+    : activeDocument
+      ? `${activeDocument.pageCount} ${copy.documents.pages.toLowerCase()} • ${formatDocumentFileSize(activeDocument.sizeBytes, preferences.locale)}`
     : copy.documents.metadataPending;
 
   return (
@@ -294,9 +293,9 @@ export function DocumentsScreen({ view }: { view: DocumentView }) {
         ))}
       </nav>
 
-      {view === "overview" && <DocumentOverviewTab copy={copy.documents} result={parseResult} selectedFile={selectedFile} />}
+      {view === "overview" && <><DocumentOverviewTab copy={copy.documents} locale={preferences.locale} persistedDocument={activeDocument} result={parseResult} selectedFile={selectedFile} /><DocumentLibrary locale={preferences.locale} /></>}
       {view === "parsed" && <ParsedContentTab copy={copy.documents} result={parseResult} />}
-      {view === "chunks" && <ChunksTab copy={copy.documents} />}
+      {view === "chunks" && <ChunksPipeline locale={preferences.locale} />}
     </div>
   );
 }

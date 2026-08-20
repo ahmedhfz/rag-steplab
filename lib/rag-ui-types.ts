@@ -1,6 +1,16 @@
-export type PipelineStepKey = "document" | "parse" | "chunk" | "embed" | "index" | "retrieve" | "generate";
+export type PipelineStepKey =
+  | "document"
+  | "parse"
+  | "chunk"
+  | "embed"
+  | "index"
+  | "retrieve"
+  | "rerank"
+  | "context"
+  | "generate"
+  | "evaluate";
 
-export type PipelineStepState = "Not started" | "Ready" | "Processing" | "Completed" | "Error" | "Locked";
+export type PipelineStepState = "Not started" | "Ready" | "Processing" | "Completed" | "Error" | "Locked" | "Stale";
 
 export type DocumentActivityEventType =
   | "documentSelected"

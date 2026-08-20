@@ -1,18 +1,60 @@
 "use client";
 
-import { createContext, useCallback, useContext, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
-import { parseDocument, DocumentApiError, type DocumentApiErrorCode } from "@/lib/document-api";
+import { DocumentApiError, type DocumentApiErrorCode } from "@/lib/document-api";
 import { validatePdfFile, type DocumentFileValidationError } from "@/lib/document-file";
 import type { DocumentParseResponse } from "@/lib/document-parse-types";
+import {
+  createChunkRun,
+  createEmbeddingRun,
+  createEvaluationDataset,
+  createEvaluationRun,
+  createExperiment,
+  getCapabilities,
+  getChunkRun,
+  getDocument,
+  getEmbeddingRun,
+  listDocuments,
+  listEvaluationDatasets,
+  listEvaluationRuns,
+  listExperiments,
+  parseAndPersistDocument,
+  reparsePersistedDocument,
+} from "@/lib/rag-api";
+import type {
+  Capabilities,
+  ChunkConfig,
+  ChunkRun,
+  ChunkStrategy,
+  DocumentDetail,
+  EmbeddingRun,
+  EvaluationCase,
+  EvaluationDataset,
+  EvaluationRun,
+  ExperimentRequest,
+  ExperimentRun,
+  PersistedDocument,
+} from "@/lib/rag-api-types";
 import type { DocumentActivityEventType } from "@/lib/rag-ui-types";
 
 export type DocumentParseStatus = "not-started" | "ready" | "processing" | "completed" | "error";
+export type PipelineOperationStatus = "locked" | "ready" | "processing" | "completed" | "error" | "stale";
+export type PersistenceStatus = "checking" | "available" | "unavailable";
 
 export type DocumentActivityEvent = {
   id: number;
   type: DocumentActivityEventType;
   errorCode?: DocumentApiErrorCode;
+};
+
+type EvaluationRunInput = {
+  datasetId: string;
+  judge: boolean;
+  retrieval: ExperimentRequest["retrieval"];
+  reranking: ExperimentRequest["reranking"];
+  context: ExperimentRequest["context"];
+  generation: ExperimentRequest["generation"];
 };
 
 type DocumentPipelineContextValue = {
@@ -22,12 +64,59 @@ type DocumentPipelineContextValue = {
   parseResult: DocumentParseResponse | null;
   parseError: DocumentApiError | null;
   activity: DocumentActivityEvent[];
+  persistenceStatus: PersistenceStatus;
+  persistenceError: DocumentApiError | null;
+  capabilities: Capabilities | null;
+  documents: PersistedDocument[];
+  activeDocument: DocumentDetail | null;
+  chunkStatus: PipelineOperationStatus;
+  chunkRun: ChunkRun | null;
+  chunkError: DocumentApiError | null;
+  embeddingStatus: PipelineOperationStatus;
+  embeddingRun: EmbeddingRun | null;
+  embeddingError: DocumentApiError | null;
+  experimentStatus: PipelineOperationStatus;
+  experimentRun: ExperimentRun | null;
+  experimentError: DocumentApiError | null;
+  experimentHistory: ExperimentRun[];
+  evaluationDatasets: EvaluationDataset[];
+  evaluationStatus: PipelineOperationStatus;
+  evaluationRun: EvaluationRun | null;
+  evaluationError: DocumentApiError | null;
+  evaluationHistory: EvaluationRun[];
   selectFile: (file: File | undefined) => void;
+  selectPersistedDocument: (documentId: string) => Promise<void>;
   removeFile: () => void;
   parseSelectedFile: () => Promise<void>;
+  reparseActiveDocument: () => Promise<void>;
+  runChunking: (strategy: ChunkStrategy, config: ChunkConfig) => Promise<void>;
+  runEmbedding: () => Promise<void>;
+  runExperiment: (input: Omit<ExperimentRequest, "documentId" | "chunkRunId" | "embeddingRunId">) => Promise<void>;
+  createDataset: (name: string, cases: EvaluationCase[]) => Promise<void>;
+  runEvaluation: (input: EvaluationRunInput) => Promise<void>;
+  refreshPersistence: () => Promise<void>;
+  refreshEvaluationRuns: (datasetId: string) => Promise<void>;
 };
 
 const DocumentPipelineContext = createContext<DocumentPipelineContextValue | null>(null);
+const ACTIVE_DOCUMENT_STORAGE_KEY = "rag-steplab-active-document-id";
+
+function rememberActiveDocument(documentId: string | null) {
+  try {
+    if (documentId) window.localStorage.setItem(ACTIVE_DOCUMENT_STORAGE_KEY, documentId);
+    else window.localStorage.removeItem(ACTIVE_DOCUMENT_STORAGE_KEY);
+  } catch {
+    // Kalıcı seçim bir kolaylıktır; storage engeli gerçek pipeline'ı durdurmamalıdır.
+  }
+}
+
+function asApiError(error: unknown, fallback: string) {
+  return error instanceof DocumentApiError ? error : new DocumentApiError("unknown", fallback);
+}
+
+function staleRun<T extends { isStale: boolean }>(run: T | null): T | null {
+  return run ? { ...run, isStale: true } : null;
+}
 
 export function DocumentPipelineProvider({ children }: { children: React.ReactNode }) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -36,94 +125,438 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const [parseResult, setParseResult] = useState<DocumentParseResponse | null>(null);
   const [parseError, setParseError] = useState<DocumentApiError | null>(null);
   const [activity, setActivity] = useState<DocumentActivityEvent[]>([]);
+  const [persistenceStatus, setPersistenceStatus] = useState<PersistenceStatus>("checking");
+  const [persistenceError, setPersistenceError] = useState<DocumentApiError | null>(null);
+  const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
+  const [documents, setDocuments] = useState<PersistedDocument[]>([]);
+  const [activeDocument, setActiveDocument] = useState<DocumentDetail | null>(null);
+  const [chunkStatus, setChunkStatus] = useState<PipelineOperationStatus>("locked");
+  const [chunkRun, setChunkRun] = useState<ChunkRun | null>(null);
+  const [chunkError, setChunkError] = useState<DocumentApiError | null>(null);
+  const [embeddingStatus, setEmbeddingStatus] = useState<PipelineOperationStatus>("locked");
+  const [embeddingRun, setEmbeddingRun] = useState<EmbeddingRun | null>(null);
+  const [embeddingError, setEmbeddingError] = useState<DocumentApiError | null>(null);
+  const [experimentStatus, setExperimentStatus] = useState<PipelineOperationStatus>("locked");
+  const [experimentRun, setExperimentRun] = useState<ExperimentRun | null>(null);
+  const [experimentError, setExperimentError] = useState<DocumentApiError | null>(null);
+  const [experimentHistory, setExperimentHistory] = useState<ExperimentRun[]>([]);
+  const [evaluationDatasets, setEvaluationDatasets] = useState<EvaluationDataset[]>([]);
+  const [evaluationStatus, setEvaluationStatus] = useState<PipelineOperationStatus>("locked");
+  const [evaluationRun, setEvaluationRun] = useState<EvaluationRun | null>(null);
+  const [evaluationError, setEvaluationError] = useState<DocumentApiError | null>(null);
+  const [evaluationHistory, setEvaluationHistory] = useState<EvaluationRun[]>([]);
   const runIdRef = useRef(0);
   const activityIdRef = useRef(0);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const controllersRef = useRef(new Map<string, AbortController>());
+
+  const replaceController = useCallback((key: string) => {
+    controllersRef.current.get(key)?.abort();
+    const controller = new AbortController();
+    controllersRef.current.set(key, controller);
+    return controller;
+  }, []);
+
+  useEffect(() => () => {
+    controllersRef.current.forEach((controller) => controller.abort());
+    controllersRef.current.clear();
+  }, []);
 
   const addActivity = useCallback((type: DocumentActivityEventType, errorCode?: DocumentApiErrorCode) => {
     const id = ++activityIdRef.current;
     setActivity((current) => [...current, { id, type, errorCode }]);
   }, []);
 
+  const resetDownstream = useCallback(() => {
+    setChunkStatus("locked");
+    setChunkRun(null);
+    setChunkError(null);
+    setEmbeddingStatus("locked");
+    setEmbeddingRun(null);
+    setEmbeddingError(null);
+    setExperimentStatus("locked");
+    setExperimentRun(null);
+    setExperimentError(null);
+    setExperimentHistory([]);
+    setEvaluationDatasets([]);
+    setEvaluationStatus("locked");
+    setEvaluationRun(null);
+    setEvaluationError(null);
+    setEvaluationHistory([]);
+  }, []);
+
+  const refreshPersistence = useCallback(async () => {
+    const controller = replaceController("bootstrap");
+    setPersistenceStatus("checking");
+    setPersistenceError(null);
+    try {
+      const [nextCapabilities, nextDocuments] = await Promise.all([
+        getCapabilities(controller.signal),
+        listDocuments(controller.signal),
+      ]);
+      setCapabilities(nextCapabilities);
+      setDocuments(nextDocuments);
+      setPersistenceStatus("available");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setCapabilities(null);
+      setPersistenceError(asApiError(error, "Persistent pipeline data could not be loaded."));
+      setPersistenceStatus("unavailable");
+    }
+  }, [replaceController]);
+
+  const loadDocumentRelatedData = useCallback(async (documentId: string, signal: AbortSignal) => {
+    const detail = await getDocument(documentId, signal);
+    const [experiments, datasets, activeChunk, activeEmbedding] = await Promise.all([
+      listExperiments(documentId, signal),
+      listEvaluationDatasets(documentId, signal),
+      detail.activeChunkRunId ? getChunkRun(detail.activeChunkRunId, signal) : Promise.resolve(null),
+      detail.activeEmbeddingRunId ? getEmbeddingRun(detail.activeEmbeddingRunId, signal) : Promise.resolve(null),
+    ]);
+    const chunkMatchesLineage = Boolean(activeChunk && activeChunk.documentId === detail.id && activeChunk.parseRunId === detail.activeParseRunId);
+    const embeddingMatchesLineage = Boolean(activeEmbedding && chunkMatchesLineage && activeEmbedding.documentId === detail.id && activeEmbedding.chunkRunId === activeChunk?.id);
+    const currentExperiments = experiments.map((run) => ({
+      ...run,
+      isStale: run.chunkRunId !== detail.activeChunkRunId || (run.embeddingRunId !== null && run.embeddingRunId !== detail.activeEmbeddingRunId),
+    }));
+    setActiveDocument(detail);
+    setParseResult(detail.activeParseRun);
+    setParseStatus(detail.activeParseRunId ? "completed" : "not-started");
+    setChunkRun(activeChunk ? { ...activeChunk, isStale: !chunkMatchesLineage } : null);
+    setEmbeddingRun(activeEmbedding ? { ...activeEmbedding, isStale: !embeddingMatchesLineage } : null);
+    setExperimentHistory(currentExperiments);
+    setExperimentRun(currentExperiments.find((run) => !run.isStale) ?? null);
+    setEvaluationDatasets(datasets);
+    setChunkStatus(!detail.activeParseRunId ? "locked" : !activeChunk ? "ready" : chunkMatchesLineage ? "completed" : "stale");
+    setEmbeddingStatus(!activeChunk ? "locked" : !activeEmbedding ? "ready" : embeddingMatchesLineage ? "completed" : "stale");
+    setExperimentStatus(embeddingMatchesLineage ? "ready" : "locked");
+    setEvaluationStatus(embeddingMatchesLineage && datasets.length > 0 ? "ready" : "locked");
+  }, []);
+
+  const selectPersistedDocument = useCallback(async (documentId: string) => {
+    const controller = replaceController("document");
+    controllersRef.current.get("parse")?.abort();
+    runIdRef.current += 1;
+    setSelectedFile(null);
+    setFileError(null);
+    setParseResult(null);
+    setParseError(null);
+    setParseStatus("not-started");
+    resetDownstream();
+    try {
+      await loadDocumentRelatedData(documentId, controller.signal);
+      rememberActiveDocument(documentId);
+      setPersistenceStatus("available");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setPersistenceError(asApiError(error, "The selected document could not be loaded."));
+      setPersistenceStatus("unavailable");
+    }
+  }, [loadDocumentRelatedData, replaceController, resetDownstream]);
+
+  useEffect(() => {
+    const controller = replaceController("bootstrap");
+    void Promise.all([getCapabilities(controller.signal), listDocuments(controller.signal)])
+      .then(async ([nextCapabilities, nextDocuments]) => {
+        setCapabilities(nextCapabilities);
+        setDocuments(nextDocuments);
+        let documentId: string | null = null;
+        try {
+          documentId = window.localStorage.getItem(ACTIVE_DOCUMENT_STORAGE_KEY);
+        } catch {
+          // Browser storage kapalıysa kalıcı backend verisi yine kullanılabilir.
+        }
+        if (documentId && nextDocuments.some((document) => document.id === documentId)) {
+          await loadDocumentRelatedData(documentId, controller.signal);
+        } else if (documentId) {
+          rememberActiveDocument(null);
+        }
+        setPersistenceStatus("available");
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setCapabilities(null);
+        setPersistenceError(asApiError(error, "Persistent pipeline data could not be loaded."));
+        setPersistenceStatus("unavailable");
+      });
+    return () => controller.abort();
+  }, [loadDocumentRelatedData, replaceController]);
+
   const selectFile = useCallback((file: File | undefined) => {
     if (!file) return;
-
     const validationError = validatePdfFile(file);
     if (validationError) {
       setFileError(validationError);
       return;
     }
-
-    abortControllerRef.current?.abort();
+    controllersRef.current.forEach((controller, key) => {
+      if (key !== "bootstrap") controller.abort();
+    });
     runIdRef.current += 1;
     setSelectedFile(file);
+    setActiveDocument(null);
+    rememberActiveDocument(null);
     setFileError(null);
     setParseStatus("ready");
     setParseResult(null);
     setParseError(null);
     setActivity([]);
+    resetDownstream();
     addActivity("documentSelected");
-  }, [addActivity]);
+  }, [addActivity, resetDownstream]);
 
   const removeFile = useCallback(() => {
-    abortControllerRef.current?.abort();
+    controllersRef.current.forEach((controller, key) => {
+      if (key !== "bootstrap") controller.abort();
+    });
     runIdRef.current += 1;
     setSelectedFile(null);
+    setActiveDocument(null);
+    rememberActiveDocument(null);
     setFileError(null);
     setParseStatus("not-started");
     setParseResult(null);
     setParseError(null);
     setActivity([]);
-  }, []);
+    resetDownstream();
+  }, [resetDownstream]);
 
   const parseSelectedFile = useCallback(async () => {
     if (!selectedFile || parseStatus === "processing") return;
-
     const currentRunId = runIdRef.current;
-    const controller = new AbortController();
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = controller;
+    const controller = replaceController("parse");
     setParseStatus("processing");
     setParseError(null);
+    setChunkRun((run) => staleRun(run));
+    setEmbeddingRun((run) => staleRun(run));
+    setExperimentRun((run) => staleRun(run));
+    setEvaluationRun((run) => staleRun(run));
     addActivity("parseRequested");
     addActivity("parsing");
-
     try {
-      const result = await parseDocument(selectedFile, controller.signal);
+      const result = await parseAndPersistDocument(selectedFile, controller.signal);
       if (runIdRef.current !== currentRunId) return;
-
       setParseResult(result);
       setParseStatus("completed");
+      setChunkStatus(result.documentId && result.parseRunId ? "ready" : "locked");
       addActivity("parseCompleted");
+      if (result.documentId && result.parseRunId) {
+        const document: PersistedDocument = {
+          id: result.documentId,
+          fileName: result.document.fileName,
+          mediaType: result.document.mediaType,
+          sizeBytes: result.document.sizeBytes,
+          pageCount: result.document.pageCount,
+          sha256: null,
+          activeParseRunId: result.parseRunId,
+          activeChunkRunId: null,
+          activeEmbeddingRunId: null,
+          createdAt: null,
+          updatedAt: null,
+        };
+        setDocuments((current) => [document, ...current.filter((item) => item.id !== document.id)]);
+        setActiveDocument({ ...document, parseRuns: [], chunkRuns: [], embeddingRuns: [], experiments: [], activeParseRun: result });
+        rememberActiveDocument(document.id);
+        setPersistenceStatus("available");
+      }
     } catch (error) {
       if (runIdRef.current !== currentRunId || (error instanceof DOMException && error.name === "AbortError")) return;
-
-      const apiError = error instanceof DocumentApiError
-        ? error
-        : new DocumentApiError("unknown", "The document could not be parsed.");
+      const apiError = asApiError(error, "The document could not be parsed.");
       setParseError(apiError);
       setParseStatus("error");
       addActivity("parseFailed", apiError.code);
     } finally {
-      if (runIdRef.current === currentRunId) abortControllerRef.current = null;
+      if (runIdRef.current === currentRunId) controllersRef.current.delete("parse");
     }
-  }, [addActivity, parseStatus, selectedFile]);
+  }, [addActivity, parseStatus, replaceController, selectedFile]);
 
-  return (
-    <DocumentPipelineContext.Provider value={{
-      selectedFile,
-      fileError,
-      parseStatus,
-      parseResult,
-      parseError,
-      activity,
-      selectFile,
-      removeFile,
-      parseSelectedFile,
-    }}>
-      {children}
-    </DocumentPipelineContext.Provider>
-  );
+  const reparseActiveDocument = useCallback(async () => {
+    const documentId = activeDocument?.id;
+    if (!documentId || parseStatus === "processing") return;
+    const currentRunId = runIdRef.current;
+    controllersRef.current.forEach((controller, key) => {
+      if (key !== "bootstrap") controller.abort();
+    });
+    const controller = replaceController("reparse");
+    setParseStatus("processing");
+    setParseError(null);
+    addActivity("parseRequested");
+    addActivity("parsing");
+    try {
+      const result = await reparsePersistedDocument(documentId, controller.signal);
+      if (runIdRef.current !== currentRunId) return;
+      setParseResult(result);
+      await loadDocumentRelatedData(documentId, controller.signal);
+      if (runIdRef.current !== currentRunId) return;
+      setParseStatus("completed");
+      setExperimentHistory((current) => current.map((run) => ({ ...run, isStale: true })));
+      setEvaluationRun((run) => staleRun(run));
+      addActivity("parseCompleted");
+      setDocuments((current) => current.map((document) => document.id === documentId ? {
+        ...document,
+        pageCount: result.document.pageCount,
+        activeParseRunId: result.parseRunId,
+        activeChunkRunId: null,
+        activeEmbeddingRunId: null,
+      } : document));
+    } catch (error) {
+      if (runIdRef.current !== currentRunId || (error instanceof DOMException && error.name === "AbortError")) return;
+      const apiError = asApiError(error, "The persisted document could not be reparsed.");
+      setParseError(apiError);
+      setParseStatus("error");
+      addActivity("parseFailed", apiError.code);
+    } finally {
+      if (runIdRef.current === currentRunId) controllersRef.current.delete("reparse");
+    }
+  }, [activeDocument, addActivity, loadDocumentRelatedData, parseStatus, replaceController]);
+
+  const runChunking = useCallback(async (strategy: ChunkStrategy, config: ChunkConfig) => {
+    const documentId = activeDocument?.id;
+    const parseRunId = activeDocument?.activeParseRunId;
+    if (!documentId || !parseRunId || chunkStatus === "processing") return;
+    const controller = replaceController("chunk");
+    setChunkStatus("processing");
+    setChunkError(null);
+    setEmbeddingRun((run) => staleRun(run));
+    setExperimentRun((run) => staleRun(run));
+    setEvaluationRun((run) => staleRun(run));
+    try {
+      const result = await createChunkRun(documentId, strategy, config, parseRunId, controller.signal);
+      setChunkRun(result);
+      setChunkStatus(result.status === "completed" ? "completed" : result.status === "running" ? "processing" : "error");
+      setEmbeddingStatus(result.status === "completed" ? "ready" : "locked");
+      setExperimentStatus("locked");
+      setEvaluationStatus("locked");
+      setActiveDocument((current) => current ? { ...current, activeChunkRunId: result.id, activeEmbeddingRunId: null } : current);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setChunkError(asApiError(error, "Chunking could not be completed."));
+      setChunkStatus("error");
+    } finally {
+      controllersRef.current.delete("chunk");
+    }
+  }, [activeDocument, chunkStatus, replaceController]);
+
+  const runEmbedding = useCallback(async () => {
+    const documentId = activeDocument?.id;
+    const chunkRunId = chunkRun?.id ?? activeDocument?.activeChunkRunId;
+    if (!documentId || !chunkRunId || embeddingStatus === "processing") return;
+    const controller = replaceController("embedding");
+    setEmbeddingStatus("processing");
+    setEmbeddingError(null);
+    setExperimentRun((run) => staleRun(run));
+    setEvaluationRun((run) => staleRun(run));
+    try {
+      const result = await createEmbeddingRun(documentId, chunkRunId, controller.signal);
+      setEmbeddingRun(result);
+      setEmbeddingStatus(result.status === "completed" ? "completed" : result.status === "running" ? "processing" : "error");
+      setExperimentStatus(result.status === "completed" ? "ready" : "locked");
+      setEvaluationStatus(result.status === "completed" && evaluationDatasets.length > 0 ? "ready" : "locked");
+      setActiveDocument((current) => current ? { ...current, activeEmbeddingRunId: result.id } : current);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setEmbeddingError(asApiError(error, "Embeddings could not be created."));
+      setEmbeddingStatus("error");
+    } finally {
+      controllersRef.current.delete("embedding");
+    }
+  }, [activeDocument, chunkRun, embeddingStatus, evaluationDatasets.length, replaceController]);
+
+  const runExperiment = useCallback(async (input: Omit<ExperimentRequest, "documentId" | "chunkRunId" | "embeddingRunId">) => {
+    const documentId = activeDocument?.id;
+    const chunkRunId = chunkRun?.id ?? activeDocument?.activeChunkRunId ?? null;
+    const embeddingRunId = embeddingRun?.id ?? activeDocument?.activeEmbeddingRunId ?? null;
+    if (!documentId || !chunkRunId || experimentStatus === "processing") return;
+    if (input.retrieval.mode !== "keyword" && !embeddingRunId) return;
+    const controller = replaceController("experiment");
+    setExperimentStatus("processing");
+    setExperimentError(null);
+    try {
+      const result = await createExperiment({ ...input, documentId, chunkRunId, embeddingRunId }, controller.signal);
+      setExperimentRun(result);
+      setExperimentHistory((current) => [result, ...current.filter((run) => run.id !== result.id)]);
+      setExperimentStatus(result.status === "completed" ? "completed" : result.status === "running" ? "processing" : "error");
+      setEvaluationStatus(evaluationDatasets.length > 0 ? "ready" : "locked");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setExperimentError(asApiError(error, "The experiment could not be completed."));
+      setExperimentStatus("error");
+    } finally {
+      controllersRef.current.delete("experiment");
+    }
+  }, [activeDocument, chunkRun, embeddingRun, evaluationDatasets.length, experimentStatus, replaceController]);
+
+  const createDataset = useCallback(async (name: string, cases: EvaluationCase[]) => {
+    const documentId = activeDocument?.id;
+    const parseRunId = activeDocument?.activeParseRunId;
+    if (!documentId || !parseRunId) return;
+    const controller = replaceController("evaluation-dataset");
+    setEvaluationStatus("processing");
+    setEvaluationError(null);
+    try {
+      const dataset = await createEvaluationDataset({ documentId, parseRunId, name, cases }, controller.signal);
+      setEvaluationDatasets((current) => [dataset, ...current.filter((item) => item.id !== dataset.id)]);
+      setEvaluationStatus(activeDocument.activeChunkRunId ? "ready" : "locked");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setEvaluationError(asApiError(error, "The evaluation dataset could not be created."));
+      setEvaluationStatus("error");
+    } finally {
+      controllersRef.current.delete("evaluation-dataset");
+    }
+  }, [activeDocument, replaceController]);
+
+  const runEvaluation = useCallback(async (input: EvaluationRunInput) => {
+    const chunkRunId = chunkRun?.id ?? activeDocument?.activeChunkRunId;
+    const embeddingRunId = embeddingRun?.id ?? activeDocument?.activeEmbeddingRunId;
+    if (!chunkRunId || !embeddingRunId || evaluationStatus === "processing") return;
+    const controller = replaceController("evaluation");
+    setEvaluationStatus("processing");
+    setEvaluationError(null);
+    try {
+      const result = await createEvaluationRun({ ...input, chunkRunId, embeddingRunId }, controller.signal);
+      setEvaluationRun(result);
+      setEvaluationHistory((current) => [result, ...current.filter((run) => run.id !== result.id)]);
+      setEvaluationStatus(result.status === "completed" ? "completed" : result.status === "running" ? "processing" : "error");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setEvaluationError(asApiError(error, "Evaluation could not be completed."));
+      setEvaluationStatus("error");
+    } finally {
+      controllersRef.current.delete("evaluation");
+    }
+  }, [activeDocument, chunkRun, embeddingRun, evaluationStatus, replaceController]);
+
+  const refreshEvaluationRuns = useCallback(async (datasetId: string) => {
+    const controller = replaceController("evaluation-history");
+    try {
+      setEvaluationHistory(await listEvaluationRuns(datasetId, controller.signal));
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setEvaluationError(asApiError(error, "Evaluation history could not be loaded."));
+    } finally {
+      controllersRef.current.delete("evaluation-history");
+    }
+  }, [replaceController]);
+
+  const value = useMemo<DocumentPipelineContextValue>(() => ({
+    selectedFile, fileError, parseStatus, parseResult, parseError, activity,
+    persistenceStatus, persistenceError, capabilities, documents, activeDocument,
+    chunkStatus, chunkRun, chunkError, embeddingStatus, embeddingRun, embeddingError,
+    experimentStatus, experimentRun, experimentError, experimentHistory,
+    evaluationDatasets, evaluationStatus, evaluationRun, evaluationError, evaluationHistory,
+    selectFile, selectPersistedDocument, removeFile, parseSelectedFile, reparseActiveDocument, runChunking, runEmbedding,
+    runExperiment, createDataset, runEvaluation, refreshPersistence, refreshEvaluationRuns,
+  }), [
+    activeDocument, activity, capabilities, chunkError, chunkRun, chunkStatus, createDataset, documents,
+    embeddingError, embeddingRun, embeddingStatus, evaluationDatasets, evaluationError, evaluationHistory,
+    evaluationRun, evaluationStatus, experimentError, experimentHistory, experimentRun, experimentStatus,
+    fileError, parseError, parseResult, parseSelectedFile, parseStatus, persistenceError, persistenceStatus,
+    reparseActiveDocument,
+    refreshEvaluationRuns, refreshPersistence, removeFile, runChunking, runEmbedding, runEvaluation, runExperiment,
+    selectFile, selectedFile, selectPersistedDocument,
+  ]);
+
+  return <DocumentPipelineContext.Provider value={value}>{children}</DocumentPipelineContext.Provider>;
 }
 
 export function useDocumentPipeline() {

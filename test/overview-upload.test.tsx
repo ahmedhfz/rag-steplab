@@ -43,7 +43,7 @@ describe("Overview PDF selection", () => {
 
   it("sends the selected PDF and renders the real parse lifecycle", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    const parsePayload = {
       document: { fileName: "learning-notes.pdf", mediaType: "application/pdf", sizeBytes: 9, pageCount: 1 },
       structured: {
         pages: [{ pageNumber: 1, elements: [{ id: "element-1", type: "heading", pageNumbers: [1], text: "Lesson", level: 1, table: null }] }],
@@ -51,7 +51,14 @@ describe("Overview PDF selection", () => {
       },
       markdown: "# Lesson",
       summary: { pageCount: 1, headingCount: 1, paragraphCount: 0, listCount: 0, tableCount: 0 },
-    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    };
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const payload = url.endsWith("/capabilities")
+        ? { embeddingModel: "gemini-embedding-001", embeddingDimensions: 3072, generationModel: "gemini", rerankModel: "gemini", judgeModel: "gemini", embeddingFormatVersion: "v1", limits: {} }
+        : url.endsWith("/documents") && init?.method !== "POST" ? { documents: [] }
+          : parsePayload;
+      return Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+    });
     vi.stubGlobal("fetch", fetchMock);
     renderOverview();
     const input = screen.getByLabelText("Choose PDF");
@@ -78,7 +85,7 @@ describe("Overview PDF selection", () => {
     await user.upload(input, file);
     await user.click(screen.getByRole("button", { name: "Parse Document" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("The parsing backend could not be reached.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("The RAG backend could not be reached.");
     expect(screen.getByText("Parse failed")).toBeInTheDocument();
     expect(screen.getByText("No parse summary is available until a backend parser returns structured content.")).toBeInTheDocument();
     expect(screen.getByTestId("activity-timeline")).toHaveAttribute("data-state", "error");
