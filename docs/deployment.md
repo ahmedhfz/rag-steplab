@@ -19,7 +19,8 @@ Connector ile 20 Ağustos 2026 tarihinde doğrulanan durum:
 - `rag-documents` private Storage bucket oluşturuldu; yalnız `application/pdf`, 50 MiB object limiti.
 - Supabase üzerinde dedicated `rag_steplab_app` login role ve session-pooler bağlantısı oluşturuldu; bağlantıdan yalnız `current_user` doğrulandı. Parola ve server key repository veya log’a yazılmadan Render secret environment değişkenlerine aktarıldı.
 - Canonical Alembic migration `0001_rag_lab_initial` canlı projeye uygulandı. Tam 9 uygulama tablosu, `vector(768)`, generated `tsvector`, GIN index ve `rag_lab.alembic_version` doğrulandı; migration sonrası role geçici verilen database `CREATE` yetkisi geri alındı.
-- Render hesabında tek workspace `My Workspace` (`tea-da31oh0u01pc738cheq0`) kullanıldı. `rag-steplab-api` (`srv-da3bcjtg1s2s73d855dg`) yalnız `Free` plan ve Frankfurt region ile oluşturuldu; public URL `https://rag-steplab-api.onrender.com`. GitHub App erişimi yalnız `ahmedhfz/rag-steplab` repository’siyle sınırlandırıldı. `feature/rag-pipeline` commit `469f05b` deploy’u canlıdır; `/health` ve PostgreSQL bağlantısını da sınayan `/ready` HTTP 200 döndürdü.
+- Render hesabında tek workspace `My Workspace` (`tea-da31oh0u01pc738cheq0`) kullanıldı. `rag-steplab-api` (`srv-da3bcjtg1s2s73d855dg`) yalnız `Free` plan ve Frankfurt region ile oluşturuldu; public URL `https://rag-steplab-api.onrender.com`. GitHub App erişimi yalnız `ahmedhfz/rag-steplab` repository’siyle sınırlandırıldı. Runtime release `076cd31` ile canlıdır; `/health` ve PostgreSQL bağlantısını da sınayan `/ready` HTTP 200 döndürdü.
+- Hosted smoke gerçek PDF ile parse, üç chunking yöntemi, Gemini Embedding 2, dense/keyword/hybrid retrieval, reranking, context, grounded generation/citations, judge evaluation, history ve stale-lineage akışlarını geçti. Parse sonrası ölçülen bellek yaklaşık 257 MB ile Free instance'ın 512 MiB sınırının altında kaldı; smoke bitiminde dokuz uygulama tablosu ve private bucket tekrar sıfırlandı.
 - Vercel team’de yeni `rag-steplab` projesi (`prj_0YyTu7GFkuDBOBCTYTPvpysLPZC5`) oluşturuldu ve `ahmedhfz/rag-steplab` GitHub repository’sine bağlandı; mevcut `lumimate-ai` projesine dokunulmadı.
 - Vercel framework preset’i `Next.js`, root directory `.` olarak doğrulandı. `feature/rag-pipeline` sabit preview alias’ı `https://rag-steplab-git-feature-rag-pipeline-ahmed-hafizoglu-s-projects.vercel.app` olarak kullanılır. Preview branch ve production ortamlarında `NEXT_PUBLIC_API_BASE_URL=https://rag-steplab-api.onrender.com` tanımlandı. Yerel secret dosyalarının Vercel kaynak yüklemesine girmemesi `.vercelignore` ile ayrıca korunur.
 
@@ -117,6 +118,7 @@ Full hosted RAG contract smoke (real PDF, persistence and configured Gemini/DB):
 $env:SMOKE_FRONTEND_URL = "https://<vercel-domain>"
 $env:SMOKE_API_URL = "https://<render-domain>"
 $env:SMOKE_PDF_PATH = "C:\path\to\sample.pdf"
+$env:SMOKE_QUERY = "Dokümandaki bağlamla doğrudan cevaplanabilen bir soru"
 $env:SMOKE_REQUIRE_RAG = "1"
 node scripts/smoke.mjs
 ```
