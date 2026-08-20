@@ -106,7 +106,7 @@ describe("Overview PDF selection", () => {
       if (url.endsWith("/parse-runs/parse-queued")) {
         pollCount += 1;
         return Promise.resolve(new Response(JSON.stringify(pollCount === 1
-          ? { id: "parse-queued", documentId: "document-queued", status: "running" }
+          ? { id: "parse-queued", documentId: "document-queued", status: "running", progress: 55 }
           : completedParse), { status: 200 }));
       }
       return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
@@ -123,7 +123,72 @@ describe("Overview PDF selection", () => {
     expect(postCount).toBe(1);
 
     await waitFor(() => expect(screen.getByTestId("activity-timeline")).toHaveAttribute("data-state", "running"));
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "55");
+    expect(screen.getByTestId("parse-progress")).toHaveAttribute("data-progress", "55");
     await waitFor(() => expect(screen.getByTestId("activity-timeline")).toHaveAttribute("data-state", "completed"));
+    expect(screen.getByTestId("activity-timeline").querySelector('[data-activity-type="parsing"]')).toHaveAttribute("data-activity-status", "completed");
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  });
+
+  it("interpolates the long Docling checkpoint without presenting it as exact", async () => {
+    const user = userEvent.setup();
+    const completedParse = {
+      document: { fileName: "slow.pdf", mediaType: "application/pdf", sizeBytes: 9, pageCount: 1 },
+      structured: { pages: [{ pageNumber: 1, elements: [] }], elements: [] },
+      markdown: "# Slow",
+      summary: { pageCount: 1, headingCount: 0, paragraphCount: 0, listCount: 0, tableCount: 0 },
+      documentId: "document-slow",
+      parseRunId: "parse-slow",
+      status: "completed",
+    };
+    let pollCount = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/capabilities")) return Promise.resolve(new Response(JSON.stringify({ embeddingModel: "gemini", embeddingDimensions: 768, generationModel: "gemini", rerankModel: "gemini", judgeModel: "gemini", embeddingFormatVersion: "v1", limits: {} }), { status: 200 }));
+      if (url.endsWith("/documents") && init?.method !== "POST") return Promise.resolve(new Response(JSON.stringify({ documents: [] }), { status: 200 }));
+      if (url.endsWith("/documents/parse") && init?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ documentId: "document-slow", parseRunId: "parse-slow", status: "queued" }), { status: 202 }));
+      if (url.endsWith("/parse-runs/parse-slow")) {
+        pollCount += 1;
+        return Promise.resolve(new Response(JSON.stringify(pollCount < 20 ? { id: "parse-slow", documentId: "document-slow", status: "running", progress: 30 } : completedParse), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderOverview();
+    await user.upload(screen.getByLabelText("Choose PDF"), new File(["%PDF-1.4"], "slow.pdf", { type: "application/pdf" }));
+    await user.click(screen.getByRole("button", { name: "Parse Document" }));
+
+    await waitFor(() => expect(screen.getByTestId("activity-timeline")).toHaveAttribute("data-state", "running"));
+    await waitFor(() => {
+      const progress = Number(screen.getByTestId("parse-progress").getAttribute("data-progress"));
+      expect(progress).toBeGreaterThan(30);
+      expect(progress).toBeLessThanOrEqual(70);
+      expect(screen.getByText("(estimated)")).toBeInTheDocument();
+    }, { timeout: 3_000 });
+  });
+
+  it("surfaces a terminal failure returned by the initial accepted response", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/capabilities")) return Promise.resolve(new Response(JSON.stringify({ embeddingModel: "gemini", embeddingDimensions: 768, generationModel: "gemini", rerankModel: "gemini", judgeModel: "gemini", embeddingFormatVersion: "v1", limits: {} }), { status: 200 }));
+      if (url.endsWith("/documents") && init?.method !== "POST") return Promise.resolve(new Response(JSON.stringify({ documents: [] }), { status: 200 }));
+      if (url.endsWith("/documents/parse") && init?.method === "POST") {
+        return Promise.resolve(new Response(JSON.stringify({
+          documentId: "document-failed",
+          parseRunId: "parse-failed",
+          status: "failed",
+          error: { code: "modal_dispatch_failed", message: "The parse worker could not be started on Modal." },
+        }), { status: 202 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderOverview();
+    await user.upload(screen.getByLabelText("Choose PDF"), new File(["%PDF-1.4"], "failed.pdf", { type: "application/pdf" }));
+    await user.click(screen.getByRole("button", { name: "Parse Document" }));
+
+    await waitFor(() => expect(screen.getByTestId("activity-timeline")).toHaveAttribute("data-state", "error"));
+    expect(screen.getAllByText("The parse worker could not be started on Modal. Check the local Modal setup and try again.").length).toBeGreaterThan(0);
+    expect(screen.queryByText("The backend returned an invalid parse result.")).not.toBeInTheDocument();
   });
 
   it("keeps polling through a temporary network failure and recovers", async () => {

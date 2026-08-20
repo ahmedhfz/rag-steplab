@@ -73,9 +73,12 @@ export type AppCopy = {
     noParseSummary: string;
     activity: string;
     noActivity: string;
+    parseProgress: string;
+    parseProgressEstimated: string;
     activityEvents: Record<DocumentActivityEventType, string>;
     emptyFile: string;
     backendUnavailable: string;
+    modalDispatchFailed: string;
     invalidResponse: string;
     doclingError: string;
     parseInterrupted: string;
@@ -261,6 +264,8 @@ export const UI_COPY = {
       noParseSummary: "No parse summary is available until a backend parser returns structured content.",
       activity: "Activity",
       noActivity: "No activity yet. Select a PDF to begin.",
+      parseProgress: "Progress",
+      parseProgressEstimated: "estimated",
       activityEvents: {
         documentSelected: "Document selected",
         parseRequested: "Parse requested",
@@ -270,6 +275,7 @@ export const UI_COPY = {
       },
       emptyFile: "The selected file is empty.",
       backendUnavailable: "The RAG backend could not be reached. Start FastAPI on port 8000 and try again.",
+      modalDispatchFailed: "The parse worker could not be started on Modal. Check the local Modal setup and try again.",
       invalidResponse: "The backend returned an invalid parse result.",
       doclingError: "Docling could not parse this PDF. Try a different or non-corrupted PDF.",
       parseInterrupted: "The parse worker stopped before the document was completed. Try parsing again.",
@@ -454,6 +460,8 @@ export const UI_COPY = {
       noParseSummary: "Backend ayrıştırıcısı yapısal içerik döndürene kadar ayrıştırma özeti bulunmaz.",
       activity: "Aktivite",
       noActivity: "Henüz aktivite yok. Başlamak için PDF seçin.",
+      parseProgress: "İlerleme",
+      parseProgressEstimated: "tahmini",
       activityEvents: {
         documentSelected: "Doküman seçildi",
         parseRequested: "Ayrıştırma istendi",
@@ -463,6 +471,7 @@ export const UI_COPY = {
       },
       emptyFile: "Seçilen dosya boş.",
       backendUnavailable: "RAG backend'ine ulaşılamadı. FastAPI'yi 8000 portunda başlatıp tekrar deneyin.",
+      modalDispatchFailed: "Parse worker'ı Modal üzerinde başlatılamadı. Local Modal kurulumunu kontrol edip tekrar deneyin.",
       invalidResponse: "Backend geçersiz bir ayrıştırma sonucu döndürdü.",
       doclingError: "Docling bu PDF'i ayrıştıramadı. Farklı veya bozulmamış bir PDF deneyin.",
       parseInterrupted: "Ayrıştırma worker'ı doküman tamamlanmadan durdu. Tekrar ayrıştırmayı deneyin.",

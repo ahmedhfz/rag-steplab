@@ -45,9 +45,14 @@ RAG smoke kapıları [docs/deployment.md](../docs/deployment.md) içinde tanıml
 ## Çalıştırma
 
 Virtual environment ve dependency'ler bir kez kurulduktan sonra proje kökündeki `npm run dev`, frontend ile backend'i birlikte başlatır.
-Async parse'ı local API üzerinden başlatmak için Modal CLI profilinin authenticate
-edilmiş ve `rag-steplab-api` app'ine erişebilir olması gerekir; production
-credential'ları browser'a veya local `.env` dosyasına kopyalanmaz.
+Local development'ta `DATABASE_URL` yoksa `LOCAL_PARSE_WORKER_ENABLED` varsayılan
+olarak açıktır ve aynı gerçek Docling worker path'i FastAPI sürecinde arka planda
+çalışır. Böylece local memory Storage/Repository ile `202 → queued → running →
+completed/failed` lifecycle'ı production sözleşmesiyle aynı kalır; parser sahte
+çıktı üretmez. Paylaşılan production-like Postgres + Storage kurulumu kullanılıyorsa
+`LOCAL_PARSE_WORKER_ENABLED=false` ile authenticated Modal CLI üzerinden
+`rag-steplab-api` worker'ına dispatch edilebilir. Production credential'ları
+browser'a veya source control'a kopyalanmaz.
 
 Backend'i tek başına çalıştırmak için PowerShell:
 

@@ -76,6 +76,30 @@ def test_parse_pdf_file_uses_full_document_converter_and_existing_normalizer(mon
     assert parsed.run_metadata["mode"] == "full_document_converter"
 
 
+def test_parse_pdf_file_reports_real_lifecycle_checkpoints(monkeypatch):
+    class Converter:
+        def convert(self, _path):
+            return SimpleNamespace(document=FakeDocument())
+
+    monkeypatch.setattr("app.parser._get_document_converter", lambda *_args, **_kwargs: Converter())
+    checkpoints = []
+
+    parsed = parse_pdf_file(
+        Path("lesson.pdf"),
+        "lesson.pdf",
+        123,
+        progress_callback=lambda progress, phase: checkpoints.append((progress, phase)),
+    )
+
+    assert parsed.summary is not None
+    assert checkpoints == [
+        (25, "docling_starting"),
+        (30, "docling_ready"),
+        (72, "docling_converted"),
+        (90, "content_normalized"),
+    ]
+
+
 def test_parse_pdf_file_rejects_a_document_without_semantic_tables(monkeypatch):
     document = SimpleNamespace(
         pages={1: object()},

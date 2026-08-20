@@ -44,6 +44,7 @@ export type DocumentParseResponse = {
   structured: StructuredContent;
   markdown: string;
   summary: ParseSummary;
+  progress?: number;
 };
 
 /**
@@ -56,5 +57,15 @@ export type ParseJobAcceptedResponse = {
   documentId: string;
   parseRunId: string;
   status: Exclude<ParseRunStatus, "completed" | "failed">;
+  progress?: number;
+  runMetadata?: Record<string, unknown> | null;
+};
+
+export type ParseJobFailedResponse = {
+  documentId: string;
+  parseRunId: string;
+  status: "failed";
+  progress?: number;
+  error: { code: string; message: string };
   runMetadata?: Record<string, unknown> | null;
 };

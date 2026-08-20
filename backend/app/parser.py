@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from statistics import median
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 try:  # Docling is installed in the worker image, not required for API imports.
     from docling.datamodel.base_models import InputFormat
@@ -103,14 +103,31 @@ def clear_document_converter_cache() -> None:
     _converter_cache.clear()
 
 
-def parse_pdf_file(path: Path, file_name: str, size_bytes: int) -> ParseResponse:
+def parse_pdf_file(
+    path: Path,
+    file_name: str,
+    size_bytes: int,
+    progress_callback: Callable[[int, str], None] | None = None,
+) -> ParseResponse:
+    def report_progress(progress: int, phase: str) -> None:
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(progress, phase)
+        except Exception:
+            # Telemetry must never turn a valid parse into a failed parse.
+            return
+
     try:
         settings = get_settings()
         configured_artifacts = settings.docling_artifacts_path or os.getenv("DOCLING_ARTIFACTS_PATH")
         artifacts_path = Path(configured_artifacts).expanduser() if configured_artifacts else None
         converter_warm = _converter_cache_key(artifacts_path) in _converter_cache
+        report_progress(25, "docling_starting")
         converter = _get_document_converter(artifacts_path)
+        report_progress(30, "docling_ready")
         conversion_result = converter.convert(path)
+        report_progress(72, "docling_converted")
         document = getattr(conversion_result, "document", None)
         if document is None:
             raise ApiProblem(
@@ -129,6 +146,7 @@ def parse_pdf_file(path: Path, file_name: str, size_bytes: int) -> ParseResponse
         if counts["table"] == 0:
             raise ApiProblem(422, "docling_tables_missing", "Docling produced no semantic tables.")
         markdown = _to_markdown(structured.pages)
+        report_progress(90, "content_normalized")
     except ApiProblem:
         raise
     except Exception as exc:  # Docling exposes several version-specific exception types.

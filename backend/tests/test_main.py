@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.errors import ApiProblem
+from app.config import Settings
 from app.main import app
 from app.pipeline import run_parse_worker
 from app.repository import reset_repository
@@ -38,12 +39,13 @@ def test_returns_normalized_parse_contract(monkeypatch):
         summary=ParseSummary(page_count=1, heading_count=1, paragraph_count=0, list_count=0, table_count=0),
     )
 
-    def fake_parse(path, file_name, size_bytes):
+    def fake_parse(path, file_name, size_bytes, **_kwargs):
         assert path.suffix == ".pdf"
         assert file_name == "lesson.pdf"
         assert size_bytes == 8
         return parsed
 
+    monkeypatch.setattr("app.main.get_settings", lambda: Settings(app_env="development", local_parse_worker_enabled=False))
     monkeypatch.setattr("app.main.dispatch_parse_run", lambda *_args: "dispatch-test")
     monkeypatch.setattr("app.parser.parse_pdf_file", fake_parse)
     response = client.post("/documents/parse", files={"file": ("lesson.pdf", b"%PDF-1.7", "application/pdf")})
@@ -66,6 +68,7 @@ def test_returns_safe_error_when_docling_cannot_parse(monkeypatch):
     def failing_parse(*_args, **_kwargs):
         raise ApiProblem(422, "docling_error", "Docling could not parse this PDF.")
 
+    monkeypatch.setattr("app.main.get_settings", lambda: Settings(app_env="development", local_parse_worker_enabled=False))
     monkeypatch.setattr("app.main.dispatch_parse_run", lambda *_args: "dispatch-test")
     monkeypatch.setattr("app.parser.parse_pdf_file", failing_parse)
     response = client.post(

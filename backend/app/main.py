@@ -11,7 +11,12 @@ from fastapi.responses import JSONResponse
 from .config import get_settings
 from .db import check_database
 from .errors import ApiProblem
-from .modal_dispatch import ModalDispatchError, dispatch_parse_run, parse_call_terminal_failure
+from .modal_dispatch import (
+    ModalDispatchError,
+    dispatch_local_parse_run,
+    dispatch_parse_run,
+    parse_call_terminal_failure,
+)
 from .pipeline import (
     create_chunk_run,
     create_dataset,
@@ -119,6 +124,16 @@ def _public_parse_status(status: str | None) -> str:
     return "failed" if status == "interrupted" else (status or "failed")
 
 
+def _parse_progress(parse: dict[str, Any]) -> int:
+    status = _public_parse_status(parse.get("status"))
+    if status == "completed":
+        return 100
+    value = (parse.get("execution_metadata") or {}).get("progress")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return max(0, min(100, round(value)))
+    return 8 if status == "running" else 0
+
+
 def _parse_response(document: dict[str, Any], parse: dict[str, Any]) -> ParseResponse:
     status = _public_parse_status(parse.get("status"))
     error: ApiError | None = None
@@ -155,6 +170,7 @@ def _parse_response(document: dict[str, Any], parse: dict[str, Any]) -> ParseRes
         document_id=document.get("id"),
         parse_run_id=parse.get("id"),
         status=status,  # type: ignore[arg-type]
+        progress=_parse_progress(parse),
         run_metadata=metadata,
         error=error,
     )
@@ -162,6 +178,10 @@ def _parse_response(document: dict[str, Any], parse: dict[str, Any]) -> ParseRes
 
 def _dispatch_queued_parse(parse: dict[str, Any]) -> dict[str, Any]:
     repository = get_repository()
+    settings = get_settings()
+    if settings.app_env == "development" and settings.local_parse_worker_enabled and not repository.persistent:
+        dispatch_id = dispatch_local_parse_run(parse["id"])
+        return repository.set_parse_dispatch(parse["id"], dispatch_id) or parse
     try:
         dispatch_id = dispatch_parse_run(parse["id"])
     except ModalDispatchError:
@@ -319,6 +339,7 @@ def _run_summary_dict(row: dict[str, Any], document: dict[str, Any]) -> dict[str
     return _camelize({
         "id": row["id"],
         "status": status,
+        "progress": _parse_progress(row) if "structured" in row else None,
         "isStale": stale,
         "historicalLineage": bool(row.get("historical_lineage", False)),
         "upstream": {

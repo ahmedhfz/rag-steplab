@@ -8,10 +8,11 @@ on:
 
 permissions:
   contents: read
+  deployments: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   frontend:
@@ -83,3 +84,89 @@ jobs:
             echo "A secret-shaped value was found in tracked files."
             exit 1
           fi
+
+  deploy-modal:
+    name: Deploy Modal production
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [frontend, backend, secret-hygiene]
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: modal-production
+      cancel-in-progress: false
+    env:
+      MODAL_ENVIRONMENT: main
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      MODAL_API_URL: https://ahmedhfz-dev--rag-steplab-api-api.modal.run
+    steps:
+      - name: Checkout tested commit
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pinned Modal CLI
+        run: python -m pip install modal==1.5.4
+
+      - name: Verify deployment credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$MODAL_TOKEN_ID"
+          test -n "$MODAL_TOKEN_SECRET"
+          modal token info
+
+      - name: Deploy tested Git SHA to Modal
+        run: modal deploy --env "$MODAL_ENVIRONMENT" --tag "$GITHUB_SHA" --strategy rolling backend/modal_app.py
+
+      - name: Verify Modal deployment tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          modal app history rag-steplab-api --env "$MODAL_ENVIRONMENT" --json \
+            | python -c 'import json, os, sys; history=json.load(sys.stdin); actual=history[0].get("tag") if history else None; expected=os.environ["GITHUB_SHA"]; assert actual == expected, f"Expected Modal tag {expected}, got {actual}"'
+
+      - name: Verify deployed API
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..12}; do
+            if curl --fail --silent --show-error "$MODAL_API_URL/health" >/dev/null \
+              && curl --fail --silent --show-error "$MODAL_API_URL/ready" >/dev/null \
+              && curl --fail --silent --show-error "$MODAL_API_URL/openapi.json" >/dev/null; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Modal API did not become healthy after deployment."
+          exit 1
+
+      - name: Verify Vercel production uses the same Git SHA
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..36}; do
+            deployment_id="$(gh api --method GET "repos/$GITHUB_REPOSITORY/deployments" \
+              -f sha="$GITHUB_SHA" \
+              -f environment=Production \
+              -f per_page=10 \
+              --jq '.[0].id // empty')"
+            if [ -n "$deployment_id" ]; then
+              state="$(gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment_id/statuses" --jq '.[0].state // empty')"
+              if [ "$state" = "success" ]; then
+                exit 0
+              fi
+              if [ "$state" = "failure" ] || [ "$state" = "error" ]; then
+                echo "Vercel production deployment failed for $GITHUB_SHA."
+                exit 1
+              fi
+            fi
+            sleep 10
+          done
+          echo "No successful Vercel production deployment found for $GITHUB_SHA."
+          exit 1

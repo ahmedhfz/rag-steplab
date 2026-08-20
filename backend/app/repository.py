@@ -92,6 +92,7 @@ def _run_summary(row: dict[str, Any], *, stale: bool = False) -> RunSummary:
     return RunSummary(
         id=row["id"],
         status=status,
+        progress=(100 if status == "completed" else (row.get("execution_metadata") or {}).get("progress")),
         is_stale=stale,
         historical_lineage=bool(row.get("historical_lineage", False)),
         upstream={
@@ -144,6 +145,9 @@ class Repository:
         raise NotImplementedError
 
     def mark_parse_running(self, run_id: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def update_parse_progress(self, run_id: str, progress: int, phase: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
     def complete_parse(
@@ -314,7 +318,7 @@ class InMemoryRepository(Repository):
                 "error_code": None,
                 "error_message": None,
                 "config": copy.deepcopy(config or {}),
-                "execution_metadata": {},
+                "execution_metadata": {"progress": 0, "phase": "queued"},
                 "dispatch_id": None,
                 "started_at": None,
                 "completed_at": None,
@@ -353,6 +357,19 @@ class InMemoryRepository(Repository):
                 row["status"] = "running"
                 row["started_at"] = row.get("started_at") or now_utc()
                 row["updated_at"] = now_utc()
+            return copy.deepcopy(row)
+
+    def update_parse_progress(self, run_id, progress, phase):
+        with self._lock:
+            row = self.parses.get(run_id)
+            if row is None:
+                return None
+            if row["status"] in {"completed", "failed", "interrupted"}:
+                return copy.deepcopy(row)
+            metadata = copy.deepcopy(row.get("execution_metadata") or {})
+            metadata.update({"progress": max(0, min(100, int(progress))), "phase": phase})
+            row["execution_metadata"] = metadata
+            row["updated_at"] = now_utc()
             return copy.deepcopy(row)
 
     def complete_parse(self, run_id, parsed, *, parser_version="unknown", execution_metadata=None, duration_ms=None):
@@ -690,7 +707,7 @@ class SqlAlchemyRepository(Repository):
                     markdown="",
                     summary=None,
                     status="queued",
-                    execution_metadata={},
+                    execution_metadata={"progress": 0, "phase": "queued"},
                     started_at=None,
                     completed_at=None,
                     duration_ms=None,
@@ -732,6 +749,19 @@ class SqlAlchemyRepository(Repository):
                 row.status = "running"
                 row.started_at = row.started_at or now_utc()
                 session.flush()
+            return self._parse_dict(row)
+
+    def update_parse_progress(self, run_id, progress, phase):
+        with session_scope() as session:
+            row = session.get(ParseRun, run_id)
+            if row is None:
+                return None
+            if row.status in {"completed", "failed", "interrupted"}:
+                return self._parse_dict(row)
+            metadata = dict(row.execution_metadata or {})
+            metadata.update({"progress": max(0, min(100, int(progress))), "phase": phase})
+            row.execution_metadata = _dump(metadata)
+            session.flush()
             return self._parse_dict(row)
 
     def complete_parse(self, run_id, parsed, *, parser_version="unknown", execution_metadata=None, duration_ms=None):

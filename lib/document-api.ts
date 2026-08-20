@@ -1,6 +1,7 @@
 import type {
   DocumentParseResponse,
   ParseJobAcceptedResponse,
+  ParseJobFailedResponse,
   ParsedElementType,
 } from "@/lib/document-parse-types";
 
@@ -37,7 +38,7 @@ export class DocumentApiError extends Error {
 
 type ApiErrorPayload = { error?: { code?: unknown; message?: unknown } };
 
-export type ParseDocumentResponse = DocumentParseResponse | ParseJobAcceptedResponse;
+export type ParseDocumentResponse = DocumentParseResponse | ParseJobAcceptedResponse | ParseJobFailedResponse;
 
 function getApiBaseUrl() {
   const configuredUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
@@ -58,6 +59,24 @@ export function isParseJobAcceptedResponse(value: unknown): value is ParseJobAcc
   return typeof documentId === "string"
     && typeof parseRunId === "string"
     && (response.status === "queued" || response.status === "running");
+}
+
+export function isParseJobFailedResponse(value: unknown): value is ParseJobFailedResponse {
+  if (!value || typeof value !== "object") return false;
+  const response = value as Partial<ParseJobFailedResponse> & {
+    document_id?: unknown;
+    parse_run_id?: unknown;
+  };
+  const documentId = response.documentId ?? response.document_id;
+  const parseRunId = response.parseRunId ?? response.parse_run_id;
+  const error = response.error;
+  return typeof documentId === "string"
+    && typeof parseRunId === "string"
+    && response.status === "failed"
+    && Boolean(error)
+    && typeof error === "object"
+    && typeof (error as { code?: unknown }).code === "string"
+    && typeof (error as { message?: unknown }).message === "string";
 }
 
 export function isDocumentParseResponse(value: unknown): value is DocumentParseResponse {
@@ -134,7 +153,7 @@ export async function parseDocument(file: File, signal?: AbortSignal): Promise<P
     throw new DocumentApiError("invalid_response", "The parsing backend returned invalid JSON.", response.status);
   }
 
-  if (!isDocumentParseResponse(payload) && !isParseJobAcceptedResponse(payload)) {
+  if (!isDocumentParseResponse(payload) && !isParseJobAcceptedResponse(payload) && !isParseJobFailedResponse(payload)) {
     throw new DocumentApiError("invalid_response", "The parsing backend returned an invalid parse contract.", response.status);
   }
 
