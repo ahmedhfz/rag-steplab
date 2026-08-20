@@ -63,6 +63,8 @@ type DocumentPipelineContextValue = {
   selectedFile: File | null;
   fileError: DocumentFileValidationError | null;
   parseStatus: DocumentParseStatus;
+  parseProgress: number;
+  parseProgressEstimated: boolean;
   parseResult: DocumentParseResponse | null;
   parseError: DocumentApiError | null;
   activity: DocumentActivityEvent[];
@@ -124,6 +126,10 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<DocumentFileValidationError | null>(null);
   const [parseStatus, setParseStatus] = useState<DocumentParseStatus>("not-started");
+  const [parseProgress, setParseProgress] = useState(0);
+  // Docling exposes coarse stage checkpoints, so the UI may interpolate between
+  // them while the long-running conversion itself is still in progress.
+  const [lastReportedParseProgress, setLastReportedParseProgress] = useState(0);
   const [parseResult, setParseResult] = useState<DocumentParseResponse | null>(null);
   const [parseError, setParseError] = useState<DocumentApiError | null>(null);
   const parseInFlightRef = useRef(false);
@@ -174,6 +180,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     if (runIdRef.current !== expectedRunId) return;
     activeParseRunIdRef.current = run.id;
     setParseStatus(run.status);
+    setLastReportedParseProgress(run.progress);
+    setParseProgress((current) => Math.max(current, run.progress));
     if (run.status === "failed") {
       const problem = run.error ?? { code: "parse_failed", message: "The parse run failed." };
       setParseError(new DocumentApiError(problem.code, problem.message));
@@ -236,6 +244,11 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     activeParseRunIdRef.current = inFlightParseSummary?.id ?? detail.activeParseRunId;
     setParseResult(detail.activeParseRun);
     setParseStatus(nextParseStatus);
+    const loadedParseProgress = inFlightParseSummary?.progress
+      ?? activeParseSummary?.progress
+      ?? (detail.activeParseRun ? 100 : 0);
+    setLastReportedParseProgress(loadedParseProgress);
+    setParseProgress(loadedParseProgress);
     setParseError(visibleParseSummary?.error
       ? new DocumentApiError(visibleParseSummary.error.code, visibleParseSummary.error.message)
       : null);
@@ -250,6 +263,23 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setEvaluationStatus(embeddingMatchesLineage && datasets.length > 0 ? "ready" : "locked");
     return { parseStatus: nextParseStatus, parseRunId: inFlightParseSummary?.id ?? null };
   }, []);
+
+  useEffect(() => {
+    if (parseStatus !== "queued" && parseStatus !== "running") return;
+
+    // The parser reports authoritative checkpoints. Between checkpoints, move
+    // slowly through a capped range so a long Docling conversion does not look
+    // frozen. The UI marks these values as estimated.
+    const interval = window.setInterval(() => {
+      setParseProgress((current) => {
+        if (current < 30) return current;
+        const cap = current < 72 ? 70 : current < 90 ? 88 : 98;
+        return Math.min(cap, current + 1);
+      });
+    }, 750);
+
+    return () => window.clearInterval(interval);
+  }, [parseStatus]);
 
   const resumeParseRun = useCallback(async (documentId: string, parseRunId: string, expectedRunId: number) => {
     const controller = replaceController("parse-resume");
@@ -318,6 +348,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setParseResult(null);
     setParseError(null);
     setParseStatus("not-started");
+    setLastReportedParseProgress(0);
+    setParseProgress(0);
     resetDownstream();
     try {
       const loaded = await loadDocumentRelatedData(documentId, controller.signal);
@@ -382,6 +414,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     rememberActiveDocument(null);
     setFileError(null);
     setParseStatus("ready");
+    setLastReportedParseProgress(0);
+    setParseProgress(0);
     setParseResult(null);
     setParseError(null);
     setActivity([]);
@@ -401,6 +435,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     rememberActiveDocument(null);
     setFileError(null);
     setParseStatus("not-started");
+    setLastReportedParseProgress(0);
+    setParseProgress(0);
     setParseResult(null);
     setParseError(null);
     setActivity([]);
@@ -414,6 +450,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     parseInFlightRef.current = true;
     activeParseRunIdRef.current = null;
     setParseStatus("queued");
+    setLastReportedParseProgress(0);
+    setParseProgress(0);
     setParseError(null);
     setChunkRun((run) => staleRun(run));
     setEmbeddingRun((run) => staleRun(run));
@@ -430,6 +468,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (runIdRef.current !== currentRunId) return;
       setParseResult(result);
       setParseStatus("completed");
+      setLastReportedParseProgress(100);
+      setParseProgress(100);
       activeParseRunIdRef.current = result.parseRunId;
       setChunkStatus(result.documentId && result.parseRunId ? "ready" : "locked");
       addActivity("parseCompleted");
@@ -479,6 +519,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     parseInFlightRef.current = true;
     activeParseRunIdRef.current = null;
     setParseStatus("queued");
+    setLastReportedParseProgress(0);
+    setParseProgress(0);
     setParseError(null);
     addActivity("parseRequested");
     addActivity("parsing");
@@ -494,6 +536,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       await loadDocumentRelatedData(documentId, controller.signal);
       if (runIdRef.current !== currentRunId) return;
       setParseStatus("completed");
+      setLastReportedParseProgress(100);
+      setParseProgress(100);
       setExperimentHistory((current) => current.map((run) => ({ ...run, isStale: true })));
       setEvaluationRun((run) => staleRun(run));
       addActivity("parseCompleted");
@@ -650,7 +694,9 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   }, [replaceController]);
 
   const value = useMemo<DocumentPipelineContextValue>(() => ({
-    selectedFile, fileError, parseStatus, parseResult, parseError, activity,
+    selectedFile, fileError, parseStatus, parseProgress,
+    parseProgressEstimated: parseProgress > lastReportedParseProgress,
+    parseResult, parseError, activity,
     persistenceStatus, persistenceError, capabilities, documents, activeDocument,
     chunkStatus, chunkRun, chunkError, embeddingStatus, embeddingRun, embeddingError,
     experimentStatus, experimentRun, experimentError, experimentHistory,
@@ -661,7 +707,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     activeDocument, activity, capabilities, chunkError, chunkRun, chunkStatus, createDataset, documents,
     embeddingError, embeddingRun, embeddingStatus, evaluationDatasets, evaluationError, evaluationHistory,
     evaluationRun, evaluationStatus, experimentError, experimentHistory, experimentRun, experimentStatus,
-    fileError, parseError, parseResult, parseSelectedFile, parseStatus, persistenceError, persistenceStatus,
+    fileError, lastReportedParseProgress, parseError, parseProgress, parseResult, parseSelectedFile, parseStatus, persistenceError, persistenceStatus,
     reparseActiveDocument,
     refreshEvaluationRuns, refreshPersistence, removeFile, runChunking, runEmbedding, runEvaluation, runExperiment,
     selectFile, selectedFile, selectPersistedDocument,

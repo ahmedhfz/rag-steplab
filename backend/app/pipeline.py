@@ -203,11 +203,13 @@ def run_parse_worker(
     parse_run_id: str,
     *,
     repository: Repository | None = None,
+    worker_name: str = "modal",
 ) -> dict[str, Any] | None:
     """Run one queued parse and persist one terminal lifecycle transition.
 
     This function is the only place where the full Docling converter is called
-    by the Modal worker. It never falls back to the old text-cell heuristic.
+    by the Modal worker or the development worker. It never falls back to the
+    old text-cell heuristic.
     """
 
     repository = repository or get_repository()
@@ -221,6 +223,15 @@ def run_parse_worker(
     if running is None or running.get("status") in {"completed", "failed", "interrupted"}:
         return running
     started = time.perf_counter()
+
+    def report_progress(progress: int, phase: str) -> None:
+        try:
+            repository.update_parse_progress(parse_run_id, progress, phase)
+        except Exception:
+            # Progress is observability; it must never prevent the parse itself.
+            logger.warning("parse_progress_update_failed parse_run_id=%s phase=%s", parse_run_id, phase)
+
+    report_progress(8, "worker_started")
     queue_duration_ms = None
     if running.get("created_at") is not None and running.get("started_at") is not None:
         queue_duration_ms = max(0, int((running["started_at"] - running["created_at"]).total_seconds() * 1000))
@@ -235,6 +246,7 @@ def run_parse_worker(
         storage_started = time.perf_counter()
         content = get_storage().download(document["storage_path"])
         storage_download_ms = max(0, int((time.perf_counter() - storage_started) * 1000))
+        report_progress(15, "source_loaded")
         temporary_path: Path | None = None
         try:
             from .parser import parse_pdf_file
@@ -243,14 +255,21 @@ def run_parse_worker(
                 temporary_file.write(content)
                 temporary_path = Path(temporary_file.name)
             with measure_resource_usage() as measurement:
-                parsed = parse_pdf_file(temporary_path, document["file_name"], len(content))
+                parsed = parse_pdf_file(
+                    temporary_path,
+                    document["file_name"],
+                    len(content),
+                    progress_callback=report_progress,
+                )
         finally:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
         duration_ms = int(measurement.get("elapsedMs") or (time.perf_counter() - started) * 1000)
         execution_metadata = {
             **(parsed.run_metadata or {}),
-            "worker": "modal",
+            "worker": worker_name,
+            "progress": 100,
+            "phase": "completed",
             "queueDurationMs": queue_duration_ms,
             "storageDownloadMs": storage_download_ms,
             "measurement": measurement,

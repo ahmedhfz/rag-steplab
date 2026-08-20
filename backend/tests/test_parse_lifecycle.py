@@ -98,6 +98,21 @@ def test_repository_lifecycle_has_duplicate_guard_and_terminal_idempotency():
     assert repository.fail_parse(queued["id"], "late_error", "must not overwrite") ["status"] == "completed"
 
 
+def test_running_parse_exposes_persisted_progress_checkpoint():
+    repository = get_repository()
+    document = _document(repository)
+    queued = repository.create_parse_run(document["id"])
+    repository.mark_parse_running(queued["id"])
+    repository.update_parse_progress(queued["id"], 72, "docling_converted")
+
+    response = client.get(f"/parse-runs/{queued['id']}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "running"
+    assert response.json()["progress"] == 72
+    assert response.json()["runMetadata"]["phase"] == "docling_converted"
+
+
 def test_internal_interrupted_state_is_publicly_failed_with_parse_interrupted():
     repository = get_repository()
     document = _document(repository)
@@ -178,6 +193,7 @@ def test_modal_dispatch_failure_is_durable_and_never_runs_local_parser(monkeypat
     def fail_local_parser(*_args, **_kwargs):
         raise AssertionError("API must not run a local parser fallback")
 
+    monkeypatch.setattr("app.main.get_settings", lambda: Settings(app_env="development", local_parse_worker_enabled=False))
     monkeypatch.setattr("app.main.dispatch_parse_run", fail_dispatch)
     monkeypatch.setattr("app.parser.parse_pdf_file", fail_local_parser)
 
@@ -193,9 +209,25 @@ def test_modal_dispatch_failure_is_durable_and_never_runs_local_parser(monkeypat
     assert client.get(f"/parse-runs/{payload['parseRunId']}").json()["status"] == "failed"
 
 
+def test_local_development_dispatch_keeps_async_lifecycle_without_persistence(monkeypatch):
+    monkeypatch.setattr("app.main.get_settings", lambda: Settings(app_env="development", local_parse_worker_enabled=True))
+    monkeypatch.setattr("app.main.dispatch_local_parse_run", lambda run_id: f"local-{run_id}")
+
+    accepted = client.post(
+        "/documents/parse",
+        files={"file": ("lesson.pdf", b"%PDF-1.7", "application/pdf")},
+    )
+
+    assert accepted.status_code == 202
+    payload = accepted.json()
+    assert payload["status"] == "queued"
+    assert get_repository().get_parse_row(payload["parseRunId"])["dispatch_id"] == f"local-{payload['parseRunId']}"
+
+
 def test_worker_persists_measurement_and_cleans_temporary_pdf(monkeypatch):
+    monkeypatch.setattr("app.main.get_settings", lambda: Settings(app_env="development", local_parse_worker_enabled=False))
     monkeypatch.setattr("app.main.dispatch_parse_run", lambda *_args: "dispatch-test")
-    monkeypatch.setattr("app.parser.parse_pdf_file", lambda path, *_args: (_assert_pdf_exists(path), _parsed())[1])
+    monkeypatch.setattr("app.parser.parse_pdf_file", lambda path, *_args, **_kwargs: (_assert_pdf_exists(path), _parsed())[1])
 
     accepted = client.post(
         "/documents/parse",
@@ -207,14 +239,16 @@ def test_worker_persists_measurement_and_cleans_temporary_pdf(monkeypatch):
     assert result is not None
     assert result["status"] == "completed"
     assert result["execution_metadata"]["worker"] == "modal"
+    assert result["execution_metadata"]["progress"] == 100
     measurement = result["execution_metadata"]["measurement"]
     assert {"elapsedMs", "peakRssMb", "cpuUserMs", "cpuSystemMs"} <= measurement.keys()
 
 
 def test_worker_marks_missing_semantic_tables_as_failed(monkeypatch):
+    monkeypatch.setattr("app.main.get_settings", lambda: Settings(app_env="development", local_parse_worker_enabled=False))
     monkeypatch.setattr("app.main.dispatch_parse_run", lambda *_args: "dispatch-test")
 
-    def reject_without_tables(*_args):
+    def reject_without_tables(*_args, **_kwargs):
         raise ApiProblem(422, "docling_tables_missing", "Docling produced no semantic tables.")
 
     monkeypatch.setattr("app.parser.parse_pdf_file", reject_without_tables)

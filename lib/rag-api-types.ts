@@ -14,6 +14,7 @@ export type ParseRun = {
   id: string;
   documentId: string;
   status: ParseRunStatus;
+  progress: number;
   result: PersistedParseResponse | null;
   error: ApiProblem | null;
   runMetadata: Record<string, unknown> | null;
@@ -28,6 +29,7 @@ export type RunTiming = {
 export type RunSummary = {
   id: string;
   status: RunStatus;
+  progress: number | null;
   isStale: boolean;
   historicalLineage: boolean;
   upstream: Record<string, string | null>;

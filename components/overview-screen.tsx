@@ -126,6 +126,7 @@ function getParseErrorMessage(copy: AppCopy, code: DocumentApiErrorCode | undefi
   if (code === "invalid_file_type") return copy.overview.invalidPdf;
   if (code === "file_too_large") return copy.overview.fileTooLarge;
   if (code === "backend_unavailable") return copy.overview.backendUnavailable;
+  if (code === "modal_dispatch_failed") return copy.overview.modalDispatchFailed;
   if (code === "invalid_response") return copy.overview.invalidResponse;
   if (code === "docling_error") return copy.overview.doclingError;
   if (code === "parse_interrupted") return copy.overview.parseInterrupted;
@@ -156,25 +157,33 @@ function ActivityItem({
   event,
   copy,
   parseErrorCode,
+  parseProgress,
+  parseProgressEstimated,
+  parseStatus,
   index,
   total,
 }: {
   event: DocumentActivityEvent;
   copy: AppCopy;
   parseErrorCode?: DocumentApiErrorCode;
+  parseProgress: number;
+  parseProgressEstimated: boolean;
+  parseStatus: DocumentParseStatus;
   index: number;
   total: number;
 }) {
-  const Icon = activityIcons[event.type];
-  const isProcessing = event.type === "parsing";
-  const isCompleted = event.type === "parseCompleted";
-  const isFailed = event.type === "parseFailed";
+  const isParsingEvent = event.type === "parsing";
+  const isProcessing = isParsingEvent && (parseStatus === "queued" || parseStatus === "running");
+  const isCompleted = event.type === "parseCompleted" || (isParsingEvent && parseStatus === "completed");
+  const isFailed = event.type === "parseFailed" || (isParsingEvent && parseStatus === "failed");
+  const Icon = isCompleted && isParsingEvent ? CheckCircle2 : isFailed && isParsingEvent ? AlertCircle : activityIcons[event.type];
+  const progress = Math.max(0, Math.min(100, Math.round(parseProgress)));
 
   return (
     <motion.li
       animate={{ opacity: 1, x: 0 }}
       className={cn(
-        "relative flex items-start gap-3 border-b px-4 py-3 last:border-b-0 transition-colors",
+        "relative flex items-start gap-3 border-b px-4 py-2.5 last:border-b-0 transition-colors",
         isProcessing && "bg-amber-50/60",
         isCompleted && "bg-emerald-50/65",
         isFailed && "bg-red-50/60",
@@ -214,6 +223,29 @@ function ActivityItem({
       </div>
       <div className="min-w-0 pt-0.5">
         <div className={cn("text-sm font-medium", isCompleted && "text-emerald-800", isFailed && "text-red-800")}>{copy.overview.activityEvents[event.type]}</div>
+        {isProcessing && (
+          <div className="mt-2 w-full min-w-0 max-w-md space-y-1.5">
+            <div className="flex items-center justify-between gap-3 text-[11px] text-amber-800">
+              <span>
+                {copy.overview.parseProgress}
+                {parseProgressEstimated && <span className="ml-1 text-amber-700/70">({copy.overview.parseProgressEstimated})</span>}
+              </span>
+              <span className="font-semibold tabular-nums">{progress}%</span>
+            </div>
+            <div
+              aria-label={`${copy.overview.parseProgress}: ${progress}%`}
+              aria-valuemax={100}
+              aria-valuemin={0}
+              aria-valuenow={progress}
+              className="h-1.5 overflow-hidden rounded-full bg-amber-100"
+              data-progress={progress}
+              data-testid="parse-progress"
+              role="progressbar"
+            >
+              <div className="h-full rounded-full bg-amber-500 transition-[width] duration-500 ease-out" style={{ width: `${progress}%` }} />
+            </div>
+          </div>
+        )}
         {event.type === "parseFailed" && <div className="mt-1 text-xs text-red-700">{getParseErrorMessage(copy, event.errorCode ?? parseErrorCode)}</div>}
       </div>
     </motion.li>
@@ -231,6 +263,8 @@ export function OverviewScreen() {
     selectedFile,
     fileError,
     parseStatus,
+    parseProgress,
+    parseProgressEstimated,
     parseResult,
     parseError,
     activity,
@@ -314,7 +348,7 @@ export function OverviewScreen() {
         </div>
       </section>
 
-      <section className="grid min-w-0 border-t lg:grid-cols-[minmax(320px,40%)_minmax(0,60%)]">
+      <section className="grid min-w-0 border-t lg:grid-cols-[minmax(0,1fr)_minmax(300px,340px)]">
         <div className="min-w-0 p-4 sm:p-8 lg:border-r">
           <h2 className="text-sm font-semibold">{copy.overview.uploadDocument}</h2>
           <motion.div
@@ -481,7 +515,7 @@ export function OverviewScreen() {
           </div>
         </div>
 
-        <div className="min-w-0 p-4 sm:p-8">
+        <div className="min-w-0 h-fit self-start p-4 sm:p-6">
           <h2 className="text-sm font-semibold">{copy.overview.activity}</h2>
           <div aria-live="polite" className="mt-4 overflow-hidden border-t" data-state={parseStatus === "failed" ? "error" : parseStatus} data-testid="activity-timeline">
             {activity.length === 0 ? (
@@ -497,6 +531,9 @@ export function OverviewScreen() {
                       event={event}
                       index={index}
                       key={event.id}
+                      parseProgress={parseProgress}
+                      parseProgressEstimated={parseProgressEstimated}
+                      parseStatus={parseStatus}
                       parseErrorCode={parseError?.code}
                       total={activity.length}
                     />

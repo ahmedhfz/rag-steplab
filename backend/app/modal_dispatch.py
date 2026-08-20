@@ -2,11 +2,31 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from .config import Settings, get_settings
 
 
 class ModalDispatchError(RuntimeError):
     """Raised when a parse cannot be handed to Modal."""
+
+
+_local_parse_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rag-local-parse")
+
+
+def dispatch_local_parse_run(parse_run_id: str) -> str:
+    """Run the real Docling worker asynchronously for development-only memory mode."""
+
+    def run_worker() -> None:
+        from .pipeline import run_parse_worker
+
+        run_parse_worker(parse_run_id, worker_name="local")
+
+    try:
+        _local_parse_executor.submit(run_worker)
+    except RuntimeError as exc:  # executor is shutting down during process exit
+        raise ModalDispatchError("The local parse worker could not be started.") from exc
+    return f"local-{parse_run_id}"
 
 
 def parse_call_terminal_failure(dispatch_id: str) -> bool:

@@ -83,6 +83,9 @@ class Settings:
     modal_app_name: str = "rag-steplab-api"
     modal_parse_function_name: str = "parse_worker"
     modal_dispatch_enabled: bool = True
+    # Development without a shared database/storage runs the same real Docling
+    # worker path in-process so the async lifecycle remains usable locally.
+    local_parse_worker_enabled: bool = False
     docling_artifacts_path: str | None = None
     docling_parser_version: str = "docling-2.117.0"
 
@@ -90,6 +93,8 @@ class Settings:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     _load_local_dotenv()
+    app_env = os.getenv("APP_ENV", "development")
+    database_url = os.getenv("DATABASE_URL") or None
     origins = tuple(
         origin.strip()
         for origin in os.getenv(
@@ -98,9 +103,9 @@ def get_settings() -> Settings:
         if origin.strip()
     )
     return Settings(
-        app_env=os.getenv("APP_ENV", "development"),
+        app_env=app_env,
         log_level=os.getenv("LOG_LEVEL", "INFO"),
-        database_url=os.getenv("DATABASE_URL") or None,
+        database_url=database_url,
         database_schema=os.getenv("DATABASE_SCHEMA", "rag_lab"),
         supabase_url=os.getenv("SUPABASE_URL") or None,
         supabase_secret_key=os.getenv("SUPABASE_SECRET_KEY") or None,
@@ -123,6 +128,10 @@ def get_settings() -> Settings:
         modal_app_name=os.getenv("MODAL_APP_NAME", "rag-steplab-api"),
         modal_parse_function_name=os.getenv("MODAL_PARSE_FUNCTION_NAME", "parse_worker"),
         modal_dispatch_enabled=_bool("MODAL_DISPATCH_ENABLED", True),
+        local_parse_worker_enabled=_bool(
+            "LOCAL_PARSE_WORKER_ENABLED",
+            app_env == "development" and database_url is None,
+        ),
         docling_artifacts_path=os.getenv("DOCLING_ARTIFACTS_PATH") or None,
         docling_parser_version=os.getenv("DOCLING_PARSER_VERSION", "docling-2.117.0"),
     )

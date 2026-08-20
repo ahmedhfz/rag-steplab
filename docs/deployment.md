@@ -41,7 +41,9 @@ Frontend 2 saniyede bir poll eder. Browser 15 dakika sonunda gerçek run'ı
 failed yapmadan takibi durdurur; refresh durable polling'i sürdürür. Transient
 network/5xx/408/429 hataları run'ı failed yapmaz. queued/running sırasında
 ikinci submit hem UI hem database unique inflight guard ile engellenir. Fake
-percentage, warming state, answer veya score üretilmez.
+answer veya score üretilmez. Progress yüzdesinin backend checkpoint'leri
+authoritative'dir; UI iki checkpoint arasında yalnız açıkça `estimated` olarak
+işaretlenen ve bir sonraki checkpoint'i geçmeyen görsel ilerleme gösterebilir.
 
 ## Modal App
 
@@ -98,6 +100,14 @@ exact içerir; wildcard kullanılmaz. PDF limiti 50 MiB'dir.
 7. Merged SHA'nın Modal'a deploy edilmesi ve direct smoke tekrarı.
 8. `NEXT_PUBLIC_API_BASE_URL` production güncellemesi ve Vercel redeploy.
 9. Production browser E2E, full RAG smoke ve kısa health/log observation.
+
+`main` branch'ine gelen her push'ta GitHub Actions önce frontend, backend ve
+secret-hygiene kapılarını çalıştırır. Üçü de başarılı olursa aynı workflow
+`modal deploy --env main --tag "$GITHUB_SHA" --strategy rolling backend/modal_app.py`
+komutuyla test edilen commit'i production Modal App'e gönderir. GitHub
+repository/environment secret'larında `MODAL_TOKEN_ID` ve
+`MODAL_TOKEN_SECRET` bulunmalıdır. Modal deployment history içindeki tag,
+Vercel production deployment SHA'sı ve GitHub commit SHA'sı aynı olmalıdır.
 
 Modal deploy komutları:
 

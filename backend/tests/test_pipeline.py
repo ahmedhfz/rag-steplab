@@ -43,8 +43,11 @@ def _parsed() -> ParseResponse:
 
 
 def _queue_and_run(monkeypatch, *, file_name: str = "lesson.pdf"):
+    from app.config import Settings
+
+    monkeypatch.setattr("app.main.get_settings", lambda: Settings(app_env="development", local_parse_worker_enabled=False))
     monkeypatch.setattr("app.main.dispatch_parse_run", lambda *_args: "dispatch-test")
-    monkeypatch.setattr("app.parser.parse_pdf_file", lambda *_args: _parsed())
+    monkeypatch.setattr("app.parser.parse_pdf_file", lambda *_args, **_kwargs: _parsed())
     response = client.post(
         "/documents/parse",
         files={"file": (file_name, b"%PDF-1.7", "application/pdf")},

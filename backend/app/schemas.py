@@ -73,6 +73,7 @@ class ParseResponse(CamelCaseModel):
     document_id: str | None = None
     parse_run_id: str | None = None
     status: ParseStatus = "completed"
+    progress: int = Field(default=0, ge=0, le=100)
     run_metadata: dict[str, Any] | None = None
     error: ApiError | None = None
 
@@ -89,6 +90,7 @@ RunStatus = Literal["queued", "running", "completed", "failed"]
 class RunSummary(CamelCaseModel):
     id: str
     status: RunStatus
+    progress: int | None = Field(default=None, ge=0, le=100)
     is_stale: bool = False
     historical_lineage: bool = False
     upstream: dict[str, str | None] = Field(default_factory=dict)

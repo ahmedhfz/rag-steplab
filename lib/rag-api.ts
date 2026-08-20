@@ -132,18 +132,28 @@ function normalizeParseStatus(value: unknown): ParseRunStatus {
   return normalizeStatus(value);
 }
 
+function normalizeProgress(value: unknown, status: ParseRunStatus): number {
+  const progress = optionalNumber(value);
+  if (progress !== null) return Math.max(0, Math.min(100, Math.round(progress)));
+  if (status === "completed") return 100;
+  return status === "running" ? 8 : 0;
+}
+
 function normalizeRun(value: unknown): RunSummary {
   const payload = requiredObject(value, "run metadata");
   const timing = object(payload.timing);
   const upstream = object(payload.upstream);
   const config = object(payload.config);
+  const runMetadata = object(payload.runMetadata ?? payload.run_metadata);
   const errorCode = optionalString(field(payload, "errorCode", "error_code"));
   const errorMessage = optionalString(field(payload, "errorMessage", "error_message"));
   const status = normalizeStatus(payload.status);
+  const progress = optionalNumber(payload.progress ?? runMetadata.progress);
   const normalizedError = normalizeProblem(payload.error) ?? (errorCode && errorMessage ? { code: errorCode, message: errorMessage } : null);
   return {
     id: requiredString(payload.id, "run id"),
     status,
+    progress: progress ?? (status === "running" ? 8 : status === "queued" ? 0 : null),
     isStale: boolean(field(payload, "isStale", "is_stale")),
     historicalLineage: boolean(field(payload, "historicalLineage", "historical_lineage")),
     upstream: Object.fromEntries(Object.entries(upstream).map(([key, item]) => [key, optionalString(item)])),
@@ -345,6 +355,8 @@ function normalizeParseRun(value: unknown, fallbackDocumentId: string | null = n
   if (!parseRunId) invalidResponse("The parse response is missing the parse run id.");
   const rawStatus = payload.status ?? (result ? "completed" : isParseJobAcceptedResponse(value) ? value.status : null);
   const status = normalizeParseStatus(rawStatus);
+  const runMetadata = object(payload.runMetadata ?? payload.run_metadata);
+  const progress = normalizeProgress(payload.progress ?? runMetadata.progress, status);
   const problem = normalizeProblem(payload.error)
     ?? ((status === "failed" || payload.status === "interrupted") && optionalString(field(payload, "errorCode", "error_code"))
       ? {
@@ -367,9 +379,10 @@ function normalizeParseRun(value: unknown, fallbackDocumentId: string | null = n
     id: parseRunId,
     documentId: documentId ?? normalizedResult?.documentId ?? "",
     status,
+    progress,
     result: normalizedResult,
     error: problem,
-    runMetadata: object(payload.runMetadata ?? payload.run_metadata),
+    runMetadata,
   };
 }
 
