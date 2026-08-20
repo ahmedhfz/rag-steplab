@@ -37,7 +37,16 @@ Root’taki `render.yaml` Frankfurt bölgesinde `rag-steplab-api` adlı Free Pyt
 - deploy trigger: `checksPass`
 - persistent disk, worker, cron ve Render Postgres yoktur.
 
-Render edge TLS’i sonlandırır; uygulama yalnız `0.0.0.0:$PORT` dinler. Free instance cold-start ve Docling bellek/startup süresi gerçek PDF smoke testiyle doğrulanmalıdır. Bu risk çözülmeden paid plan seçilmemelidir.
+Render edge TLS’i sonlandırır; uygulama yalnız `0.0.0.0:$PORT` dinler. İlk tam `docling` dağıtımı gerçek PDF parse sırasında Free instance'ın yaklaşık 512 MiB limitine ulaşıp yeniden başladı. Ücretli plana geçmek yerine hosted backend `docling-slim[convert-core,format-pdf]` ve Docling'in `DoclingParseDocumentBackend` text-layer akışına indirildi.
+
+Bu Free-tier profili:
+
+- text layer içeren born-digital PDF'leri gerçek Docling parser ile işler,
+- Torch/CUDA, OCR ve local table/layout modellerini kurmaz,
+- image-only/scanned PDF'leri fake sonuç üretmeden `422 docling_text_layer_missing` ile reddeder,
+- tablo hücrelerini ayrı bir table modeliyle çıkarmadığı için hosted parse özetinde `table_count=0` üretebilir.
+
+Tam Docling/OCR davranışı ileride gerçekten gerekirse önce bellek ölçümü ve kullanıcı onayıyla ayrı bir compute kararı olarak ele alınmalıdır. Mevcut Free deployment otomatik olarak paid plana yükseltilmez.
 
 ## Environment contract
 
@@ -132,7 +141,8 @@ Smoke script response body, token veya secret yazdırmaz; yalnız endpoint label
 - CORS başarısızsa origin listesi exact URL’lerle düzeltilir; wildcard eklenmez.
 - Supabase bağlantısı başarısızsa credential, pooler mode, region/DNS ve connection limitleri kontrol edilir.
 - Gemini 401/403, quota, 429, timeout veya model-not-found durumlarında güvenli API error döndürülür; key loglanmaz.
-- Docling timeout/memory nedeniyle Free Render deploy başarısızsa önce PDF boyutu, concurrency ve startup ölçülür; ücretli plan yalnız açık kullanıcı onayıyla değerlendirilir.
+- `docling_text_layer_missing`, bozuk bir parse değil OCR gerektiren image-only/scanned PDF anlamına gelir; Free hosted profilde bilinçli ve görünür bir sınırdır.
+- Docling timeout/memory tekrar görülürse PDF boyutu, concurrency ve process memory ölçülür; ücretli plan yalnız açık kullanıcı onayıyla değerlendirilir.
 - Cloud kaynaklarının var olması uçtan uca RAG kanıtı değildir; gerçek PDF ile Storage → parse → persistence → downstream smoke zorunludur.
 
 ## Official references
@@ -143,6 +153,7 @@ Smoke script response body, token veya secret yazdırmaz; yalnız endpoint label
 - [Render FastAPI deploy](https://render.com/docs/deploy-fastapi)
 - [Render Blueprint specification](https://render.com/docs/blueprint-spec)
 - [Render health checks](https://render.com/docs/health-checks)
+- [Docling slim package ve hedefli extras](https://github.com/docling-project/docling/blob/main/packages/docling-slim/README.md)
 - [Vercel Git deployments](https://vercel.com/docs/git)
 - [Vercel environment variables](https://vercel.com/docs/environment-variables)
 - [Gemini embeddings](https://ai.google.dev/gemini-api/docs/embeddings)
