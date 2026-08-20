@@ -2,7 +2,6 @@ fastapi==0.139.2
 pydantic>=2.12,<3
 python-multipart>=0.0.20,<1
 uvicorn[standard]>=0.37,<1
-docling-slim[convert-core,format-pdf]==2.117.0
 SQLAlchemy>=2.0,<3
 psycopg[binary]>=3.2,<4
 alembic>=1.15,<2

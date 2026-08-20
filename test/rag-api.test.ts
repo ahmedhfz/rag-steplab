@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { getChunkRun, getDocument, listDocuments } from "@/lib/rag-api";
+import { getChunkRun, getDocument, getParseRun, listDocuments, waitForParseRun } from "@/lib/rag-api";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -108,5 +108,31 @@ describe("RAG API contract normalization", () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "");
     await expect(listDocuments()).rejects.toMatchObject({ code: "configuration_error" });
+  });
+
+  it("maps the internal interrupted state to public failed without exposing a new status", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "parse-run-1",
+      documentId: "document-1",
+      status: "interrupted",
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(getParseRun("parse-run-1")).resolves.toMatchObject({
+      id: "parse-run-1",
+      documentId: "document-1",
+      status: "failed",
+      error: { code: "parse_interrupted" },
+    });
+  });
+
+  it("stops browser polling without changing a durable running job to failed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      parseRunId: "parse-run-1",
+      documentId: "document-1",
+      status: "running",
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    const polling = waitForParseRun("parse-run-1", undefined, "document-1", undefined, 1);
+    await expect(polling).rejects.toMatchObject({ code: "parse_poll_timeout" });
   });
 });

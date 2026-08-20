@@ -57,7 +57,10 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: backend/requirements-dev.txt
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-worker.txt
+            backend/requirements-dev.txt
 
       - name: Install dependencies
         run: python -m pip install --upgrade pip && python -m pip install -r backend/requirements-dev.txt

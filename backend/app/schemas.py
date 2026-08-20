@@ -60,15 +60,21 @@ class ParseSummary(CamelCaseModel):
     table_count: int = Field(ge=0)
 
 
+ParseStatus = Literal["queued", "running", "completed", "failed"]
+
+
 class ParseResponse(CamelCaseModel):
     document: DocumentMetadata
-    structured: StructuredContent
-    markdown: str
-    summary: ParseSummary
+    # Queue yanıtında semantic çıktı henüz oluşmamıştır. Tamamlanan koşuda üç
+    # alan birlikte döner; API bunu repository durumundan üretir.
+    structured: StructuredContent | None = None
+    markdown: str | None = None
+    summary: ParseSummary | None = None
     document_id: str | None = None
     parse_run_id: str | None = None
-    status: Literal["completed"] = "completed"
+    status: ParseStatus = "completed"
     run_metadata: dict[str, Any] | None = None
+    error: ApiError | None = None
 
 
 class RunTiming(CamelCaseModel):
@@ -77,7 +83,7 @@ class RunTiming(CamelCaseModel):
     duration_ms: int | None = Field(default=None, ge=0)
 
 
-RunStatus = Literal["running", "completed", "failed", "interrupted"]
+RunStatus = Literal["queued", "running", "completed", "failed"]
 
 
 class RunSummary(CamelCaseModel):

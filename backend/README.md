@@ -3,13 +3,52 @@
 Backend gerçek ve kalıcı RAG learning pipeline'ını sağlar:
 
 ```text
-PDF → private Storage → Docling → chunking → Gemini embeddings → pgvector/FTS
-→ retrieval/reranking → context → grounded generation/citations → evaluation
+PDF → private Storage → 202 parse run → Modal API/worker → full Docling
+→ chunking → Gemini embeddings → pgvector/FTS → retrieval/reranking → context
+→ grounded generation/citations → evaluation
 ```
+
+## Async parse sözleşmesi
+
+`POST /documents/parse` ve persisted doküman için `POST
+/documents/{documentId}/parse`, PDF Storage'a alındıktan sonra HTTP `202` ve
+`documentId`/`parseRunId` döndürür. Frontend `GET /parse-runs/{parseRunId}`
+ile şu public durumları izler:
+
+```text
+queued → running → completed
+                 ↘ failed
+```
+
+`completed` yanıtı normalized `structured`, Markdown ve summary içerir. `failed`
+yanıtı `error.code` ve güvenli bir mesaj içerir. Veritabanında tutulabilecek
+`interrupted` durum API sınırında `failed` + `parse_interrupted` olarak
+normalize edilir; browser'a ayrı bir interrupted state açılmaz. Polling sırasında
+geçici ağ hataları run'ı başarısız saymaz; durable status tekrar okunur.
+
+Parse tamamlanmadan chunking, embedding veya downstream deneyler başlatılamaz.
+Bu nedenle `queued`/`running`/`failed` run için sahte progress, score veya parse
+özeti üretmek yasaktır.
+
+## Modal deployment
+
+Production parsing tam Docling `DocumentConverter` ve semantic normalization
+üzerinden çalışır. Başlangıç profili worker için `CPU 2`, `4096 MiB`, `timeout
+900 s`, `min_containers=0`, `max_containers=1`; API için yaklaşık `CPU 0.5`,
+`1024 MiB`, `min_containers=0`, `max_containers=2`'dir. Docling modelleri pinned
+ve versioned bir Modal Volume'a prefetch edilir. `backend/app` image'a explicit
+paketlenir ve remote import smoke'ta `app.main` ile `app.parser` doğrulanır.
+
+Cloud cutover tamamlanana kadar Render silinmez. Modal direct smoke, Vercel
+Preview smoke, merged SHA deploy, production full RAG smoke ve observation
+kapıları [docs/deployment.md](../docs/deployment.md) içindeki sırayla geçmelidir.
 
 ## Çalıştırma
 
 Virtual environment ve dependency'ler bir kez kurulduktan sonra proje kökündeki `npm run dev`, frontend ile backend'i birlikte başlatır.
+Async parse'ı local API üzerinden başlatmak için Modal CLI profilinin authenticate
+edilmiş ve `rag-steplab-api` app'ine erişebilir olması gerekir; production
+credential'ları browser'a veya local `.env` dosyasına kopyalanmaz.
 
 Backend'i tek başına çalıştırmak için PowerShell:
 

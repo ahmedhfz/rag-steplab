@@ -1,161 +1,161 @@
-# RAG StepLab deployment
+# RAG StepLab deployment — Render → Modal migration
 
-Bu proje için production akışı:
+Bu doküman migration mimarisini, doğrulama kapılarını, cutover sırasını ve
+rollback contract'ını tanımlar. Render yalnız bütün Modal ve Vercel kapıları
+geçilene kadar geçici güvenlik ağı olarak tutulur.
+
+## Hedef mimari
 
 ```text
-Vercel Next.js → Render FastAPI/Docling → Supabase PostgreSQL + Storage → Gemini API
+Vercel Next.js
+    ↓
+Modal FastAPI ASGI API
+    ↓
+Modal internal worker (full Docling DocumentConverter)
+    ↓
+Supabase PostgreSQL + pgvector + private Storage
+    ↓
+Gemini
 ```
 
-RAG StepLab auth veya multi-tenant bir SaaS değildir. İlk dağıtım düşük trafik, tek backend servisi ve synchronous FastAPI çalışması içindir. Redis, Celery, Kafka, Docker ve local PostgreSQL kullanılmaz.
+Supabase schema, Storage bucket, SQLAlchemy/Alembic lineage'ı ve mevcut RAG
+pipeline'ı korunur. Render, rollback için migration'ın son kapısına kadar
+aktif tutulur.
 
-## Mevcut cloud durumu
+## Async parse contract
 
-Connector ile 20 Ağustos 2026 tarihinde doğrulanan durum:
+Yeni parse akışı:
 
-- Supabase `rag-steplab` oluşturuldu: project ref `dronqqospsuhnjjitqls`, region `eu-central-1`, status `ACTIVE_HEALTHY`, organization planı `free`.
-- Supabase project maliyeti connector tarafından `0/month` döndü.
-- `rag_lab` private schema oluşturuldu.
-- `vector` extension etkin ve sürümü platform tarafından `0.8.2` olarak raporlandı. Extension sürümü migration/config içinde pinlenmez.
-- `rag-documents` private Storage bucket oluşturuldu; yalnız `application/pdf`, 50 MiB object limiti.
-- Supabase üzerinde dedicated `rag_steplab_app` login role ve session-pooler bağlantısı oluşturuldu; bağlantıdan yalnız `current_user` doğrulandı. Parola ve server key repository veya log’a yazılmadan Render secret environment değişkenlerine aktarıldı.
-- Canonical Alembic migration `0001_rag_lab_initial` canlı projeye uygulandı. Tam 9 uygulama tablosu, `vector(768)`, generated `tsvector`, GIN index ve `rag_lab.alembic_version` doğrulandı; migration sonrası role geçici verilen database `CREATE` yetkisi geri alındı.
-- Render hesabında tek workspace `My Workspace` (`tea-da31oh0u01pc738cheq0`) kullanıldı. `rag-steplab-api` (`srv-da3bcjtg1s2s73d855dg`) yalnız `Free` plan ve Frankfurt region ile oluşturuldu; public URL `https://rag-steplab-api.onrender.com`. GitHub App erişimi yalnız `ahmedhfz/rag-steplab` repository’siyle sınırlandırıldı. `main` runtime release `ec82bc3` ile canlıdır; `/health` ve PostgreSQL bağlantısını da sınayan `/ready` HTTP 200 döndürdü.
-- Hosted smoke gerçek PDF ile parse, üç chunking yöntemi, Gemini Embedding 2, dense/keyword/hybrid retrieval, reranking, context, grounded generation/citations, judge evaluation, history ve stale-lineage akışlarını geçti. Parse sonrası ölçülen bellek yaklaşık 257 MB ile Free instance'ın 512 MiB sınırının altında kaldı; smoke bitiminde dokuz uygulama tablosu ve private bucket tekrar sıfırlandı.
-- Vercel team’de yeni `rag-steplab` projesi (`prj_0YyTu7GFkuDBOBCTYTPvpysLPZC5`) oluşturuldu ve `ahmedhfz/rag-steplab` GitHub repository’sine bağlandı; mevcut `lumimate-ai` projesine dokunulmadı.
-- Vercel framework preset’i `Next.js`, root directory `.` olarak doğrulandı. `feature/rag-pipeline` sabit preview alias’ı `https://rag-steplab-git-feature-rag-pipeline-ahmed-hafizoglu-s-projects.vercel.app`; production alias’ı `https://rag-steplab.vercel.app` olarak kullanılır ve `ec82bc3` deployment’i `READY` durumundadır. Preview branch ve production ortamlarında `NEXT_PUBLIC_API_BASE_URL=https://rag-steplab-api.onrender.com` tanımlandı. Yerel secret dosyalarının Vercel kaynak yüklemesine girmemesi `.vercelignore` ile ayrıca korunur.
+```text
+POST /documents/parse (multipart PDF)
+    → Storage upload + document + queued run
+    → HTTP 202 { documentId, parseRunId, status: "queued" }
+    → GET /parse-runs/{parseRunId}
+    → queued → running → completed | failed
+```
 
-Supabase bootstrap’i yalnız schema, vector extension ve private bucket kaynakları içindir. Uygulama tablolarının canonical migration sahibi `backend/alembic` olacaktır; repository’ye `supabase/migrations` ağacı eklenmemelidir. İlk migration `rag_lab` şeması ile `extensions.vector` hazır değilse bilinçli olarak başarısız olur; bu platform kaynaklarını uygulama migration’ı oluşturmaya çalışmaz.
+Persisted source için `POST /documents/{documentId}/parse` aynı lifecycle'ı
+kullanır. `completed` polling yanıtı normalized structured content, Markdown,
+summary ve provenance içerir. `failed` yanıtı güvenli `error.code`/`message`
+içerir. Database'de internal `interrupted` tutulsa bile public API ve frontend
+bunu `failed` + `error.code = parse_interrupted` olarak gösterir; public
+interrupted state yoktur.
 
-## Render Blueprint
+Frontend polling kuralları:
 
-Root’taki `render.yaml` Frankfurt bölgesinde `rag-steplab-api` adlı Free Python web service tanımlar:
+- Poll interval 2 saniyedir. Browser 15 dakika sonunda gerçek run'ı failed
+  yapmadan takibi durdurur; kullanıcıya refresh ile durable polling'i sürdürme
+  mesajı gösterilir.
+- queued/running sırasında ikinci submit disabled ve provider-level guard ile
+  engellenir.
+- transient network/5xx/408/429 polling hatası run'ı failed yapmaz; sonraki
+  poll durable status'ı yeniden okur.
+- browser refresh sonrasında persisted active parse run seçilip polling devam
+  eder.
+- completed olmayan run downstream chunk, embedding, retrieval veya evaluation
+  için usable değildir.
+- fake percentage, warming/progress, answer veya score üretilmez.
 
-- service root: `backend`
-- Python runtime: `3.13.0` (`PYTHON_VERSION` is explicit because the Blueprint root is `backend`)
-- build: `pip install -r requirements.txt`
-- start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-- health check: `/health`
-- deploy trigger: `checksPass`
-- persistent disk, worker, cron ve Render Postgres yoktur.
+## Modal resource başlangıç profili
 
-Render edge TLS’i sonlandırır; uygulama yalnız `0.0.0.0:$PORT` dinler. İlk tam `docling` dağıtımı gerçek PDF parse sırasında Free instance'ın yaklaşık 512 MiB limitine ulaşıp yeniden başladı. Ücretli plana geçmek yerine hosted backend `docling-slim[convert-core,format-pdf]` ve Docling'in `DoclingParseDocumentBackend` text-layer akışına indirildi.
+Bu değerler benchmark başlangıcıdır; semantic doğruluk ve stabilite korunmadan
+resource azaltılmaz:
 
-Bu Free-tier profili:
+| Bileşen | CPU | Bellek | Timeout | Min/Max |
+| --- | ---: | ---: | ---: | ---: |
+| API | yaklaşık 0.5 | yaklaşık 1024 MiB | platform varsayılanı | 0 / 2 |
+| Docling worker | 2.0 | 4096 MiB | 900 s | 0 / 1 |
 
-- text layer içeren born-digital PDF'leri gerçek Docling parser ile işler,
-- Torch/CUDA, OCR ve local table/layout modellerini kurmaz,
-- image-only/scanned PDF'leri fake sonuç üretmeden `422 docling_text_layer_missing` ile reddeder,
-- tablo hücrelerini ayrı bir table modeliyle çıkarmadığı için hosted parse özetinde `table_count=0` üretebilir.
+Docling sürümü pinned tutulur. Model/artifact prefetch versioned Modal
+Volume'a yapılır ve image içinde explicit `artifacts_path` kullanılır. Image
+`backend/app` paketini explicit içermeli; remote import smoke şu iki importu
+çalıştırmalıdır:
 
-Tam Docling/OCR davranışı ileride gerçekten gerekirse önce bellek ölçümü ve kullanıcı onayıyla ayrı bir compute kararı olarak ele alınmalıdır. Mevcut Free deployment otomatik olarak paid plana yükseltilmez.
+```text
+import app.main
+import app.parser
+```
+
+İlk benchmark'ta cold/warm süre, peak RAM, CPU ve Storage/DB network süreleri
+ölçülür. Paid plan veya paid resource migration kapsamına dahil değildir.
+
+Karaman regression PDF'iyle ilk Modal ölçümü: cold worker parse `33.983 ms`,
+warm worker parse `25.996 ms`; gözlenen peak RSS sırasıyla `2.872,7 MiB` ve
+`3.325,89 MiB` oldu. Bu sonuç 4 GiB başlangıç profilini korumayı gerektirir;
+daha küçük profil ancak aynı semantic gate ve birden fazla PDF benchmark'ı
+geçerse değerlendirilir.
 
 ## Environment contract
 
-`.env.example` güvenli isim şablonudur. Render’da şu iki grup ayrıdır:
-
-Public frontend:
+Frontend yalnız public URL alır:
 
 ```text
-NEXT_PUBLIC_API_BASE_URL
+NEXT_PUBLIC_API_BASE_URL=https://<modal-api-domain>
 ```
 
-Render-only server variables:
+Modal API/worker secret'ları server-side environment veya Modal Secret olarak
+tutulur. `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `GEMINI_API_KEY`
+ve benzeri değerler `NEXT_PUBLIC_*`, source control, README, smoke output veya
+browser log'larına yazılmaz. CORS yalnız gerçek Vercel origin'lerini exact
+olarak içerir; wildcard kullanılmaz.
 
-```text
-DATABASE_URL
-DATABASE_SCHEMA=rag_lab
-SUPABASE_URL
-SUPABASE_SECRET_KEY
-SUPABASE_STORAGE_BUCKET=rag-documents
-GEMINI_API_KEY
-GEMINI_EMBEDDING_MODEL=gemini-embedding-2
-GEMINI_EMBEDDING_DIMENSIONS=768
-GEMINI_GENERATION_MODEL=gemini-flash-lite-latest
-GEMINI_RERANK_MODEL=gemini-flash-lite-latest
-GEMINI_JUDGE_MODEL=gemini-flash-lite-latest
-CORS_ORIGINS
-CORS_ORIGIN_REGEX
-WRITE_ENABLED=true
-```
-
-`SUPABASE_SECRET_KEY`, database URL/password ve Gemini key hiçbir `NEXT_PUBLIC_*` değişkenine yazılmaz. `CORS_ORIGINS` yalnız gerçek Vercel production/preview origin’lerini içermelidir; `*` kullanılmaz. Backend’in canonical concurrency değişkeni `MAX_CONCURRENT_PIPELINE_RUNS`’tır.
-
-Gemini model adları runtime environment yüzeyinden seçilir. Bu hedef için varsayılan alias’lar `gemini-embedding-2` ve `gemini-flash-lite-latest` (generation/rerank/judge), deploy öncesi güncel Google AI model dokümanından yeniden doğrulanmalıdır. Embedding vector uzunluğu `GEMINI_EMBEDDING_DIMENSIONS` ile runtime’da doğrulanır.
-
-Supabase persistent Render backend için session pooler bağlantısı kullanılmalıdır. Transaction pooler prepared statement desteklemediği için SQLAlchemy runtime URL’si olarak seçilmez. Alembic migration için ayrı, güvenli bir migration connection string kullanılabilir.
-
-## Safe deployment order
-
-1. Backend/Alembic kodu ve migration’lar merge edildikten sonra GitHub CI kalite kapıları geçer.
-2. Supabase’te extension/schema/bucket doğrulanır; Alembic `upgrade head` yalnız uygulama tablolarını uygular.
-3. Render workspace `tea-da31oh0u01pc738cheq0` kullanılır; private GitHub repository erişimi sağlandıktan sonra Blueprint `render.yaml` yalnız Free plan ile apply edilir.
-4. Render service oluşturulduktan sonra secret/config değerleri Dashboard’da girilir; gerçek key veya password repo’ya konmaz. Supabase DB credential’ı zaten dışarıda güvenli tutuluyor.
-5. Render `/health` 200 kontrolü yapılır.
-6. Vercel’de `rag-steplab` adı müsaitse GitHub repo root Next.js projesi bağlanır; isim çakışırsa `rag-steplab-ahmedhfz` kullanılır.
-7. Vercel Preview URL’si Render `CORS_ORIGINS` içine eklenir ve yeni deployment başlatılır.
-8. `node scripts/smoke.mjs` ile frontend/backend health, ardından `SMOKE_PDF_PATH` ile gerçek parse akışı doğrulanır.
-
-## Smoke commands
-
-Local dual-service development:
+## Local doğrulama
 
 ```powershell
-npm run dev
-node scripts/smoke.mjs
+npm.cmd ci
+npm.cmd run lint
+npm.cmd run typecheck
+npm.cmd test
+npm.cmd run build
 ```
 
-Gerçek PDF parse:
+Async + semantic smoke için Karaman regression PDF'i kullanın:
 
 ```powershell
-$env:SMOKE_PDF_PATH = "C:\path\to\sample.pdf"
+$env:SMOKE_API_URL = "http://127.0.0.1:8000"
+$env:SMOKE_FRONTEND_URL = "http://localhost:3000"
+$env:SMOKE_PDF_PATH = "C:\path\to\karaman-operasyon-raporu.pdf"
 $env:SMOKE_REQUIRE_PARSE = "1"
+$env:SMOKE_REQUIRE_SEMANTIC = "1"
 node scripts/smoke.mjs
 ```
 
-Full hosted RAG contract smoke (real PDF, persistence and configured Gemini/DB):
+Semantic gate şunları doğrular: 8 sayfa, 9–11 tablo, 24–28 başlık, geçerli
+page provenance, orphan semantic element olmaması ve `BAT-S12`, `INV-T17`,
+`12,84 GWh`, `%17,6`, `%25` marker'larının korunması. Full RAG contract için
+ayrıca:
 
 ```powershell
-$env:SMOKE_FRONTEND_URL = "https://<vercel-domain>"
-$env:SMOKE_API_URL = "https://<render-domain>"
-$env:SMOKE_PDF_PATH = "C:\path\to\sample.pdf"
-$env:SMOKE_QUERY = "Dokümandaki bağlamla doğrudan cevaplanabilen bir soru"
 $env:SMOKE_REQUIRE_RAG = "1"
+$env:SMOKE_QUERY = "Dokümandaki bağlamla doğrudan cevaplanabilen bir soru"
 node scripts/smoke.mjs
 ```
 
-`SMOKE_REQUIRE_RAG=1` üç chunk stratejisini, embedding, dense/keyword/hybrid retrieval, reranking, context, generation, evaluation dataset/run, history ve aynı document üzerinde reparse sonrası stale lineage kontrolünü çalıştırır. `SMOKE_REQUIRE_JUDGE=1` ayrıca evaluation judge modelini çağırır; Gemini quota/cost sınırı nedeniyle varsayılan kapalıdır.
+Full smoke parse → Storage → chunking (üç strategy) → embedding → dense,
+keyword ve hybrid/RRF → rerank → context → grounded generation/citations →
+evaluation → history → rechunk/reparse stale invalidation zincirini yürütür.
+Smoke response body, raw PDF, token, secret veya credential yazdırmaz.
 
-Hosted endpoints:
+## Güvenli cutover sırası
 
-```powershell
-$env:SMOKE_FRONTEND_URL = "https://<vercel-domain>"
-$env:SMOKE_API_URL = "https://<render-domain>"
-$env:SMOKE_PDF_PATH = "C:\path\to\sample.pdf"
-$env:SMOKE_REQUIRE_PARSE = "1"
-node scripts/smoke.mjs
-```
+1. Frontend/backend implementation ve local test kapıları.
+2. Backward-compatible Alembic migration ve Supabase doğrulaması.
+3. Modal dark deploy, remote import/model-cache smoke ve direct semantic smoke.
+4. Vercel Preview → Modal API bağlantısı ve full preview smoke.
+5. PR/CI green, merge ve merged SHA'nın Modal'a deploy edilmesi.
+6. Modal smoke tekrar, Vercel production API URL cutover'ı ve production full
+   RAG/browser smoke.
+7. En az 30 dakika health/log observation.
+8. Render traffic/identity son doğrulaması.
+9. Yalnız exact eski `rag-steplab-api` service'i, final gate'ler green ise,
+   silinir; ardından `render.yaml` ve aktif Render referansları cleanup PR ile
+   kaldırılır.
 
-Smoke script response body, token veya secret yazdırmaz; yalnız endpoint label/status, sayısal chunk/vector/element count ve test aşaması adını raporlar. Full smoke çalıştırılmadan önce Render’da secret/config env’leri ve Supabase session-pooler `DATABASE_URL` env yüzeyine bağlanmalıdır; credential değerleri bu dokümana eklenmez.
+Modal veya production smoke başarısızsa Render silinmez. Cutover sonrası hata
+olursa production API URL Render'a geri alınır ve rollback smoke doğrulanır.
 
-## Failure gates
+## Rollback notu
 
-- Render `/health` başarısızsa Vercel deployment’i tamamlanmış sayılmaz.
-- CORS başarısızsa origin listesi exact URL’lerle düzeltilir; wildcard eklenmez.
-- Supabase bağlantısı başarısızsa credential, pooler mode, region/DNS ve connection limitleri kontrol edilir.
-- Gemini 401/403, quota, 429, timeout veya model-not-found durumlarında güvenli API error döndürülür; key loglanmaz.
-- `docling_text_layer_missing`, bozuk bir parse değil OCR gerektiren image-only/scanned PDF anlamına gelir; Free hosted profilde bilinçli ve görünür bir sınırdır.
-- Docling timeout/memory tekrar görülürse PDF boyutu, concurrency ve process memory ölçülür; ücretli plan yalnız açık kullanıcı onayıyla değerlendirilir.
-- Cloud kaynaklarının var olması uçtan uca RAG kanıtı değildir; gerçek PDF ile Storage → parse → persistence → downstream smoke zorunludur.
-
-## Official references
-
-- [Supabase Postgres connection modes](https://supabase.com/docs/guides/database/connecting-to-postgres)
-- [Supabase vector columns](https://supabase.com/docs/guides/ai/vector-columns)
-- [Supabase Storage uploads](https://supabase.com/docs/guides/storage/uploads/standard-uploads)
-- [Render FastAPI deploy](https://render.com/docs/deploy-fastapi)
-- [Render Blueprint specification](https://render.com/docs/blueprint-spec)
-- [Render health checks](https://render.com/docs/health-checks)
-- [Docling slim package ve hedefli extras](https://github.com/docling-project/docling/blob/main/packages/docling-slim/README.md)
-- [Vercel Git deployments](https://vercel.com/docs/git)
-- [Vercel environment variables](https://vercel.com/docs/environment-variables)
-- [Gemini embeddings](https://ai.google.dev/gemini-api/docs/embeddings)
+Render emergency recreation bilgisi yalnız final cleanup sonrasında bu dosyada
+legacy rollback notu olarak tutulabilir. Render URL'si aktif deployment veya
+frontend default'u olarak README/config içinde bırakılmaz.

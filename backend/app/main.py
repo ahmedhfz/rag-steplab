@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import threading
-from pathlib import Path
-from tempfile import NamedTemporaryFile
 from typing import Any
 
 from fastapi import FastAPI, File, Query, Request, UploadFile
@@ -14,7 +11,7 @@ from fastapi.responses import JSONResponse
 from .config import get_settings
 from .db import check_database
 from .errors import ApiProblem
-from .parser import parse_pdf_file
+from .modal_dispatch import ModalDispatchError, dispatch_parse_run, parse_call_terminal_failure
 from .pipeline import (
     create_chunk_run,
     create_dataset,
@@ -22,8 +19,8 @@ from .pipeline import (
     create_evaluation,
     create_experiment,
     continue_experiment,
-    parse_upload,
-    reparse_document,
+    queue_parse_upload,
+    queue_reparse_document,
 )
 from .repository import get_repository
 from .schemas import (
@@ -34,7 +31,10 @@ from .schemas import (
     EvaluationDatasetRequest,
     EvaluationRunRequest,
     ExperimentCreateRequest,
+    DocumentMetadata,
+    ParseSummary,
     ParseResponse,
+    StructuredContent,
 )
 
 
@@ -102,24 +102,96 @@ def _guarded(function, *args, **kwargs):
         _pipeline_semaphore.release()
 
 
-async def _parse_content(file: UploadFile) -> tuple[bytes, ParseResponse]:
-    file_name = file.filename or ""
-    content_type = file.content_type or ""
+def _document_metadata(row: dict[str, Any]) -> DocumentMetadata:
+    return DocumentMetadata(
+        file_name=row["file_name"],
+        media_type=row["media_type"],
+        size_bytes=row["size_bytes"],
+        page_count=row.get("page_count", 0),
+        id=row.get("id"),
+        sha256=row.get("sha256"),
+        created_at=row.get("created_at"),
+    )
+
+
+def _public_parse_status(status: str | None) -> str:
+    # interrupted is intentionally an internal DB state only.
+    return "failed" if status == "interrupted" else (status or "failed")
+
+
+def _parse_response(document: dict[str, Any], parse: dict[str, Any]) -> ParseResponse:
+    status = _public_parse_status(parse.get("status"))
+    error: ApiError | None = None
+    if status == "failed":
+        code = parse.get("error_code")
+        message = parse.get("error_message")
+        if parse.get("status") == "interrupted":
+            code = "parse_interrupted"
+            message = message or "The parse run was interrupted before completion."
+        error = ApiError(
+            code=code or "parse_failed",
+            message=message or "The parse run failed before producing normalized content.",
+        )
+    structured = parse.get("structured")
+    summary = parse.get("summary")
+    if status == "completed" and structured is not None and summary is not None:
+        structured_value = StructuredContent.model_validate(structured)
+        summary_value = ParseSummary.model_validate(summary)
+        markdown_value = parse.get("markdown") or ""
+    else:
+        structured_value = None
+        summary_value = None
+        markdown_value = None
+    metadata = dict(parse.get("execution_metadata") or {})
+    metadata.setdefault("parser", parse.get("parser_name", "docling"))
+    metadata.setdefault("parserVersion", parse.get("parser_version", "unknown"))
+    metadata.setdefault("normalizedSchemaVersion", parse.get("normalized_schema_version", "normalized-v1"))
+    metadata["status"] = status
+    return ParseResponse(
+        document=_document_metadata(document),
+        structured=structured_value,
+        markdown=markdown_value,
+        summary=summary_value,
+        document_id=document.get("id"),
+        parse_run_id=parse.get("id"),
+        status=status,  # type: ignore[arg-type]
+        run_metadata=metadata,
+        error=error,
+    )
+
+
+def _dispatch_queued_parse(parse: dict[str, Any]) -> dict[str, Any]:
+    repository = get_repository()
     try:
-        content = await file.read(get_settings().max_file_size_bytes + 1)
-    finally:
-        await file.close()
-    _ensure_file(content, file_name, content_type)
-    temporary_path: Path | None = None
-    try:
-        with NamedTemporaryFile(suffix=".pdf", delete=False) as temporary_file:
-            temporary_file.write(content)
-            temporary_path = Path(temporary_file.name)
-        parsed = await run_in_threadpool(_guarded, parse_pdf_file, temporary_path, file_name, len(content))
-    finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
-    return content, parsed
+        dispatch_id = dispatch_parse_run(parse["id"])
+    except ModalDispatchError:
+        # The accepted run remains durable and visibly failed; no local parser
+        # fallback is attempted when Modal is unavailable.
+        return repository.fail_parse(
+            parse["id"],
+            "modal_dispatch_failed",
+            "The parse worker could not be started on Modal.",
+        ) or parse
+    return repository.set_parse_dispatch(parse["id"], dispatch_id) or parse
+
+
+def _reconcile_terminal_worker_failure(parse: dict[str, Any]) -> dict[str, Any]:
+    """Collapse a hard Modal termination into the public failed contract."""
+
+    settings = get_settings()
+    if (
+        settings.app_env not in {"production", "staging"}
+        or parse.get("status") not in {"queued", "running"}
+        or not parse.get("dispatch_id")
+        or not parse_call_terminal_failure(str(parse["dispatch_id"]))
+    ):
+        return parse
+    return get_repository().fail_parse(
+        parse["id"],
+        "parse_interrupted",
+        "The parse worker was interrupted before completion.",
+        status="interrupted",
+    ) or parse
 
 
 @app.get("/health")
@@ -166,46 +238,64 @@ def capabilities() -> CapabilitiesResponse:
     )
 
 
-@app.post("/documents/parse", response_model=ParseResponse)
-async def parse_document(file: UploadFile = File(...)) -> ParseResponse:
-    content, parsed = await _parse_content(file)
-    document, parse = await run_in_threadpool(parse_upload, content, parsed.document.file_name, parsed)
-    digest = hashlib.sha256(content).hexdigest()
-    return parsed.model_copy(
-        update={
-            "document": parsed.document.model_copy(
-                update={"id": document["id"], "sha256": digest, "created_at": document.get("created_at")}
-            ),
-            "document_id": document["id"],
-            "parse_run_id": parse["id"],
-            "run_metadata": {"status": "completed", "parser": "docling"},
-        }
+@app.post("/documents/parse", response_model=ParseResponse, status_code=202)
+async def parse_document(file: UploadFile = File(...)) -> JSONResponse:
+    file_name = file.filename or ""
+    content_type = file.content_type or ""
+    try:
+        content = await file.read(get_settings().max_file_size_bytes + 1)
+    finally:
+        await file.close()
+    _ensure_file(content, file_name, content_type)
+    document, queued = await run_in_threadpool(queue_parse_upload, content, file_name)
+    parse = await run_in_threadpool(_dispatch_queued_parse, queued)
+    payload = _parse_response(document, parse)
+    return JSONResponse(
+        status_code=202,
+        content=payload.model_dump(by_alias=True, exclude_none=True, mode="json"),
     )
 
 
-@app.post("/documents/{document_id}/parse", response_model=ParseResponse)
-@app.post("/documents/{document_id}/reparse", response_model=ParseResponse, include_in_schema=False)
-async def reparse(document_id: str) -> ParseResponse:
-    document, parse = await run_in_threadpool(_guarded, reparse_document, document_id)
-    from .schemas import DocumentMetadata, ParseSummary, StructuredContent
-
-    return ParseResponse(
-        document=DocumentMetadata(
-            file_name=document["file_name"],
-            media_type=document["media_type"],
-            size_bytes=document["size_bytes"],
-            page_count=document["page_count"],
-            id=document["id"],
-            sha256=document.get("sha256"),
-            created_at=document.get("created_at"),
-        ),
-        structured=StructuredContent.model_validate(parse["structured"]),
-        markdown=parse["markdown"],
-        summary=ParseSummary.model_validate(parse["summary"]),
-        document_id=document["id"],
-        parse_run_id=parse["id"],
-        run_metadata={"status": "completed", "parser": "docling"},
+@app.post("/documents/{document_id}/parse", response_model=ParseResponse, status_code=202)
+@app.post("/documents/{document_id}/reparse", response_model=ParseResponse, status_code=202, include_in_schema=False)
+async def reparse(document_id: str) -> JSONResponse:
+    document, queued = await run_in_threadpool(queue_reparse_document, document_id)
+    parse = await run_in_threadpool(_dispatch_queued_parse, queued)
+    payload = _parse_response(document, parse)
+    return JSONResponse(
+        status_code=202,
+        content=payload.model_dump(by_alias=True, exclude_none=True, mode="json"),
     )
+
+
+@app.get("/parse-runs/{run_id}", response_model=ParseResponse, response_model_exclude_none=True)
+def parse_run(run_id: str) -> ParseResponse:
+    repository = get_repository()
+    parse = repository.get_parse_row(run_id)
+    if parse is None:
+        raise ApiProblem(404, "parse_run_not_found", "The parse run was not found.")
+    parse = _reconcile_terminal_worker_failure(parse)
+    document = repository.get_document_row(parse["document_id"])
+    if document is None:
+        raise ApiProblem(404, "document_not_found", "The document was not found.")
+    return _parse_response(document, parse)
+
+
+@app.get(
+    "/documents/{document_id}/parse-runs/{run_id}",
+    response_model=ParseResponse,
+    response_model_exclude_none=True,
+    include_in_schema=False,
+)
+def document_parse_run(document_id: str, run_id: str) -> ParseResponse:
+    parse = get_repository().get_parse_row(run_id)
+    if parse is None or parse.get("document_id") != document_id:
+        raise ApiProblem(404, "parse_run_not_found", "The parse run was not found.")
+    parse = _reconcile_terminal_worker_failure(parse)
+    document = get_repository().get_document_row(document_id)
+    if document is None:
+        raise ApiProblem(404, "document_not_found", "The document was not found.")
+    return _parse_response(document, parse)
 
 
 def _run_summary_dict(row: dict[str, Any], document: dict[str, Any]) -> dict[str, Any]:
@@ -219,9 +309,16 @@ def _run_summary_dict(row: dict[str, Any], document: dict[str, Any]) -> dict[str
         stale = row.get("chunk_run_id") != document.get("active_chunk_run_id")
         if row.get("embedding_run_id") is not None:
             stale = stale or row.get("embedding_run_id") != document.get("active_embedding_run_id")
+    raw_status = row.get("status", "completed")
+    status = _public_parse_status(raw_status)
+    error_code = row.get("error_code")
+    error_message = row.get("error_message")
+    if raw_status == "interrupted":
+        error_code = "parse_interrupted"
+        error_message = error_message or "The parse run was interrupted before completion."
     return _camelize({
         "id": row["id"],
-        "status": row.get("status", "completed"),
+        "status": status,
         "isStale": stale,
         "historicalLineage": bool(row.get("historical_lineage", False)),
         "upstream": {
@@ -236,6 +333,9 @@ def _run_summary_dict(row: dict[str, Any], document: dict[str, Any]) -> dict[str
             "completedAt": row.get("completed_at"),
             "durationMs": row.get("duration_ms"),
         },
+        "error": {"code": error_code, "message": error_message}
+        if error_code and error_message
+        else None,
     })
 
 
@@ -256,24 +356,11 @@ def _document_list_item(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _persisted_parse_response(document: dict[str, Any], parse: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "document": {
-            "id": document["id"],
-            "fileName": document["file_name"],
-            "mediaType": document["media_type"],
-            "sizeBytes": document["size_bytes"],
-            "pageCount": document.get("page_count", 0),
-            "sha256": document.get("sha256"),
-            "createdAt": document.get("created_at"),
-        },
-        "structured": parse["structured"],
-        "markdown": parse["markdown"],
-        "summary": parse["summary"],
-        "documentId": document["id"],
-        "parseRunId": parse["id"],
-        "status": "completed",
-        "runMetadata": {"status": "completed", "parser": "docling"},
-    }
+    return _parse_response(document, parse).model_dump(
+        by_alias=True,
+        exclude_none=True,
+        mode="json",
+    )
 
 
 @app.get("/documents")

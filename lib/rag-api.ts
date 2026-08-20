@@ -1,4 +1,10 @@
-import { DocumentApiError, isDocumentParseResponse, parseDocument } from "@/lib/document-api";
+import {
+  DocumentApiError,
+  isDocumentParseResponse,
+  isParseJobAcceptedResponse,
+  parseDocument,
+} from "@/lib/document-api";
+import type { DocumentParseResponse, ParseRunStatus } from "@/lib/document-parse-types";
 import type {
   ApiProblem,
   Capabilities,
@@ -18,6 +24,7 @@ import type {
   ExperimentStageResults,
   PersistedDocument,
   PersistedParseResponse,
+  ParseRun,
   RetrievedCandidate,
   RerankedCandidate,
   RunStatus,
@@ -26,6 +33,13 @@ import type {
 } from "@/lib/rag-api-types";
 
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
+
+type DocumentParseResponseWithPersistence = DocumentParseResponse & {
+  documentId?: string | null;
+  parseRunId?: string | null;
+  runMetadata?: Record<string, unknown> | null;
+  document: DocumentParseResponse["document"] & { id?: string | null };
+};
 
 type JsonObject = Record<string, unknown>;
 
@@ -109,8 +123,13 @@ function normalizeProblem(value: unknown): ApiProblem | null {
 }
 
 function normalizeStatus(value: unknown): RunStatus {
-  if (value === "running" || value === "completed" || value === "failed" || value === "interrupted") return value;
+  if (value === "queued" || value === "running" || value === "completed" || value === "failed") return value;
+  if (value === "interrupted") return "failed";
   return invalidResponse("The backend response contains an invalid run status.");
+}
+
+function normalizeParseStatus(value: unknown): ParseRunStatus {
+  return normalizeStatus(value);
 }
 
 function normalizeRun(value: unknown): RunSummary {
@@ -120,9 +139,11 @@ function normalizeRun(value: unknown): RunSummary {
   const config = object(payload.config);
   const errorCode = optionalString(field(payload, "errorCode", "error_code"));
   const errorMessage = optionalString(field(payload, "errorMessage", "error_message"));
+  const status = normalizeStatus(payload.status);
+  const normalizedError = normalizeProblem(payload.error) ?? (errorCode && errorMessage ? { code: errorCode, message: errorMessage } : null);
   return {
     id: requiredString(payload.id, "run id"),
-    status: normalizeStatus(payload.status),
+    status,
     isStale: boolean(field(payload, "isStale", "is_stale")),
     historicalLineage: boolean(field(payload, "historicalLineage", "historical_lineage")),
     upstream: Object.fromEntries(Object.entries(upstream).map(([key, item]) => [key, optionalString(item)])),
@@ -132,7 +153,7 @@ function normalizeRun(value: unknown): RunSummary {
       completedAt: optionalString(timing.completedAt ?? payload.completed_at),
       durationMs: optionalNumber(timing.durationMs ?? payload.duration_ms),
     },
-    error: normalizeProblem(payload.error) ?? (errorCode && errorMessage ? { code: errorCode, message: errorMessage } : null),
+    error: normalizedError ?? (payload.status === "interrupted" ? { code: "parse_interrupted", message: "The parse run was interrupted before completion." } : null),
   };
 }
 
@@ -302,6 +323,149 @@ function normalizePersistedParseResponse(value: unknown, requirePersistenceIds =
   };
 }
 
+function parseResultCandidate(value: unknown): unknown {
+  if (isDocumentParseResponse(value)) return value;
+  const payload = object(value);
+  for (const key of ["result", "parse", "output", "data"]) {
+    if (isDocumentParseResponse(payload[key])) return payload[key];
+  }
+  return null;
+}
+
+function normalizeParseRun(value: unknown, fallbackDocumentId: string | null = null, fallbackParseRunId: string | null = null): ParseRun {
+  const payload = requiredObject(value, "parse run");
+  const result = parseResultCandidate(value);
+  const document = result ? object((result as DocumentParseResponse).document) : object(payload.document);
+  const documentId = optionalString(field(payload, "documentId", "document_id"))
+    ?? optionalString(document.id)
+    ?? fallbackDocumentId;
+  const parseRunId = optionalString(field(payload, "parseRunId", "parse_run_id"))
+    ?? optionalString(payload.id)
+    ?? fallbackParseRunId;
+  if (!parseRunId) invalidResponse("The parse response is missing the parse run id.");
+  const rawStatus = payload.status ?? (result ? "completed" : isParseJobAcceptedResponse(value) ? value.status : null);
+  const status = normalizeParseStatus(rawStatus);
+  const problem = normalizeProblem(payload.error)
+    ?? ((status === "failed" || payload.status === "interrupted") && optionalString(field(payload, "errorCode", "error_code"))
+      ? {
+        code: optionalString(field(payload, "errorCode", "error_code")) ?? "parse_failed",
+        message: optionalString(field(payload, "errorMessage", "error_message")) ?? "The parse run failed.",
+      }
+      : null)
+    ?? (payload.status === "interrupted" ? { code: "parse_interrupted", message: "The parse run was interrupted before completion." } : null);
+  const normalizedResult = result
+    ? normalizePersistedParseResponse({
+      ...result,
+      documentId: field(payload, "documentId", "document_id") ?? (result as DocumentParseResponse & { documentId?: string | null }).documentId ?? documentId,
+      parseRunId: field(payload, "parseRunId", "parse_run_id") ?? parseRunId,
+      status: "completed",
+      runMetadata: payload.runMetadata ?? payload.run_metadata ?? null,
+    }, true)
+    : null;
+  if (status === "completed" && !normalizedResult) invalidResponse("The completed parse run is missing normalized content.");
+  return {
+    id: parseRunId,
+    documentId: documentId ?? normalizedResult?.documentId ?? "",
+    status,
+    result: normalizedResult,
+    error: problem,
+    runMetadata: object(payload.runMetadata ?? payload.run_metadata),
+  };
+}
+
+export type ParseStatusListener = (run: ParseRun) => void;
+
+export const PARSE_POLL_INTERVAL_MS = process.env.NODE_ENV === "test" ? 250 : 2_000;
+export const PARSE_POLL_TIMEOUT_MS = 15 * 60 * 1_000;
+
+function parsePollTimedOut(deadline: number) {
+  if (Date.now() < deadline) return;
+  throw new DocumentApiError(
+    "parse_poll_timeout",
+    "The parse is still running, but browser polling stopped after 15 minutes. Refresh to resume status checks.",
+  );
+}
+
+function waitForParsePoll(signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("The parse poll was aborted.", "AbortError"));
+      return;
+    }
+    const timeout = setTimeout(resolve, PARSE_POLL_INTERVAL_MS);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timeout);
+      reject(new DOMException("The parse poll was aborted.", "AbortError"));
+    }, { once: true });
+  });
+}
+
+function isTransientParsePollError(error: unknown) {
+  if (!(error instanceof DocumentApiError)) return false;
+  return error.code === "backend_unavailable" || error.status === null || error.status === 408 || error.status === 429 || (error.status !== null && error.status >= 500);
+}
+
+async function pollParseRun(
+  initial: ParseRun,
+  signal?: AbortSignal,
+  onStatus?: ParseStatusListener,
+  timeoutMs = PARSE_POLL_TIMEOUT_MS,
+  startedAt = Date.now(),
+): Promise<PersistedParseResponse> {
+  let current = initial;
+  const deadline = startedAt + timeoutMs;
+  while (current.status === "queued" || current.status === "running") {
+    parsePollTimedOut(deadline);
+    await waitForParsePoll(signal);
+    parsePollTimedOut(deadline);
+    try {
+      current = await getParseRun(current.id, signal, current.documentId || null);
+      onStatus?.(current);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      // A temporary network outage must not turn a valid queued/running run into
+      // a false failure. The next poll re-reads the durable run state.
+      if (isTransientParsePollError(error)) continue;
+      throw error;
+    }
+  }
+  if (current.status === "failed") {
+    const problem = current.error ?? { code: "parse_failed", message: "The parse run failed." };
+    throw new DocumentApiError(problem.code, problem.message);
+  }
+  if (!current.result) throw new DocumentApiError("invalid_response", "The completed parse run returned no normalized content.");
+  return current.result;
+}
+
+export async function waitForParseRun(
+  parseRunId: string,
+  signal?: AbortSignal,
+  documentId?: string | null,
+  onStatus?: ParseStatusListener,
+  timeoutMs = PARSE_POLL_TIMEOUT_MS,
+): Promise<PersistedParseResponse> {
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+  let initial: ParseRun;
+  while (true) {
+    parsePollTimedOut(deadline);
+    try {
+      initial = await getParseRun(parseRunId, signal, documentId);
+      break;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      if (!isTransientParsePollError(error)) throw error;
+      await waitForParsePoll(signal);
+    }
+  }
+  onStatus?.(initial);
+  if (initial.status === "completed") {
+    if (!initial.result) throw new DocumentApiError("invalid_response", "The completed parse response returned no normalized content.");
+    return initial.result;
+  }
+  return pollParseRun(initial, signal, onStatus, timeoutMs, startedAt);
+}
+
 function normalizeChunkRun(value: unknown): ChunkRun {
   const payload = requiredObject(value, "chunk run");
   const run = normalizeRun(payload);
@@ -388,17 +552,19 @@ async function request(path: string, init: RequestInit = {}): Promise<unknown> {
   return payload;
 }
 
-export async function parseAndPersistDocument(file: File, signal?: AbortSignal): Promise<PersistedParseResponse> {
-  const parsed = await parseDocument(file, signal);
-  return normalizePersistedParseResponse(parsed);
+export async function parseAndPersistDocument(
+  file: File,
+  signal?: AbortSignal,
+  onStatus?: ParseStatusListener,
+): Promise<PersistedParseResponse> {
+  const initial = normalizeParseRun(await parseDocument(file, signal));
+  onStatus?.(initial);
+  if (initial.status === "completed") {
+    if (!initial.result) throw new DocumentApiError("invalid_response", "The completed parse response returned no normalized content.");
+    return initial.result;
+  }
+  return pollParseRun(initial, signal, onStatus);
 }
-
-type DocumentParseResponseWithPersistence = Awaited<ReturnType<typeof parseDocument>> & {
-  documentId?: string | null;
-  parseRunId?: string | null;
-  runMetadata?: Record<string, unknown> | null;
-  document: Awaited<ReturnType<typeof parseDocument>>["document"] & { id?: string | null };
-};
 
 export async function getCapabilities(signal?: AbortSignal): Promise<Capabilities> {
   const payload = requiredObject(await request("/capabilities", { signal }), "capabilities");
@@ -420,16 +586,36 @@ export async function listDocuments(signal?: AbortSignal): Promise<PersistedDocu
 
 export async function getDocument(documentId: string, signal?: AbortSignal): Promise<DocumentDetail> {
   const payload = object(await request(`/documents/${encodeURIComponent(documentId)}`, { signal }));
+  const activeParsePayload = payload.activeParseRun;
+  const activeParse = activeParsePayload === null || activeParsePayload === undefined
+    ? null
+    : normalizeParseRun(activeParsePayload, documentId, optionalString(field(object(activeParsePayload), "parseRunId", "parse_run_id")))
+      .result;
   return {
     ...normalizeDocument(payload),
     parseRuns: requiredArray(payload.parseRuns, normalizeRun, "parse run history"),
     chunkRuns: requiredArray(payload.chunkRuns, normalizeRun, "chunk run history"),
     embeddingRuns: requiredArray(payload.embeddingRuns, normalizeRun, "embedding run history"),
     experiments: requiredArray(payload.experiments, normalizeRun, "experiment history"),
-    activeParseRun: payload.activeParseRun === null || payload.activeParseRun === undefined
-      ? null
-      : normalizePersistedParseResponse(payload.activeParseRun, true),
+    activeParseRun: activeParse,
   };
+}
+
+export async function getParseRun(runId: string, signal?: AbortSignal, documentId?: string | null): Promise<ParseRun> {
+  try {
+    return normalizeParseRun(
+      await request(`/parse-runs/${encodeURIComponent(runId)}`, { signal }),
+      documentId ?? null,
+      runId,
+    );
+  } catch (error) {
+    if (!(error instanceof DocumentApiError) || error.status !== 404 || !documentId) throw error;
+    return normalizeParseRun(
+      await request(`/documents/${encodeURIComponent(documentId)}/parse-runs/${encodeURIComponent(runId)}`, { signal }),
+      documentId,
+      runId,
+    );
+  }
 }
 
 export async function createChunkRun(documentId: string, strategy: ChunkStrategy, config: ChunkConfig, parseRunId: string, signal?: AbortSignal): Promise<ChunkRun> {
@@ -524,9 +710,19 @@ export async function getEmbeddingRun(runId: string, signal?: AbortSignal): Prom
   return normalizeEmbeddingRun(await request(`/embedding-runs/${encodeURIComponent(runId)}`, { signal }));
 }
 
-export async function reparsePersistedDocument(documentId: string, signal?: AbortSignal): Promise<PersistedParseResponse> {
-  return normalizePersistedParseResponse(
+export async function reparsePersistedDocument(
+  documentId: string,
+  signal?: AbortSignal,
+  onStatus?: ParseStatusListener,
+): Promise<PersistedParseResponse> {
+  const initial = normalizeParseRun(
     await request(`/documents/${encodeURIComponent(documentId)}/parse`, { method: "POST", signal }),
-    true,
+    documentId,
   );
+  onStatus?.(initial);
+  if (initial.status === "completed") {
+    if (!initial.result) throw new DocumentApiError("invalid_response", "The completed parse response returned no normalized content.");
+    return initial.result;
+  }
+  return pollParseRun(initial, signal, onStatus);
 }

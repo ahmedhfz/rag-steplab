@@ -78,6 +78,13 @@ class Settings:
     write_enabled: bool = True
     max_concurrent_pipeline_runs: int = 1
     max_file_size_bytes: int = 50 * 1024 * 1024
+    # Modal ve Docling değerleri deploy sırasında environment'tan gelir.
+    # Varsayılanlar local import/test akışını belirli bir platforma kilitlemez.
+    modal_app_name: str = "rag-steplab-api"
+    modal_parse_function_name: str = "parse_worker"
+    modal_dispatch_enabled: bool = True
+    docling_artifacts_path: str | None = None
+    docling_parser_version: str = "docling-2.117.0"
 
 
 @lru_cache(maxsize=1)
@@ -113,6 +120,11 @@ def get_settings() -> Settings:
         write_enabled=_bool("WRITE_ENABLED", True),
         max_concurrent_pipeline_runs=max(1, _int("MAX_CONCURRENT_PIPELINE_RUNS", 1)),
         max_file_size_bytes=max(1, _int("MAX_FILE_SIZE_BYTES", 50 * 1024 * 1024)),
+        modal_app_name=os.getenv("MODAL_APP_NAME", "rag-steplab-api"),
+        modal_parse_function_name=os.getenv("MODAL_PARSE_FUNCTION_NAME", "parse_worker"),
+        modal_dispatch_enabled=_bool("MODAL_DISPATCH_ENABLED", True),
+        docling_artifacts_path=os.getenv("DOCLING_ARTIFACTS_PATH") or None,
+        docling_parser_version=os.getenv("DOCLING_PARSER_VERSION", "docling-2.117.0"),
     )
 
 

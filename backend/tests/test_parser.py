@@ -1,6 +1,7 @@
+from pathlib import Path
 from types import SimpleNamespace
 
-from app.parser import _TextLine, _build_page_elements, build_structured_content
+from app.parser import _TextLine, _build_page_elements, build_structured_content, parse_pdf_file
 
 
 class FakeTable:
@@ -48,3 +49,46 @@ def test_build_page_elements_preserves_headings_and_joins_paragraph_lines():
     assert [element.type for element in elements] == ["heading", "paragraph", "list"]
     assert elements[1].text == "Retrieval uses persisted document chunks."
     assert elements[2].text == "Dense retrieval"
+
+
+def test_parse_pdf_file_uses_full_document_converter_and_existing_normalizer(monkeypatch):
+    class Converter:
+        def convert(self, path):
+            assert path == Path("lesson.pdf")
+            return SimpleNamespace(document=FakeDocument())
+
+    def fail_if_legacy_text_layer_is_used(*_args, **_kwargs):
+        raise AssertionError("legacy text-cell extraction must not run")
+
+    monkeypatch.setattr("app.parser._get_document_converter", lambda *_args, **_kwargs: Converter())
+    monkeypatch.setattr("app.parser._extract_text_lines", fail_if_legacy_text_layer_is_used)
+
+    parsed = parse_pdf_file(Path("lesson.pdf"), "lesson.pdf", 123)
+
+    assert parsed.document.page_count == 2
+    assert parsed.summary is not None
+    assert parsed.summary.table_count == 1
+    assert parsed.structured is not None
+    assert parsed.structured.elements[-1].type == "table"
+    assert parsed.run_metadata["mode"] == "full_document_converter"
+
+
+def test_parse_pdf_file_accepts_a_valid_document_without_tables(monkeypatch):
+    document = SimpleNamespace(
+        pages={1: object()},
+        iterate_items=lambda: iter([(SimpleNamespace(
+            label="text",
+            text="Only text",
+            prov=[SimpleNamespace(page_no=1)],
+        ), 0)]),
+    )
+    monkeypatch.setattr(
+        "app.parser._get_document_converter",
+        lambda *_args, **_kwargs: SimpleNamespace(convert=lambda _path: SimpleNamespace(document=document)),
+    )
+
+    parsed = parse_pdf_file(Path("lesson.pdf"), "lesson.pdf", 123)
+
+    assert parsed.summary is not None
+    assert parsed.summary.table_count == 0
+    assert parsed.summary.paragraph_count == 1

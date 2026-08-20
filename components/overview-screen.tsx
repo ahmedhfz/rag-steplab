@@ -94,9 +94,9 @@ function getPipelineState(
   const parseState: PipelineStepState = !hasDocument
     ? "Locked"
     : parseStatus === "ready" ? "Ready"
-      : parseStatus === "processing" ? "Processing"
+      : parseStatus === "queued" || parseStatus === "running" ? "Processing"
         : parseStatus === "completed" ? "Completed"
-          : parseStatus === "error" ? "Error"
+          : parseStatus === "failed" ? "Error"
             : "Locked";
 
   return {
@@ -115,9 +115,9 @@ function getPipelineState(
 
 function getPipelineStatus(hasFile: boolean, parseStatus: DocumentParseStatus): PipelineStepState {
   if (!hasFile) return "Not started";
-  if (parseStatus === "processing") return "Processing";
+  if (parseStatus === "queued" || parseStatus === "running") return "Processing";
   if (parseStatus === "completed") return "Completed";
-  if (parseStatus === "error") return "Error";
+  if (parseStatus === "failed") return "Error";
   return "Ready";
 }
 
@@ -128,12 +128,15 @@ function getParseErrorMessage(copy: AppCopy, code: DocumentApiErrorCode | undefi
   if (code === "backend_unavailable") return copy.overview.backendUnavailable;
   if (code === "invalid_response") return copy.overview.invalidResponse;
   if (code === "docling_error") return copy.overview.doclingError;
+  if (code === "parse_interrupted") return copy.overview.parseInterrupted;
+  if (code === "parse_poll_timeout") return copy.overview.parsePollTimeout;
   return copy.overview.unknownParseError;
 }
 
 function getParseReason(copy: AppCopy, hasFile: boolean, hasPersistedDocument: boolean, parseStatus: DocumentParseStatus) {
-  if (parseStatus === "processing") return copy.overview.parseReasonProcessing;
-  if (parseStatus === "error") return copy.overview.parseReasonError;
+  if (parseStatus === "queued") return copy.overview.parseReasonQueued;
+  if (parseStatus === "running") return copy.overview.parseReasonRunning;
+  if (parseStatus === "failed") return copy.overview.parseReasonError;
   if (hasFile && parseStatus === "completed") return copy.overview.parseReasonCompleted;
   if (hasPersistedDocument) return copy.overview.parseReasonPersisted;
   if (!hasFile) return copy.overview.parseReasonEmpty;
@@ -142,9 +145,10 @@ function getParseReason(copy: AppCopy, hasFile: boolean, hasPersistedDocument: b
 
 function getPipelineStatusMessage(copy: AppCopy, hasFile: boolean, parseStatus: DocumentParseStatus) {
   if (!hasFile) return copy.overview.noPipelineRun;
-  if (parseStatus === "processing") return copy.overview.parseProcessing;
+  if (parseStatus === "queued") return copy.overview.parseQueued;
+  if (parseStatus === "running") return copy.overview.parseRunning;
   if (parseStatus === "completed") return copy.overview.parseCompleted;
-  if (parseStatus === "error") return copy.overview.parseFailed;
+  if (parseStatus === "failed") return copy.overview.parseFailed;
   return copy.overview.parseReady;
 }
 
@@ -403,7 +407,9 @@ export function OverviewScreen() {
                       <TableRow>
                         <TableCell className="min-w-48 font-medium"><span className="mr-2 rounded border px-1 py-0.5 text-[10px] font-bold text-red-600">PDF</span>{selectedFile.name}</TableCell>
                         <TableCell>{formatDocumentFileSize(selectedFile.size, preferences.locale)}</TableCell>
-                        <TableCell className="text-xs text-slate-600">{copy.overview.documentSelected}</TableCell>
+                        <TableCell className="text-xs text-slate-600">
+                          {parseStatus === "queued" ? copy.overview.parseQueued : parseStatus === "running" ? copy.overview.parseRunning : parseStatus === "completed" ? copy.overview.parseCompleted : parseStatus === "failed" ? copy.overview.parseFailed : copy.overview.documentSelected}
+                        </TableCell>
                         <TableCell><Button aria-label={copy.overview.removeSelected} onClick={removeFile} size="icon-sm" variant="ghost"><X aria-hidden="true" className="size-4" /></Button></TableCell>
                       </TableRow>
                     </TableBody>
@@ -431,8 +437,8 @@ export function OverviewScreen() {
             </div>
             <Button
               aria-describedby="parse-disabled-reason"
-              aria-busy={parseStatus === "processing"}
-              disabled={(!selectedFile && !activeDocument) || parseStatus === "processing"}
+              aria-busy={parseStatus === "queued" || parseStatus === "running"}
+              disabled={(!selectedFile && !activeDocument) || parseStatus === "queued" || parseStatus === "running"}
               onClick={() => void (selectedFile ? parseSelectedFile() : reparseActiveDocument())}
             >
               {selectedFile ? copy.overview.parseDocument : copy.overview.reparseDocument}
@@ -477,7 +483,7 @@ export function OverviewScreen() {
 
         <div className="min-w-0 p-4 sm:p-8">
           <h2 className="text-sm font-semibold">{copy.overview.activity}</h2>
-          <div aria-live="polite" className="mt-4 overflow-hidden border-t" data-state={parseStatus} data-testid="activity-timeline">
+          <div aria-live="polite" className="mt-4 overflow-hidden border-t" data-state={parseStatus === "failed" ? "error" : parseStatus} data-testid="activity-timeline">
             {activity.length === 0 ? (
               <div className="flex min-h-28 items-center justify-center px-4 text-center text-sm text-slate-500">
                 {copy.overview.noActivity}

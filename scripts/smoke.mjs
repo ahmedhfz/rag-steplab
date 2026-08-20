@@ -4,10 +4,12 @@ import process from "node:process";
 const frontendUrl = (process.env.SMOKE_FRONTEND_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const apiUrl = (process.env.SMOKE_API_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 const timeoutMs = Number(process.env.SMOKE_TIMEOUT_MS ?? 30_000);
+const parseTimeoutMs = Number(process.env.SMOKE_PARSE_TIMEOUT_MS ?? 900_000);
 const pdfPath = process.env.SMOKE_PDF_PATH ?? "";
 const requireParse = process.env.SMOKE_REQUIRE_PARSE === "1";
 const requireRag = process.env.SMOKE_REQUIRE_RAG === "1";
 const requireJudge = process.env.SMOKE_REQUIRE_JUDGE === "1";
+const requireSemantic = process.env.SMOKE_REQUIRE_SEMANTIC === "1";
 const smokeQuery = process.env.SMOKE_QUERY ?? "What is the main topic of this document?";
 
 const failures = [];
@@ -81,6 +83,109 @@ function stageCandidates(value) {
   return [];
 }
 
+function parseRunStatus(payload) {
+  if (payload?.status === "interrupted") return "failed";
+  return payload?.status;
+}
+
+function parseRunId(payload) {
+  return payload?.parseRunId ?? payload?.parse_run_id ?? payload?.id ?? null;
+}
+
+function parseResult(payload) {
+  if (isObject(payload?.result)) return payload.result;
+  if (isObject(payload?.parse)) return payload.parse;
+  if (isObject(payload?.output)) return payload.output;
+  return payload;
+}
+
+function isRetryablePollError(error) {
+  return error?.retryable === true || error?.name === "AbortError" || error?.code === "ECONNREFUSED";
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function readParseRun(runId, documentId) {
+  let response;
+  try {
+    response = await request(`${apiUrl}/parse-runs/${encoded(runId)}`);
+  } catch (error) {
+    error.retryable = true;
+    throw error;
+  }
+  let payload = await readJson(response);
+  if (response.status === 404 && documentId) {
+    response = await request(`${apiUrl}/documents/${encoded(documentId)}/parse-runs/${encoded(runId)}`);
+    payload = await readJson(response);
+  }
+  if (!response.ok) {
+    const error = new Error(`parse run returned HTTP ${response.status}`);
+    error.retryable = response.status >= 500 || response.status === 408 || response.status === 429;
+    error.code = payload?.error?.code;
+    throw error;
+  }
+  return payload;
+}
+
+async function waitForParseRun(initialPayload) {
+  const runId = parseRunId(initialPayload);
+  const documentId = initialPayload?.documentId ?? initialPayload?.document_id ?? null;
+  if (!assertCondition(typeof runId === "string" && runId.length > 0, "parse accepted response did not return parseRunId")) return null;
+  if (!assertCondition(parseRunStatus(initialPayload) === "queued" || parseRunStatus(initialPayload) === "running", "parse accepted response did not return queued/running status")) return null;
+  console.log(`[smoke] parse: accepted (${parseRunStatus(initialPayload)})`);
+  const deadline = Date.now() + parseTimeoutMs;
+  let lastStatus = parseRunStatus(initialPayload);
+  while (Date.now() < deadline) {
+    await sleep(250);
+    try {
+      const payload = await readParseRun(runId, documentId);
+      const status = parseRunStatus(payload);
+      if (status !== lastStatus) {
+        console.log(`[smoke] parse poll: ${status}`);
+        lastStatus = status;
+      }
+      if (status === "completed") return parseResult(payload);
+      if (status === "failed") {
+        const code = payload?.error?.code ?? (payload?.status === "interrupted" ? "parse_interrupted" : "parse_failed");
+        fail(`parse run failed (${code})`);
+        return null;
+      }
+      if (status !== "queued" && status !== "running") {
+        fail(`parse run returned invalid lifecycle status (${String(payload?.status)})`);
+        return null;
+      }
+    } catch (error) {
+      if (isRetryablePollError(error)) continue;
+      fail(`parse polling failed (${error instanceof Error ? error.message : "unknown error"})`);
+      return null;
+    }
+  }
+  fail(`parse polling timed out after ${parseTimeoutMs}ms`);
+  return null;
+}
+
+function assertSemanticRegression(payload) {
+  if (!requireSemantic) return;
+  const summary = payload?.summary;
+  const elements = payload?.structured?.elements;
+  const pages = payload?.structured?.pages;
+  assertCondition(summary?.pageCount === 8, `semantic regression expected 8 pages, got ${summary?.pageCount ?? "unknown"}`);
+  assertCondition(summary?.tableCount >= 9 && summary?.tableCount <= 11, `semantic regression expected 9-11 tables, got ${summary?.tableCount ?? "unknown"}`);
+  assertCondition(summary?.headingCount >= 24 && summary?.headingCount <= 28, `semantic regression expected 24-28 headings, got ${summary?.headingCount ?? "unknown"}`);
+  const validPageNumbers = Array.isArray(pages) && pages.length > 0 && pages.every((page) => Number.isInteger(page?.pageNumber) && page.pageNumber >= 1 && page.pageNumber <= summary.pageCount);
+  assertCondition(validPageNumbers, "semantic regression returned invalid page provenance");
+  const pageElementIds = new Set((pages ?? []).flatMap((page) => Array.isArray(page?.elements) ? page.elements.map((element) => element?.id) : []));
+  const orphanElements = (elements ?? []).filter((element) => !pageElementIds.has(element?.id) || !Array.isArray(element?.pageNumbers) || element.pageNumbers.length === 0);
+  assertCondition(orphanElements.length === 0, `semantic regression returned ${orphanElements.length} orphan elements`);
+  const text = JSON.stringify(payload);
+  for (const marker of ["BAT-S12", "INV-T17", "12,84 GWh", "%17,6", "%25"]) {
+    assertCondition(text.includes(marker), `semantic regression is missing ${marker}`);
+  }
+  console.log("[smoke] semantic regression: ok (pages/tables/headings/provenance/content)");
+}
+
 async function checkHealth(name, url) {
   try {
     const response = await request(url);
@@ -104,14 +209,33 @@ async function parsePdf() {
       return null;
     }
 
-    const valid = isObject(payload?.document)
-      && isObject(payload?.structured)
-      && Array.isArray(payload.structured.elements);
+    const status = parseRunStatus(payload);
+    let completedPayload = payload;
+    if (status === "queued" || status === "running") {
+      const documentId = payload?.documentId ?? payload?.document_id ?? payload?.document?.id;
+      const duplicate = await apiRequest(`/documents/${encoded(documentId)}/parse`, { method: "POST" });
+      const duplicateAccepted = duplicate.response?.ok && (duplicate.payload?.parseRunId ?? duplicate.payload?.parse_run_id) === parseRunId(payload);
+      const duplicateRejected = duplicate.response?.status === 409;
+      if (assertCondition(duplicateAccepted || duplicateRejected, `duplicate parse request was not guarded (HTTP ${duplicate.response?.status ?? "unknown"})`)) {
+        console.log(`[smoke] duplicate parse guard: ok (${duplicateRejected ? "rejected" : "same run"})`);
+      }
+      completedPayload = await waitForParseRun(payload);
+      if (!completedPayload) return null;
+    } else if (status === "interrupted" || status === "failed") {
+      fail(`parse returned failed lifecycle (${payload?.error?.code ?? (status === "interrupted" ? "parse_interrupted" : "parse_failed")})`);
+      return null;
+    }
+
+    const valid = isObject(completedPayload?.document)
+      && isObject(completedPayload?.structured)
+      && Array.isArray(completedPayload.structured.elements)
+      && completedPayload?.status === "completed";
     if (!assertCondition(valid, "parse returned an invalid normalized response")) return null;
 
-    const elementCount = payload.structured.elements.length;
+    assertSemanticRegression(completedPayload);
+    const elementCount = completedPayload.structured.elements.length;
     console.log(`[smoke] parse: ok (${elementCount} normalized elements)`);
-    return payload;
+    return completedPayload;
   } catch (error) {
     fail(`parse failed (${error instanceof Error ? error.name : "unknown error"})`);
     return null;
@@ -355,12 +479,16 @@ async function runRagContract(parsePayload) {
   console.log("[smoke] rechunk stale lineage: ok");
 
   const reparseResult = await apiRequest(`${documentPath}/parse`, { method: "POST" });
-  const reparsed = reparseResult.payload;
   if (!reparseResult.response?.ok) fail(`reparse returned HTTP ${reparseResult.response?.status ?? "unknown"}`);
-  const reparsedDocumentId = reparsed?.documentId ?? reparsed?.document?.id;
-  const reparsedParseRunId = reparsed?.parseRunId;
+  const reparsed = reparseResult.payload?.status === "queued" || reparseResult.payload?.status === "running"
+    ? await waitForParseRun(reparseResult.payload)
+    : reparseResult.payload;
+  const reparsedDocumentId = reparsed?.documentId ?? reparsed?.document?.id ?? documentId;
+  const reparsedParseRunId = reparsed?.parseRunId ?? reparsed?.parse_run_id;
   assertCondition(reparsedDocumentId === documentId, "reparse did not preserve document identity");
   assertCondition(typeof reparsedParseRunId === "string" && reparsedParseRunId !== parseRunId, "reparse did not create a new parse run");
+  assertCondition(reparsed?.status === "completed", "reparse did not complete after polling");
+  assertSemanticRegression(reparsed);
   const afterReparse = await apiRequest(documentPath);
   const oldChunkRun = afterReparse.payload?.chunkRuns?.find((run) => run.id === selectedChunkRun.id);
   const rechunkRun = afterReparse.payload?.chunkRuns?.find((run) => run.id === rechunkResult.payload.id);

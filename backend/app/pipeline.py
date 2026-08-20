@@ -8,6 +8,7 @@ generation is persisted as visible stage objects in one experiment row.
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 import tempfile
@@ -33,6 +34,10 @@ from .schemas import (
     ParseResponse,
 )
 from .storage import get_storage
+from .telemetry import measure_resource_usage
+
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_model_dump(value: Any) -> dict[str, Any]:
@@ -127,6 +132,181 @@ def parse_upload(
         storage.remove(storage_path)
         raise ApiProblem(500, "persistence_failed", "The parsed document could not be persisted.")
     return document, parse
+
+
+def queue_parse_upload(
+    content: bytes,
+    file_name: str,
+    *,
+    repository: Repository | None = None,
+    settings: Settings | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Persist the PDF and a queued parse run without doing CPU-heavy work."""
+
+    repository = repository or get_repository()
+    settings = settings or get_settings()
+    _require_write(repository, settings)
+    digest = hashlib.sha256(content).hexdigest()
+    storage_path = f"{new_id()}/{digest}.pdf"
+    storage = get_storage()
+    storage.upload_pdf(storage_path, content)
+    metadata = {
+        "file_name": file_name,
+        "media_type": "application/pdf",
+        "size_bytes": len(content),
+        "page_count": 0,
+    }
+    document: dict[str, Any] | None = None
+    try:
+        document = repository.create_document(
+            metadata,
+            settings.supabase_storage_bucket,
+            storage_path,
+            digest,
+        )
+        parse = repository.create_parse_run(
+            document["id"],
+            parser_version=settings.docling_parser_version,
+        )
+    except Exception:
+        if document is not None:
+            repository.delete_document(document["id"])
+        storage.remove(storage_path)
+        raise
+    if parse is None:
+        storage.remove(storage_path)
+        raise ApiProblem(500, "persistence_failed", "The parse run could not be queued.")
+    return document, parse
+
+
+def queue_reparse_document(
+    document_id: str,
+    *,
+    repository: Repository | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Create a new parse run while preserving the current active lineage."""
+
+    repository = repository or get_repository()
+    settings = get_settings()
+    _require_write(repository, settings)
+    document = _document_or_404(repository, document_id)
+    parse = repository.create_parse_run(
+        document_id,
+        parser_version=settings.docling_parser_version,
+    )
+    if parse is None:
+        raise ApiProblem(500, "persistence_failed", "The parse run could not be queued.")
+    return document, parse
+
+
+def run_parse_worker(
+    parse_run_id: str,
+    *,
+    repository: Repository | None = None,
+) -> dict[str, Any] | None:
+    """Run one queued parse and persist one terminal lifecycle transition.
+
+    This function is the only place where the full Docling converter is called
+    by the Modal worker. It never falls back to the old text-cell heuristic.
+    """
+
+    repository = repository or get_repository()
+    settings = get_settings()
+    row = repository.get_parse_row(parse_run_id)
+    if row is None:
+        return None
+    if row.get("status") in {"completed", "failed", "interrupted"}:
+        return row
+    running = repository.mark_parse_running(parse_run_id)
+    if running is None or running.get("status") in {"completed", "failed", "interrupted"}:
+        return running
+    started = time.perf_counter()
+    queue_duration_ms = None
+    if running.get("created_at") is not None and running.get("started_at") is not None:
+        queue_duration_ms = max(0, int((running["started_at"] - running["created_at"]).total_seconds() * 1000))
+    logger.info(
+        "parse_worker_started parse_run_id=%s parser_version=%s queue_duration_ms=%s",
+        parse_run_id,
+        settings.docling_parser_version,
+        queue_duration_ms,
+    )
+    try:
+        document = _document_or_404(repository, running["document_id"])
+        storage_started = time.perf_counter()
+        content = get_storage().download(document["storage_path"])
+        storage_download_ms = max(0, int((time.perf_counter() - storage_started) * 1000))
+        temporary_path: Path | None = None
+        try:
+            from .parser import parse_pdf_file
+
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temporary_file:
+                temporary_file.write(content)
+                temporary_path = Path(temporary_file.name)
+            with measure_resource_usage() as measurement:
+                parsed = parse_pdf_file(temporary_path, document["file_name"], len(content))
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+        duration_ms = int(measurement.get("elapsedMs") or (time.perf_counter() - started) * 1000)
+        execution_metadata = {
+            **(parsed.run_metadata or {}),
+            "worker": "modal",
+            "queueDurationMs": queue_duration_ms,
+            "storageDownloadMs": storage_download_ms,
+            "measurement": measurement,
+        }
+        completed = repository.complete_parse(
+            parse_run_id,
+            parsed,
+            parser_version=settings.docling_parser_version,
+            execution_metadata=execution_metadata,
+            duration_ms=duration_ms,
+        )
+        logger.info(
+            "parse_worker_completed parse_run_id=%s parser_version=%s duration_ms=%s peak_rss_mb=%s start_mode=%s",
+            parse_run_id,
+            settings.docling_parser_version,
+            duration_ms,
+            measurement.get("peakRssMb"),
+            execution_metadata.get("workerStartMode"),
+        )
+        return completed
+    except ApiProblem as exc:
+        duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+        failed = repository.fail_parse(
+            parse_run_id,
+            exc.code,
+            exc.message,
+            status="failed",
+            duration_ms=duration_ms,
+        )
+        logger.warning(
+            "parse_worker_failed parse_run_id=%s parser_version=%s duration_ms=%s error_code=%s cause_type=%s cause=%s",
+            parse_run_id,
+            settings.docling_parser_version,
+            duration_ms,
+            exc.code,
+            type(exc.__cause__).__name__ if exc.__cause__ is not None else None,
+            str(exc.__cause__)[:500] if exc.__cause__ is not None else None,
+        )
+        return failed
+    except Exception as exc:
+        duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+        failed = repository.fail_parse(
+            parse_run_id,
+            "parse_worker_error",
+            "The parse worker could not complete this document.",
+            status="failed",
+            duration_ms=duration_ms,
+        )
+        logger.error(
+            "parse_worker_failed parse_run_id=%s parser_version=%s duration_ms=%s error_code=parse_worker_error exception_type=%s",
+            parse_run_id,
+            settings.docling_parser_version,
+            duration_ms,
+            type(exc).__name__,
+        )
+        return failed
 
 
 def reparse_document(document_id: str, *, repository: Repository | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
