@@ -24,10 +24,13 @@ Remote migration history CLI ile fetch edilmiştir:
 - `20260820211422_standardize_rag_lab_ownership` (historical duplicate)
 - `20260820211551_add_documents_active_run_indexes`
 
-`20260820212643_rag_lab_production_baseline.sql` mevcut production
+`20260820211450_rag_lab_production_baseline.sql` mevcut production
 `rag_lab` şemasının data içermeyen snapshot'ıdır. Existing production'da
 DDL çalıştırılmadan migration history repair ile applied olarak işaretlenir;
 boş/local environment'ta ise mevcut şemayı yeniden oluşturur.
+Baseline sürümü, historical active-run index migration'ından önce sıralanır;
+çünkü o migration'ın hedeflediği tablolar geçmişte Alembic/manual DDL ile
+oluşturulmuştu ve remote history'de ayrıca kayıtlı değildi.
 
 `20260820212718_remove_alembic_version.sql`, runtime ve CI kontrolleri
 tamamlandıktan sonra yalnız historical `rag_lab.alembic_version` tablosunu

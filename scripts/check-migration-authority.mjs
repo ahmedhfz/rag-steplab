@@ -52,7 +52,7 @@ for (const fileName of migrationFiles) {
 const allowedHistoricalFiles = new Set([
   "docs/architecture/migrations.md",
   "supabase/tests/database/01_schema.sql",
-  "supabase/migrations/20260820212643_rag_lab_production_baseline.sql",
+  "supabase/migrations/20260820211450_rag_lab_production_baseline.sql",
   "supabase/migrations/20260820212718_remove_alembic_version.sql",
 ]);
 const ignoredDirectories = new Set([
