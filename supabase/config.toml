@@ -1,0 +1,16 @@
+# RAG StepLab Supabase CLI project configuration.
+# The hosted project is selected with `supabase link --project-ref`; no
+# database password, service key, or project ref is stored in this file.
+project_id = "rag-steplab"
+
+[db]
+major_version = 17
+
+[db.migrations]
+enabled = true
+
+[db.seed]
+enabled = false
+
+[storage]
+file_size_limit = "50MiB"

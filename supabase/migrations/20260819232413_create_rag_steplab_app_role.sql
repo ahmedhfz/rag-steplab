@@ -1,0 +1,13 @@
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rag_steplab_app') THEN
+    CREATE ROLE rag_steplab_app LOGIN NOINHERIT;
+  END IF;
+END
+$$;
+GRANT CONNECT ON DATABASE postgres TO rag_steplab_app;
+GRANT USAGE, CREATE ON SCHEMA rag_lab TO rag_steplab_app;
+GRANT USAGE ON SCHEMA extensions TO rag_steplab_app;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA extensions TO rag_steplab_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA rag_lab GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO rag_steplab_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA rag_lab GRANT USAGE, SELECT ON SEQUENCES TO rag_steplab_app;;
