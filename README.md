@@ -54,10 +54,9 @@ npm run dev
 
 Bu komut Next.js'i `http://localhost:3000`, FastAPI'yi `http://127.0.0.1:8000` üzerinde birlikte başlatır. Yalnız frontend gerektiğinde `npm run dev:frontend` kullanılabilir.
 
-Supabase → Modal → Vercel hedef mimarisi, async parse sözleşmesi, kaynak profili,
-cutover kapıları ve full RAG smoke adımları için
-[deployment dokümantasyonuna](docs/deployment.md) bakın. Render, cutover ve
-production smoke tamamlanana kadar yalnızca rollback güvenlik ağıdır.
+Supabase → Modal → Vercel production mimarisi, async parse sözleşmesi, kaynak
+profili ve full RAG smoke adımları için
+[deployment dokümantasyonuna](docs/deployment.md) bakın.
 
 ## Modal deployment
 
@@ -68,8 +67,8 @@ Başlangıç benchmark profili worker için `CPU 2 / 4096 MiB / timeout 900 s`, 
 için yaklaşık `CPU 0.5 / 1024 MiB`'dir. Docling modelleri versioned bir Modal
 Volume'da cache'lenir; cold start'ta tekrar internetten indirilmez.
 
-Migration doğrulanmadan production URL veya cloud kaynağı bu README'de başarılı
-ilan edilmez. Local sözleşme ve semantic smoke için:
+Production değişiklikleri semantic ve full RAG smoke geçmeden başarılı ilan
+edilmez. Local sözleşme ve semantic smoke için:
 
 ```powershell
 npm.cmd run lint

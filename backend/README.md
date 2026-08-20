@@ -39,9 +39,8 @@ Production parsing tam Docling `DocumentConverter` ve semantic normalization
 ve versioned bir Modal Volume'a prefetch edilir. `backend/app` image'a explicit
 paketlenir ve remote import smoke'ta `app.main` ile `app.parser` doğrulanır.
 
-Cloud cutover tamamlanana kadar Render silinmez. Modal direct smoke, Vercel
-Preview smoke, merged SHA deploy, production full RAG smoke ve observation
-kapıları [docs/deployment.md](../docs/deployment.md) içindeki sırayla geçmelidir.
+Modal deploy, model cache hazırlığı, merged SHA doğrulaması ve production full
+RAG smoke kapıları [docs/deployment.md](../docs/deployment.md) içinde tanımlıdır.
 
 ## Çalıştırma
 
