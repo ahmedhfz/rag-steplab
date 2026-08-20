@@ -59,8 +59,9 @@ describe("EvaluationScreen", () => {
 
     expect(screen.getByRole("heading", { name: "Evaluation" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "No evaluation data yet" })).toBeInTheDocument();
-    expect(screen.getByText("Evaluation needs a dataset and a real RAG run. Neither is connected yet.")).toBeInTheDocument();
+    expect(screen.getAllByText("Create a dataset after the active document has current chunks and embeddings, then run a real evaluation.").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText(/Recall|Precision|MRR|accuracy/i)).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Back to overview" })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("button", { name: "Create dataset" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run evaluation" })).toBeDisabled();
   });
 });

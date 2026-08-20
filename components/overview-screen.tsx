@@ -6,6 +6,9 @@ import { AnimatePresence, motion } from "motion/react";
 import {
   AlertCircle,
   ArrowRight,
+  ArrowUpDown,
+  BarChart3,
+  Blocks,
   Braces,
   CheckCircle2,
   CircleEllipsis,
@@ -23,7 +26,7 @@ import {
 } from "lucide-react";
 
 import { StatusIndicator } from "@/components/status-indicator";
-import { useDocumentPipeline, type DocumentParseStatus, type DocumentActivityEvent } from "@/components/document-pipeline-provider";
+import { useDocumentPipeline, type DocumentParseStatus, type DocumentActivityEvent, type PipelineOperationStatus } from "@/components/document-pipeline-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -43,7 +46,10 @@ const pipelineSteps: PipelineStepDefinition[] = [
   { key: "embed", icon: "embed" },
   { key: "index", icon: "index" },
   { key: "retrieve", icon: "retrieve" },
+  { key: "rerank", icon: "rerank" },
+  { key: "context", icon: "context" },
   { key: "generate", icon: "generate" },
+  { key: "evaluate", icon: "evaluate" },
 ];
 
 const pipelineIcons: Record<PipelineStepKey, LucideIcon> = {
@@ -53,7 +59,10 @@ const pipelineIcons: Record<PipelineStepKey, LucideIcon> = {
   embed: Braces,
   index: Database,
   retrieve: Search,
+  rerank: ArrowUpDown,
+  context: Blocks,
   generate: CircleEllipsis,
+  evaluate: BarChart3,
 };
 
 const activityIcons: Record<DocumentActivityEvent["type"], LucideIcon> = {
@@ -64,8 +73,25 @@ const activityIcons: Record<DocumentActivityEvent["type"], LucideIcon> = {
   parseFailed: AlertCircle,
 };
 
-function getPipelineState(hasFile: boolean, parseStatus: DocumentParseStatus): Record<PipelineStepKey, PipelineStepState> {
-  const parseState: PipelineStepState = !hasFile
+function operationState(status: PipelineOperationStatus): PipelineStepState {
+  if (status === "ready") return "Ready";
+  if (status === "processing") return "Processing";
+  if (status === "completed") return "Completed";
+  if (status === "error") return "Error";
+  if (status === "stale") return "Stale";
+  return "Locked";
+}
+
+function getPipelineState(
+  hasDocument: boolean,
+  parseStatus: DocumentParseStatus,
+  chunkStatus: PipelineOperationStatus,
+  embeddingStatus: PipelineOperationStatus,
+  experimentStatus: PipelineOperationStatus,
+  evaluationStatus: PipelineOperationStatus,
+  stageResults: { reranking: unknown; context: unknown; generation: unknown } | null,
+): Record<PipelineStepKey, PipelineStepState> {
+  const parseState: PipelineStepState = !hasDocument
     ? "Locked"
     : parseStatus === "ready" ? "Ready"
       : parseStatus === "processing" ? "Processing"
@@ -74,13 +100,16 @@ function getPipelineState(hasFile: boolean, parseStatus: DocumentParseStatus): R
             : "Locked";
 
   return {
-    document: hasFile ? "Completed" : "Not started",
+    document: hasDocument ? "Completed" : "Not started",
     parse: parseState,
-    chunk: parseStatus === "completed" ? "Ready" : "Locked",
-    embed: "Locked",
-    index: "Locked",
-    retrieve: "Locked",
-    generate: "Locked",
+    chunk: operationState(chunkStatus),
+    embed: operationState(embeddingStatus),
+    index: embeddingStatus === "completed" ? "Completed" : operationState(embeddingStatus),
+    retrieve: operationState(experimentStatus),
+    rerank: stageResults?.reranking ? "Completed" : experimentStatus === "processing" ? "Processing" : "Locked",
+    context: stageResults?.context ? "Completed" : experimentStatus === "processing" ? "Processing" : "Locked",
+    generate: stageResults?.generation ? "Completed" : experimentStatus === "processing" ? "Processing" : "Locked",
+    evaluate: operationState(evaluationStatus),
   };
 }
 
@@ -102,11 +131,12 @@ function getParseErrorMessage(copy: AppCopy, code: DocumentApiErrorCode | undefi
   return copy.overview.unknownParseError;
 }
 
-function getParseReason(copy: AppCopy, hasFile: boolean, parseStatus: DocumentParseStatus) {
-  if (!hasFile) return copy.overview.parseReasonEmpty;
+function getParseReason(copy: AppCopy, hasFile: boolean, hasPersistedDocument: boolean, parseStatus: DocumentParseStatus) {
   if (parseStatus === "processing") return copy.overview.parseReasonProcessing;
-  if (parseStatus === "completed") return copy.overview.parseReasonCompleted;
   if (parseStatus === "error") return copy.overview.parseReasonError;
+  if (hasFile && parseStatus === "completed") return copy.overview.parseReasonCompleted;
+  if (hasPersistedDocument) return copy.overview.parseReasonPersisted;
+  if (!hasFile) return copy.overview.parseReasonEmpty;
   return copy.overview.parseReasonReady;
 }
 
@@ -203,9 +233,25 @@ export function OverviewScreen() {
     selectFile,
     removeFile: clearSelectedFile,
     parseSelectedFile,
+    reparseActiveDocument,
+    activeDocument,
+    chunkStatus,
+    embeddingStatus,
+    experimentStatus,
+    experimentRun,
+    evaluationStatus,
   } = useDocumentPipeline();
-  const pipelineState = getPipelineState(Boolean(selectedFile), parseStatus);
-  const pipelineStatus = getPipelineStatus(Boolean(selectedFile), parseStatus);
+  const hasDocument = Boolean(selectedFile || activeDocument);
+  const pipelineState = getPipelineState(
+    hasDocument,
+    parseStatus,
+    chunkStatus,
+    embeddingStatus,
+    experimentStatus,
+    evaluationStatus,
+    experimentRun?.stageResults ?? null,
+  );
+  const pipelineStatus = getPipelineStatus(hasDocument, parseStatus);
 
   function handleFileInputChange(event: React.ChangeEvent<HTMLInputElement>) {
     selectFile(event.target.files?.[0]);
@@ -224,7 +270,7 @@ export function OverviewScreen() {
 
         <div className="mt-7 grid gap-7 xl:grid-cols-[minmax(0,1fr)_220px]">
           <div className="technical-scrollbar overflow-x-auto pb-3">
-            <div className="flex min-w-[820px] items-start">
+            <div className="flex min-w-[1180px] items-start">
               {pipelineSteps.map((step, index) => {
                 const Icon = pipelineIcons[step.icon];
                 const state = pipelineState[step.key];
@@ -253,7 +299,7 @@ export function OverviewScreen() {
           <aside className="border-t pt-5 xl:border-l xl:border-t-0 xl:pl-7 xl:pt-0">
             <h2 className="text-sm font-semibold">{copy.overview.pipelineStatus}</h2>
             <div className="mt-5"><StatusIndicator state={pipelineStatus} /></div>
-            <p className="mt-2 text-xs text-slate-500">{getPipelineStatusMessage(copy, Boolean(selectedFile), parseStatus)}</p>
+            <p className="mt-2 text-xs text-slate-500">{getPipelineStatusMessage(copy, hasDocument, parseStatus)}</p>
             {preferences.showLearningHints && (
               <>
                 <Separator className="my-5" />
@@ -386,14 +432,14 @@ export function OverviewScreen() {
             <Button
               aria-describedby="parse-disabled-reason"
               aria-busy={parseStatus === "processing"}
-              disabled={!selectedFile || parseStatus === "processing"}
-              onClick={() => void parseSelectedFile()}
+              disabled={(!selectedFile && !activeDocument) || parseStatus === "processing"}
+              onClick={() => void (selectedFile ? parseSelectedFile() : reparseActiveDocument())}
             >
-              {copy.overview.parseDocument}
+              {selectedFile ? copy.overview.parseDocument : copy.overview.reparseDocument}
             </Button>
           </div>
           <p className="border-b py-3 text-xs text-slate-500" id="parse-disabled-reason">
-            {getParseReason(copy, Boolean(selectedFile), parseStatus)}
+            {getParseReason(copy, Boolean(selectedFile), Boolean(activeDocument), parseStatus)}
           </p>
           {parseError && (
             <p className="border-b px-1 py-3 text-xs text-red-700" role="alert">

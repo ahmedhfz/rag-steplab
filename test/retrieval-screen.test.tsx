@@ -4,11 +4,12 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { PreferencesProvider } from "@/components/preferences-provider";
 import { RetrievalScreen } from "@/components/retrieval-screen";
+import { DocumentPipelineProvider } from "@/components/document-pipeline-provider";
 
 function renderRetrieval() {
   return render(
     <PreferencesProvider>
-      <RetrievalScreen />
+      <DocumentPipelineProvider><RetrievalScreen /></DocumentPipelineProvider>
     </PreferencesProvider>,
   );
 }
@@ -28,11 +29,9 @@ describe("RetrievalScreen", () => {
 
     const ask = screen.getByRole("button", { name: "Ask" });
     expect(ask).toBeDisabled();
-    expect(ask).toHaveAccessibleDescription("Ask is disabled until a retrieval backend and indexed content are connected.");
+    expect(ask).toHaveAccessibleDescription("Select a persisted document and complete chunking first.");
 
-    const reranker = screen.getByRole("combobox", { name: "Reranker" });
-    expect(reranker).toBeDisabled();
-    expect(reranker).toHaveAccessibleDescription("Reranker options become available after retrieval is connected.");
+    expect(screen.getByRole("switch", { name: "Reranker" })).toBeEnabled();
 
     const copyTrace = screen.getByRole("button", { name: "Copy trace" });
     expect(copyTrace).toBeDisabled();
@@ -41,7 +40,7 @@ describe("RetrievalScreen", () => {
     const reset = screen.getByRole("button", { name: "Reset" });
     expect(reset).toBeDisabled();
     expect(reset).toHaveAccessibleDescription("No query settings have changed.");
-    expect(screen.getByText("No retrieval results are available yet.")).toBeInTheDocument();
+    expect(screen.getAllByText("No real retrieval experiment has run yet.").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("No trace data is available yet.")).toBeInTheDocument();
   });
 
@@ -67,6 +66,6 @@ describe("RetrievalScreen", () => {
     expect(screen.getByRole("combobox", { name: "Top-K" })).toHaveTextContent("5");
     expect(screen.getByRole("combobox", { name: "Mode" })).toHaveTextContent("Dense");
     expect(reset).toBeDisabled();
-    expect(screen.getByText("No retrieval results are available yet.")).toBeInTheDocument();
+    expect(screen.getAllByText("No real retrieval experiment has run yet.").length).toBeGreaterThanOrEqual(1);
   });
 });

@@ -9,7 +9,13 @@ export type DocumentApiErrorCode =
   | "file_too_large"
   | "docling_error"
   | "invalid_response"
-  | "unknown";
+  | "configuration_error"
+  | "revision_conflict"
+  | "invalid_config"
+  | "provider_error"
+  | "not_found"
+  | "unknown"
+  | (string & {});
 
 export class DocumentApiError extends Error {
   readonly code: DocumentApiErrorCode;
@@ -26,14 +32,17 @@ export class DocumentApiError extends Error {
 type ApiErrorPayload = { error?: { code?: unknown; message?: unknown } };
 
 function getApiBaseUrl() {
-  return (process.env.NEXT_PUBLIC_API_BASE_URL ?? DEFAULT_API_BASE_URL).replace(/\/$/, "");
+  const configuredUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  if (configuredUrl) return configuredUrl.replace(/\/$/, "");
+  if (process.env.NODE_ENV !== "production") return DEFAULT_API_BASE_URL;
+  throw new DocumentApiError("configuration_error", "NEXT_PUBLIC_API_BASE_URL is required in production.");
 }
 
 function isParsedElementType(value: unknown): value is ParsedElementType {
   return value === "heading" || value === "paragraph" || value === "list" || value === "table" || value === "other";
 }
 
-function isDocumentParseResponse(value: unknown): value is DocumentParseResponse {
+export function isDocumentParseResponse(value: unknown): value is DocumentParseResponse {
   if (!value || typeof value !== "object") return false;
 
   const response = value as Partial<DocumentParseResponse>;
@@ -70,7 +79,7 @@ async function readErrorPayload(response: Response): Promise<{ code: DocumentApi
     const code = payload.error?.code;
     const message = payload.error?.message;
     return {
-      code: code === "invalid_file_type" || code === "empty_file" || code === "file_too_large" || code === "docling_error" ? code : "unknown",
+      code: typeof code === "string" && code ? code : "unknown",
       message: typeof message === "string" ? message : "The parsing backend returned an error.",
     };
   } catch {
@@ -91,6 +100,7 @@ export async function parseDocument(file: File, signal?: AbortSignal): Promise<D
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
+    if (error instanceof DocumentApiError) throw error;
     throw new DocumentApiError("backend_unavailable", "The parsing backend could not be reached.");
   }
 
