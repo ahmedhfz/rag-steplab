@@ -1,6 +1,9 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+from app.errors import ApiProblem
 from app.parser import _TextLine, _build_page_elements, build_structured_content, parse_pdf_file
 
 
@@ -73,7 +76,7 @@ def test_parse_pdf_file_uses_full_document_converter_and_existing_normalizer(mon
     assert parsed.run_metadata["mode"] == "full_document_converter"
 
 
-def test_parse_pdf_file_accepts_a_valid_document_without_tables(monkeypatch):
+def test_parse_pdf_file_rejects_a_document_without_semantic_tables(monkeypatch):
     document = SimpleNamespace(
         pages={1: object()},
         iterate_items=lambda: iter([(SimpleNamespace(
@@ -87,8 +90,8 @@ def test_parse_pdf_file_accepts_a_valid_document_without_tables(monkeypatch):
         lambda *_args, **_kwargs: SimpleNamespace(convert=lambda _path: SimpleNamespace(document=document)),
     )
 
-    parsed = parse_pdf_file(Path("lesson.pdf"), "lesson.pdf", 123)
+    with pytest.raises(ApiProblem) as error:
+        parse_pdf_file(Path("lesson.pdf"), "lesson.pdf", 123)
 
-    assert parsed.summary is not None
-    assert parsed.summary.table_count == 0
-    assert parsed.summary.paragraph_count == 1
+    assert error.value.status_code == 422
+    assert error.value.code == "docling_tables_missing"

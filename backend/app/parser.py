@@ -126,6 +126,8 @@ def parse_pdf_file(path: Path, file_name: str, size_bytes: int) -> ParseResponse
         page_count = len(structured.pages)
         if not structured.elements:
             raise ApiProblem(422, "docling_content_missing", "Docling produced no readable semantic content.")
+        if counts["table"] == 0:
+            raise ApiProblem(422, "docling_tables_missing", "Docling produced no semantic tables.")
         markdown = _to_markdown(structured.pages)
     except ApiProblem:
         raise
