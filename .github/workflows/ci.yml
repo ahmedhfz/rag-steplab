@@ -156,9 +156,9 @@ jobs:
         run: |
           set -euo pipefail
           supabase migration list --linked
-          status="$(supabase db push --linked --dry-run --yes --skip-vault)"
+          status="$(supabase db push --linked --dry-run --yes --skip-vault --output-format json)"
           printf '%s\n' "$status"
-          grep -q '"upToDate":true' <<<"$status"
+          jq -e '.upToDate == true' <<<"$status" >/dev/null
 
   deploy-modal:
     name: Deploy Modal production
