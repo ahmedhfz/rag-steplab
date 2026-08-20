@@ -211,6 +211,29 @@ def test_worker_persists_measurement_and_cleans_temporary_pdf(monkeypatch):
     assert {"elapsedMs", "peakRssMb", "cpuUserMs", "cpuSystemMs"} <= measurement.keys()
 
 
+def test_worker_marks_missing_semantic_tables_as_failed(monkeypatch):
+    monkeypatch.setattr("app.main.dispatch_parse_run", lambda *_args: "dispatch-test")
+
+    def reject_without_tables(*_args):
+        raise ApiProblem(422, "docling_tables_missing", "Docling produced no semantic tables.")
+
+    monkeypatch.setattr("app.parser.parse_pdf_file", reject_without_tables)
+    accepted = client.post(
+        "/documents/parse",
+        files={"file": ("lesson.pdf", b"%PDF-1.7", "application/pdf")},
+    )
+    parse_run_id = accepted.json()["parseRunId"]
+
+    result = run_parse_worker(parse_run_id)
+    public = client.get(f"/parse-runs/{parse_run_id}").json()
+
+    assert result is not None
+    assert result["status"] == "failed"
+    assert result["error_code"] == "docling_tables_missing"
+    assert public["status"] == "failed"
+    assert public["error"]["code"] == "docling_tables_missing"
+
+
 def _assert_pdf_exists(path: Path) -> None:
     assert path.exists()
     assert path.suffix == ".pdf"
