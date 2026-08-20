@@ -1,4 +1,8 @@
-import type { DocumentParseResponse, ParsedElementType } from "@/lib/document-parse-types";
+import type {
+  DocumentParseResponse,
+  ParseJobAcceptedResponse,
+  ParsedElementType,
+} from "@/lib/document-parse-types";
 
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
 
@@ -13,6 +17,8 @@ export type DocumentApiErrorCode =
   | "revision_conflict"
   | "invalid_config"
   | "provider_error"
+  | "parse_interrupted"
+  | "parse_poll_timeout"
   | "not_found"
   | "unknown"
   | (string & {});
@@ -31,6 +37,8 @@ export class DocumentApiError extends Error {
 
 type ApiErrorPayload = { error?: { code?: unknown; message?: unknown } };
 
+export type ParseDocumentResponse = DocumentParseResponse | ParseJobAcceptedResponse;
+
 function getApiBaseUrl() {
   const configuredUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
   if (configuredUrl) return configuredUrl.replace(/\/$/, "");
@@ -40,6 +48,16 @@ function getApiBaseUrl() {
 
 function isParsedElementType(value: unknown): value is ParsedElementType {
   return value === "heading" || value === "paragraph" || value === "list" || value === "table" || value === "other";
+}
+
+export function isParseJobAcceptedResponse(value: unknown): value is ParseJobAcceptedResponse {
+  if (!value || typeof value !== "object") return false;
+  const response = value as Partial<ParseJobAcceptedResponse> & { document_id?: unknown; parse_run_id?: unknown };
+  const documentId = response.documentId ?? response.document_id;
+  const parseRunId = response.parseRunId ?? response.parse_run_id;
+  return typeof documentId === "string"
+    && typeof parseRunId === "string"
+    && (response.status === "queued" || response.status === "running");
 }
 
 export function isDocumentParseResponse(value: unknown): value is DocumentParseResponse {
@@ -87,7 +105,7 @@ async function readErrorPayload(response: Response): Promise<{ code: DocumentApi
   }
 }
 
-export async function parseDocument(file: File, signal?: AbortSignal): Promise<DocumentParseResponse> {
+export async function parseDocument(file: File, signal?: AbortSignal): Promise<ParseDocumentResponse> {
   const formData = new FormData();
   formData.append("file", file, file.name);
 
@@ -116,7 +134,7 @@ export async function parseDocument(file: File, signal?: AbortSignal): Promise<D
     throw new DocumentApiError("invalid_response", "The parsing backend returned invalid JSON.", response.status);
   }
 
-  if (!isDocumentParseResponse(payload)) {
+  if (!isDocumentParseResponse(payload) && !isParseJobAcceptedResponse(payload)) {
     throw new DocumentApiError("invalid_response", "The parsing backend returned an invalid parse contract.", response.status);
   }
 

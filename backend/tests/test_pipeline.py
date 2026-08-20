@@ -3,8 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.parser import parse_pdf_file
-from app.pipeline import parse_upload
+from app.pipeline import parse_upload, run_parse_worker
 from app.repository import InMemoryRepository, reset_repository
 from app.schemas import (
     DocumentMetadata,
@@ -43,11 +42,23 @@ def _parsed() -> ParseResponse:
     )
 
 
+def _queue_and_run(monkeypatch, *, file_name: str = "lesson.pdf"):
+    monkeypatch.setattr("app.main.dispatch_parse_run", lambda *_args: "dispatch-test")
+    monkeypatch.setattr("app.parser.parse_pdf_file", lambda *_args: _parsed())
+    response = client.post(
+        "/documents/parse",
+        files={"file": (file_name, b"%PDF-1.7", "application/pdf")},
+    )
+    assert response.status_code == 202
+    queued = response.json()
+    assert queued["status"] == "queued"
+    run = run_parse_worker(queued["parseRunId"])
+    assert run is not None and run["status"] == "completed"
+    return queued
+
+
 def test_document_chunk_and_keyword_experiment_are_persisted(monkeypatch):
-    monkeypatch.setattr("app.main.parse_pdf_file", lambda *_args: _parsed())
-    response = client.post("/documents/parse", files={"file": ("lesson.pdf", b"%PDF-1.7", "application/pdf")})
-    assert response.status_code == 200
-    payload = response.json()
+    payload = _queue_and_run(monkeypatch)
     document_id = payload["documentId"]
     assert payload["parseRunId"]
 
@@ -148,8 +159,7 @@ def test_generation_citations_and_evaluation_use_real_stage_metadata(monkeypatch
             return {"groundedness": 0.9, "claimResults": [{"supported": True}]}, FakeMetadata()
 
     monkeypatch.setattr("app.pipeline.GeminiService", FakeGemini)
-    monkeypatch.setattr("app.main.parse_pdf_file", lambda *_args: _parsed())
-    parsed = client.post("/documents/parse", files={"file": ("lesson.pdf", b"%PDF-1.7", "application/pdf")}).json()
+    parsed = _queue_and_run(monkeypatch)
     document_id = parsed["documentId"]
     chunk = client.post(
         f"/documents/{document_id}/chunks",
@@ -188,12 +198,7 @@ def test_generation_citations_and_evaluation_use_real_stage_metadata(monkeypatch
 
 
 def test_rechunk_and_reparse_reject_stale_downstream_lineage(monkeypatch):
-    monkeypatch.setattr("app.main.parse_pdf_file", lambda *_args: _parsed())
-    monkeypatch.setattr("app.parser.parse_pdf_file", lambda *_args: _parsed())
-    parsed = client.post(
-        "/documents/parse",
-        files={"file": ("lesson.pdf", b"%PDF-1.7", "application/pdf")},
-    ).json()
+    parsed = _queue_and_run(monkeypatch)
     document_id = parsed["documentId"]
     parse_run_id = parsed["parseRunId"]
 
@@ -235,8 +240,9 @@ def test_rechunk_and_reparse_reject_stale_downstream_lineage(monkeypatch):
         json={"documentId": document_id, "parseRunId": parse_run_id, "name": "before-reparse", "cases": [{"question": "retrieval"}]},
     ).json()
     reparsed = client.post(f"/documents/{document_id}/parse")
-    assert reparsed.status_code == 200
+    assert reparsed.status_code == 202
     assert reparsed.json()["parseRunId"] != parse_run_id
+    run_parse_worker(reparsed.json()["parseRunId"])
 
     stale_chunk = client.post(
         f"/documents/{document_id}/chunks",

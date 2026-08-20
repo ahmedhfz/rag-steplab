@@ -21,6 +21,7 @@ import {
   listExperiments,
   parseAndPersistDocument,
   reparsePersistedDocument,
+  waitForParseRun,
 } from "@/lib/rag-api";
 import type {
   Capabilities,
@@ -35,10 +36,11 @@ import type {
   ExperimentRequest,
   ExperimentRun,
   PersistedDocument,
+  ParseRun,
 } from "@/lib/rag-api-types";
 import type { DocumentActivityEventType } from "@/lib/rag-ui-types";
 
-export type DocumentParseStatus = "not-started" | "ready" | "processing" | "completed" | "error";
+export type DocumentParseStatus = "not-started" | "ready" | "queued" | "running" | "completed" | "failed";
 export type PipelineOperationStatus = "locked" | "ready" | "processing" | "completed" | "error" | "stale";
 export type PersistenceStatus = "checking" | "available" | "unavailable";
 
@@ -124,6 +126,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const [parseStatus, setParseStatus] = useState<DocumentParseStatus>("not-started");
   const [parseResult, setParseResult] = useState<DocumentParseResponse | null>(null);
   const [parseError, setParseError] = useState<DocumentApiError | null>(null);
+  const parseInFlightRef = useRef(false);
+  const activeParseRunIdRef = useRef<string | null>(null);
   const [activity, setActivity] = useState<DocumentActivityEvent[]>([]);
   const [persistenceStatus, setPersistenceStatus] = useState<PersistenceStatus>("checking");
   const [persistenceError, setPersistenceError] = useState<DocumentApiError | null>(null);
@@ -166,6 +170,18 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setActivity((current) => [...current, { id, type, errorCode }]);
   }, []);
 
+  const applyParseRunStatus = useCallback((run: ParseRun, expectedRunId: number) => {
+    if (runIdRef.current !== expectedRunId) return;
+    activeParseRunIdRef.current = run.id;
+    setParseStatus(run.status);
+    if (run.status === "failed") {
+      const problem = run.error ?? { code: "parse_failed", message: "The parse run failed." };
+      setParseError(new DocumentApiError(problem.code, problem.message));
+    } else {
+      setParseError(null);
+    }
+  }, []);
+
   const resetDownstream = useCallback(() => {
     setChunkStatus("locked");
     setChunkRun(null);
@@ -184,26 +200,6 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setEvaluationHistory([]);
   }, []);
 
-  const refreshPersistence = useCallback(async () => {
-    const controller = replaceController("bootstrap");
-    setPersistenceStatus("checking");
-    setPersistenceError(null);
-    try {
-      const [nextCapabilities, nextDocuments] = await Promise.all([
-        getCapabilities(controller.signal),
-        listDocuments(controller.signal),
-      ]);
-      setCapabilities(nextCapabilities);
-      setDocuments(nextDocuments);
-      setPersistenceStatus("available");
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      setCapabilities(null);
-      setPersistenceError(asApiError(error, "Persistent pipeline data could not be loaded."));
-      setPersistenceStatus("unavailable");
-    }
-  }, [replaceController]);
-
   const loadDocumentRelatedData = useCallback(async (documentId: string, signal: AbortSignal) => {
     const detail = await getDocument(documentId, signal);
     const [experiments, datasets, activeChunk, activeEmbedding] = await Promise.all([
@@ -218,9 +214,31 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       ...run,
       isStale: run.chunkRunId !== detail.activeChunkRunId || (run.embeddingRunId !== null && run.embeddingRunId !== detail.activeEmbeddingRunId),
     }));
+    const activeParseSummary = detail.activeParseRunId
+      ? detail.parseRuns.find((run) => run.id === detail.activeParseRunId) ?? null
+      : null;
+    const inFlightParseSummary = detail.parseRuns.find((run) => run.status === "queued" || run.status === "running") ?? null;
+    const latestParseSummary = detail.parseRuns[0] ?? null;
+    const failedReparseSummary = latestParseSummary?.status === "failed" && latestParseSummary.id !== detail.activeParseRunId
+      ? latestParseSummary
+      : null;
+    const visibleParseSummary = inFlightParseSummary ?? failedReparseSummary ?? activeParseSummary;
+    const nextParseStatus: DocumentParseStatus = inFlightParseSummary
+      ? inFlightParseSummary.status
+      : failedReparseSummary
+        ? "failed"
+        : detail.activeParseRun
+          ? "completed"
+          : detail.activeParseRunId
+            ? "failed"
+            : "not-started";
     setActiveDocument(detail);
+    activeParseRunIdRef.current = inFlightParseSummary?.id ?? detail.activeParseRunId;
     setParseResult(detail.activeParseRun);
-    setParseStatus(detail.activeParseRunId ? "completed" : "not-started");
+    setParseStatus(nextParseStatus);
+    setParseError(visibleParseSummary?.error
+      ? new DocumentApiError(visibleParseSummary.error.code, visibleParseSummary.error.message)
+      : null);
     setChunkRun(activeChunk ? { ...activeChunk, isStale: !chunkMatchesLineage } : null);
     setEmbeddingRun(activeEmbedding ? { ...activeEmbedding, isStale: !embeddingMatchesLineage } : null);
     setExperimentHistory(currentExperiments);
@@ -230,11 +248,70 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setEmbeddingStatus(!activeChunk ? "locked" : !activeEmbedding ? "ready" : embeddingMatchesLineage ? "completed" : "stale");
     setExperimentStatus(embeddingMatchesLineage ? "ready" : "locked");
     setEvaluationStatus(embeddingMatchesLineage && datasets.length > 0 ? "ready" : "locked");
+    return { parseStatus: nextParseStatus, parseRunId: inFlightParseSummary?.id ?? null };
   }, []);
+
+  const resumeParseRun = useCallback(async (documentId: string, parseRunId: string, expectedRunId: number) => {
+    const controller = replaceController("parse-resume");
+    try {
+      const result = await waitForParseRun(
+        parseRunId,
+        controller.signal,
+        documentId,
+        (run) => applyParseRunStatus(run, expectedRunId),
+      );
+      if (runIdRef.current !== expectedRunId || activeParseRunIdRef.current !== parseRunId) return;
+      setParseResult(result);
+      setParseStatus("completed");
+      await loadDocumentRelatedData(documentId, controller.signal);
+      if (runIdRef.current !== expectedRunId) return;
+      addActivity("parseCompleted");
+    } catch (error) {
+      if (runIdRef.current !== expectedRunId || (error instanceof DOMException && error.name === "AbortError")) return;
+      const apiError = asApiError(error, "The persisted document could not be parsed.");
+      setParseError(apiError);
+      if (apiError.code !== "parse_poll_timeout") {
+        setParseStatus("failed");
+        addActivity("parseFailed", apiError.code);
+      }
+    } finally {
+      if (runIdRef.current === expectedRunId) controllersRef.current.delete("parse-resume");
+    }
+  }, [addActivity, applyParseRunStatus, loadDocumentRelatedData, replaceController]);
+
+  const refreshPersistence = useCallback(async () => {
+    const controller = replaceController("bootstrap");
+    setPersistenceStatus("checking");
+    setPersistenceError(null);
+    try {
+      const [nextCapabilities, nextDocuments] = await Promise.all([
+        getCapabilities(controller.signal),
+        listDocuments(controller.signal),
+      ]);
+      setCapabilities(nextCapabilities);
+      setDocuments(nextDocuments);
+
+      const documentId = activeDocument?.id;
+      if (documentId && nextDocuments.some((document) => document.id === documentId)) {
+        const loaded = await loadDocumentRelatedData(documentId, controller.signal);
+        if (!parseInFlightRef.current && (loaded.parseStatus === "queued" || loaded.parseStatus === "running") && loaded.parseRunId) {
+          void resumeParseRun(documentId, loaded.parseRunId, runIdRef.current);
+        }
+      }
+      setPersistenceStatus("available");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setCapabilities(null);
+      setPersistenceError(asApiError(error, "Persistent pipeline data could not be loaded."));
+      setPersistenceStatus("unavailable");
+    }
+  }, [activeDocument, loadDocumentRelatedData, replaceController, resumeParseRun]);
 
   const selectPersistedDocument = useCallback(async (documentId: string) => {
     const controller = replaceController("document");
     controllersRef.current.get("parse")?.abort();
+    controllersRef.current.get("parse-resume")?.abort();
+    parseInFlightRef.current = false;
     runIdRef.current += 1;
     setSelectedFile(null);
     setFileError(null);
@@ -243,15 +320,18 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setParseStatus("not-started");
     resetDownstream();
     try {
-      await loadDocumentRelatedData(documentId, controller.signal);
+      const loaded = await loadDocumentRelatedData(documentId, controller.signal);
       rememberActiveDocument(documentId);
       setPersistenceStatus("available");
+      if ((loaded.parseStatus === "queued" || loaded.parseStatus === "running") && loaded.parseRunId) {
+        void resumeParseRun(documentId, loaded.parseRunId, runIdRef.current);
+      }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setPersistenceError(asApiError(error, "The selected document could not be loaded."));
       setPersistenceStatus("unavailable");
     }
-  }, [loadDocumentRelatedData, replaceController, resetDownstream]);
+  }, [loadDocumentRelatedData, replaceController, resetDownstream, resumeParseRun]);
 
   useEffect(() => {
     const controller = replaceController("bootstrap");
@@ -266,7 +346,10 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
           // Browser storage kapalıysa kalıcı backend verisi yine kullanılabilir.
         }
         if (documentId && nextDocuments.some((document) => document.id === documentId)) {
-          await loadDocumentRelatedData(documentId, controller.signal);
+          const loaded = await loadDocumentRelatedData(documentId, controller.signal);
+          if ((loaded.parseStatus === "queued" || loaded.parseStatus === "running") && loaded.parseRunId) {
+            void resumeParseRun(documentId, loaded.parseRunId, runIdRef.current);
+          }
         } else if (documentId) {
           rememberActiveDocument(null);
         }
@@ -279,7 +362,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         setPersistenceStatus("unavailable");
       });
     return () => controller.abort();
-  }, [loadDocumentRelatedData, replaceController]);
+  }, [loadDocumentRelatedData, replaceController, resumeParseRun]);
 
   const selectFile = useCallback((file: File | undefined) => {
     if (!file) return;
@@ -292,6 +375,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (key !== "bootstrap") controller.abort();
     });
     runIdRef.current += 1;
+    parseInFlightRef.current = false;
+    activeParseRunIdRef.current = null;
     setSelectedFile(file);
     setActiveDocument(null);
     rememberActiveDocument(null);
@@ -309,6 +394,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (key !== "bootstrap") controller.abort();
     });
     runIdRef.current += 1;
+    parseInFlightRef.current = false;
+    activeParseRunIdRef.current = null;
     setSelectedFile(null);
     setActiveDocument(null);
     rememberActiveDocument(null);
@@ -321,10 +408,12 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   }, [resetDownstream]);
 
   const parseSelectedFile = useCallback(async () => {
-    if (!selectedFile || parseStatus === "processing") return;
+    if (!selectedFile || parseInFlightRef.current || parseStatus === "queued" || parseStatus === "running") return;
     const currentRunId = runIdRef.current;
     const controller = replaceController("parse");
-    setParseStatus("processing");
+    parseInFlightRef.current = true;
+    activeParseRunIdRef.current = null;
+    setParseStatus("queued");
     setParseError(null);
     setChunkRun((run) => staleRun(run));
     setEmbeddingRun((run) => staleRun(run));
@@ -333,10 +422,15 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     addActivity("parseRequested");
     addActivity("parsing");
     try {
-      const result = await parseAndPersistDocument(selectedFile, controller.signal);
+      const result = await parseAndPersistDocument(
+        selectedFile,
+        controller.signal,
+        (run) => applyParseRunStatus(run, currentRunId),
+      );
       if (runIdRef.current !== currentRunId) return;
       setParseResult(result);
       setParseStatus("completed");
+      activeParseRunIdRef.current = result.parseRunId;
       setChunkStatus(result.documentId && result.parseRunId ? "ready" : "locked");
       addActivity("parseCompleted");
       if (result.documentId && result.parseRunId) {
@@ -362,29 +456,41 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (runIdRef.current !== currentRunId || (error instanceof DOMException && error.name === "AbortError")) return;
       const apiError = asApiError(error, "The document could not be parsed.");
       setParseError(apiError);
-      setParseStatus("error");
-      addActivity("parseFailed", apiError.code);
+      if (apiError.code !== "parse_poll_timeout") {
+        setParseStatus("failed");
+        addActivity("parseFailed", apiError.code);
+      }
     } finally {
-      if (runIdRef.current === currentRunId) controllersRef.current.delete("parse");
+      if (runIdRef.current === currentRunId) {
+        parseInFlightRef.current = false;
+        controllersRef.current.delete("parse");
+      }
     }
-  }, [addActivity, parseStatus, replaceController, selectedFile]);
+  }, [addActivity, applyParseRunStatus, parseStatus, replaceController, selectedFile]);
 
   const reparseActiveDocument = useCallback(async () => {
     const documentId = activeDocument?.id;
-    if (!documentId || parseStatus === "processing") return;
+    if (!documentId || parseInFlightRef.current || parseStatus === "queued" || parseStatus === "running") return;
     const currentRunId = runIdRef.current;
     controllersRef.current.forEach((controller, key) => {
       if (key !== "bootstrap") controller.abort();
     });
     const controller = replaceController("reparse");
-    setParseStatus("processing");
+    parseInFlightRef.current = true;
+    activeParseRunIdRef.current = null;
+    setParseStatus("queued");
     setParseError(null);
     addActivity("parseRequested");
     addActivity("parsing");
     try {
-      const result = await reparsePersistedDocument(documentId, controller.signal);
+      const result = await reparsePersistedDocument(
+        documentId,
+        controller.signal,
+        (run) => applyParseRunStatus(run, currentRunId),
+      );
       if (runIdRef.current !== currentRunId) return;
       setParseResult(result);
+      activeParseRunIdRef.current = result.parseRunId;
       await loadDocumentRelatedData(documentId, controller.signal);
       if (runIdRef.current !== currentRunId) return;
       setParseStatus("completed");
@@ -402,12 +508,17 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (runIdRef.current !== currentRunId || (error instanceof DOMException && error.name === "AbortError")) return;
       const apiError = asApiError(error, "The persisted document could not be reparsed.");
       setParseError(apiError);
-      setParseStatus("error");
-      addActivity("parseFailed", apiError.code);
+      if (apiError.code !== "parse_poll_timeout") {
+        setParseStatus("failed");
+        addActivity("parseFailed", apiError.code);
+      }
     } finally {
-      if (runIdRef.current === currentRunId) controllersRef.current.delete("reparse");
+      if (runIdRef.current === currentRunId) {
+        parseInFlightRef.current = false;
+        controllersRef.current.delete("reparse");
+      }
     }
-  }, [activeDocument, addActivity, loadDocumentRelatedData, parseStatus, replaceController]);
+  }, [activeDocument, addActivity, applyParseRunStatus, loadDocumentRelatedData, parseStatus, replaceController]);
 
   const runChunking = useCallback(async (strategy: ChunkStrategy, config: ChunkConfig) => {
     const documentId = activeDocument?.id;

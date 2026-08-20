@@ -35,8 +35,16 @@ Uygulama sahte doküman, chunk, skor, cevap veya evaluation metriği göstermez.
 Backend `backend/` altında FastAPI, Docling, SQLAlchemy 2, psycopg 3 ve Alembic kullanır. Kurulum, environment ve migration adımları için [backend/README.md](backend/README.md) dosyasına bakın.
 
 ```text
-PDF → Storage → Parse → Chunk → Embed → Retrieve → Rerank → Context → Generate → Evaluate
+PDF → Supabase Storage → HTTP 202/queued → Modal API → Modal worker/Docling
+    → persisted parse → Chunk → Embed → Retrieve → Rerank → Context → Generate → Evaluate
 ```
+
+Parse artık uzun süren bir synchronous HTTP isteği değildir. `POST /documents/parse`
+dosyayı Storage'a alıp `202` ve `parseRunId` döndürür; frontend parse run'ı
+`queued → running → completed/failed` durumlarıyla izler. Geçici ağ kesintisi
+polling'i bozmaz ve worker'ın iç `interrupted` durumu API'de `failed` +
+`error.code=parse_interrupted` olarak görünür. Başarısız veya tamamlanmamış bir
+run için sahte özet, ilerleme yüzdesi veya downstream veri gösterilmez.
 
 Backend virtual environment ve `.env` hazırlandıktan sonra proje kökünde tek komut yeterlidir:
 
@@ -46,7 +54,33 @@ npm run dev
 
 Bu komut Next.js'i `http://localhost:3000`, FastAPI'yi `http://127.0.0.1:8000` üzerinde birlikte başlatır. Yalnız frontend gerektiğinde `npm run dev:frontend` kullanılabilir.
 
-Hosted Supabase → Render → Vercel akışı, environment contract, Free plan sınırları ve full RAG smoke adımları için [deployment dokümantasyonuna](docs/deployment.md) bakın.
+Supabase → Modal → Vercel hedef mimarisi, async parse sözleşmesi, kaynak profili,
+cutover kapıları ve full RAG smoke adımları için
+[deployment dokümantasyonuna](docs/deployment.md) bakın. Render, cutover ve
+production smoke tamamlanana kadar yalnızca rollback güvenlik ağıdır.
+
+## Modal deployment
+
+Production parser, lightweight text-layer heuristic yerine tam
+`DocumentConverter` kullanır. Modal API ASGI katmanı Storage ve veritabanı
+lineage'ını yönetir; Modal worker scale-to-zero profiliyle parse işini yürütür.
+Başlangıç benchmark profili worker için `CPU 2 / 4096 MiB / timeout 900 s`, API
+için yaklaşık `CPU 0.5 / 1024 MiB`'dir. Docling modelleri versioned bir Modal
+Volume'da cache'lenir; cold start'ta tekrar internetten indirilmez.
+
+Migration doğrulanmadan production URL veya cloud kaynağı bu README'de başarılı
+ilan edilmez. Local sözleşme ve semantic smoke için:
+
+```powershell
+npm.cmd run lint
+npm.cmd run typecheck
+npm.cmd test
+npm.cmd run build
+$env:SMOKE_REQUIRE_PARSE = "1"
+$env:SMOKE_REQUIRE_SEMANTIC = "1"
+$env:SMOKE_PDF_PATH = "C:\path\to\karaman-operasyon-raporu.pdf"
+node scripts/smoke.mjs
+```
 
 ## Learning roadmap
 

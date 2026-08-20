@@ -73,17 +73,23 @@ class ParseRun(Base):
     normalized_schema_version: Mapped[str] = mapped_column(
         String(64), nullable=False, default="normalized-v1"
     )
-    structured: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    # Queue kaydı parse tamamlanmadan önce semantic payload taşımaz.
+    structured: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     markdown: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")
+    summary: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
     error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    execution_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    dispatch_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
 

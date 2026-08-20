@@ -45,3 +45,16 @@ export type DocumentParseResponse = {
   markdown: string;
   summary: ParseSummary;
 };
+
+/**
+ * Public parse lifecycle. Database-only states (for example `interrupted`)
+ * are intentionally not part of the browser contract.
+ */
+export type ParseRunStatus = "queued" | "running" | "completed" | "failed";
+
+export type ParseJobAcceptedResponse = {
+  documentId: string;
+  parseRunId: string;
+  status: Exclude<ParseRunStatus, "completed" | "failed">;
+  runMetadata?: Record<string, unknown> | null;
+};

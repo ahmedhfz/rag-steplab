@@ -1,6 +1,6 @@
-import type { DocumentParseResponse } from "@/lib/document-parse-types";
+import type { DocumentParseResponse, ParseRunStatus } from "@/lib/document-parse-types";
 
-export type RunStatus = "running" | "completed" | "failed" | "interrupted";
+export type RunStatus = ParseRunStatus;
 export type ChunkStrategy = "fixed_token" | "recursive_token" | "structure_aware";
 export type RetrievalMode = "dense" | "keyword" | "hybrid";
 export type ExperimentTargetStage = "retrieval" | "reranking" | "context" | "generation";
@@ -8,6 +8,15 @@ export type ExperimentTargetStage = "retrieval" | "reranking" | "context" | "gen
 export type ApiProblem = {
   code: string;
   message: string;
+};
+
+export type ParseRun = {
+  id: string;
+  documentId: string;
+  status: ParseRunStatus;
+  result: PersistedParseResponse | null;
+  error: ApiProblem | null;
+  runMetadata: Record<string, unknown> | null;
 };
 
 export type RunTiming = {

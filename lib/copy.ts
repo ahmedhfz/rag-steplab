@@ -54,6 +54,8 @@ export type AppCopy = {
     parseDocument: string;
     reparseDocument: string;
     parseReady: string;
+    parseQueued: string;
+    parseRunning: string;
     parseProcessing: string;
     parseCompleted: string;
     parseFailed: string;
@@ -62,6 +64,8 @@ export type AppCopy = {
     parseReasonPersisted: string;
     parseReasonReady: string;
     parseReasonProcessing: string;
+    parseReasonQueued: string;
+    parseReasonRunning: string;
     parseReasonCompleted: string;
     parseReasonError: string;
     parseSummary: string;
@@ -74,6 +78,8 @@ export type AppCopy = {
     backendUnavailable: string;
     invalidResponse: string;
     doclingError: string;
+    parseInterrupted: string;
+    parsePollTimeout: string;
     unknownParseError: string;
     invalidPdf: string;
     fileTooLarge: string;
@@ -236,10 +242,14 @@ export const UI_COPY = {
       parseDocument: "Parse Document",
       reparseDocument: "Reparse Document",
       parseReady: "Ready to send this PDF to FastAPI and Docling.",
+      parseQueued: "Parse request queued. The worker will start when capacity is available.",
+      parseRunning: "Docling is parsing the PDF. This can take a moment.",
       parseProcessing: "Docling is parsing the PDF. This can take a moment.",
       parseCompleted: "Parsing completed. The persisted parse run is ready for chunking.",
       parseFailed: "Parsing failed.",
       parseReasonReady: "Click Parse Document to start the real FastAPI → Docling request.",
+      parseReasonQueued: "The parse request is queued for the Docling worker.",
+      parseReasonRunning: "The PDF is being parsed by the Docling worker.",
       parseReasonProcessing: "The PDF is being parsed by Docling.",
       parseReasonCompleted: "Parse completed. You can inspect the returned content or run parsing again.",
       parseReasonError: "The PDF was sent, but the parser returned an error.",
@@ -262,6 +272,8 @@ export const UI_COPY = {
       backendUnavailable: "The RAG backend could not be reached. Start FastAPI on port 8000 and try again.",
       invalidResponse: "The backend returned an invalid parse result.",
       doclingError: "Docling could not parse this PDF. Try a different or non-corrupted PDF.",
+      parseInterrupted: "The parse worker stopped before the document was completed. Try parsing again.",
+      parsePollTimeout: "The parse may still be running. Browser polling stopped after 15 minutes; refresh the page to resume status checks.",
       unknownParseError: "The document could not be parsed.",
       invalidPdf: "Only PDF files are supported.",
       fileTooLarge: "The PDF must be 50 MB or smaller.",
@@ -423,10 +435,14 @@ export const UI_COPY = {
       parseDocument: "Dokümanı Ayrıştır",
       reparseDocument: "Dokümanı Yeniden Ayrıştır",
       parseReady: "Bu PDF FastAPI ve Docling'e gönderilmeye hazır.",
+      parseQueued: "Ayrıştırma isteği sıraya alındı. Worker uygun olduğunda başlayacak.",
+      parseRunning: "Docling PDF'i ayrıştırıyor. Bu işlem biraz sürebilir.",
       parseProcessing: "Docling PDF'i ayrıştırıyor. Bu işlem biraz sürebilir.",
       parseCompleted: "Ayrıştırma tamamlandı. Kalıcı parse run parçalama için hazır.",
       parseFailed: "Ayrıştırma başarısız.",
       parseReasonReady: "Gerçek FastAPI → Docling isteğini başlatmak için Dokümanı Ayrıştır'a tıklayın.",
+      parseReasonQueued: "Ayrıştırma isteği Docling worker kuyruğunda bekliyor.",
+      parseReasonRunning: "PDF Docling worker tarafından ayrıştırılıyor.",
       parseReasonProcessing: "PDF Docling tarafından ayrıştırılıyor.",
       parseReasonCompleted: "Ayrıştırma tamamlandı. Dönen içeriği inceleyebilir veya yeniden çalıştırabilirsiniz.",
       parseReasonError: "PDF gönderildi ancak ayrıştırıcı hata döndürdü.",
@@ -449,6 +465,8 @@ export const UI_COPY = {
       backendUnavailable: "RAG backend'ine ulaşılamadı. FastAPI'yi 8000 portunda başlatıp tekrar deneyin.",
       invalidResponse: "Backend geçersiz bir ayrıştırma sonucu döndürdü.",
       doclingError: "Docling bu PDF'i ayrıştıramadı. Farklı veya bozulmamış bir PDF deneyin.",
+      parseInterrupted: "Ayrıştırma worker'ı doküman tamamlanmadan durdu. Tekrar ayrıştırmayı deneyin.",
+      parsePollTimeout: "Ayrıştırma hâlâ sürüyor olabilir. Tarayıcı takibi 15 dakika sonra durdu; durum takibini sürdürmek için sayfayı yenileyin.",
       unknownParseError: "Doküman ayrıştırılamadı.",
       invalidPdf: "Yalnız PDF dosyaları desteklenir.",
       fileTooLarge: "PDF 50 MB veya daha küçük olmalıdır.",

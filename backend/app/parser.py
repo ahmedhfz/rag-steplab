@@ -1,14 +1,23 @@
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from statistics import median
 from typing import Any, Iterable
 
-from docling.backend.docling_parse_backend import DoclingParseDocumentBackend
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.document import InputDocument
+try:  # Docling is installed in the worker image, not required for API imports.
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+except ImportError:  # pragma: no cover - exercised in lightweight local tooling
+    InputFormat = None  # type: ignore[assignment,misc]
+    PdfPipelineOptions = None  # type: ignore[assignment,misc]
+    DocumentConverter = None  # type: ignore[assignment,misc]
+    PdfFormatOption = None  # type: ignore[assignment,misc]
 
+from .config import get_settings
 from .errors import ApiProblem
 from .schemas import (
     DocumentMetadata,
@@ -40,49 +49,89 @@ def _safe_unload(resource: Any | None) -> None:
         pass
 
 
+_converter_cache: dict[str, Any] = {}
+
+
+def _converter_cache_key(artifacts_path: Path | None) -> str:
+    return str(artifacts_path.resolve()) if artifacts_path is not None else "<default>"
+
+
+def _build_document_converter(artifacts_path: Path | None = None) -> Any:
+    """Create the full semantic Docling PDF converter.
+
+    The API process imports this module, but converter construction is deferred
+    until the Modal worker starts parsing. This prevents model initialization on
+    the small HTTP containers and makes the worker's cold/warm behavior explicit.
+    """
+
+    if DocumentConverter is None or InputFormat is None or PdfFormatOption is None:
+        raise ApiProblem(503, "docling_unavailable", "The full Docling parser is not available.")
+
+    pipeline_options: Any | None = None
+    if PdfPipelineOptions is not None:
+        kwargs: dict[str, Any] = {}
+        if artifacts_path is not None:
+            kwargs["artifacts_path"] = str(artifacts_path)
+        try:
+            pipeline_options = PdfPipelineOptions(**kwargs)
+        except TypeError:
+            # Keep compatibility with a pinned Docling patch release that may
+            # expose artifacts_path on the converter settings instead.
+            pipeline_options = PdfPipelineOptions()
+            if artifacts_path is not None and hasattr(pipeline_options, "artifacts_path"):
+                pipeline_options.artifacts_path = str(artifacts_path)
+
+    if pipeline_options is None:
+        return DocumentConverter()
+    return DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
+        }
+    )
+
+
+def _get_document_converter(artifacts_path: Path | None = None) -> Any:
+    cache_key = _converter_cache_key(artifacts_path)
+    converter = _converter_cache.get(cache_key)
+    if converter is None:
+        converter = _build_document_converter(artifacts_path)
+        _converter_cache[cache_key] = converter
+    return converter
+
+
+def clear_document_converter_cache() -> None:
+    _converter_cache.clear()
+
+
 def parse_pdf_file(path: Path, file_name: str, size_bytes: int) -> ParseResponse:
-    backend: Any | None = None
     try:
-        input_document = InputDocument(path, InputFormat.PDF, DoclingParseDocumentBackend)
-        # InputDocument backend'i public property olarak sunmuyor; pinli Docling API'sinin
-        # oluşturduğu tek backend örneğini kullanarak PDF'i ikinci kez açmıyoruz.
-        backend = getattr(input_document, "_backend", None)
-        if not input_document.valid or backend is None or not backend.is_valid():
-            raise ApiProblem(422, "docling_error", "Docling could not parse this PDF.")
-
-        page_count = int(backend.page_count())
-        pages: list[ParsedPage] = []
-        elements: list[ParsedElement] = []
-        for page_index in range(page_count):
-            page_backend = backend.load_page(page_index)
-            try:
-                lines = _extract_text_lines(page_backend.get_text_cells())
-            finally:
-                _safe_unload(page_backend)
-
-            page_number = page_index + 1
-            page_elements = _build_page_elements(lines, page_number, len(elements) + 1)
-            pages.append(ParsedPage(page_number=page_number, elements=page_elements))
-            elements.extend(page_elements)
-
-        if not elements:
+        settings = get_settings()
+        configured_artifacts = settings.docling_artifacts_path or os.getenv("DOCLING_ARTIFACTS_PATH")
+        artifacts_path = Path(configured_artifacts).expanduser() if configured_artifacts else None
+        converter_warm = _converter_cache_key(artifacts_path) in _converter_cache
+        converter = _get_document_converter(artifacts_path)
+        conversion_result = converter.convert(path)
+        document = getattr(conversion_result, "document", None)
+        if document is None:
             raise ApiProblem(
                 422,
-                "docling_text_layer_missing",
-                "Docling found no readable PDF text layer. OCR is unavailable on the Free deployment.",
+                "docling_error",
+                "Docling could not produce a semantic document.",
             )
 
-        structured = StructuredContent(pages=pages, elements=elements)
-        markdown = _to_markdown(pages)
+        # The existing normalizer is the canonical API/storage boundary. Do not
+        # expose Docling's internal document graph to the frontend or database.
+        structured = build_structured_content(document)
+        counts = Counter(element.type for element in structured.elements)
+        page_count = len(structured.pages)
+        if not structured.elements:
+            raise ApiProblem(422, "docling_content_missing", "Docling produced no readable semantic content.")
+        markdown = _to_markdown(structured.pages)
     except ApiProblem:
         raise
     except Exception as exc:  # Docling exposes several version-specific exception types.
         raise ApiProblem(422, "docling_error", "Docling could not parse this PDF.") from exc
-    finally:
-        _safe_unload(backend)
 
-    counts = Counter(element.type for element in structured.elements)
-    page_count = len(structured.pages)
     summary = ParseSummary(
         page_count=page_count,
         heading_count=counts["heading"],
@@ -101,7 +150,22 @@ def parse_pdf_file(path: Path, file_name: str, size_bytes: int) -> ParseResponse
         structured=structured,
         markdown=markdown,
         summary=summary,
+        run_metadata={
+            "parser": "docling",
+            "parserVersion": settings.docling_parser_version,
+            "doclingVersion": _docling_version(),
+            "normalizedSchemaVersion": "normalized-v1",
+            "mode": "full_document_converter",
+            "workerStartMode": "warm" if converter_warm else "cold",
+        },
     )
+
+
+def _docling_version() -> str:
+    try:
+        return version("docling")
+    except PackageNotFoundError:  # pragma: no cover - guarded by converter availability
+        return "unknown"
 
 
 def _extract_text_lines(cells: Iterable[Any]) -> list[_TextLine]:
@@ -227,6 +291,10 @@ def build_structured_content(document: Any) -> StructuredContent:
             continue
 
         page_numbers = _page_numbers(item)
+        # A semantic item without page provenance cannot be shown, cited, or
+        # chunked safely. Dropping it is preferable to persisting an orphan.
+        if not page_numbers:
+            continue
         if element_type == "table":
             table = _table_output(item, document)
             text = table.markdown or "Table"

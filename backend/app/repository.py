@@ -12,15 +12,18 @@ import hashlib
 import json
 import math
 import re
+import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 
 from .chunking import CHUNKER_VERSION, TOKENIZER_VERSION
 from .config import get_settings
 from .db import session_scope
+from .errors import ApiProblem
 from .models import (
     Base,
     Chunk,
@@ -36,6 +39,7 @@ from .models import (
 from .schemas import (
     ChunkItem,
     ChunkRunRequest,
+    ApiError,
     DocumentDetail,
     DocumentListItem,
     EvaluationCase,
@@ -78,9 +82,16 @@ def _record_timing(row: dict[str, Any]) -> RunTiming:
 
 
 def _run_summary(row: dict[str, Any], *, stale: bool = False) -> RunSummary:
+    status = row.get("status", "completed")
+    error_code = row.get("error_code")
+    error_message = row.get("error_message")
+    if status == "interrupted":
+        status = "failed"
+        error_code = "parse_interrupted"
+        error_message = error_message or "The run was interrupted before completion."
     return RunSummary(
         id=row["id"],
-        status=row.get("status", "completed"),
+        status=status,
         is_stale=stale,
         historical_lineage=bool(row.get("historical_lineage", False)),
         upstream={
@@ -91,6 +102,7 @@ def _run_summary(row: dict[str, Any], *, stale: bool = False) -> RunSummary:
         },
         config=copy.deepcopy(row.get("config", {})),
         timing=_record_timing(row),
+        error=ApiError(code=error_code, message=error_message) if error_code and error_message else None,
     )
 
 
@@ -103,6 +115,58 @@ class Repository:
         raise NotImplementedError
 
     def save_parse(self, document_id: str, parsed: ParseResponse, *, run_id: str | None = None) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def create_parse_run(
+        self,
+        document_id: str,
+        *,
+        parser_version: str = "unknown",
+        config: dict[str, Any] | None = None,
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def queue_parse_run(
+        self,
+        document_id: str,
+        *,
+        parser_version: str = "unknown",
+        config: dict[str, Any] | None = None,
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self.create_parse_run(document_id, parser_version=parser_version, config=config, run_id=run_id)
+
+    def set_parse_dispatch(self, run_id: str, dispatch_id: str | None) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def find_inflight_parse(self, document_id: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def mark_parse_running(self, run_id: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def complete_parse(
+        self,
+        run_id: str,
+        parsed: ParseResponse,
+        *,
+        parser_version: str = "unknown",
+        execution_metadata: dict[str, Any] | None = None,
+        duration_ms: int | None = None,
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def fail_parse(
+        self,
+        run_id: str,
+        code: str,
+        message: str,
+        *,
+        status: str = "failed",
+        execution_metadata: dict[str, Any] | None = None,
+        duration_ms: int | None = None,
+    ) -> dict[str, Any] | None:
         raise NotImplementedError
 
     def get_document_row(self, document_id: str) -> dict[str, Any] | None:
@@ -193,6 +257,7 @@ class InMemoryRepository(Repository):
     persistent = False
 
     def __init__(self) -> None:
+        self._lock = threading.RLock()
         self.documents: dict[str, dict[str, Any]] = {}
         self.parses: dict[str, dict[str, Any]] = {}
         self.chunk_runs: dict[str, dict[str, Any]] = {}
@@ -221,34 +286,137 @@ class InMemoryRepository(Repository):
         return copy.deepcopy(row)
 
     def save_parse(self, document_id, parsed, *, run_id=None):
+        queued = self.create_parse_run(document_id, parser_version="unknown", run_id=run_id)
+        if queued is None:
+            return None
+        return self.complete_parse(queued["id"], parsed, parser_version="unknown", duration_ms=0)
+
+    def create_parse_run(self, document_id, *, parser_version="unknown", config=None, run_id=None):
         document = self.documents.get(document_id)
         if document is None:
             return None
-        identifier = run_id or new_id()
-        payload = parsed.model_dump(mode="json", by_alias=False)
-        row = {
-            "id": identifier,
-            "document_id": document_id,
-            "parser_name": "docling",
-            "parser_version": "unknown",
-            "normalized_schema_version": "normalized-v1",
-            "structured": payload["structured"],
-            "markdown": payload["markdown"],
-            "summary": payload["summary"],
-            "status": "completed",
-            "config": {},
-            "started_at": now_utc(),
-            "completed_at": now_utc(),
-            "duration_ms": 0,
-            "created_at": now_utc(),
-        }
-        self.parses[identifier] = row
-        document["page_count"] = payload["document"]["page_count"]
-        document["active_parse_run_id"] = identifier
-        document["active_chunk_run_id"] = None
-        document["active_embedding_run_id"] = None
-        document["updated_at"] = now_utc()
-        return copy.deepcopy(row)
+        with self._lock:
+            existing = self.find_inflight_parse(document_id)
+            if existing is not None:
+                raise ApiProblem(409, "parse_already_in_progress", "A parse run is already in progress for this document.")
+            identifier = run_id or new_id()
+            now = now_utc()
+            row = {
+                "id": identifier,
+                "document_id": document_id,
+                "parser_name": "docling",
+                "parser_version": parser_version,
+                "normalized_schema_version": "normalized-v1",
+                "structured": None,
+                "markdown": "",
+                "summary": None,
+                "status": "queued",
+                "error_code": None,
+                "error_message": None,
+                "config": copy.deepcopy(config or {}),
+                "execution_metadata": {},
+                "dispatch_id": None,
+                "started_at": None,
+                "completed_at": None,
+                "duration_ms": None,
+                "created_at": now,
+                "updated_at": now,
+            }
+            self.parses[identifier] = row
+            return copy.deepcopy(row)
+
+    def find_inflight_parse(self, document_id):
+        with self._lock:
+            rows = [
+                row
+                for row in self.parses.values()
+                if row["document_id"] == document_id and row.get("status") in {"queued", "running"}
+            ]
+            rows.sort(key=lambda row: row.get("created_at") or now_utc(), reverse=True)
+            return copy.deepcopy(rows[0]) if rows else None
+
+    def set_parse_dispatch(self, run_id, dispatch_id):
+        with self._lock:
+            row = self.parses.get(run_id)
+            if row is None:
+                return None
+            row["dispatch_id"] = dispatch_id
+            row["updated_at"] = now_utc()
+            return copy.deepcopy(row)
+
+    def mark_parse_running(self, run_id):
+        with self._lock:
+            row = self.parses.get(run_id)
+            if row is None:
+                return None
+            if row["status"] == "queued":
+                row["status"] = "running"
+                row["started_at"] = row.get("started_at") or now_utc()
+                row["updated_at"] = now_utc()
+            return copy.deepcopy(row)
+
+    def complete_parse(self, run_id, parsed, *, parser_version="unknown", execution_metadata=None, duration_ms=None):
+        with self._lock:
+            row = self.parses.get(run_id)
+            if row is None:
+                return None
+            if row["status"] == "completed":
+                return copy.deepcopy(row)
+            if row["status"] in {"failed", "interrupted"}:
+                return copy.deepcopy(row)
+            if parsed.structured is None or parsed.summary is None:
+                raise ValueError("completed parse payload is missing normalized content")
+            document = self.documents.get(row["document_id"])
+            if document is None:
+                return None
+            payload = parsed.model_dump(mode="json", by_alias=False)
+            completed_at = now_utc()
+            row.update(
+                {
+                    "parser_version": parser_version,
+                    "structured": payload["structured"],
+                    "markdown": payload["markdown"] or "",
+                    "summary": payload["summary"],
+                    "status": "completed",
+                    "error_code": None,
+                    "error_message": None,
+                    "execution_metadata": copy.deepcopy(execution_metadata or parsed.run_metadata or {}),
+                    "started_at": row.get("started_at") or completed_at,
+                    "completed_at": completed_at,
+                    "duration_ms": duration_ms if duration_ms is not None else 0,
+                    "updated_at": completed_at,
+                }
+            )
+            document["page_count"] = payload["document"]["page_count"]
+            document["active_parse_run_id"] = run_id
+            document["active_chunk_run_id"] = None
+            document["active_embedding_run_id"] = None
+            document["updated_at"] = completed_at
+            return copy.deepcopy(row)
+
+    def fail_parse(self, run_id, code, message, *, status="failed", execution_metadata=None, duration_ms=None):
+        if status not in {"failed", "interrupted"}:
+            raise ValueError("parse failure status must be failed or interrupted")
+        with self._lock:
+            row = self.parses.get(run_id)
+            if row is None:
+                return None
+            if row["status"] in {"completed", "failed", "interrupted"}:
+                return copy.deepcopy(row)
+            completed_at = now_utc()
+            row.update(
+                {
+                    "status": status,
+                    "error_code": code,
+                    "error_message": message,
+                    "execution_metadata": copy.deepcopy(execution_metadata or row.get("execution_metadata") or {}),
+                    "started_at": row.get("started_at"),
+                    "completed_at": completed_at,
+                    "duration_ms": duration_ms,
+                    "updated_at": completed_at,
+                }
+            )
+            return copy.deepcopy(row)
 
     def get_document_row(self, document_id):
         return copy.deepcopy(self.documents.get(document_id))
@@ -272,7 +440,9 @@ class InMemoryRepository(Repository):
         return copy.deepcopy(self.parses.get(run_id))
 
     def list_parse_rows(self, document_id):
-        return copy.deepcopy([row for row in self.parses.values() if row["document_id"] == document_id])
+        rows = [row for row in self.parses.values() if row["document_id"] == document_id]
+        rows.sort(key=lambda row: row.get("created_at") or now_utc(), reverse=True)
+        return copy.deepcopy(rows)
 
     def save_chunk_run(self, document_id, parse_run_id, request, drafts):
         identifier = new_id()
@@ -486,35 +656,133 @@ class SqlAlchemyRepository(Repository):
         }
 
     def save_parse(self, document_id, parsed, *, run_id=None):
-        payload = parsed.model_dump(mode="json", by_alias=False)
+        queued = self.create_parse_run(document_id, parser_version="unknown", run_id=run_id)
+        if queued is None:
+            return None
+        return self.complete_parse(queued["id"], parsed, parser_version="unknown", duration_ms=0)
+
+    def create_parse_run(self, document_id, *, parser_version="unknown", config=None, run_id=None):
         identifier = run_id or new_id()
+        try:
+            with session_scope() as session:
+                document = session.get(Document, document_id)
+                if document is None:
+                    return None
+                existing = session.scalars(
+                    select(ParseRun)
+                    .where(ParseRun.document_id == document_id, ParseRun.status.in_(["queued", "running"]))
+                    .order_by(ParseRun.created_at.desc())
+                    .with_for_update()
+                ).first()
+                if existing is not None:
+                    raise ApiProblem(
+                        409,
+                        "parse_already_in_progress",
+                        "A parse run is already in progress for this document.",
+                    )
+                row = ParseRun(
+                    id=identifier,
+                    document_id=document_id,
+                    parser_name="docling",
+                    parser_version=parser_version,
+                    normalized_schema_version="normalized-v1",
+                    structured=None,
+                    markdown="",
+                    summary=None,
+                    status="queued",
+                    execution_metadata={},
+                    started_at=None,
+                    completed_at=None,
+                    duration_ms=None,
+                )
+                session.add(row)
+                session.flush()
+                return self._parse_dict(row)
+        except IntegrityError as exc:
+            raise ApiProblem(
+                409,
+                "parse_already_in_progress",
+                "A parse run is already in progress for this document.",
+            ) from exc
+
+    def find_inflight_parse(self, document_id):
         with session_scope() as session:
-            document = session.get(Document, document_id)
+            row = session.scalars(
+                select(ParseRun)
+                .where(ParseRun.document_id == document_id, ParseRun.status.in_(["queued", "running"]))
+                .order_by(ParseRun.created_at.desc())
+            ).first()
+            return self._parse_dict(row) if row else None
+
+    def set_parse_dispatch(self, run_id, dispatch_id):
+        with session_scope() as session:
+            row = session.get(ParseRun, run_id)
+            if row is None:
+                return None
+            row.dispatch_id = dispatch_id
+            session.flush()
+            return self._parse_dict(row)
+
+    def mark_parse_running(self, run_id):
+        with session_scope() as session:
+            row = session.get(ParseRun, run_id)
+            if row is None:
+                return None
+            if row.status == "queued":
+                row.status = "running"
+                row.started_at = row.started_at or now_utc()
+                session.flush()
+            return self._parse_dict(row)
+
+    def complete_parse(self, run_id, parsed, *, parser_version="unknown", execution_metadata=None, duration_ms=None):
+        payload = parsed.model_dump(mode="json", by_alias=False)
+        if payload.get("structured") is None or payload.get("summary") is None:
+            raise ValueError("completed parse payload is missing normalized content")
+        with session_scope() as session:
+            row = session.get(ParseRun, run_id)
+            if row is None:
+                return None
+            if row.status == "completed" or row.status in {"failed", "interrupted"}:
+                return self._parse_dict(row)
+            document = session.get(Document, row.document_id)
             if document is None:
                 return None
-            row = ParseRun(
-                id=identifier,
-                document_id=document_id,
-                parser_name="docling",
-                parser_version="unknown",
-                normalized_schema_version="normalized-v1",
-                structured=payload["structured"],
-                markdown=payload["markdown"],
-                summary=payload["summary"],
-                status="completed",
-                started_at=now_utc(),
-                completed_at=now_utc(),
-                duration_ms=0,
-            )
-            session.add(row)
-            # Active pointers have a real FK back to the run table. Flush the
-            # run first because SQLAlchemy cannot infer ordering across this
-            # intentional circular lineage without ORM relationships.
-            session.flush()
+            completed_at = now_utc()
+            row.parser_version = parser_version
+            row.structured = payload["structured"]
+            row.markdown = payload.get("markdown") or ""
+            row.summary = payload["summary"]
+            row.status = "completed"
+            row.error_code = None
+            row.error_message = None
+            row.execution_metadata = _dump(execution_metadata or parsed.run_metadata or {})
+            row.started_at = row.started_at or completed_at
+            row.completed_at = completed_at
+            row.duration_ms = duration_ms if duration_ms is not None else 0
             document.page_count = payload["document"]["page_count"]
-            document.active_parse_run_id = identifier
+            document.active_parse_run_id = run_id
             document.active_chunk_run_id = None
             document.active_embedding_run_id = None
+            session.flush()
+            return self._parse_dict(row)
+
+    def fail_parse(self, run_id, code, message, *, status="failed", execution_metadata=None, duration_ms=None):
+        if status not in {"failed", "interrupted"}:
+            raise ValueError("parse failure status must be failed or interrupted")
+        with session_scope() as session:
+            row = session.get(ParseRun, run_id)
+            if row is None:
+                return None
+            if row.status in {"completed", "failed", "interrupted"}:
+                return self._parse_dict(row)
+            completed_at = now_utc()
+            row.status = status
+            row.error_code = code
+            row.error_message = message
+            if execution_metadata is not None:
+                row.execution_metadata = _dump(execution_metadata)
+            row.completed_at = completed_at
+            row.duration_ms = duration_ms
             session.flush()
             return self._parse_dict(row)
 
@@ -523,13 +791,22 @@ class SqlAlchemyRepository(Repository):
         return {
             "id": row.id,
             "document_id": row.document_id,
+            "parser_name": row.parser_name,
+            "parser_version": row.parser_version,
+            "normalized_schema_version": row.normalized_schema_version,
             "structured": row.structured,
             "markdown": row.markdown,
             "summary": row.summary,
             "status": row.status,
+            "error_code": row.error_code,
+            "error_message": row.error_message,
+            "execution_metadata": row.execution_metadata or {},
+            "dispatch_id": row.dispatch_id,
             "started_at": row.started_at,
             "completed_at": row.completed_at,
             "duration_ms": row.duration_ms,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
         }
 
     def get_document_row(self, document_id):
