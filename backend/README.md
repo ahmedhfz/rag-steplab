@@ -60,11 +60,38 @@ Backend'i tek başına çalıştırmak için PowerShell:
 cd backend
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.venv\Scripts\python.exe -m alembic -c alembic.ini upgrade head
 .venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
 ```
 
-Environment isimleri repository kökündeki `.env.example` dosyasında tanımlıdır. `rag_lab` şeması, `extensions.vector` ve private `rag-documents` bucket'ı Alembic öncesinde Supabase'te hazır olmalıdır. Secret değerleri source control'a eklenmez.
+Environment isimleri repository kökündeki `.env.example` dosyasında tanımlıdır. Paylaşılan
+Supabase PostgreSQL kullanıldığında `rag_lab` şeması, `extensions.vector` ve
+private `rag-documents` bucket'ı Supabase migration'ları tarafından hazırlanır.
+Secret değerleri source control'a eklenmez.
+
+## Database migrations
+
+Migration authority yalnız Supabase CLI'dır:
+
+```text
+supabase/migrations/*.sql → Supabase CLI → Supabase PostgreSQL
+```
+
+Yeni migration oluşturmak için repository root'unda:
+
+```powershell
+supabase migration new <descriptive_name>
+```
+
+Local Supabase stack ile şema rebuild'i:
+
+```powershell
+supabase start
+supabase db reset --local --no-seed
+```
+
+Uygulamanın local `DATABASE_URL` fallback'i korunur; Supabase CLI local
+stack'i uygulamanın zorunlu runtime dependency'si değildir. Production
+migration'ları yalnız GitHub Actions Supabase CLI job'ı uygular.
 
 Frontend varsayılan olarak `http://127.0.0.1:8000` adresini kullanır. Farklı bir adres için frontend build/dev işleminden önce `NEXT_PUBLIC_API_BASE_URL` tanımlanabilir. Hosted kurulum için `docs/deployment.md` canonical kaynaktır.
 

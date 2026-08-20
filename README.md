@@ -32,7 +32,7 @@ Uygulama sahte doküman, chunk, skor, cevap veya evaluation metriği göstermez.
 
 ## Backend
 
-Backend `backend/` altında FastAPI, Docling, SQLAlchemy 2, psycopg 3 ve Alembic kullanır. Kurulum, environment ve migration adımları için [backend/README.md](backend/README.md) dosyasına bakın.
+Backend `backend/` altında FastAPI, Docling, SQLAlchemy 2 ve psycopg 3 kullanır. PostgreSQL şema değişikliklerinin tek kaynağı Supabase CLI migration'larıdır. Kurulum ve migration adımları için [backend/README.md](backend/README.md) dosyasına bakın.
 
 ```text
 PDF → Supabase Storage → HTTP 202/queued → Modal API → Modal worker/Docling
@@ -57,6 +57,30 @@ Bu komut Next.js'i `http://localhost:3000`, FastAPI'yi `http://127.0.0.1:8000` �
 Supabase → Modal → Vercel production mimarisi, async parse sözleşmesi, kaynak
 profili ve full RAG smoke adımları için
 [deployment dokümantasyonuna](docs/deployment.md) bakın.
+
+## Database migrations
+
+```text
+Schema changes → supabase/migrations/*.sql → Supabase CLI → Supabase PostgreSQL
+FastAPI runtime → SQLAlchemy 2 → psycopg 3 → Supabase PostgreSQL
+```
+
+Yeni migration yalnızca Supabase CLI ile oluşturulur:
+
+```powershell
+supabase migration new <descriptive_name>
+```
+
+Local migration rebuild için Docker üzerinde Supabase stack kullanılabilir:
+
+```powershell
+supabase start
+supabase db reset --local --no-seed
+```
+
+Production migration uygulaması yalnız GitHub Actions'ın Supabase CLI job'ı
+üzerinden yapılır. DB password, service key veya access token repository'ye
+yazılmaz; CLI link bilgisi çalışma anında sağlanır.
 
 ## Modal deployment
 

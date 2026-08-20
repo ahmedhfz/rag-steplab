@@ -85,10 +85,85 @@ jobs:
             exit 1
           fi
 
+  supabase-migrations:
+    name: Supabase migration validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.115.0
+
+      - name: Validate migration authority and filenames
+        run: node scripts/check-migration-authority.mjs
+
+      - name: Start local Supabase stack
+        run: supabase start
+
+      - name: Rebuild schema from empty local database
+        run: supabase db reset --local --no-seed
+
+      - name: Run schema assertions
+        run: supabase test db --local
+
+      - name: Run Supabase schema lint
+        run: supabase db lint --local --schema rag_lab --fail-on error
+
+      - name: Stop local Supabase stack
+        if: always()
+        continue-on-error: true
+        run: supabase stop --project-id rag-steplab --no-backup
+
+  supabase-migrate-production:
+    name: Apply Supabase migrations
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [frontend, backend, secret-hygiene, supabase-migrations]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: supabase-production-migrations
+      cancel-in-progress: false
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+    steps:
+      - name: Checkout tested commit
+        uses: actions/checkout@v4
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.115.0
+
+      - name: Verify Supabase deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_ACCESS_TOKEN"
+          test -n "$SUPABASE_PROJECT_REF"
+
+      - name: Link production project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Apply pending migrations
+        run: supabase db push --linked --yes --skip-vault
+
+      - name: Verify migration status is aligned
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase migration list --linked
+          status="$(supabase db push --linked --dry-run --yes --skip-vault)"
+          printf '%s\n' "$status"
+          grep -q '"upToDate":true' <<<"$status"
+
   deploy-modal:
     name: Deploy Modal production
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [frontend, backend, secret-hygiene]
+    needs: [frontend, backend, secret-hygiene, supabase-migrations, supabase-migrate-production]
     runs-on: ubuntu-latest
     concurrency:
       group: modal-production

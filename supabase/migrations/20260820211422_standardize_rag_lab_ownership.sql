@@ -1,0 +1,15 @@
+-- Historical duplicate.
+-- This idempotent ownership normalization was applied remotely before the
+-- migration history was consolidated. Keep it to preserve exact lineage.
+GRANT rag_steplab_app TO postgres WITH SET TRUE;
+REASSIGN OWNED BY rag_steplab_app TO postgres;
+
+GRANT USAGE ON SCHEMA rag_lab TO rag_steplab_app;
+REVOKE CREATE ON SCHEMA rag_lab FROM rag_steplab_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA rag_lab TO rag_steplab_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA rag_lab TO rag_steplab_app;
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA rag_lab
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO rag_steplab_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA rag_lab
+  GRANT USAGE, SELECT ON SEQUENCES TO rag_steplab_app;;

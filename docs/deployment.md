@@ -17,8 +17,8 @@ Supabase PostgreSQL + pgvector + private Storage
 Gemini
 ```
 
-Supabase schema, private Storage bucket, SQLAlchemy/Alembic lineage'ı ve RAG
-pipeline aynı kalır. Browser yalnız FastAPI yüzeyiyle konuşur; Docling worker
+Supabase schema, private Storage bucket, Supabase CLI migration lineage'ı ve
+RAG pipeline aynı kalır. Browser yalnız FastAPI yüzeyiyle konuşur; Docling worker
 public endpoint değildir.
 
 ## Async parse contract
@@ -92,22 +92,54 @@ exact içerir; wildcard kullanılmaz. PDF limiti 50 MiB'dir.
 ## Deploy sırası
 
 1. Local backend/frontend test, lint, typecheck ve build.
-2. Backward-compatible Alembic migration; revision ve mevcut history kontrolü.
-3. Modal deploy ve Docling model prefetch.
-4. Remote import, health ve Karaman semantic smoke.
-5. Vercel Preview browser E2E ve full RAG smoke.
-6. PR/CI green ve merge.
-7. Merged SHA'nın Modal'a deploy edilmesi ve direct smoke tekrarı.
-8. `NEXT_PUBLIC_API_BASE_URL` production güncellemesi ve Vercel redeploy.
-9. Production browser E2E, full RAG smoke ve kısa health/log observation.
+2. Supabase migration validation ve local schema rebuild.
+3. `main` push'unda Supabase CLI migration deploy ve migration status doğrulaması.
+4. Modal deploy ve Docling model prefetch.
+5. Remote import, health ve Karaman semantic smoke.
+6. Vercel Preview browser E2E ve full RAG smoke.
+7. PR/CI green ve merge.
+8. Merged SHA'nın Modal'a deploy edilmesi ve direct smoke tekrarı.
+9. `NEXT_PUBLIC_API_BASE_URL` production güncellemesi ve Vercel redeploy.
+10. Production browser E2E, full RAG smoke ve kısa health/log observation.
 
-`main` branch'ine gelen her push'ta GitHub Actions önce frontend, backend ve
-secret-hygiene kapılarını çalıştırır. Üçü de başarılı olursa aynı workflow
+`main` branch'ine gelen her push'ta GitHub Actions önce frontend, backend,
+migration validation ve secret-hygiene kapılarını çalıştırır. Migration job'ı
+başarılı olursa Supabase CLI linked production project'e pending
+`supabase/migrations` dosyalarını uygular ve status kontrolü yapar. Bu job için
+`SUPABASE_ACCESS_TOKEN` secret'ı ve `SUPABASE_PROJECT_REF` repository
+variable'ı gerekir; DB password veya service-role key workflow'a eklenmez. Aynı
+job başarısız olursa Modal/Vercel production deploy'ları başlamaz.
+
+Supabase Dashboard repository integration kullanılmaz; tek migration authority
+GitHub Actions + Supabase CLI'dır. Supabase CLI link çalışma anında
+`supabase link --project-ref "$SUPABASE_PROJECT_REF"` ile yapılır.
+
+Modal deploy job'ı
 `modal deploy --env main --tag "$GITHUB_SHA" --strategy rolling backend/modal_app.py`
 komutuyla test edilen commit'i production Modal App'e gönderir. GitHub
 repository/environment secret'larında `MODAL_TOKEN_ID` ve
 `MODAL_TOKEN_SECRET` bulunmalıdır. Modal deployment history içindeki tag,
 Vercel production deployment SHA'sı ve GitHub commit SHA'sı aynı olmalıdır.
+
+## Migration authority
+
+Runtime ORM SQLAlchemy 2 olarak kalır; schema değişiklikleri yalnız şu akıştan
+geçer:
+
+```text
+supabase/migrations/*.sql
+        ↓
+Supabase CLI
+        ↓
+Supabase PostgreSQL
+```
+
+Yeni migration üretmek için repository root'unda
+`supabase migration new <descriptive_name>` kullanılır.
+`supabase migration fetch --linked` remote history'yi yeniden oluşturmak
+için kullanılabilir. Existing production baseline migration'ı remote'da tekrar
+çalıştırılmaz; Supabase migration repair ile applied olarak işaretlenir.
+Historical baseline yalnız boş/local environment rebuild'i içindir.
 
 Modal deploy komutları:
 

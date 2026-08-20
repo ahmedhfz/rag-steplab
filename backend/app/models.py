@@ -204,7 +204,7 @@ class ChunkEmbedding(Base):
         ForeignKey(f"{SCHEMA}.chunks.id", ondelete="CASCADE"), nullable=False, index=True
     )
     input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    # The migration uses vector(768).  A JSON column keeps model import/testing portable.
+    # The Supabase baseline uses vector(768); JSONB keeps model import/testing portable.
     embedding: Mapped[list[float]] = mapped_column(
         Vector(768) if Vector is not None else JSONB, nullable=False
     )
