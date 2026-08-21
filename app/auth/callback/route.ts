@@ -37,6 +37,20 @@ async function valueFingerprint(value: string | undefined) {
     .join("");
 }
 
+function decodeStorageValue(value: string | undefined) {
+  if (!value) return null;
+  try {
+    const decoded = decodeURIComponent(value);
+    const json = decoded.startsWith("base64-")
+      ? Buffer.from(decoded.slice("base64-".length), "base64url").toString("utf8")
+      : decoded;
+    const parsed: unknown = JSON.parse(json);
+    return typeof parsed === "string" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 async function callbackDiagnostics(request: Request, url: URL) {
   const cookieHeader = request.headers.get("cookie") ?? "";
   const cookies = cookieHeader
@@ -59,6 +73,7 @@ async function callbackDiagnostics(request: Request, url: URL) {
     queryKeys: [...new Set(url.searchParams.keys())].sort(),
     cookieCount: cookieNames.length,
     pkceCookieFingerprint: await valueFingerprint(flowCookie?.value),
+    pkceVerifierFingerprint: await valueFingerprint(decodeStorageValue(flowCookie?.value) ?? undefined),
     pkceCookieLength: flowCookie?.value.length ?? 0,
     pkceCookiePresence: {
       flowSlot: cookieNames.some((name) => /-auth-token-flow-[A-Za-z0-9_-]{8,64}-code-verifier(?:\.\d+)?$/.test(name)),
