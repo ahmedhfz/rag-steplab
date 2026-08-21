@@ -4,9 +4,10 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
+  const response = NextResponse.redirect(new URL("/login?auth_error=oauth_failed", requestUrl));
 
   try {
-    const supabase = await createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient(response);
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
@@ -15,8 +16,9 @@ export async function GET(request: Request) {
     });
 
     if (error || !data.url) throw error ?? new Error("oauth_url_missing");
-    return NextResponse.redirect(data.url);
+    response.headers.set("Location", data.url);
+    return response;
   } catch {
-    return NextResponse.redirect(new URL("/login?auth_error=oauth_failed", requestUrl));
+    return response;
   }
 }
