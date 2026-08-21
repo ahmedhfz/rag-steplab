@@ -179,6 +179,11 @@ class Repository:
     def get_document_row(self, document_id: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
+    def get_document_by_sha256(
+        self, sha256: str, *, owner_user_id: uuid.UUID | str | None = None
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
     def list_document_rows(self) -> list[dict[str, Any]]:
         raise NotImplementedError
 
@@ -277,6 +282,10 @@ class InMemoryRepository(Repository):
 
     def create_document(self, metadata, storage_bucket, storage_path, sha256):
         document_id = new_id()
+        owner_user_id = metadata.get("owner_user_id")
+        with self._lock:
+            if self.get_document_by_sha256(sha256, owner_user_id=owner_user_id) is not None:
+                raise ApiProblem(409, "duplicate_document", "A document with this SHA256 already exists for this user.")
         row = {
             "id": document_id,
             **metadata,
@@ -284,7 +293,6 @@ class InMemoryRepository(Repository):
             "storage_path": storage_path,
             "sha256": sha256,
             "owner_user_id": metadata.get("owner_user_id"),
-            "is_canonical": metadata.get("is_canonical", True),
             "active_parse_run_id": None,
             "active_chunk_run_id": None,
             "active_embedding_run_id": None,
@@ -443,6 +451,26 @@ class InMemoryRepository(Repository):
     def get_document_row(self, document_id):
         return copy.deepcopy(self.documents.get(document_id))
 
+    def get_document_by_sha256(self, sha256, *, owner_user_id=None):
+        owner = owner_user_id
+        if owner is not None and not isinstance(owner, uuid.UUID):
+            owner = uuid.UUID(str(owner))
+        with self._lock:
+            rows = [
+                row for row in self.documents.values()
+                if row.get("sha256") == sha256
+                and (owner is None or row.get("owner_user_id") == owner)
+            ]
+            rows.sort(
+                key=lambda row: (
+                    row.get("active_parse_run_id") is not None,
+                    row.get("updated_at") or datetime.min.replace(tzinfo=timezone.utc),
+                    row.get("created_at") or datetime.min.replace(tzinfo=timezone.utc),
+                ),
+                reverse=True,
+            )
+            return copy.deepcopy(rows[0]) if rows else None
+
     def list_document_rows(self):
         return copy.deepcopy(list(self.documents.values()))
 
@@ -503,6 +531,7 @@ class InMemoryRepository(Repository):
         self.chunk_runs[identifier] = row
         self.chunks[identifier] = items
         document = self.documents[document_id]
+        document["active_parse_run_id"] = parse_run_id
         document["active_chunk_run_id"] = identifier
         document["active_embedding_run_id"] = None
         document["updated_at"] = now_utc()
@@ -541,6 +570,8 @@ class InMemoryRepository(Repository):
             for chunk_id, vector in values
         ]
         document = self.documents[document_id]
+        document["active_parse_run_id"] = self.chunk_runs[chunk_run_id]["parse_run_id"]
+        document["active_chunk_run_id"] = chunk_run_id
         document["active_embedding_run_id"] = identifier
         document["updated_at"] = now_utc()
         return copy.deepcopy(row)
@@ -652,7 +683,6 @@ class SqlAlchemyRepository(Repository):
             page_count=metadata.get("page_count", 0),
             sha256=sha256,
             owner_user_id=metadata.get("owner_user_id"),
-            is_canonical=metadata.get("is_canonical", True),
             storage_bucket=storage_bucket,
             storage_path=storage_path,
         )
@@ -671,7 +701,6 @@ class SqlAlchemyRepository(Repository):
             "page_count": row.page_count,
             "sha256": row.sha256,
             "owner_user_id": row.owner_user_id,
-            "is_canonical": row.is_canonical,
             "storage_bucket": row.storage_bucket,
             "storage_path": row.storage_path,
             "active_parse_run_id": row.active_parse_run_id,
@@ -853,6 +882,20 @@ class SqlAlchemyRepository(Repository):
             row = session.get(Document, document_id)
             return self._document_dict(row) if row else None
 
+    def get_document_by_sha256(self, sha256, *, owner_user_id=None):
+        with session_scope() as session:
+            query = select(Document).where(Document.sha256 == sha256)
+            if owner_user_id is not None:
+                query = query.where(Document.owner_user_id == owner_user_id)
+            query = query.order_by(
+                Document.active_parse_run_id.is_not(None).desc(),
+                Document.updated_at.desc(),
+                Document.created_at.desc(),
+                Document.id,
+            )
+            row = session.scalars(query).first()
+            return self._document_dict(row) if row else None
+
     def list_document_rows(self):
         with session_scope() as session:
             return [self._document_dict(row) for row in session.scalars(select(Document).order_by(Document.created_at.desc()))]
@@ -911,6 +954,7 @@ class SqlAlchemyRepository(Repository):
             session.flush()
             document = session.get(Document, document_id)
             if document:
+                document.active_parse_run_id = parse_run_id
                 document.active_chunk_run_id = identifier
                 document.active_embedding_run_id = None
             session.flush()
@@ -988,6 +1032,10 @@ class SqlAlchemyRepository(Repository):
             session.flush()
             document = session.get(Document, document_id)
             if document:
+                chunk = session.get(ChunkRun, chunk_run_id)
+                if chunk is not None:
+                    document.active_parse_run_id = chunk.parse_run_id
+                document.active_chunk_run_id = chunk_run_id
                 document.active_embedding_run_id = identifier
             session.flush()
             return self._embedding_dict(run)
@@ -1273,6 +1321,11 @@ class ScopedRepository(Repository):
 
     def get_document_row(self, document_id):
         return self._owned_document(document_id)
+
+    def get_document_by_sha256(self, sha256, *, owner_user_id=None):
+        if owner_user_id is not None and uuid.UUID(str(owner_user_id)) != self.owner_user_id:
+            return None
+        return self._repository.get_document_by_sha256(sha256, owner_user_id=self.owner_user_id)
 
     def list_document_rows(self):
         return [row for row in self._repository.list_document_rows() if row.get("owner_user_id") == self.owner_user_id]

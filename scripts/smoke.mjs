@@ -476,15 +476,16 @@ async function runRagContract(parsePayload) {
     return;
   }
   const afterRechunk = await apiRequest(documentPath);
-  const staleChunkAfterRechunk = afterRechunk.payload?.chunkRuns?.find((run) => run.id === selectedChunkRun.id);
-  const staleEmbeddingAfterRechunk = afterRechunk.payload?.embeddingRuns?.find((run) => run.id === embeddingRunId);
-  const staleExperimentAfterRechunk = afterRechunk.payload?.experiments?.find((run) => run.id === generationResult.payload.id);
+  const historicalChunkAfterRechunk = afterRechunk.payload?.chunkRuns?.find((run) => run.id === selectedChunkRun.id);
+  const historicalEmbeddingAfterRechunk = afterRechunk.payload?.embeddingRuns?.find((run) => run.id === embeddingRunId);
+  const historicalExperimentAfterRechunk = afterRechunk.payload?.experiments?.find((run) => run.id === generationResult.payload.id);
   assertCondition(afterRechunk.payload?.activeChunkRunId === rechunkResult.payload.id, "rechunk did not replace the active chunk run");
   assertCondition(afterRechunk.payload?.activeEmbeddingRunId === null, "rechunk did not invalidate the active embedding run");
-  assertCondition(staleChunkAfterRechunk?.isStale === true, "rechunk did not mark the previous chunk run stale");
-  assertCondition(staleEmbeddingAfterRechunk?.isStale === true, "rechunk did not mark the previous embedding run stale");
-  assertCondition(staleExperimentAfterRechunk?.isStale === true, "rechunk did not mark the previous experiment stale");
-  console.log("[smoke] rechunk stale lineage: ok");
+  assertCondition(historicalChunkAfterRechunk?.isCompatible === true && historicalChunkAfterRechunk?.isStale === false, "rechunk invalidated compatible historical chunk lineage");
+  assertCondition(historicalEmbeddingAfterRechunk?.isCompatible === true && historicalEmbeddingAfterRechunk?.isStale === false, "rechunk invalidated compatible historical embedding lineage");
+  assertCondition(historicalExperimentAfterRechunk?.isCompatible === true && historicalExperimentAfterRechunk?.isStale === false, "rechunk invalidated compatible historical experiment lineage");
+  assertCondition(historicalChunkAfterRechunk?.historicalLineage === true, "rechunk did not expose historical chunk lineage");
+  console.log("[smoke] rechunk historical-compatible lineage: ok");
 
   const reparseResult = await apiRequest(`${documentPath}/parse`, { method: "POST" });
   if (!reparseResult.response?.ok) fail(`reparse returned HTTP ${reparseResult.response?.status ?? "unknown"}`);
@@ -502,11 +503,12 @@ async function runRagContract(parsePayload) {
   const rechunkRun = afterReparse.payload?.chunkRuns?.find((run) => run.id === rechunkResult.payload.id);
   const oldEmbeddingRun = afterReparse.payload?.embeddingRuns?.find((run) => run.id === embeddingRunId);
   const oldExperiment = afterReparse.payload?.experiments?.find((run) => run.id === generationResult.payload.id);
-  assertCondition(oldChunkRun?.isStale === true, "reparse did not mark the previous chunk run stale");
-  assertCondition(rechunkRun?.isStale === true, "reparse did not mark the active rechunk run stale");
-  assertCondition(oldEmbeddingRun?.isStale === true, "reparse did not mark the previous embedding run stale");
-  assertCondition(oldExperiment?.isStale === true, "reparse did not mark the previous experiment stale");
-  console.log("[smoke] reparse stale lineage: ok");
+  assertCondition(oldChunkRun?.isCompatible === true && oldChunkRun?.isStale === false, "reparse invalidated the previous compatible chunk lineage");
+  assertCondition(rechunkRun?.isCompatible === true && rechunkRun?.isStale === false, "reparse invalidated the compatible rechunk lineage");
+  assertCondition(oldEmbeddingRun?.isCompatible === true && oldEmbeddingRun?.isStale === false, "reparse invalidated the previous compatible embedding lineage");
+  assertCondition(oldExperiment?.isCompatible === true && oldExperiment?.isStale === false, "reparse invalidated the previous compatible experiment lineage");
+  assertCondition(oldChunkRun?.historicalLineage === true, "reparse did not expose historical chunk lineage");
+  console.log("[smoke] reparse historical-compatible lineage: ok");
 }
 
 await checkHealth("frontend", `${frontendUrl}/`);

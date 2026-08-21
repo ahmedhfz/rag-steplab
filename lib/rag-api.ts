@@ -95,8 +95,8 @@ function optionalNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function boolean(value: unknown) {
-  return value === true;
+function boolean(value: unknown, fallback = false) {
+  return value === undefined ? fallback : value === true;
 }
 
 function strings(value: unknown) {
@@ -156,6 +156,8 @@ function normalizeRun(value: unknown): RunSummary {
     status,
     progress: progress ?? (status === "running" ? 8 : status === "queued" ? 0 : null),
     isStale: boolean(field(payload, "isStale", "is_stale")),
+    isCompatible: boolean(field(payload, "isCompatible", "is_compatible"), !boolean(field(payload, "isStale", "is_stale"))),
+    compatibilityReason: optionalString(field(payload, "compatibilityReason", "compatibility_reason")),
     historicalLineage: boolean(field(payload, "historicalLineage", "historical_lineage")),
     upstream: Object.fromEntries(Object.entries(upstream).map(([key, item]) => [key, optionalString(item)])),
     config,

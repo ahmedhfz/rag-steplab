@@ -38,6 +38,7 @@ from .telemetry import measure_resource_usage
 
 
 logger = logging.getLogger(__name__)
+SUPPORTED_NORMALIZED_SCHEMA_VERSION = "normalized-v1"
 
 
 def _safe_model_dump(value: Any) -> dict[str, Any]:
@@ -75,6 +76,21 @@ def _parse_or_404(repository: Repository, parse_run_id: str) -> dict[str, Any]:
     return row
 
 
+def _lineage_problem(message: str) -> ApiProblem:
+    return ApiProblem(409, "lineage_incompatible", message)
+
+
+def _require_compatible_parse(repository: Repository, document_id: str, parse_run_id: str) -> dict[str, Any]:
+    parse = _parse_or_404(repository, parse_run_id)
+    if parse.get("document_id") != document_id:
+        raise _lineage_problem("The parse run belongs to another document.")
+    if parse.get("normalized_schema_version") != SUPPORTED_NORMALIZED_SCHEMA_VERSION:
+        raise _lineage_problem("The parse run uses an unsupported normalized schema version.")
+    if parse.get("structured") is None or parse.get("summary") is None:
+        raise _lineage_problem("The parse run has no usable normalized output.")
+    return parse
+
+
 def _chunk_or_404(repository: Repository, chunk_run_id: str) -> dict[str, Any]:
     row = repository.get_chunk_row(chunk_run_id)
     if row is None:
@@ -84,6 +100,14 @@ def _chunk_or_404(repository: Repository, chunk_run_id: str) -> dict[str, Any]:
     return row
 
 
+def _require_compatible_chunk(repository: Repository, document_id: str, chunk_run_id: str) -> dict[str, Any]:
+    chunk = _chunk_or_404(repository, chunk_run_id)
+    if chunk.get("document_id") != document_id:
+        raise _lineage_problem("The chunk run belongs to another document.")
+    _require_compatible_parse(repository, document_id, chunk["parse_run_id"])
+    return chunk
+
+
 def _embedding_or_404(repository: Repository, embedding_run_id: str) -> dict[str, Any]:
     row = repository.get_embedding_row(embedding_run_id)
     if row is None:
@@ -91,6 +115,128 @@ def _embedding_or_404(repository: Repository, embedding_run_id: str) -> dict[str
     if row.get("status") != "completed":
         raise ApiProblem(409, "embedding_run_incomplete", "The embedding run is not complete.")
     return row
+
+
+def _require_compatible_embedding(
+    repository: Repository,
+    document_id: str,
+    embedding_run_id: str,
+    *,
+    chunk_run_id: str | None = None,
+    settings: Settings | None = None,
+    require_current_contract: bool = False,
+) -> dict[str, Any]:
+    embedding = _embedding_or_404(repository, embedding_run_id)
+    if embedding.get("document_id") != document_id:
+        raise _lineage_problem("The embedding run belongs to another document.")
+    parent_chunk = _require_compatible_chunk(repository, document_id, embedding["chunk_run_id"])
+    if chunk_run_id is not None and embedding["chunk_run_id"] != chunk_run_id:
+        raise _lineage_problem("The embedding run does not belong to the selected chunks.")
+    if require_current_contract:
+        settings = settings or get_settings()
+        if (
+            embedding.get("model") != settings.gemini_embedding_model
+            or embedding.get("dimensions") != settings.gemini_embedding_dimensions
+            or embedding.get("embedding_format_version") != EMBEDDING_FORMAT_VERSION
+        ):
+            raise _lineage_problem("The embedding run is incompatible with the current model, dimension, or format.")
+    # Keep the parent lookup explicit: an embedding is usable only through a
+    # completed chunk whose parse is itself compatible.
+    _ = parent_chunk
+    return embedding
+
+
+def run_lineage_compatibility(
+    repository: Repository,
+    document: dict[str, Any],
+    row: dict[str, Any],
+    *,
+    settings: Settings | None = None,
+) -> tuple[bool, str | None]:
+    """Return whether one persisted run can still participate in its lineage.
+
+    Active pointers are intentionally absent from this decision: they choose
+    defaults, while completed historical runs remain valid when their direct
+    parents and format contracts are compatible.
+    """
+    if row.get("status") != "completed":
+        return False, "run_not_completed"
+    document_id = document.get("id")
+    try:
+        if "structured" in row:
+            _require_compatible_parse(repository, document_id, row["id"])
+        elif "strategy" in row:
+            _require_compatible_chunk(repository, document_id, row["id"])
+        elif "dimensions" in row:
+            _require_compatible_embedding(
+                repository,
+                document_id,
+                row["id"],
+                settings=settings,
+                require_current_contract=True,
+            )
+        else:
+            chunk_id = row.get("chunk_run_id")
+            if not chunk_id:
+                return False, "chunk_lineage_missing"
+            _require_compatible_chunk(repository, document_id, chunk_id)
+            embedding_id = row.get("embedding_run_id")
+            if embedding_id:
+                _require_compatible_embedding(
+                    repository,
+                    document_id,
+                    embedding_id,
+                    chunk_run_id=chunk_id,
+                    settings=settings,
+                    require_current_contract=True,
+                )
+    except ApiProblem as exc:
+        return False, exc.code
+    return True, None
+
+
+def _usable_completed_parse(row: dict[str, Any] | None) -> bool:
+    return bool(
+        row
+        and row.get("status") == "completed"
+        and row.get("normalized_schema_version") == SUPPORTED_NORMALIZED_SCHEMA_VERSION
+        and row.get("structured") is not None
+        and row.get("summary") is not None
+    )
+
+
+def _reusable_parse(repository: Repository, document: dict[str, Any]) -> dict[str, Any] | None:
+    inflight = repository.find_inflight_parse(document["id"])
+    if inflight is not None:
+        return inflight
+    rows = repository.list_parse_rows(document["id"])
+    active_id = document.get("active_parse_run_id")
+    active = next((row for row in rows if row.get("id") == active_id), None)
+    if _usable_completed_parse(active):
+        return active
+    return next((row for row in rows if _usable_completed_parse(row)), None)
+
+
+def _queue_parse_for_document(
+    repository: Repository,
+    document: dict[str, Any],
+    settings: Settings,
+) -> tuple[dict[str, Any], bool]:
+    reusable = _reusable_parse(repository, document)
+    if reusable is not None:
+        return reusable, False
+    try:
+        parse = repository.create_parse_run(document["id"], parser_version=settings.docling_parser_version)
+    except ApiProblem as exc:
+        if exc.code != "parse_already_in_progress":
+            raise
+        inflight = repository.find_inflight_parse(document["id"])
+        if inflight is None:
+            raise
+        return inflight, False
+    if parse is None:
+        raise ApiProblem(500, "persistence_failed", "The parse run could not be queued.")
+    return parse, True
 
 
 def parse_upload(
@@ -140,34 +286,19 @@ def queue_parse_upload(
     *,
     repository: Repository | None = None,
     settings: Settings | None = None,
-) -> tuple[dict[str, Any], dict[str, Any], bool]:
+) -> tuple[dict[str, Any], dict[str, Any], bool, bool]:
     """Persist the PDF and a queued parse run without doing CPU-heavy work."""
 
     repository = repository or get_repository()
     settings = settings or get_settings()
     _require_write(repository, settings)
     digest = hashlib.sha256(content).hexdigest()
-    existing = next(
-        (
-            row for row in repository.list_document_rows()
-            if row.get("sha256") == digest and row.get("is_canonical", True)
-        ),
-        None,
-    )
+    existing = repository.get_document_by_sha256(digest)
     if existing is not None:
-        parse = repository.find_inflight_parse(existing["id"])
-        if parse is None:
-            parse_rows = repository.list_parse_rows(existing["id"])
-            parse = next(
-                (row for row in parse_rows if row["id"] == existing.get("active_parse_run_id")),
-                parse_rows[0] if parse_rows else None,
-            )
-        if parse is None:
-            raise ApiProblem(409, "duplicate_document_without_parse", "The existing document has no usable parse run.")
-        return existing, parse, True
+        parse, dispatch_required = _queue_parse_for_document(repository, existing, settings)
+        return existing, parse, True, dispatch_required
     storage_path = f"{new_id()}/{digest}.pdf"
     storage = get_storage()
-    storage.upload_pdf(storage_path, content)
     metadata = {
         "file_name": file_name,
         "media_type": "application/pdf",
@@ -176,16 +307,19 @@ def queue_parse_upload(
     }
     document: dict[str, Any] | None = None
     try:
-        document = repository.create_document(
-            metadata,
-            settings.supabase_storage_bucket,
-            storage_path,
-            digest,
-        )
-        parse = repository.create_parse_run(
-            document["id"],
-            parser_version=settings.docling_parser_version,
-        )
+        try:
+            # The unique owner+SHA identity is the arbitration point. Upload
+            # only after this insert succeeds, so a losing concurrent request
+            # cannot leave an orphaned PDF in Storage.
+            document = repository.create_document(metadata, settings.supabase_storage_bucket, storage_path, digest)
+        except Exception as exc:
+            raced = repository.get_document_by_sha256(digest)
+            if raced is None:
+                raise
+            parse, dispatch_required = _queue_parse_for_document(repository, raced, settings)
+            return raced, parse, True, dispatch_required
+        storage.upload_pdf(storage_path, content)
+        parse, _ = _queue_parse_for_document(repository, document, settings)
     except Exception:
         if document is not None:
             repository.delete_document(document["id"])
@@ -194,7 +328,7 @@ def queue_parse_upload(
     if parse is None:
         storage.remove(storage_path)
         raise ApiProblem(500, "persistence_failed", "The parse run could not be queued.")
-    return document, parse, False
+    return document, parse, False, True
 
 
 def queue_reparse_document(
@@ -376,11 +510,7 @@ def create_chunk_run(document_id: str, request: ChunkRunRequest, *, repository: 
     parse_id = request.parse_run_id or document.get("active_parse_run_id")
     if not parse_id:
         raise ApiProblem(409, "parse_required", "Parse the document before chunking it.")
-    parse = _parse_or_404(repository, parse_id)
-    if parse["document_id"] != document_id:
-        raise ApiProblem(409, "lineage_mismatch", "The parse run belongs to another document.")
-    if parse_id != document.get("active_parse_run_id"):
-        raise ApiProblem(409, "stale_lineage", "The selected parse run is no longer active.")
+    parse = _require_compatible_parse(repository, document_id, parse_id)
     try:
         drafts = chunk_structured(parse["structured"], request.strategy, request.config)
     except ValueError as exc:
@@ -396,11 +526,7 @@ def create_embedding_run(document_id: str, chunk_run_id: str | None, *, reposito
     chunk_id = chunk_run_id or document.get("active_chunk_run_id")
     if not chunk_id:
         raise ApiProblem(409, "chunks_required", "Create chunks before embedding them.")
-    chunk_run = _chunk_or_404(repository, chunk_id)
-    if chunk_run["document_id"] != document_id:
-        raise ApiProblem(409, "lineage_mismatch", "The chunk run belongs to another document.")
-    if chunk_id != document.get("active_chunk_run_id") or chunk_run["parse_run_id"] != document.get("active_parse_run_id"):
-        raise ApiProblem(409, "stale_lineage", "The selected chunk run is no longer active.")
+    chunk_run = _require_compatible_chunk(repository, document_id, chunk_id)
     chunks = repository.get_chunks_for_embedding(chunk_id)
     service = GeminiService(settings)
     inputs = [document_embedding_text(chunk["text"], chunk.get("heading_path")) for chunk in chunks]
@@ -657,20 +783,26 @@ def create_experiment(request: ExperimentCreateRequest, *, repository: Repositor
     chunk_run_id = request.chunk_run_id or document.get("active_chunk_run_id")
     if not chunk_run_id:
         raise ApiProblem(409, "chunks_required", "Create chunks before running an experiment.")
-    chunk_run = _chunk_or_404(repository, chunk_run_id)
-    if chunk_run["document_id"] != request.document_id:
-        raise ApiProblem(409, "lineage_mismatch", "The chunk run belongs to another document.")
-    if chunk_run_id != document.get("active_chunk_run_id") or chunk_run["parse_run_id"] != document.get("active_parse_run_id"):
-        raise ApiProblem(409, "stale_lineage", "The selected chunk run is no longer active.")
+    chunk_run = _require_compatible_chunk(repository, request.document_id, chunk_run_id)
     embedding_run_id = request.embedding_run_id or document.get("active_embedding_run_id")
     if request.retrieval.mode in {"dense", "hybrid"} and not embedding_run_id:
         raise ApiProblem(409, "embedding_required", "Dense or hybrid retrieval requires embeddings.")
     if embedding_run_id:
-        embedding = _embedding_or_404(repository, embedding_run_id)
-        if embedding["chunk_run_id"] != chunk_run_id:
-            raise ApiProblem(409, "lineage_mismatch", "The embedding run does not belong to the selected chunks.")
-        if embedding_run_id != document.get("active_embedding_run_id"):
-            raise ApiProblem(409, "stale_lineage", "The selected embedding run is no longer active.")
+        try:
+            _require_compatible_embedding(
+                repository,
+                request.document_id,
+                embedding_run_id,
+                chunk_run_id=chunk_run_id,
+                settings=settings,
+                require_current_contract=request.retrieval.mode in {"dense", "hybrid"},
+            )
+        except ApiProblem:
+            if request.embedding_run_id is not None or request.retrieval.mode in {"dense", "hybrid"}:
+                raise
+            # Keyword retrieval does not consume an embedding. An active
+            # embedding from another historical chunk is simply not selected.
+            embedding_run_id = None
     # Persistent retrieval is executed in PostgreSQL; loading every chunk here
     # would defeat the SQL candidate limit and make production retrieval scale
     # with the whole corpus. In-memory storage needs the local rows for tests.
@@ -771,11 +903,7 @@ def create_dataset(request: EvaluationDatasetRequest, *, repository: Repository 
     parse_id = request.parse_run_id or document.get("active_parse_run_id")
     if not parse_id:
         raise ApiProblem(409, "parse_required", "Parse the document before creating an evaluation dataset.")
-    parse = _parse_or_404(repository, parse_id)
-    if parse["document_id"] != request.document_id:
-        raise ApiProblem(409, "lineage_mismatch", "The parse run belongs to another document.")
-    if parse_id != document.get("active_parse_run_id"):
-        raise ApiProblem(409, "stale_lineage", "The selected parse run is no longer active.")
+    _require_compatible_parse(repository, request.document_id, parse_id)
     return repository.save_dataset(request, parse_id)
 
 
@@ -822,16 +950,38 @@ def create_evaluation(request: EvaluationRunRequest, *, repository: Repository |
     if dataset is None:
         raise ApiProblem(404, "dataset_not_found", "The evaluation dataset was not found.")
     document = _document_or_404(repository, dataset["document_id"])
-    if dataset["parse_run_id"] != document.get("active_parse_run_id"):
-        raise ApiProblem(409, "stale_lineage", "The evaluation dataset belongs to an inactive parse run.")
+    _require_compatible_parse(repository, dataset["document_id"], dataset["parse_run_id"])
+    selected_chunk_id = request.chunk_run_id or document.get("active_chunk_run_id")
+    if not selected_chunk_id:
+        raise ApiProblem(409, "chunks_required", "Create chunks for the dataset parse before evaluating it.")
+    selected_chunk = _require_compatible_chunk(repository, dataset["document_id"], selected_chunk_id)
+    if selected_chunk["parse_run_id"] != dataset["parse_run_id"]:
+        raise _lineage_problem("The evaluation dataset parse and selected chunks are incompatible.")
+    selected_embedding_id = request.embedding_run_id or document.get("active_embedding_run_id")
+    if request.retrieval.mode in {"dense", "hybrid"} and not selected_embedding_id:
+        raise ApiProblem(409, "embedding_required", "Dense or hybrid evaluation requires embeddings for the selected chunks.")
+    if selected_embedding_id:
+        try:
+            _require_compatible_embedding(
+                repository,
+                dataset["document_id"],
+                selected_embedding_id,
+                chunk_run_id=selected_chunk_id,
+                settings=get_settings(),
+                require_current_contract=request.retrieval.mode in {"dense", "hybrid"},
+            )
+        except ApiProblem:
+            if request.embedding_run_id is not None or request.retrieval.mode in {"dense", "hybrid"}:
+                raise
+            selected_embedding_id = None
     judge_service = GeminiService(get_settings()) if request.judge else None
     case_results: list[dict[str, Any]] = []
     child_ids: list[str] = []
     for case in dataset["cases"][:10]:
         exp_request = ExperimentCreateRequest(
             document_id=dataset["document_id"],
-            chunk_run_id=request.chunk_run_id,
-            embedding_run_id=request.embedding_run_id,
+            chunk_run_id=selected_chunk_id,
+            embedding_run_id=selected_embedding_id,
             query=case["question"],
             target_stage="generation",
             retrieval=request.retrieval,

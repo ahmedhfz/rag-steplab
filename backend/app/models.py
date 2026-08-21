@@ -6,7 +6,7 @@ from datetime import datetime
 import uuid
 from typing import Any
 
-from sqlalchemy import Boolean, CheckConstraint, Computed, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import CheckConstraint, Computed, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON
@@ -42,12 +42,11 @@ class Document(Base):
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     page_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
         # Supabase auth.users SQLAlchemy metadata'sında tanımlı değil; gerçek FK
         # Supabase migration'ında korunuyor, burada yalnızca UUID kolonu eşleniyor.
-        UUID(as_uuid=True), nullable=True, index=True
+        UUID(as_uuid=True), nullable=False, index=True
     )
-    is_canonical: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     storage_bucket: Mapped[str] = mapped_column(String(255), nullable=False)
     storage_path: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
     active_parse_run_id: Mapped[str | None] = mapped_column(

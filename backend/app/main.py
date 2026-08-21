@@ -27,6 +27,7 @@ from .pipeline import (
     continue_experiment,
     queue_parse_upload,
     queue_reparse_document,
+    run_lineage_compatibility,
 )
 from .repository import get_repository
 from .schemas import (
@@ -284,13 +285,13 @@ async def parse_document(
     finally:
         await file.close()
     _ensure_file(content, file_name, content_type)
-    document, queued, reused_document = await run_in_threadpool(
+    document, queued, reused_document, dispatch_required = await run_in_threadpool(
         queue_parse_upload,
         content,
         file_name,
         repository=_user_repository(user),
     )
-    parse = queued if reused_document else await run_in_threadpool(_dispatch_queued_parse, queued)
+    parse = queued if not dispatch_required else await run_in_threadpool(_dispatch_queued_parse, queued)
     payload = _parse_response(document, parse, reused_document=reused_document)
     return JSONResponse(
         status_code=202,
@@ -345,17 +346,23 @@ def document_parse_run(document_id: str, run_id: str, user: CurrentUser = Depend
     return _parse_response(document, parse)
 
 
-def _run_summary_dict(row: dict[str, Any], document: dict[str, Any]) -> dict[str, Any]:
+def _run_summary_dict(row: dict[str, Any], document: dict[str, Any], repository) -> dict[str, Any]:
+    compatible, compatibility_reason = run_lineage_compatibility(
+        repository,
+        document,
+        row,
+        settings=get_settings(),
+    )
     if "structured" in row:
-        stale = row["id"] != document.get("active_parse_run_id")
+        historical = row["id"] != document.get("active_parse_run_id")
     elif "strategy" in row:
-        stale = row["id"] != document.get("active_chunk_run_id") or row.get("parse_run_id") != document.get("active_parse_run_id")
+        historical = row["id"] != document.get("active_chunk_run_id") or row.get("parse_run_id") != document.get("active_parse_run_id")
     elif "dimensions" in row:
-        stale = row["id"] != document.get("active_embedding_run_id") or row.get("chunk_run_id") != document.get("active_chunk_run_id")
+        historical = row["id"] != document.get("active_embedding_run_id") or row.get("chunk_run_id") != document.get("active_chunk_run_id")
     else:
-        stale = row.get("chunk_run_id") != document.get("active_chunk_run_id")
+        historical = row.get("chunk_run_id") != document.get("active_chunk_run_id")
         if row.get("embedding_run_id") is not None:
-            stale = stale or row.get("embedding_run_id") != document.get("active_embedding_run_id")
+            historical = historical or row.get("embedding_run_id") != document.get("active_embedding_run_id")
     raw_status = row.get("status", "completed")
     status = _public_parse_status(raw_status)
     error_code = row.get("error_code")
@@ -367,8 +374,12 @@ def _run_summary_dict(row: dict[str, Any], document: dict[str, Any]) -> dict[str
         "id": row["id"],
         "status": status,
         "progress": _parse_progress(row) if "structured" in row else None,
-        "isStale": stale,
-        "historicalLineage": bool(row.get("historical_lineage", False)),
+        # Kept as a wire-compatible alias for older clients. It no longer
+        # means "not active"; only a broken/incomplete lineage is stale.
+        "isStale": not compatible,
+        "isCompatible": compatible,
+        "compatibilityReason": compatibility_reason,
+        "historicalLineage": bool(historical and row.get("status") == "completed"),
         "upstream": {
             "documentId": row.get("document_id"),
             "parseRunId": row.get("parse_run_id"),
@@ -431,10 +442,10 @@ def get_document(document_id: str, user: CurrentUser = Depends(get_current_user)
     active_embedding = next((row for row in embeddings if row["id"] == document.get("active_embedding_run_id")), None)
     return _camelize({
         **_document_list_item(document),
-        "parseRuns": [_run_summary_dict(row, document) for row in parses],
-        "chunkRuns": [{**_run_summary_dict(row, document), "strategy": row.get("strategy"), "chunkCount": row.get("chunk_count", 0)} for row in chunks],
-        "embeddingRuns": [{**_run_summary_dict(row, document), "model": row.get("model"), "dimensions": row.get("dimensions"), "embeddingFormatVersion": row.get("embedding_format_version"), "embeddingCount": row.get("embedding_count", 0)} for row in embeddings],
-        "experiments": [_run_summary_dict(row, document) for row in experiments],
+        "parseRuns": [_run_summary_dict(row, document, repository) for row in parses],
+        "chunkRuns": [{**_run_summary_dict(row, document, repository), "strategy": row.get("strategy"), "chunkCount": row.get("chunk_count", 0)} for row in chunks],
+        "embeddingRuns": [{**_run_summary_dict(row, document, repository), "model": row.get("model"), "dimensions": row.get("dimensions"), "embeddingFormatVersion": row.get("embedding_format_version"), "embeddingCount": row.get("embedding_count", 0)} for row in embeddings],
+        "experiments": [_run_summary_dict(row, document, repository) for row in experiments],
         "activeParseRun": _persisted_parse_response(document, active_parse) if active_parse else None,
         "activeChunkRun": active_chunk,
         "activeEmbeddingRun": active_embedding,
