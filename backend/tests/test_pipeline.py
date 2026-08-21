@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+import uuid
+
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.pipeline import parse_upload, run_parse_worker
+from app.config import Settings
+from app.pipeline import parse_upload, queue_parse_upload, run_parse_worker
 from app.repository import InMemoryRepository, reset_repository
 from app.schemas import (
     DocumentMetadata,
@@ -211,7 +215,31 @@ def test_generation_citations_and_evaluation_use_real_stage_metadata(monkeypatch
     assert evaluation.json()["results"]["aggregate"]["groundedness"] == 0.9
 
 
-def test_rechunk_and_reparse_reject_stale_downstream_lineage(monkeypatch):
+def test_historical_completed_lineage_remains_usable_after_rechunk_and_reparse(monkeypatch):
+    class FakeMetadata:
+        configured_model = "gemini-flash-lite-latest"
+        effective_model = "gemini-2.5-flash-lite"
+
+    class FakeGemini:
+        settings = type("Settings", (), {"gemini_generation_model": "gemini-flash-lite-latest", "gemini_max_retries": 0})()
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def embed_documents(self, texts):
+            return [[1.0, 0.0, 0.0] for _ in texts], FakeMetadata()
+
+        def embed_query(self, _query):
+            return [1.0, 0.0, 0.0], FakeMetadata()
+
+        def generate_json(self, _prompt, _config):
+            return {
+                "insufficientContext": False,
+                "answer": "Retrieval finds chunks.",
+                "claims": [{"text": "Retrieval finds chunks.", "citationIds": ["C1"]}],
+            }, FakeMetadata()
+
+    monkeypatch.setattr("app.pipeline.GeminiService", FakeGemini)
     parsed = _queue_and_run(monkeypatch)
     document_id = parsed["documentId"]
     parse_run_id = parsed["parseRunId"]
@@ -227,16 +255,19 @@ def test_rechunk_and_reparse_reject_stale_downstream_lineage(monkeypatch):
 
     detail = client.get(f"/documents/{document_id}").json()
     assert detail["activeChunkRunId"] == second_chunk["id"]
-    assert next(run for run in detail["chunkRuns"] if run["id"] == first_chunk["id"])["isStale"] is True
+    first_summary = next(run for run in detail["chunkRuns"] if run["id"] == first_chunk["id"])
+    assert first_summary["isCompatible"] is True
+    assert first_summary["isStale"] is False
+    assert first_summary["historicalLineage"] is True
 
-    stale_embedding = client.post(
+    historical_embedding = client.post(
         f"/documents/{document_id}/embeddings",
         json={"chunkRunId": first_chunk["id"]},
     )
-    assert stale_embedding.status_code == 409
-    assert stale_embedding.json()["error"]["code"] == "stale_lineage"
+    assert historical_embedding.status_code == 200
+    historical_embedding_id = historical_embedding.json()["id"]
 
-    stale_experiment = client.post(
+    historical_experiment = client.post(
         "/experiments",
         json={
             "documentId": document_id,
@@ -246,8 +277,7 @@ def test_rechunk_and_reparse_reject_stale_downstream_lineage(monkeypatch):
             "retrieval": {"mode": "keyword", "topK": 1},
         },
     )
-    assert stale_experiment.status_code == 409
-    assert stale_experiment.json()["error"]["code"] == "stale_lineage"
+    assert historical_experiment.status_code == 200
 
     dataset = client.post(
         "/evaluation/datasets",
@@ -258,13 +288,75 @@ def test_rechunk_and_reparse_reject_stale_downstream_lineage(monkeypatch):
     assert reparsed.json()["parseRunId"] != parse_run_id
     run_parse_worker(reparsed.json()["parseRunId"])
 
-    stale_chunk = client.post(
+    historical_chunk = client.post(
         f"/documents/{document_id}/chunks",
         json={"parseRunId": parse_run_id, "strategy": "fixed_token", "config": {"chunkSizeTokens": 64, "overlapTokens": 8}},
     )
-    assert stale_chunk.status_code == 409
-    assert stale_chunk.json()["error"]["code"] == "stale_lineage"
+    assert historical_chunk.status_code == 200
 
-    stale_evaluation = client.post("/evaluation/runs", json={"datasetId": dataset["id"]})
-    assert stale_evaluation.status_code == 409
-    assert stale_evaluation.json()["error"]["code"] == "stale_lineage"
+    historical_evaluation = client.post(
+        "/evaluation/runs",
+        json={
+            "datasetId": dataset["id"],
+            "chunkRunId": first_chunk["id"],
+            "embeddingRunId": historical_embedding_id,
+            "retrieval": {"mode": "keyword", "topK": 1},
+        },
+    )
+    assert historical_evaluation.status_code == 200
+
+    after_reparse = client.get(f"/documents/{document_id}").json()
+    old_parse_summary = next(run for run in after_reparse["parseRuns"] if run["id"] == parse_run_id)
+    assert old_parse_summary["isCompatible"] is True
+    assert old_parse_summary["isStale"] is False
+
+
+def test_same_user_sha256_identity_is_race_safe_and_cross_user_isolated():
+    repository = InMemoryRepository()
+    settings = Settings(app_env="development", docling_parser_version="test")
+
+    def upload_once(_index):
+        return queue_parse_upload(b"%PDF-1.7", "lesson.pdf", repository=repository, settings=settings)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(upload_once, range(8)))
+    assert len({item[0]["id"] for item in results}) == 1
+    assert len({item[1]["id"] for item in results}) == 1
+    assert len(repository.documents) == 1
+    assert len(repository.parses) == 1
+
+    owner_a = uuid.UUID("11111111-1111-4111-8111-111111111111")
+    owner_b = uuid.UUID("22222222-2222-4222-8222-222222222222")
+    first = repository.create_document(
+        {"file_name": "a.pdf", "media_type": "application/pdf", "size_bytes": 1, "owner_user_id": owner_a},
+        "rag-documents",
+        "a.pdf",
+        "same-sha",
+    )
+    second = repository.create_document(
+        {"file_name": "b.pdf", "media_type": "application/pdf", "size_bytes": 1, "owner_user_id": owner_b},
+        "rag-documents",
+        "b.pdf",
+        "same-sha",
+    )
+    assert first["id"] != second["id"]
+    assert repository.get_document_by_sha256("same-sha", owner_user_id=owner_a)["id"] == first["id"]
+    assert repository.get_document_by_sha256("same-sha", owner_user_id=owner_b)["id"] == second["id"]
+
+
+def test_duplicate_failed_parse_creates_new_parse_on_same_document():
+    repository = InMemoryRepository()
+    settings = Settings(app_env="development", docling_parser_version="test")
+    first_document, first_parse, _, first_dispatch = queue_parse_upload(
+        b"%PDF-1.7", "lesson.pdf", repository=repository, settings=settings
+    )
+    assert first_dispatch is True
+    repository.fail_parse(first_parse["id"], "docling_error", "failed")
+
+    second_document, second_parse, reused_document, dispatch_required = queue_parse_upload(
+        b"%PDF-1.7", "lesson.pdf", repository=repository, settings=settings
+    )
+    assert reused_document is True
+    assert dispatch_required is True
+    assert second_document["id"] == first_document["id"]
+    assert second_parse["id"] != first_parse["id"]

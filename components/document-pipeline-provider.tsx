@@ -126,10 +126,6 @@ function asApiError(error: unknown, fallback: string) {
   return error instanceof DocumentApiError ? error : new DocumentApiError("unknown", fallback);
 }
 
-function staleRun<T extends { isStale: boolean }>(run: T | null): T | null {
-  return run ? { ...run, isStale: true } : null;
-}
-
 export function DocumentPipelineProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "/";
   const [authUserId, setAuthUserId] = useState<string | null>(process.env.NODE_ENV === "test" ? "test-user" : null);
@@ -240,10 +236,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     ]);
     const chunkMatchesLineage = Boolean(activeChunk && activeChunk.documentId === detail.id && activeChunk.parseRunId === detail.activeParseRunId);
     const embeddingMatchesLineage = Boolean(activeEmbedding && chunkMatchesLineage && activeEmbedding.documentId === detail.id && activeEmbedding.chunkRunId === activeChunk?.id);
-    const currentExperiments = experiments.map((run) => ({
-      ...run,
-      isStale: run.chunkRunId !== detail.activeChunkRunId || (run.embeddingRunId !== null && run.embeddingRunId !== detail.activeEmbeddingRunId),
-    }));
+    const currentExperiments = experiments;
     const activeParseSummary = detail.activeParseRunId
       ? detail.parseRuns.find((run) => run.id === detail.activeParseRunId) ?? null
       : null;
@@ -274,10 +267,10 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setParseError(visibleParseSummary?.error
       ? new DocumentApiError(visibleParseSummary.error.code, visibleParseSummary.error.message)
       : null);
-    setChunkRun(activeChunk ? { ...activeChunk, isStale: !chunkMatchesLineage } : null);
-    setEmbeddingRun(activeEmbedding ? { ...activeEmbedding, isStale: !embeddingMatchesLineage } : null);
+    setChunkRun(activeChunk);
+    setEmbeddingRun(activeEmbedding);
     setExperimentHistory(currentExperiments);
-    setExperimentRun(currentExperiments.find((run) => !run.isStale) ?? null);
+    setExperimentRun(currentExperiments.find((run) => run.isCompatible) ?? null);
     setEvaluationDatasets(datasets);
     setChunkStatus(!detail.activeParseRunId ? "locked" : !activeChunk ? "ready" : chunkMatchesLineage ? "completed" : "stale");
     setEmbeddingStatus(!activeChunk ? "locked" : !activeEmbedding ? "ready" : embeddingMatchesLineage ? "completed" : "stale");
@@ -482,10 +475,10 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setLastReportedParseProgress(0);
     setParseProgress(0);
     setParseError(null);
-    setChunkRun((run) => staleRun(run));
-    setEmbeddingRun((run) => staleRun(run));
-    setExperimentRun((run) => staleRun(run));
-    setEvaluationRun((run) => staleRun(run));
+    setChunkRun(null);
+    setEmbeddingRun(null);
+    setExperimentRun(null);
+    setEvaluationRun(null);
     addActivity("parseRequested");
     addActivity("parsing");
     try {
@@ -567,8 +560,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       setParseStatus("completed");
       setLastReportedParseProgress(100);
       setParseProgress(100);
-      setExperimentHistory((current) => current.map((run) => ({ ...run, isStale: true })));
-      setEvaluationRun((run) => staleRun(run));
+      setEvaluationRun(null);
       addActivity("parseCompleted");
       setDocuments((current) => current.map((document) => document.id === documentId ? {
         ...document,
@@ -600,9 +592,9 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const controller = replaceController("chunk");
     setChunkStatus("processing");
     setChunkError(null);
-    setEmbeddingRun((run) => staleRun(run));
-    setExperimentRun((run) => staleRun(run));
-    setEvaluationRun((run) => staleRun(run));
+    setEmbeddingRun(null);
+    setExperimentRun(null);
+    setEvaluationRun(null);
     try {
       const result = await createChunkRun(documentId, strategy, config, parseRunId, controller.signal);
       setChunkRun(result);
@@ -627,8 +619,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const controller = replaceController("embedding");
     setEmbeddingStatus("processing");
     setEmbeddingError(null);
-    setExperimentRun((run) => staleRun(run));
-    setEvaluationRun((run) => staleRun(run));
+    setExperimentRun(null);
+    setEvaluationRun(null);
     try {
       const result = await createEmbeddingRun(documentId, chunkRunId, controller.signal);
       setEmbeddingRun(result);

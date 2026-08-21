@@ -93,6 +93,8 @@ class RunSummary(CamelCaseModel):
     status: RunStatus
     progress: int | None = Field(default=None, ge=0, le=100)
     is_stale: bool = False
+    is_compatible: bool = True
+    compatibility_reason: str | None = None
     historical_lineage: bool = False
     upstream: dict[str, str | None] = Field(default_factory=dict)
     config: dict[str, Any] = Field(default_factory=dict)

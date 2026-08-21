@@ -31,6 +31,8 @@ export type RunSummary = {
   status: RunStatus;
   progress: number | null;
   isStale: boolean;
+  isCompatible: boolean;
+  compatibilityReason: string | null;
   historicalLineage: boolean;
   upstream: Record<string, string | null>;
   config: Record<string, unknown>;

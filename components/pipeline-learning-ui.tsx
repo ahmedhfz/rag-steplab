@@ -75,8 +75,8 @@ export function StageSection({
 
 export function RunMetadata({ run, locale }: { run: RunSummary; locale: AppLocale }) {
   const labels = locale === "tr"
-    ? { run: "Çalıştırma", duration: "Süre", lineage: "Kaynaklar", config: "Ayarlar", stale: "Bu sonuç güncel pipeline ile eşleşmiyor." }
-    : { run: "Run", duration: "Duration", lineage: "Upstream", config: "Config", stale: "This result no longer matches the active pipeline." };
+    ? { run: "Çalıştırma", duration: "Süre", lineage: "Kaynaklar", config: "Ayarlar", incompatible: "Bu lineage mevcut uyumluluk kurallarıyla kullanılamıyor." }
+    : { run: "Run", duration: "Duration", lineage: "Upstream", config: "Config", incompatible: "This lineage is not compatible with the current contract." };
   const upstream = Object.entries(run.upstream).filter((entry): entry is [string, string] => Boolean(entry[1]));
   return (
     <div className="grid gap-3 border bg-slate-50/60 p-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
@@ -87,7 +87,7 @@ export function RunMetadata({ run, locale }: { run: RunSummary; locale: AppLocal
         <summary className="cursor-pointer font-medium text-slate-600">{labels.config}</summary>
         <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-5">{JSON.stringify(run.config, null, 2)}</pre>
       </details>
-      {run.isStale && <p className="text-orange-700 sm:col-span-2 lg:col-span-4" role="status"><History aria-hidden="true" className="mr-1 inline size-3.5" />{labels.stale}</p>}
+      {!run.isCompatible && <p className="text-orange-700 sm:col-span-2 lg:col-span-4" role="status"><History aria-hidden="true" className="mr-1 inline size-3.5" />{labels.incompatible}</p>}
     </div>
   );
 }
