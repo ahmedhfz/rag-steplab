@@ -63,8 +63,12 @@ async function callbackDiagnostics(request: Request, url: URL) {
     })
     .filter((cookie): cookie is { name: string; value: string } => Boolean(cookie?.name));
   const cookieNames = cookies.map((cookie) => cookie.name);
-  const flowCookie = cookies.find((cookie) => /-auth-token-flow-[A-Za-z0-9_-]{8,64}-code-verifier(?:\.\d+)?$/.test(cookie.name));
   const flowId = url.searchParams.get("sb_flow_id");
+  const flowCookie =
+    (flowId
+      ? cookies.find((cookie) => cookie.name.includes(`-auth-token-flow-${flowId}-code-verifier`))
+      : undefined) ??
+    cookies.find((cookie) => /-auth-token-flow-[A-Za-z0-9_-]{8,64}-code-verifier(?:\.\d+)?$/.test(cookie.name));
 
   return {
     codePresent: url.searchParams.has("code"),
