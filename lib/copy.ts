@@ -23,9 +23,12 @@ export type AppCopy = {
   footer: { localProject: string; backendStatus: string };
   common: {
     close: string;
+    back: string;
     openNavigation: string;
     primaryNavigation: string;
+    accountMenu: string;
     frontendFoundation: string;
+    signOut: string;
     storagePending: string;
     backToOverview: string;
     learningHint: string;
@@ -211,9 +214,12 @@ export const UI_COPY = {
     footer: { localProject: "RAG learning laboratory", backendStatus: "Backend: live RAG API" },
     common: {
       close: "Close",
+      back: "Back",
       openNavigation: "Open navigation",
       primaryNavigation: "Primary navigation",
+      accountMenu: "Account menu",
       frontendFoundation: "Full pipeline lab",
+      signOut: "Sign out",
       storagePending: "Loading preferences…",
       backToOverview: "Back to overview",
       learningHint: "Learning hint",
@@ -407,9 +413,12 @@ export const UI_COPY = {
     footer: { localProject: "RAG öğrenme laboratuvarı", backendStatus: "Backend: canlı RAG API" },
     common: {
       close: "Kapat",
+      back: "Geri",
       openNavigation: "Gezinmeyi aç",
       primaryNavigation: "Birincil gezinme",
+      accountMenu: "Hesap menüsü",
       frontendFoundation: "Tam pipeline laboratuvarı",
+      signOut: "Çıkış yap",
       storagePending: "Tercihler yükleniyor…",
       backToOverview: "Genel bakışa dön",
       learningHint: "Öğrenme ipucu",

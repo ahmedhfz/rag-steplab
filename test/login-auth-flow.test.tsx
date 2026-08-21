@@ -1,5 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -32,7 +33,10 @@ vi.mock("@/lib/supabase/browser", () => ({
 
 import { LoginScreen } from "@/components/login-screen";
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  window.history.replaceState({}, "", "/");
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -94,5 +98,12 @@ describe("LoginScreen Supabase auth flows", () => {
     await user.click(googleLink);
 
     expect(googleLink).toHaveAttribute("href", "/auth/google");
+  });
+
+  it("shows OAuth errors after hydration without changing the initial server markup", async () => {
+    window.history.replaceState({}, "", "/login?auth_error=oauth_failed");
+    render(<LoginScreen />);
+
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Google ile giriş tamamlanamadı"));
   });
 });

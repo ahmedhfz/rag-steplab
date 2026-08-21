@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  ArrowLeft,
   BarChart3,
   Beaker,
   BookOpen,
@@ -43,7 +44,181 @@ function isNavItemActive(key: AppNavKey, pathname: string) {
   return pathname === `/${key}`;
 }
 
-function Sidebar({ pathname, onNavigate, copy }: { pathname: string; onNavigate?: () => void; copy: AppCopy }) {
+type AuthUserSummary = {
+  email: string | null;
+  name: string | null;
+};
+
+function getAuthUserSummary(user: { email?: string; user_metadata?: Record<string, unknown> } | null | undefined): AuthUserSummary {
+  const metadata = user?.user_metadata;
+  const name = [metadata?.full_name, metadata?.name, metadata?.user_name, metadata?.preferred_username]
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+    ?.trim() ?? null;
+
+  return { email: user?.email ?? null, name };
+}
+
+function getInitials(name: string | null, email: string | null) {
+  const source = name?.trim() || email?.split("@")[0]?.trim() || "";
+  if (!source) return "RL";
+
+  const parts = source.split(/\s+/).filter(Boolean);
+  if (parts.length > 1) {
+    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+  }
+
+  return source.slice(0, 2).toUpperCase();
+}
+
+type UserMenuItemProps = {
+  icon: LucideIcon;
+  label: string;
+  onClick?: () => void;
+  href?: string;
+};
+
+function UserMenuItem({ icon: Icon, label, onClick, href }: UserMenuItemProps) {
+  const className = "flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300";
+
+  if (href) {
+    return <Link className={className} href={href} onClick={onClick}><Icon aria-hidden="true" className="size-4 text-slate-500" />{label}</Link>;
+  }
+
+  return <button className={className} onClick={onClick} type="button"><Icon aria-hidden="true" className="size-4 text-slate-500" />{label}</button>;
+}
+
+type UserMenuProps = {
+  copy: AppCopy;
+  user: AuthUserSummary;
+  onNavigate?: () => void;
+  onSignOut: () => Promise<void>;
+};
+
+function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
+  const [openView, setOpenView] = useState<"menu" | "guides" | "help" | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const isOpen = openView !== null;
+  const displayName = user.name ?? user.email ?? copy.productName;
+  const initials = getInitials(user.name, user.email);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!containerRef.current?.contains(event.target as Node)) setOpenView(null);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+
+      event.preventDefault();
+      if (openView === "menu") {
+        setOpenView(null);
+        triggerRef.current?.focus();
+      } else {
+        setOpenView("menu");
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, openView]);
+
+  function closeAfterNavigation() {
+    setOpenView(null);
+    onNavigate?.();
+  }
+
+  async function handleSignOut() {
+    setOpenView(null);
+    await onSignOut();
+  }
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="dialog"
+        aria-label={`${displayName} — ${copy.common.accountMenu}`}
+        className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-slate-300"
+        onClick={() => setOpenView(isOpen ? null : "menu")}
+        ref={triggerRef}
+        type="button"
+      >
+        <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">{initials}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-slate-800">{displayName}</span>
+          <span className="block truncate text-xs text-slate-500">{user.email ?? copy.common.frontendFoundation}</span>
+        </span>
+      </button>
+
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <motion.div
+            animate={{ opacity: 1, y: 0 }}
+            aria-label={copy.common.accountMenu}
+            className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-50 overflow-hidden rounded-lg border bg-white p-1.5 shadow-lg"
+            exit={{ opacity: 0, y: 4 }}
+            initial={{ opacity: 0, y: 4 }}
+            role="dialog"
+            transition={{ duration: 0.14, ease: "easeOut" }}
+          >
+            {openView === "menu" && (
+              <>
+                <div className="mb-1 border-b px-2.5 pb-2.5 pt-1">
+                  <p className="truncate text-sm font-semibold text-slate-900">{displayName}</p>
+                  <p className="truncate text-xs text-slate-500">{user.email ?? copy.common.frontendFoundation}</p>
+                </div>
+                <UserMenuItem icon={BookOpen} label={copy.guides} onClick={() => setOpenView("guides")} />
+                <UserMenuItem icon={CircleHelp} label={copy.help} onClick={() => setOpenView("help")} />
+                <UserMenuItem href="/settings" icon={Settings} label={copy.nav.settings} onClick={closeAfterNavigation} />
+                <div className="my-1 border-t" />
+                <UserMenuItem icon={LogOut} label={copy.common.signOut} onClick={() => void handleSignOut()} />
+              </>
+            )}
+
+            {openView === "guides" && (
+              <div className="p-1">
+                <button className="mb-2 flex items-center gap-1.5 rounded px-1.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900" onClick={() => setOpenView("menu")} type="button">
+                  <ArrowLeft aria-hidden="true" className="size-3.5" />
+                  {copy.common.back}
+                </button>
+                <h2 className="px-1.5 text-sm font-semibold text-slate-900">{copy.guidePanel.title}</h2>
+                <p className="px-1.5 pt-1.5 text-xs leading-5 text-slate-600">{copy.guidePanel.description}</p>
+                <nav aria-label={copy.guides} className="mt-3 grid gap-1 border-t pt-2 text-sm">
+                  <Link className="rounded px-2 py-1.5 hover:bg-slate-100" href="/" onClick={closeAfterNavigation}>{copy.nav.overview}</Link>
+                  <Link className="rounded px-2 py-1.5 hover:bg-slate-100" href="/documents" onClick={closeAfterNavigation}>{copy.nav.documents}</Link>
+                  <Link className="rounded px-2 py-1.5 hover:bg-slate-100" href="/retrieval" onClick={closeAfterNavigation}>{copy.nav.retrieval}</Link>
+                </nav>
+              </div>
+            )}
+
+            {openView === "help" && (
+              <div className="p-1">
+                <button className="mb-2 flex items-center gap-1.5 rounded px-1.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900" onClick={() => setOpenView("menu")} type="button">
+                  <ArrowLeft aria-hidden="true" className="size-3.5" />
+                  {copy.common.back}
+                </button>
+                <h2 className="px-1.5 text-sm font-semibold text-slate-900">{copy.helpPanel.title}</h2>
+                <p className="px-1.5 pt-1.5 text-xs leading-5 text-slate-600">{copy.helpPanel.description}</p>
+                <Link className="mt-3 inline-flex border-t px-1.5 pt-2 text-sm font-medium text-slate-900 underline-offset-4 hover:underline" href="/settings" onClick={closeAfterNavigation}>
+                  {copy.helpPanel.settingsLink}
+                </Link>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: string; onNavigate?: () => void; copy: AppCopy; user: AuthUserSummary; onSignOut: () => Promise<void> }) {
   return (
     <div className="flex h-full flex-col bg-[#fcfcfd]">
       <div className="flex h-[74px] items-center gap-3 border-b px-6">
@@ -72,12 +247,8 @@ function Sidebar({ pathname, onNavigate, copy }: { pathname: string; onNavigate?
         })}
       </nav>
 
-      <div className="flex items-center gap-3 border-t px-5 py-4">
-        <span className="grid size-9 place-items-center rounded-full bg-slate-100 text-xs font-semibold">RL</span>
-        <div className="min-w-0">
-          <div className="truncate text-sm font-medium">{copy.common.frontendFoundation}</div>
-          <div className="text-xs text-slate-500">{copy.footer.backendStatus}</div>
-        </div>
+      <div className="border-t px-3 py-3">
+        <UserMenu copy={copy} onNavigate={onNavigate} onSignOut={onSignOut} user={user} />
       </div>
     </div>
   );
@@ -93,159 +264,6 @@ function getPageTitle(pathname: string, copy: AppCopy) {
   return copy.productName;
 }
 
-type HeaderMenuKey = "guides" | "help";
-
-type HeaderMenuProps = {
-  id: HeaderMenuKey;
-  label: string;
-  icon: LucideIcon;
-  panelTitle: string;
-  panelDescription: string;
-  children: React.ReactNode;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  className?: string;
-  showLabelOnSmallScreens?: boolean;
-};
-
-function HeaderMenu({
-  id,
-  label,
-  icon: Icon,
-  panelTitle,
-  panelDescription,
-  children,
-  open,
-  onOpenChange,
-  className,
-  showLabelOnSmallScreens = true,
-}: HeaderMenuProps) {
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const panelId = `${id}-header-panel`;
-  const titleId = `${id}-header-panel-title`;
-
-  useEffect(() => {
-    if (!open) return;
-
-    function handlePointerDown(event: PointerEvent) {
-      if (!containerRef.current?.contains(event.target as Node)) onOpenChange(false);
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key !== "Escape") return;
-
-      event.preventDefault();
-      onOpenChange(false);
-      triggerRef.current?.focus();
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onOpenChange, open]);
-
-  function handleTriggerKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
-    if (event.key !== "ArrowDown") return;
-
-    event.preventDefault();
-    onOpenChange(true);
-    requestAnimationFrame(() => panelRef.current?.querySelector<HTMLElement>("a, button")?.focus());
-  }
-
-  return (
-    <div className={cn("relative", className)} ref={containerRef}>
-      <button
-        aria-controls={panelId}
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        aria-label={label}
-        className={cn(
-          "flex h-8 items-center gap-2 rounded-md px-3 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-slate-400",
-          !showLabelOnSmallScreens && "px-2 sm:px-3",
-        )}
-        onClick={() => onOpenChange(!open)}
-        onKeyDown={handleTriggerKeyDown}
-        ref={triggerRef}
-        type="button"
-      >
-        <Icon aria-hidden="true" className="size-4" />
-        <span className={cn(!showLabelOnSmallScreens && "hidden sm:inline")}>{label}</span>
-      </button>
-
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            animate={{ opacity: 1, y: 0 }}
-            aria-labelledby={titleId}
-            className="absolute right-0 top-10 z-50 w-72 origin-top-right border bg-white p-4 shadow-sm"
-            exit={{ opacity: 0, y: -4 }}
-            id={panelId}
-            initial={{ opacity: 0, y: -4 }}
-            ref={panelRef}
-            role="dialog"
-            transition={{ duration: 0.14, ease: "easeOut" }}
-          >
-            <h2 className="text-sm font-semibold" id={titleId}>{panelTitle}</h2>
-            <p className="mt-2 text-xs leading-5 text-slate-600">{panelDescription}</p>
-            {children}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-function HeaderMenus({ copy }: { copy: AppCopy }) {
-  const [openMenu, setOpenMenu] = useState<HeaderMenuKey | null>(null);
-
-  return (
-    <div className="flex items-center gap-1 sm:gap-4">
-      <HeaderMenu
-        className="hidden sm:block"
-        icon={BookOpen}
-        id="guides"
-        label={copy.guides}
-        onOpenChange={(open) => setOpenMenu(open ? "guides" : null)}
-        open={openMenu === "guides"}
-        panelDescription={copy.guidePanel.description}
-        panelTitle={copy.guidePanel.title}
-      >
-        <nav aria-label={copy.guides} className="mt-3 grid gap-1 border-t pt-3 text-sm">
-          <Link className="rounded px-2 py-1.5 hover:bg-slate-100" href="/" onClick={() => setOpenMenu(null)}>{copy.nav.overview}</Link>
-          <Link className="rounded px-2 py-1.5 hover:bg-slate-100" href="/documents" onClick={() => setOpenMenu(null)}>{copy.nav.documents}</Link>
-          <Link className="rounded px-2 py-1.5 hover:bg-slate-100" href="/retrieval" onClick={() => setOpenMenu(null)}>{copy.nav.retrieval}</Link>
-        </nav>
-      </HeaderMenu>
-
-      <HeaderMenu
-        icon={CircleHelp}
-        id="help"
-        label={copy.help}
-        onOpenChange={(open) => setOpenMenu(open ? "help" : null)}
-        open={openMenu === "help"}
-        panelDescription={copy.helpPanel.description}
-        panelTitle={copy.helpPanel.title}
-        showLabelOnSmallScreens={false}
-      >
-        <Link className="mt-3 inline-flex border-t pt-3 text-sm font-medium text-slate-900 underline-offset-4 hover:underline" href="/settings" onClick={() => setOpenMenu(null)}>
-          {copy.helpPanel.settingsLink}
-        </Link>
-      </HeaderMenu>
-
-      <Button asChild aria-label={copy.nav.settings} className="text-slate-700" size="icon" variant="ghost">
-        <Link href="/settings">
-          <Settings aria-hidden="true" className="size-[18px]" />
-        </Link>
-      </Button>
-    </div>
-  );
-}
-
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -255,17 +273,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { preferences } = usePreferences();
   const copy = UI_COPY[preferences.locale];
   const router = useRouter();
-  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [authUser, setAuthUser] = useState<AuthUserSummary>({ email: null, name: null });
 
   useEffect(() => {
     let active = true;
     try {
       const supabase = getSupabaseBrowserClient();
       void supabase.auth.getUser().then(({ data }) => {
-        if (active) setUserEmail(data.user?.email ?? null);
+        if (active) setAuthUser(getAuthUserSummary(data.user));
       });
       const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-        if (active) setUserEmail(session?.user.email ?? null);
+        if (active) setAuthUser(getAuthUserSummary(session?.user));
       });
       return () => {
         active = false;
@@ -340,7 +358,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <MotionConfig reducedMotion="never">
       <div className="min-h-screen bg-[#fdfdfd] text-slate-950">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-[232px] border-r lg:block">
-        <Sidebar copy={copy} pathname={pathname} />
+        <Sidebar copy={copy} onSignOut={signOut} pathname={pathname} user={authUser} />
       </aside>
 
       <div
@@ -378,7 +396,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Button aria-label={copy.common.close} autoFocus className="absolute right-3 top-4 z-10" onClick={() => setMobileOpen(false)} ref={mobileCloseButtonRef} size="icon" variant="ghost">
                 <X aria-hidden="true" className="size-5" />
               </Button>
-              <Sidebar copy={copy} onNavigate={() => setMobileOpen(false)} pathname={pathname} />
+              <Sidebar copy={copy} onNavigate={() => setMobileOpen(false)} onSignOut={signOut} pathname={pathname} user={authUser} />
             </motion.aside>
           )}
         </AnimatePresence>
@@ -394,14 +412,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span className="hidden rounded-md border bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 sm:inline-flex">
               {copy.learningMode}: {copy.detailLevel[preferences.detailLevel]}
             </span>
-          </div>
-          <div className="flex items-center gap-2 sm:gap-4">
-            <div className="flex items-center gap-2 border-r pr-2 sm:pr-4">
-              <span aria-hidden="true" className="grid size-8 place-items-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-600">{userEmail?.slice(0, 1).toUpperCase() ?? "RL"}</span>
-              <span className="hidden max-w-32 truncate text-xs text-slate-600 md:inline">{userEmail ?? "RAG StepLab"}</span>
-              <Button aria-label="Çıkış yap" className="text-slate-600" disabled={!userEmail} onClick={signOut} size="icon" variant="ghost"><LogOut aria-hidden="true" className="size-4" /></Button>
-            </div>
-            <HeaderMenus copy={copy} />
           </div>
         </header>
 
