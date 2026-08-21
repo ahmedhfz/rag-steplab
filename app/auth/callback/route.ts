@@ -7,7 +7,11 @@ function authErrorCategory(error: unknown) {
 
   const name = "name" in error && typeof error.name === "string" ? error.name : "unknown";
   const code = "code" in error && typeof error.code === "string" ? error.code : "unknown";
-  return `${name}:${code}`;
+  const status =
+    "status" in error && (typeof error.status === "number" || typeof error.status === "string")
+      ? String(error.status)
+      : "unknown";
+  return `${name}:${code}:${status}`;
 }
 
 export async function GET(request: Request) {
