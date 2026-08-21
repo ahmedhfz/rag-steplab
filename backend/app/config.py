@@ -64,6 +64,9 @@ class Settings:
     database_schema: str = "rag_lab"
     supabase_url: str | None = None
     supabase_secret_key: str | None = None
+    supabase_jwt_issuer: str | None = None
+    supabase_jwt_audience: str = "authenticated"
+    supabase_jwt_jwks_url: str | None = None
     supabase_storage_bucket: str = "rag-documents"
     gemini_api_key: str | None = None
     gemini_embedding_model: str = "gemini-embedding-2"
@@ -109,6 +112,9 @@ def get_settings() -> Settings:
         database_schema=os.getenv("DATABASE_SCHEMA", "rag_lab"),
         supabase_url=os.getenv("SUPABASE_URL") or None,
         supabase_secret_key=os.getenv("SUPABASE_SECRET_KEY") or None,
+        supabase_jwt_issuer=os.getenv("SUPABASE_JWT_ISSUER") or None,
+        supabase_jwt_audience=os.getenv("SUPABASE_JWT_AUDIENCE", "authenticated"),
+        supabase_jwt_jwks_url=os.getenv("SUPABASE_JWT_JWKS_URL") or None,
         supabase_storage_bucket=os.getenv("SUPABASE_STORAGE_BUCKET", "rag-documents"),
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         gemini_embedding_model=os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-2"),

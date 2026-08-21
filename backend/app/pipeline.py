@@ -140,13 +140,31 @@ def queue_parse_upload(
     *,
     repository: Repository | None = None,
     settings: Settings | None = None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], bool]:
     """Persist the PDF and a queued parse run without doing CPU-heavy work."""
 
     repository = repository or get_repository()
     settings = settings or get_settings()
     _require_write(repository, settings)
     digest = hashlib.sha256(content).hexdigest()
+    existing = next(
+        (
+            row for row in repository.list_document_rows()
+            if row.get("sha256") == digest and row.get("is_canonical", True)
+        ),
+        None,
+    )
+    if existing is not None:
+        parse = repository.find_inflight_parse(existing["id"])
+        if parse is None:
+            parse_rows = repository.list_parse_rows(existing["id"])
+            parse = next(
+                (row for row in parse_rows if row["id"] == existing.get("active_parse_run_id")),
+                parse_rows[0] if parse_rows else None,
+            )
+        if parse is None:
+            raise ApiProblem(409, "duplicate_document_without_parse", "The existing document has no usable parse run.")
+        return existing, parse, True
     storage_path = f"{new_id()}/{digest}.pdf"
     storage = get_storage()
     storage.upload_pdf(storage_path, content)
@@ -176,7 +194,7 @@ def queue_parse_upload(
     if parse is None:
         storage.remove(storage_path)
         raise ApiProblem(500, "persistence_failed", "The parse run could not be queued.")
-    return document, parse
+    return document, parse, False
 
 
 def queue_reparse_document(

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
   Beaker,
@@ -10,6 +10,7 @@ import {
   FileText,
   Grid2X2,
   Home,
+  LogOut,
   Menu,
   Search,
   Settings,
@@ -23,6 +24,7 @@ import { usePreferences } from "@/components/preferences-provider";
 import { PageTransition } from "@/components/page-transition";
 import { Button } from "@/components/ui/button";
 import { type AppCopy, type AppNavKey, UI_COPY } from "@/lib/copy";
+import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { cn } from "@/lib/utils";
 
 const navItems: Array<{ key: AppNavKey; href: string; icon: LucideIcon }> = [
@@ -252,6 +254,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const mobilePanelRef = useRef<HTMLElement>(null);
   const { preferences } = usePreferences();
   const copy = UI_COPY[preferences.locale];
+  const router = useRouter();
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    try {
+      const supabase = getSupabaseBrowserClient();
+      void supabase.auth.getUser().then(({ data }) => {
+        if (active) setUserEmail(data.user?.email ?? null);
+      });
+      const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (active) setUserEmail(session?.user.email ?? null);
+      });
+      return () => {
+        active = false;
+        listener.subscription.unsubscribe();
+      };
+    } catch {
+      return () => { active = false; };
+    }
+  }, []);
+
+  async function signOut() {
+    try {
+      await getSupabaseBrowserClient().auth.signOut();
+    } finally {
+      router.replace("/login");
+    }
+  }
   useEffect(() => {
     if (!mobileOpen) return;
 
@@ -295,6 +326,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       event.preventDefault();
       last.focus();
     }
+  }
+
+  if (pathname === "/login" || pathname === "/auth/reset-password") {
+    return (
+      <MotionConfig reducedMotion="never">
+        <PageTransition pathname={pathname}>{children}</PageTransition>
+      </MotionConfig>
+    );
   }
 
   return (
@@ -356,7 +395,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               {copy.learningMode}: {copy.detailLevel[preferences.detailLevel]}
             </span>
           </div>
-          <HeaderMenus copy={copy} />
+          <div className="flex items-center gap-2 sm:gap-4">
+            <div className="flex items-center gap-2 border-r pr-2 sm:pr-4">
+              <span aria-hidden="true" className="grid size-8 place-items-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-600">{userEmail?.slice(0, 1).toUpperCase() ?? "RL"}</span>
+              <span className="hidden max-w-32 truncate text-xs text-slate-600 md:inline">{userEmail ?? "RAG StepLab"}</span>
+              <Button aria-label="Çıkış yap" className="text-slate-600" disabled={!userEmail} onClick={signOut} size="icon" variant="ghost"><LogOut aria-hidden="true" className="size-4" /></Button>
+            </div>
+            <HeaderMenus copy={copy} />
+          </div>
         </header>
 
         <main className="min-w-0">

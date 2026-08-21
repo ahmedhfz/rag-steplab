@@ -6,6 +6,7 @@ const navigationState = vi.hoisted(() => ({ pathname: "/" }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => navigationState.pathname,
+  useRouter: () => ({ replace: vi.fn() }),
 }));
 
 vi.mock("next/link", () => ({
@@ -32,6 +33,26 @@ afterEach(() => {
 });
 
 describe("AppShell navigation contract", () => {
+  it("keeps the page content visible when the pathname changes in the same shell", () => {
+    navigationState.pathname = "/documents";
+    const { rerender } = render(
+      <PreferencesProvider>
+        <AppShell><p>Document overview</p></AppShell>
+      </PreferencesProvider>,
+    );
+
+    navigationState.pathname = "/documents/parsed";
+    rerender(
+      <PreferencesProvider>
+        <AppShell><p>Parsed content</p></AppShell>
+      </PreferencesProvider>,
+    );
+
+    expect(screen.getByRole("main")).toHaveTextContent("Parsed content");
+    expect(screen.getByText("Parsed content")).toBeVisible();
+    expect(screen.getByRole("main").firstElementChild).not.toHaveAttribute("style");
+  });
+
   it.each([
     ["/documents/parsed", "Documents", "/documents"],
     ["/documents/chunks", "Chunks", "/documents/chunks"],

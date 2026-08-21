@@ -31,6 +31,7 @@ import type {
   RunSummary,
   ValidatedCitation,
 } from "@/lib/rag-api-types";
+import { getSupabaseAccessToken } from "@/lib/supabase/browser";
 
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
 
@@ -541,13 +542,26 @@ function listPayload(value: unknown, key: string): unknown[] {
 async function request(path: string, init: RequestInit = {}): Promise<unknown> {
   let response: Response;
   try {
+    const accessToken = await getSupabaseAccessToken();
+    if (!accessToken && process.env.NODE_ENV !== "test") {
+      throw new DocumentApiError("auth_required", "Oturum açmanız gerekiyor.");
+    }
+    const headers = new Headers(init.headers);
+    if (!(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
+    if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
     response = await fetch(`${getApiBaseUrl()}${path}`, {
       ...init,
-      headers: init.body instanceof FormData ? init.headers : { "Content-Type": "application/json", ...init.headers },
+      headers,
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     if (error instanceof DocumentApiError) throw error;
+    if (error instanceof Error && error.message === "supabase_session_unavailable") {
+      throw new DocumentApiError("auth_required", "Oturum doğrulanamadı. Lütfen tekrar giriş yapın.");
+    }
+    if (error instanceof Error && error.message === "supabase_configuration_missing") {
+      throw new DocumentApiError("configuration_error", "Supabase auth yapılandırması eksik.");
+    }
     throw new DocumentApiError("backend_unavailable", "The RAG backend could not be reached.");
   }
 

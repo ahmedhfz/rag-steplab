@@ -4,6 +4,7 @@ import type {
   ParseJobFailedResponse,
   ParsedElementType,
 } from "@/lib/document-parse-types";
+import { getSupabaseAccessToken } from "@/lib/supabase/browser";
 
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
 
@@ -130,14 +131,26 @@ export async function parseDocument(file: File, signal?: AbortSignal): Promise<P
 
   let response: Response;
   try {
+    const accessToken = await getSupabaseAccessToken();
+    if (!accessToken && process.env.NODE_ENV !== "test") {
+      throw new DocumentApiError("auth_required", "Oturum açmanız gerekiyor.");
+    }
+    const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
     response = await fetch(`${getApiBaseUrl()}/documents/parse`, {
       method: "POST",
       body: formData,
       signal,
+      headers,
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     if (error instanceof DocumentApiError) throw error;
+    if (error instanceof Error && error.message === "supabase_session_unavailable") {
+      throw new DocumentApiError("auth_required", "Oturum doğrulanamadı. Lütfen tekrar giriş yapın.");
+    }
+    if (error instanceof Error && error.message === "supabase_configuration_missing") {
+      throw new DocumentApiError("configuration_error", "Supabase auth yapılandırması eksik.");
+    }
     throw new DocumentApiError("backend_unavailable", "The parsing backend could not be reached.");
   }
 

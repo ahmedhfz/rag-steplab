@@ -3,12 +3,13 @@ from __future__ import annotations
 import threading
 from typing import Any
 
-from fastapi import FastAPI, File, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import get_settings
+from .auth import CurrentUser, get_current_user
 from .db import check_database
 from .errors import ApiProblem
 from .modal_dispatch import (
@@ -47,7 +48,14 @@ settings = get_settings()
 MAX_FILE_SIZE_BYTES = settings.max_file_size_bytes
 ALLOWED_CONTENT_TYPES = {"", "application/pdf", "application/octet-stream"}
 
-app = FastAPI(title="RAG StepLab API", version="1.0.0")
+_hide_api_docs = settings.app_env in {"production", "staging"}
+app = FastAPI(
+    title="RAG StepLab API",
+    version="1.0.0",
+    docs_url=None if _hide_api_docs else "/docs",
+    redoc_url=None if _hide_api_docs else "/redoc",
+    openapi_url=None if _hide_api_docs else "/openapi.json",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_origins),
@@ -62,7 +70,7 @@ _pipeline_semaphore = threading.BoundedSemaphore(max(1, settings.max_concurrent_
 @app.exception_handler(ApiProblem)
 async def api_problem_handler(_: Request, problem: ApiProblem) -> JSONResponse:
     payload = ErrorResponse(error=ApiError(code=problem.code, message=problem.message))
-    return JSONResponse(status_code=problem.status_code, content=payload.model_dump(by_alias=True))
+    return JSONResponse(status_code=problem.status_code, content=payload.model_dump(by_alias=True), headers=problem.headers)
 
 
 @app.exception_handler(Exception)
@@ -134,7 +142,7 @@ def _parse_progress(parse: dict[str, Any]) -> int:
     return 8 if status == "running" else 0
 
 
-def _parse_response(document: dict[str, Any], parse: dict[str, Any]) -> ParseResponse:
+def _parse_response(document: dict[str, Any], parse: dict[str, Any], *, reused_document: bool = False) -> ParseResponse:
     status = _public_parse_status(parse.get("status"))
     error: ApiError | None = None
     if status == "failed":
@@ -173,6 +181,7 @@ def _parse_response(document: dict[str, Any], parse: dict[str, Any]) -> ParseRes
         progress=_parse_progress(parse),
         run_metadata=metadata,
         error=error,
+        reused_document=reused_document,
     )
 
 
@@ -231,6 +240,7 @@ def ready() -> dict[str, str]:
             not current_settings.supabase_url
             or not current_settings.supabase_secret_key
             or not current_settings.gemini_api_key
+            or not (current_settings.supabase_jwt_issuer or current_settings.supabase_url)
         ):
             raise ApiProblem(503, "runtime_config_incomplete", "Required runtime integrations are not configured.")
         return {"status": "ready", "persistence": "postgres"}
@@ -239,8 +249,12 @@ def ready() -> dict[str, str]:
     return {"status": "ready", "persistence": "memory", "environment": "development"}
 
 
+def _user_repository(user: CurrentUser):
+    return get_repository().scoped(user.id)
+
+
 @app.get("/capabilities", response_model=CapabilitiesResponse)
-def capabilities() -> CapabilitiesResponse:
+def capabilities(_: CurrentUser = Depends(get_current_user)) -> CapabilitiesResponse:
     current_settings = get_settings()
     return CapabilitiesResponse(
         embedding_model=current_settings.gemini_embedding_model,
@@ -259,7 +273,10 @@ def capabilities() -> CapabilitiesResponse:
 
 
 @app.post("/documents/parse", response_model=ParseResponse, status_code=202)
-async def parse_document(file: UploadFile = File(...)) -> JSONResponse:
+async def parse_document(
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(get_current_user),
+) -> JSONResponse:
     file_name = file.filename or ""
     content_type = file.content_type or ""
     try:
@@ -267,9 +284,14 @@ async def parse_document(file: UploadFile = File(...)) -> JSONResponse:
     finally:
         await file.close()
     _ensure_file(content, file_name, content_type)
-    document, queued = await run_in_threadpool(queue_parse_upload, content, file_name)
-    parse = await run_in_threadpool(_dispatch_queued_parse, queued)
-    payload = _parse_response(document, parse)
+    document, queued, reused_document = await run_in_threadpool(
+        queue_parse_upload,
+        content,
+        file_name,
+        repository=_user_repository(user),
+    )
+    parse = queued if reused_document else await run_in_threadpool(_dispatch_queued_parse, queued)
+    payload = _parse_response(document, parse, reused_document=reused_document)
     return JSONResponse(
         status_code=202,
         content=payload.model_dump(by_alias=True, exclude_none=True, mode="json"),
@@ -278,8 +300,12 @@ async def parse_document(file: UploadFile = File(...)) -> JSONResponse:
 
 @app.post("/documents/{document_id}/parse", response_model=ParseResponse, status_code=202)
 @app.post("/documents/{document_id}/reparse", response_model=ParseResponse, status_code=202, include_in_schema=False)
-async def reparse(document_id: str) -> JSONResponse:
-    document, queued = await run_in_threadpool(queue_reparse_document, document_id)
+async def reparse(document_id: str, user: CurrentUser = Depends(get_current_user)) -> JSONResponse:
+    document, queued = await run_in_threadpool(
+        queue_reparse_document,
+        document_id,
+        repository=_user_repository(user),
+    )
     parse = await run_in_threadpool(_dispatch_queued_parse, queued)
     payload = _parse_response(document, parse)
     return JSONResponse(
@@ -289,8 +315,8 @@ async def reparse(document_id: str) -> JSONResponse:
 
 
 @app.get("/parse-runs/{run_id}", response_model=ParseResponse, response_model_exclude_none=True)
-def parse_run(run_id: str) -> ParseResponse:
-    repository = get_repository()
+def parse_run(run_id: str, user: CurrentUser = Depends(get_current_user)) -> ParseResponse:
+    repository = _user_repository(user)
     parse = repository.get_parse_row(run_id)
     if parse is None:
         raise ApiProblem(404, "parse_run_not_found", "The parse run was not found.")
@@ -307,12 +333,13 @@ def parse_run(run_id: str) -> ParseResponse:
     response_model_exclude_none=True,
     include_in_schema=False,
 )
-def document_parse_run(document_id: str, run_id: str) -> ParseResponse:
-    parse = get_repository().get_parse_row(run_id)
+def document_parse_run(document_id: str, run_id: str, user: CurrentUser = Depends(get_current_user)) -> ParseResponse:
+    repository = _user_repository(user)
+    parse = repository.get_parse_row(run_id)
     if parse is None or parse.get("document_id") != document_id:
         raise ApiProblem(404, "parse_run_not_found", "The parse run was not found.")
     parse = _reconcile_terminal_worker_failure(parse)
-    document = get_repository().get_document_row(document_id)
+    document = repository.get_document_row(document_id)
     if document is None:
         raise ApiProblem(404, "document_not_found", "The document was not found.")
     return _parse_response(document, parse)
@@ -385,13 +412,13 @@ def _persisted_parse_response(document: dict[str, Any], parse: dict[str, Any]) -
 
 
 @app.get("/documents")
-def list_documents() -> dict[str, Any]:
-    return {"items": [_document_list_item(row) for row in get_repository().list_document_rows()]}
+def list_documents(user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    return {"items": [_document_list_item(row) for row in _user_repository(user).list_document_rows()]}
 
 
 @app.get("/documents/{document_id}")
-def get_document(document_id: str) -> dict[str, Any]:
-    repository = get_repository()
+def get_document(document_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    repository = _user_repository(user)
     document = repository.get_document_row(document_id)
     if document is None:
         raise ApiProblem(404, "document_not_found", "The document was not found.")
@@ -415,85 +442,85 @@ def get_document(document_id: str) -> dict[str, Any]:
 
 
 @app.post("/documents/{document_id}/chunks")
-def chunks(document_id: str, request: ChunkRunRequest) -> dict[str, Any]:
-    return _camelize(_guarded(create_chunk_run, document_id, request))
+def chunks(document_id: str, request: ChunkRunRequest, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    return _camelize(_guarded(create_chunk_run, document_id, request, repository=_user_repository(user)))
 
 
 @app.get("/chunk-runs/{run_id}")
-def chunk_run(run_id: str) -> dict[str, Any]:
-    row = get_repository().get_chunk_row(run_id)
+def chunk_run(run_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    row = _user_repository(user).get_chunk_row(run_id)
     if row is None:
         raise ApiProblem(404, "chunk_run_not_found", "The chunk run was not found.")
     return _camelize(row)
 
 
 @app.post("/documents/{document_id}/embeddings")
-def embeddings(document_id: str, request: dict[str, str] | None = None) -> dict[str, Any]:
-    return _camelize(_guarded(create_embedding_run, document_id, (request or {}).get("chunkRunId")))
+def embeddings(document_id: str, request: dict[str, str] | None = None, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    return _camelize(_guarded(create_embedding_run, document_id, (request or {}).get("chunkRunId"), repository=_user_repository(user)))
 
 
 @app.get("/embedding-runs/{run_id}")
-def embedding_run(run_id: str) -> dict[str, Any]:
-    row = get_repository().get_embedding_row(run_id)
+def embedding_run(run_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    row = _user_repository(user).get_embedding_row(run_id)
     if row is None:
         raise ApiProblem(404, "embedding_run_not_found", "The embedding run was not found.")
     return _camelize(row)
 
 
 @app.post("/experiments")
-def experiments(request: ExperimentCreateRequest) -> dict[str, Any]:
-    return _camelize(_guarded(create_experiment, request))
+def experiments(request: ExperimentCreateRequest, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    return _camelize(_guarded(create_experiment, request, repository=_user_repository(user)))
 
 
 @app.get("/experiments")
-def list_experiments(document_id: str | None = Query(default=None, alias="documentId")) -> dict[str, Any]:
-    return {"items": _camelize(get_repository().list_experiment_rows(document_id))}
+def list_experiments(document_id: str | None = Query(default=None, alias="documentId"), user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    return {"items": _camelize(_user_repository(user).list_experiment_rows(document_id))}
 
 
 @app.get("/experiments/{experiment_id}")
-def get_experiment(experiment_id: str) -> dict[str, Any]:
-    row = get_repository().get_experiment_row(experiment_id)
+def get_experiment(experiment_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    row = _user_repository(user).get_experiment_row(experiment_id)
     if row is None:
         raise ApiProblem(404, "experiment_not_found", "The experiment was not found.")
     return _camelize(row)
 
 
 @app.post("/experiments/{experiment_id}/continue")
-def continue_run(experiment_id: str) -> dict[str, Any]:
-    return _camelize(_guarded(continue_experiment, experiment_id))
+def continue_run(experiment_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    return _camelize(_guarded(continue_experiment, experiment_id, repository=_user_repository(user)))
 
 
 @app.post("/evaluation/datasets")
-def evaluation_dataset(request: EvaluationDatasetRequest) -> dict[str, Any]:
-    return _camelize(create_dataset(request))
+def evaluation_dataset(request: EvaluationDatasetRequest, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    return _camelize(create_dataset(request, repository=_user_repository(user)))
 
 
 @app.get("/evaluation/datasets")
-def list_evaluation_datasets(document_id: str | None = Query(default=None, alias="documentId")) -> dict[str, Any]:
-    return {"items": _camelize(get_repository().list_dataset_rows(document_id))}
+def list_evaluation_datasets(document_id: str | None = Query(default=None, alias="documentId"), user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    return {"items": _camelize(_user_repository(user).list_dataset_rows(document_id))}
 
 
 @app.get("/evaluation/datasets/{dataset_id}")
-def get_evaluation_dataset(dataset_id: str) -> dict[str, Any]:
-    row = get_repository().get_dataset_row(dataset_id)
+def get_evaluation_dataset(dataset_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    row = _user_repository(user).get_dataset_row(dataset_id)
     if row is None:
         raise ApiProblem(404, "dataset_not_found", "The evaluation dataset was not found.")
     return _camelize(row)
 
 
 @app.post("/evaluation/runs")
-def evaluation_run(request: EvaluationRunRequest) -> dict[str, Any]:
-    return _camelize(_guarded(create_evaluation, request))
+def evaluation_run(request: EvaluationRunRequest, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    return _camelize(_guarded(create_evaluation, request, repository=_user_repository(user)))
 
 
 @app.get("/evaluation/runs")
-def list_evaluation_runs(dataset_id: str | None = Query(default=None, alias="datasetId")) -> dict[str, Any]:
-    return {"items": _camelize(get_repository().list_evaluation_rows(dataset_id))}
+def list_evaluation_runs(dataset_id: str | None = Query(default=None, alias="datasetId"), user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    return {"items": _camelize(_user_repository(user).list_evaluation_rows(dataset_id))}
 
 
 @app.get("/evaluation/runs/{run_id}")
-def get_evaluation_run(run_id: str) -> dict[str, Any]:
-    row = get_repository().get_evaluation_row(run_id)
+def get_evaluation_run(run_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    row = _user_repository(user).get_evaluation_row(run_id)
     if row is None:
         raise ApiProblem(404, "evaluation_run_not_found", "The evaluation run was not found.")
     return _camelize(row)

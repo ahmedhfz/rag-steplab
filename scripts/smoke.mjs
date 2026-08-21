@@ -11,6 +11,7 @@ const requireRag = process.env.SMOKE_REQUIRE_RAG === "1";
 const requireJudge = process.env.SMOKE_REQUIRE_JUDGE === "1";
 const requireSemantic = process.env.SMOKE_REQUIRE_SEMANTIC === "1";
 const smokeQuery = process.env.SMOKE_QUERY ?? "What is the main topic of this document?";
+const smokeAccessToken = process.env.SMOKE_ACCESS_TOKEN ?? "";
 
 const failures = [];
 
@@ -49,11 +50,14 @@ async function readJson(response) {
 
 async function apiRequest(path, init = {}) {
   try {
+    const headers = {
+      ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+      ...(smokeAccessToken ? { Authorization: `Bearer ${smokeAccessToken}` } : {}),
+      ...init.headers,
+    };
     const response = await request(`${apiUrl}${path}`, {
       ...init,
-      headers: init.body instanceof FormData
-        ? init.headers
-        : { "Content-Type": "application/json", ...init.headers },
+      headers,
     });
     return { response, payload: await readJson(response) };
   } catch (error) {
@@ -110,14 +114,18 @@ function sleep(ms) {
 async function readParseRun(runId, documentId) {
   let response;
   try {
-    response = await request(`${apiUrl}/parse-runs/${encoded(runId)}`);
+    response = await request(`${apiUrl}/parse-runs/${encoded(runId)}`, {
+      headers: smokeAccessToken ? { Authorization: `Bearer ${smokeAccessToken}` } : undefined,
+    });
   } catch (error) {
     error.retryable = true;
     throw error;
   }
   let payload = await readJson(response);
   if (response.status === 404 && documentId) {
-    response = await request(`${apiUrl}/documents/${encoded(documentId)}/parse-runs/${encoded(runId)}`);
+    response = await request(`${apiUrl}/documents/${encoded(documentId)}/parse-runs/${encoded(runId)}`, {
+      headers: smokeAccessToken ? { Authorization: `Bearer ${smokeAccessToken}` } : undefined,
+    });
     payload = await readJson(response);
   }
   if (!response.ok) {
