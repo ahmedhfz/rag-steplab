@@ -8,7 +8,10 @@ export async function updateSupabaseSession(request: NextRequest) {
   if (!url || !key) return { response, authenticated: false };
 
   const supabase = createServerClient(url, key, {
-    auth: { flowType: "pkce" },
+    auth: {
+      flowType: "pkce",
+      experimental: { appendPkceFlowIdToRedirects: true },
+    },
     cookies: {
       getAll() {
         return request.cookies.getAll();
