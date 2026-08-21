@@ -306,19 +306,23 @@ def queue_parse_upload(
         "page_count": 0,
     }
     document: dict[str, Any] | None = None
+    storage = get_storage()
     try:
+        # A committed Document always has a ready source object. This keeps a
+        # concurrent duplicate request from dispatching a worker before the
+        # winner finishes uploading the PDF.
+        storage.upload_pdf(storage_path, content)
         try:
-            # The unique owner+SHA identity is the arbitration point. Upload
-            # only after this insert succeeds, so a losing concurrent request
-            # cannot leave an orphaned PDF in Storage.
             document = repository.create_document(metadata, settings.supabase_storage_bucket, storage_path, digest)
-        except Exception as exc:
+        except Exception:
+            # The unique owner+SHA identity is the arbitration point. A loser
+            # removes only its own UUID object before reusing the winner.
+            storage.remove(storage_path)
             raced = repository.get_document_by_sha256(digest)
             if raced is None:
                 raise
             parse, dispatch_required = _queue_parse_for_document(repository, raced, settings)
             return raced, parse, True, dispatch_required
-        storage.upload_pdf(storage_path, content)
         parse, _ = _queue_parse_for_document(repository, document, settings)
     except Exception:
         if document is not None:
