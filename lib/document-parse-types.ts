@@ -45,6 +45,8 @@ export type DocumentParseResponse = {
   markdown: string;
   summary: ParseSummary;
   progress?: number;
+  /** True when the upload reused an existing persisted document identity. */
+  reusedDocument?: boolean;
 };
 
 /**
@@ -59,6 +61,7 @@ export type ParseJobAcceptedResponse = {
   status: Exclude<ParseRunStatus, "completed" | "failed">;
   progress?: number;
   runMetadata?: Record<string, unknown> | null;
+  reusedDocument?: boolean;
 };
 
 export type ParseJobFailedResponse = {
@@ -68,4 +71,5 @@ export type ParseJobFailedResponse = {
   progress?: number;
   error: { code: string; message: string };
   runMetadata?: Record<string, unknown> | null;
+  reusedDocument?: boolean;
 };

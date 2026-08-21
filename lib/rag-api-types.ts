@@ -18,6 +18,7 @@ export type ParseRun = {
   result: PersistedParseResponse | null;
   error: ApiProblem | null;
   runMetadata: Record<string, unknown> | null;
+  reusedDocument: boolean;
 };
 
 export type RunTiming = {
@@ -67,6 +68,7 @@ export type PersistedParseResponse = DocumentParseResponse & {
   parseRunId: string | null;
   status: "completed";
   runMetadata: Record<string, unknown> | null;
+  reusedDocument: boolean;
 };
 
 export type ChunkConfig = {

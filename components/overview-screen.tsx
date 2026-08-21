@@ -260,7 +260,7 @@ export function OverviewScreen() {
   const dragDepthRef = useRef(0);
   const [isDragging, setIsDragging] = useState(false);
   const {
-    selectedFile,
+    pendingUpload,
     fileError,
     parseStatus,
     parseProgress,
@@ -279,7 +279,7 @@ export function OverviewScreen() {
     experimentRun,
     evaluationStatus,
   } = useDocumentPipeline();
-  const hasDocument = Boolean(selectedFile || activeDocument);
+  const hasDocument = Boolean(pendingUpload || activeDocument);
   const pipelineState = getPipelineState(
     hasDocument,
     parseStatus,
@@ -419,7 +419,7 @@ export function OverviewScreen() {
           <h3 className="mt-8 text-sm font-semibold">{copy.overview.selectedDocument}</h3>
           <div aria-live="polite" className="mt-3 min-h-16">
             <AnimatePresence initial={false} mode="wait">
-              {selectedFile ? (
+              {pendingUpload ? (
                 <motion.div
                   animate={{ opacity: 1, y: 0 }}
                   className="overflow-x-auto border-y"
@@ -439,8 +439,8 @@ export function OverviewScreen() {
                     </TableHeader>
                     <TableBody>
                       <TableRow>
-                        <TableCell className="min-w-48 font-medium"><span className="mr-2 rounded border px-1 py-0.5 text-[10px] font-bold text-red-600">PDF</span>{selectedFile.name}</TableCell>
-                        <TableCell>{formatDocumentFileSize(selectedFile.size, preferences.locale)}</TableCell>
+                        <TableCell className="min-w-48 font-medium"><span className="mr-2 rounded border px-1 py-0.5 text-[10px] font-bold text-red-600">PDF</span>{pendingUpload.name}</TableCell>
+                        <TableCell>{formatDocumentFileSize(pendingUpload.size, preferences.locale)}</TableCell>
                         <TableCell className="text-xs text-slate-600">
                           {parseStatus === "queued" ? copy.overview.parseQueued : parseStatus === "running" ? copy.overview.parseRunning : parseStatus === "completed" ? copy.overview.parseCompleted : parseStatus === "failed" ? copy.overview.parseFailed : copy.overview.documentSelected}
                         </TableCell>
@@ -472,14 +472,14 @@ export function OverviewScreen() {
             <Button
               aria-describedby="parse-disabled-reason"
               aria-busy={parseStatus === "queued" || parseStatus === "running"}
-              disabled={(!selectedFile && !activeDocument) || parseStatus === "queued" || parseStatus === "running"}
-              onClick={() => void (selectedFile ? parseSelectedFile() : reparseActiveDocument())}
+              disabled={(!pendingUpload && !activeDocument) || parseStatus === "queued" || parseStatus === "running"}
+              onClick={() => void (pendingUpload ? parseSelectedFile() : reparseActiveDocument())}
             >
-              {selectedFile ? copy.overview.parseDocument : copy.overview.reparseDocument}
+              {pendingUpload ? copy.overview.parseDocument : copy.overview.reparseDocument}
             </Button>
           </div>
           <p className="border-b py-3 text-xs text-slate-500" id="parse-disabled-reason">
-            {getParseReason(copy, Boolean(selectedFile), Boolean(activeDocument), parseStatus)}
+            {getParseReason(copy, Boolean(pendingUpload), Boolean(activeDocument), parseStatus)}
           </p>
           {parseError && (
             <p className="border-b px-1 py-3 text-xs text-red-700" role="alert">
@@ -494,7 +494,7 @@ export function OverviewScreen() {
                   <Link href="/documents/parsed">{copy.overview.openParsedContent} <FileText className="size-4" /></Link>
                 </Button>
               </div>
-            {parseResult ? (
+            {!pendingUpload && parseResult ? (
               <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
                 {[
                   [copy.documents.summaryFields.pageCount, parseResult.summary.pageCount],
