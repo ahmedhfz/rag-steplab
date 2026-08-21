@@ -2,6 +2,15 @@ import { NextResponse } from "next/server";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
+async function valueFingerprint(value: string | undefined) {
+  if (!value) return null;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest))
+    .slice(0, 8)
+    .map((part) => part.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const response = NextResponse.redirect(new URL("/login?auth_error=oauth_failed", requestUrl));
@@ -16,6 +25,14 @@ export async function GET(request: Request) {
     });
 
     if (error || !data.url) throw error ?? new Error("oauth_url_missing");
+    const pkceCookie = response.cookies
+      .getAll()
+      .find(({ name }) => /-auth-token-flow-[A-Za-z0-9_-]{8,64}-code-verifier(?:\.\d+)?$/.test(name));
+    console.info("oauth_started", {
+      pkceCookiePresent: Boolean(pkceCookie),
+      pkceCookieFingerprint: await valueFingerprint(pkceCookie?.value),
+      pkceCookieLength: pkceCookie?.value.length ?? 0,
+    });
     response.headers.set("Location", data.url);
     return response;
   } catch {
