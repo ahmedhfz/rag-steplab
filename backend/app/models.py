@@ -43,7 +43,9 @@ class Document(Base):
     page_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("auth.users.id", ondelete="RESTRICT"), nullable=True, index=True
+        # Supabase auth.users SQLAlchemy metadata'sında tanımlı değil; gerçek FK
+        # Supabase migration'ında korunuyor, burada yalnızca UUID kolonu eşleniyor.
+        UUID(as_uuid=True), nullable=True, index=True
     )
     is_canonical: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     storage_bucket: Mapped[str] = mapped_column(String(255), nullable=False)

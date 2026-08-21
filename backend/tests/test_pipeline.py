@@ -114,6 +114,17 @@ def test_all_nine_database_tables_are_declared():
     }
 
 
+def test_sqlalchemy_metadata_does_not_require_supabase_auth_table():
+    from app.models import Base
+
+    # Supabase auth.users SQLAlchemy metadata'sında yer almadığı için model
+    # metadata'sı external auth tablosuna çözülmeden sıralanabilmeli.
+    assert {table.fullname for table in Base.metadata.sorted_tables} >= {
+        "rag_lab.documents",
+        "rag_lab.chunk_runs",
+    }
+
+
 def test_parse_compensates_document_and_storage_when_parse_persistence_fails():
     class FailingRepository(InMemoryRepository):
         def save_parse(self, document_id, parsed, *, run_id=None):
