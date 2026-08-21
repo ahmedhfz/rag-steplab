@@ -9,7 +9,10 @@ export async function createSupabaseServerClient(response?: NextResponse) {
   if (!url || !key) throw new Error("supabase_configuration_missing");
 
   return createServerClient(url, key, {
-    auth: { flowType: "pkce" },
+    auth: {
+      flowType: "pkce",
+      experimental: { appendPkceFlowIdToRedirects: true },
+    },
     cookies: {
       getAll() {
         return cookieStore.getAll();

@@ -11,6 +11,7 @@ export function getSupabaseBrowserClient() {
   browserClient = createBrowserClient(url, key, {
     auth: {
       flowType: "pkce",
+      experimental: { appendPkceFlowIdToRedirects: true },
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: true,

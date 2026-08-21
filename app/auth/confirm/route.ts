@@ -9,6 +9,7 @@ export async function GET(request: Request) {
   const tokenHash = url.searchParams.get("token_hash");
   const type = url.searchParams.get("type");
   const code = url.searchParams.get("code");
+  const flowId = url.searchParams.get("sb_flow_id");
   const next = url.searchParams.get("next");
   const recoveryFlow = type === "recovery" || next === "/auth/reset-password";
 
@@ -25,7 +26,7 @@ export async function GET(request: Request) {
           token_hash: tokenHash,
           type: type as "email" | "recovery",
         })
-      : await supabase.auth.exchangeCodeForSession(code as string);
+      : await supabase.auth.exchangeCodeForSession(code as string, flowId ? { flowId } : undefined);
     if (error) throw error;
     response.headers.set("Location", new URL(recoveryFlow ? "/auth/reset-password" : "/", request.url).toString());
     return response;
