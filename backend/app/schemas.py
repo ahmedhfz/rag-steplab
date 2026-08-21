@@ -156,6 +156,7 @@ class ChunkRunResponse(RunSummary):
     strategy: ChunkStrategy
     chunk_count: int = Field(ge=0)
     chunks: list[ChunkItem] = Field(default_factory=list)
+    reused_artifact: bool = False
 
 
 class EmbeddingRunRequest(CamelCaseModel):
@@ -169,6 +170,8 @@ class EmbeddingRunResponse(RunSummary):
     dimensions: int = Field(ge=1)
     embedding_format_version: str
     embedding_count: int = Field(ge=0)
+    effective_model: str | None = None
+    reused_artifact: bool = False
 
 
 class RetrievalConfig(CamelCaseModel):

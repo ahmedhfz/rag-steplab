@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .chunking import TOKENIZER, TOKENIZER_VERSION, chunk_structured
+from .chunking import CHUNKER_VERSION, TOKENIZER, TOKENIZER_VERSION, chunk_structured, config_hash, effective_config
 from .config import Settings, get_settings
 from .errors import ApiProblem
 from .gemini import EMBEDDING_FORMAT_VERSION, GeminiService, document_embedding_text
@@ -115,6 +115,32 @@ def _embedding_or_404(repository: Repository, embedding_run_id: str) -> dict[str
     if row.get("status") != "completed":
         raise ApiProblem(409, "embedding_run_incomplete", "The embedding run is not complete.")
     return row
+
+
+def _complete_chunk_artifact(repository: Repository, row: dict[str, Any]) -> bool:
+    """Only reuse a chunk row whose persisted children match its count."""
+    chunks = row.get("chunks")
+    return (
+        row.get("status") == "completed"
+        and isinstance(chunks, list)
+        and row.get("chunk_count") == len(chunks)
+    )
+
+
+def _complete_embedding_artifact(repository: Repository, row: dict[str, Any]) -> bool:
+    """Only reuse an embedding row with one valid vector per parent chunk."""
+    if row.get("status") != "completed":
+        return False
+    chunks = repository.get_chunks_for_embedding(row["chunk_run_id"], row["id"])
+    dimensions = row.get("dimensions")
+    return (
+        row.get("embedding_count") == len(chunks)
+        and all(
+            isinstance(chunk.get("embedding"), list)
+            and len(chunk["embedding"]) == dimensions
+            for chunk in chunks
+        )
+    )
 
 
 def _require_compatible_embedding(
@@ -516,10 +542,47 @@ def create_chunk_run(document_id: str, request: ChunkRunRequest, *, repository: 
         raise ApiProblem(409, "parse_required", "Parse the document before chunking it.")
     parse = _require_compatible_parse(repository, document_id, parse_id)
     try:
-        drafts = chunk_structured(parse["structured"], request.strategy, request.config)
+        canonical_config = effective_config(request.config)
     except ValueError as exc:
         raise ApiProblem(422, "chunk_config_invalid", str(exc)) from exc
-    return repository.save_chunk_run(document_id, parse_id, request, drafts)
+    claim, claimed = repository.claim_chunk_run(
+        document_id,
+        parse_id,
+        request.strategy,
+        canonical_config,
+        config_hash(canonical_config),
+        TOKENIZER_VERSION,
+        CHUNKER_VERSION,
+    )
+    if not claimed:
+        if claim.get("status") == "completed":
+            if not _complete_chunk_artifact(repository, claim):
+                repository.fail_chunk_run(
+                    claim["id"],
+                    "artifact_incomplete",
+                    "The existing chunk artifact is incomplete and cannot be reused.",
+                )
+                raise ApiProblem(409, "artifact_incomplete", "The existing chunk artifact is incomplete and cannot be reused.")
+            claim["reused_artifact"] = True
+            return claim
+        raise ApiProblem(409, "artifact_in_progress", "The chunk artifact with this identity is currently being created.")
+    try:
+        drafts = chunk_structured(parse["structured"], request.strategy, canonical_config)
+        completed = repository.complete_chunk_run(claim["id"], drafts)
+        if completed is None:
+            raise ApiProblem(500, "persistence_failed", "The chunk run could not be completed.")
+        completed["reused_artifact"] = False
+        return completed
+    except ApiProblem as exc:
+        repository.fail_chunk_run(claim["id"], exc.code, exc.message)
+        raise
+    except Exception:
+        repository.fail_chunk_run(
+            claim["id"],
+            "chunk_run_failed",
+            "The chunk run failed before producing a completed artifact.",
+        )
+        raise
 
 
 def create_embedding_run(document_id: str, chunk_run_id: str | None, *, repository: Repository | None = None) -> dict[str, Any]:
@@ -531,27 +594,62 @@ def create_embedding_run(document_id: str, chunk_run_id: str | None, *, reposito
     if not chunk_id:
         raise ApiProblem(409, "chunks_required", "Create chunks before embedding them.")
     chunk_run = _require_compatible_chunk(repository, document_id, chunk_id)
-    chunks = repository.get_chunks_for_embedding(chunk_id)
-    service = GeminiService(settings)
-    inputs = [document_embedding_text(chunk["text"], chunk.get("heading_path")) for chunk in chunks]
-    vectors: list[list[float]] = []
-    if inputs:
-        for offset in range(0, len(inputs), 16):
-            batch, _ = service.embed_documents(inputs[offset : offset + 16])
-            vectors.extend(batch)
-    input_hashes = {
-        chunk["id"]: hashlib.sha256(input_text.encode("utf-8")).hexdigest()
-        for chunk, input_text in zip(chunks, inputs)
-    }
-    return repository.save_embedding_run(
+    claim, claimed = repository.claim_embedding_run(
         document_id,
         chunk_id,
         settings.gemini_embedding_model,
         settings.gemini_embedding_dimensions,
         EMBEDDING_FORMAT_VERSION,
-        [(chunk["id"], vector) for chunk, vector in zip(chunks, vectors)],
-        input_hashes,
     )
+    if not claimed:
+        if claim.get("status") == "completed":
+            if not _complete_embedding_artifact(repository, claim):
+                repository.fail_embedding_run(
+                    claim["id"],
+                    "artifact_incomplete",
+                    "The existing embedding artifact is incomplete and cannot be reused.",
+                )
+                raise ApiProblem(409, "artifact_incomplete", "The existing embedding artifact is incomplete and cannot be reused.")
+            claim["reused_artifact"] = True
+            return claim
+        raise ApiProblem(409, "artifact_in_progress", "The embedding artifact with this identity is currently being created.")
+    try:
+        chunks = repository.get_chunks_for_embedding(chunk_id)
+        service = GeminiService(settings)
+        inputs = [document_embedding_text(chunk["text"], chunk.get("heading_path")) for chunk in chunks]
+        vectors: list[list[float]] = []
+        effective_model: str | None = None
+        if inputs:
+            for offset in range(0, len(inputs), 16):
+                batch, metadata = service.embed_documents(inputs[offset : offset + 16])
+                vectors.extend(batch)
+                effective_model = effective_model or getattr(metadata, "effective_model", None)
+        if len(vectors) != len(chunks):
+            raise ApiProblem(503, "embedding_result_invalid", "Gemini did not return one embedding per chunk.")
+        input_hashes = {
+            chunk["id"]: hashlib.sha256(input_text.encode("utf-8")).hexdigest()
+            for chunk, input_text in zip(chunks, inputs)
+        }
+        completed = repository.complete_embedding_run(
+            claim["id"],
+            [(chunk["id"], vector) for chunk, vector in zip(chunks, vectors)],
+            input_hashes,
+            effective_model,
+        )
+        if completed is None:
+            raise ApiProblem(500, "persistence_failed", "The embedding run could not be completed.")
+        completed["reused_artifact"] = False
+        return completed
+    except ApiProblem as exc:
+        repository.fail_embedding_run(claim["id"], exc.code, exc.message)
+        raise
+    except Exception:
+        repository.fail_embedding_run(
+            claim["id"],
+            "embedding_run_failed",
+            "The embedding run failed before producing a completed artifact.",
+        )
+        raise
 
 
 def _dot_cosine(left: list[float], right: list[float]) -> float:

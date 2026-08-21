@@ -18,9 +18,10 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
-from .chunking import CHUNKER_VERSION, TOKENIZER_VERSION
+from .chunking import CHUNKER_VERSION, TOKENIZER_VERSION, config_hash
 from .config import get_settings
 from .db import session_scope
 from .errors import ApiProblem
@@ -199,6 +200,24 @@ class Repository:
     def save_chunk_run(self, document_id: str, parse_run_id: str, request: ChunkRunRequest, drafts: list[Any]) -> dict[str, Any]:
         raise NotImplementedError
 
+    def claim_chunk_run(
+        self,
+        document_id: str,
+        parse_run_id: str,
+        strategy: str,
+        config: dict[str, Any],
+        config_hash_value: str,
+        tokenizer_version: str,
+        chunker_version: str,
+    ) -> tuple[dict[str, Any], bool]:
+        raise NotImplementedError
+
+    def complete_chunk_run(self, run_id: str, drafts: list[Any]) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def fail_chunk_run(self, run_id: str, code: str, message: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
     def get_chunk_row(self, run_id: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
@@ -215,6 +234,28 @@ class Repository:
         values: list[tuple[str, list[float]]],
         input_hashes: dict[str, str] | None = None,
     ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def claim_embedding_run(
+        self,
+        document_id: str,
+        chunk_run_id: str,
+        model: str,
+        dimensions: int,
+        format_version: str,
+    ) -> tuple[dict[str, Any], bool]:
+        raise NotImplementedError
+
+    def complete_embedding_run(
+        self,
+        run_id: str,
+        values: list[tuple[str, list[float]]],
+        input_hashes: dict[str, str] | None = None,
+        effective_model: str | None = None,
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def fail_embedding_run(self, run_id: str, code: str, message: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
     def get_embedding_row(self, run_id: str) -> dict[str, Any] | None:
@@ -494,48 +535,139 @@ class InMemoryRepository(Repository):
         rows.sort(key=lambda row: row.get("created_at") or now_utc(), reverse=True)
         return copy.deepcopy(rows)
 
-    def save_chunk_run(self, document_id, parse_run_id, request, drafts):
-        identifier = new_id()
-        config = _dump(request.config)
-        row = {
-            "id": identifier,
-            "document_id": document_id,
-            "parse_run_id": parse_run_id,
-            "strategy": request.strategy,
-            "config": config,
-            "config_hash": hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest(),
-            "tokenizer_version": TOKENIZER_VERSION,
-            "chunker_version": CHUNKER_VERSION,
-            "status": "completed",
-            "chunk_count": len(drafts),
-            "started_at": now_utc(),
-            "completed_at": now_utc(),
-            "duration_ms": 0,
-            "created_at": now_utc(),
-        }
-        items: list[dict[str, Any]] = []
-        for draft in drafts:
-            item = {
-                "id": new_id(),
+    def claim_chunk_run(
+        self,
+        document_id,
+        parse_run_id,
+        strategy,
+        config,
+        config_hash_value,
+        tokenizer_version,
+        chunker_version,
+    ):
+        with self._lock:
+            existing = next(
+                (
+                    row
+                    for row in self.chunk_runs.values()
+                    if row["document_id"] == document_id
+                    and row["parse_run_id"] == parse_run_id
+                    and row["strategy"] == strategy
+                    and row["config_hash"] == config_hash_value
+                    and row["tokenizer_version"] == tokenizer_version
+                    and row["chunker_version"] == chunker_version
+                    and row.get("identity_claimed") is True
+                    and row["status"] in {"running", "completed"}
+                ),
+                None,
+            )
+            if existing is not None:
+                return copy.deepcopy(existing | {"chunks": self.chunks.get(existing["id"], [])}), False
+
+            identifier = new_id()
+            started_at = now_utc()
+            row = {
+                "id": identifier,
                 "document_id": document_id,
-                "chunk_run_id": identifier,
-                "ordinal": draft.ordinal,
-                "text": draft.text,
-                "page_numbers": list(draft.page_numbers),
-                "source_element_ids": list(draft.source_element_ids),
-                "heading_path": list(draft.heading_path),
-                "token_count": draft.token_count,
-                "character_count": draft.character_count,
+                "parse_run_id": parse_run_id,
+                "strategy": strategy,
+                "config": copy.deepcopy(config),
+                "config_hash": config_hash_value,
+                "tokenizer_version": tokenizer_version,
+                "chunker_version": chunker_version,
+                "identity_claimed": True,
+                "status": "running",
+                "chunk_count": 0,
+                "error_code": None,
+                "error_message": None,
+                "started_at": started_at,
+                "completed_at": None,
+                "duration_ms": None,
+                "created_at": started_at,
             }
-            items.append(item)
-        self.chunk_runs[identifier] = row
-        self.chunks[identifier] = items
-        document = self.documents[document_id]
-        document["active_parse_run_id"] = parse_run_id
-        document["active_chunk_run_id"] = identifier
-        document["active_embedding_run_id"] = None
-        document["updated_at"] = now_utc()
-        return copy.deepcopy(row | {"chunks": items})
+            self.chunk_runs[identifier] = row
+            self.chunks[identifier] = []
+            return copy.deepcopy(row | {"chunks": []}), True
+
+    def complete_chunk_run(self, run_id, drafts):
+        with self._lock:
+            row = self.chunk_runs.get(run_id)
+            if row is None:
+                return None
+            if row["status"] == "completed":
+                return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, [])})
+            if row["status"] != "running":
+                return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, [])})
+
+            completed_at = now_utc()
+            items: list[dict[str, Any]] = []
+            for draft in drafts:
+                items.append(
+                    {
+                        "id": new_id(),
+                        "document_id": row["document_id"],
+                        "chunk_run_id": run_id,
+                        "ordinal": draft.ordinal,
+                        "text": draft.text,
+                        "page_numbers": list(draft.page_numbers),
+                        "source_element_ids": list(draft.source_element_ids),
+                        "heading_path": list(draft.heading_path),
+                        "token_count": draft.token_count,
+                        "character_count": draft.character_count,
+                    }
+                )
+            row.update(
+                {
+                    "status": "completed",
+                    "chunk_count": len(items),
+                    "completed_at": completed_at,
+                    "duration_ms": 0,
+                    "error_code": None,
+                    "error_message": None,
+                }
+            )
+            self.chunks[run_id] = items
+            document = self.documents[row["document_id"]]
+            document["active_parse_run_id"] = row["parse_run_id"]
+            document["active_chunk_run_id"] = run_id
+            document["active_embedding_run_id"] = None
+            document["updated_at"] = completed_at
+            return copy.deepcopy(row | {"chunks": items})
+
+    def fail_chunk_run(self, run_id, code, message):
+        with self._lock:
+            row = self.chunk_runs.get(run_id)
+            if row is None:
+                return None
+            if row["status"] in {"failed", "interrupted"} or (
+                row["status"] == "completed" and code != "artifact_incomplete"
+            ):
+                return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, [])})
+            completed_at = now_utc()
+            row.update(
+                {
+                    "identity_claimed": None,
+                    "status": "failed",
+                    "error_code": code,
+                    "error_message": message,
+                    "completed_at": completed_at,
+                    "duration_ms": 0,
+                }
+            )
+            return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, [])})
+
+    def save_chunk_run(self, document_id, parse_run_id, request, drafts):
+        config = _dump(request.config)
+        claim, claimed = self.claim_chunk_run(
+            document_id,
+            parse_run_id,
+            request.strategy,
+            config,
+            config_hash(config),
+            TOKENIZER_VERSION,
+            CHUNKER_VERSION,
+        )
+        return self.complete_chunk_run(claim["id"], drafts) if claimed else claim
 
     def get_chunk_row(self, run_id):
         row = self.chunk_runs.get(run_id)
@@ -548,33 +680,110 @@ class InMemoryRepository(Repository):
             [row | {"chunks": self.chunks.get(row["id"], [])} for row in self.chunk_runs.values() if row["document_id"] == document_id]
         )
 
+    def claim_embedding_run(self, document_id, chunk_run_id, model, dimensions, format_version):
+        with self._lock:
+            existing = next(
+                (
+                    row
+                    for row in self.embedding_runs.values()
+                    if row["document_id"] == document_id
+                    and row["chunk_run_id"] == chunk_run_id
+                    and row["model"] == model
+                    and row["dimensions"] == dimensions
+                    and row["embedding_format_version"] == format_version
+                    and row.get("identity_claimed") is True
+                    and row["status"] in {"running", "completed"}
+                ),
+                None,
+            )
+            if existing is not None:
+                return copy.deepcopy(existing), False
+
+            identifier = new_id()
+            started_at = now_utc()
+            row = {
+                "id": identifier,
+                "document_id": document_id,
+                "chunk_run_id": chunk_run_id,
+                "model": model,
+                "dimensions": dimensions,
+                "embedding_format_version": format_version,
+                "identity_claimed": True,
+                "effective_model": None,
+                "status": "running",
+                "embedding_count": 0,
+                "error_code": None,
+                "error_message": None,
+                "started_at": started_at,
+                "completed_at": None,
+                "duration_ms": None,
+                "created_at": started_at,
+            }
+            self.embedding_runs[identifier] = row
+            self.embeddings[identifier] = []
+            return copy.deepcopy(row), True
+
+    def complete_embedding_run(self, run_id, values, input_hashes=None, effective_model=None):
+        with self._lock:
+            row = self.embedding_runs.get(run_id)
+            if row is None:
+                return None
+            if row["status"] != "running":
+                return copy.deepcopy(row)
+            completed_at = now_utc()
+            self.embeddings[run_id] = [
+                {
+                    "id": new_id(),
+                    "embedding_run_id": run_id,
+                    "chunk_id": chunk_id,
+                    "embedding": vector,
+                    "input_hash": (input_hashes or {}).get(chunk_id),
+                }
+                for chunk_id, vector in values
+            ]
+            row.update(
+                {
+                    "status": "completed",
+                    "embedding_count": len(values),
+                    "effective_model": effective_model,
+                    "completed_at": completed_at,
+                    "duration_ms": 0,
+                    "error_code": None,
+                    "error_message": None,
+                }
+            )
+            document = self.documents[row["document_id"]]
+            document["active_parse_run_id"] = self.chunk_runs[row["chunk_run_id"]]["parse_run_id"]
+            document["active_chunk_run_id"] = row["chunk_run_id"]
+            document["active_embedding_run_id"] = run_id
+            document["updated_at"] = completed_at
+            return copy.deepcopy(row)
+
+    def fail_embedding_run(self, run_id, code, message):
+        with self._lock:
+            row = self.embedding_runs.get(run_id)
+            if row is None:
+                return None
+            if row["status"] in {"failed", "interrupted"} or (
+                row["status"] == "completed" and code != "artifact_incomplete"
+            ):
+                return copy.deepcopy(row)
+            completed_at = now_utc()
+            row.update(
+                {
+                    "identity_claimed": None,
+                    "status": "failed",
+                    "error_code": code,
+                    "error_message": message,
+                    "completed_at": completed_at,
+                    "duration_ms": 0,
+                }
+            )
+            return copy.deepcopy(row)
+
     def save_embedding_run(self, document_id, chunk_run_id, model, dimensions, format_version, values, input_hashes=None):
-        identifier = new_id()
-        row = {
-            "id": identifier,
-            "document_id": document_id,
-            "chunk_run_id": chunk_run_id,
-            "model": model,
-            "dimensions": dimensions,
-            "embedding_format_version": format_version,
-            "status": "completed",
-            "embedding_count": len(values),
-            "started_at": now_utc(),
-            "completed_at": now_utc(),
-            "duration_ms": 0,
-            "created_at": now_utc(),
-        }
-        self.embedding_runs[identifier] = row
-        self.embeddings[identifier] = [
-            {"id": new_id(), "embedding_run_id": identifier, "chunk_id": chunk_id, "embedding": vector, "input_hash": (input_hashes or {}).get(chunk_id)}
-            for chunk_id, vector in values
-        ]
-        document = self.documents[document_id]
-        document["active_parse_run_id"] = self.chunk_runs[chunk_run_id]["parse_run_id"]
-        document["active_chunk_run_id"] = chunk_run_id
-        document["active_embedding_run_id"] = identifier
-        document["updated_at"] = now_utc()
-        return copy.deepcopy(row)
+        claim, claimed = self.claim_embedding_run(document_id, chunk_run_id, model, dimensions, format_version)
+        return self.complete_embedding_run(claim["id"], values, input_hashes) if claimed else claim
 
     def get_embedding_row(self, run_id):
         row = self.embedding_runs.get(run_id)
@@ -915,33 +1124,84 @@ class SqlAlchemyRepository(Repository):
         with session_scope() as session:
             return [self._parse_dict(row) for row in session.scalars(select(ParseRun).where(ParseRun.document_id == document_id).order_by(ParseRun.created_at.desc()))]
 
-    def save_chunk_run(self, document_id, parse_run_id, request, drafts):
+    def claim_chunk_run(
+        self,
+        document_id,
+        parse_run_id,
+        strategy,
+        config,
+        config_hash_value,
+        tokenizer_version,
+        chunker_version,
+    ):
         identifier = new_id()
-        config = _dump(request.config)
-        run = ChunkRun(
-            id=identifier,
-            document_id=document_id,
-            parse_run_id=parse_run_id,
-            strategy=request.strategy,
-            config=config,
-            config_hash=hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest(),
-            tokenizer_version=TOKENIZER_VERSION,
-            chunker_version=CHUNKER_VERSION,
-            status="completed",
-            chunk_count=len(drafts),
-            started_at=now_utc(),
-            completed_at=now_utc(),
-            duration_ms=0,
-        )
+        started_at = now_utc()
+        values = {
+            "id": identifier,
+            "document_id": document_id,
+            "parse_run_id": parse_run_id,
+            "strategy": strategy,
+            "config": _dump(config),
+            "config_hash": config_hash_value,
+            "tokenizer_version": tokenizer_version,
+            "chunker_version": chunker_version,
+            "identity_claimed": True,
+            "status": "running",
+            "chunk_count": 0,
+            "started_at": started_at,
+            "completed_at": None,
+            "duration_ms": None,
+        }
         with session_scope() as session:
-            session.add(run)
-            session.flush([run])
+            result = session.execute(
+                pg_insert(ChunkRun)
+                .values(**values)
+                .on_conflict_do_nothing(
+                    index_elements=[
+                        ChunkRun.parse_run_id,
+                        ChunkRun.strategy,
+                        ChunkRun.config_hash,
+                        ChunkRun.tokenizer_version,
+                        ChunkRun.chunker_version,
+                        ChunkRun.identity_claimed,
+                    ]
+                )
+                .returning(ChunkRun.id)
+            )
+            inserted_id = result.scalar_one_or_none()
+            if inserted_id is not None:
+                run = session.get(ChunkRun, inserted_id)
+                return self._chunk_dict(run, session), True
+            run = session.scalars(
+                select(ChunkRun)
+                .where(
+                    ChunkRun.parse_run_id == parse_run_id,
+                    ChunkRun.strategy == strategy,
+                    ChunkRun.config_hash == config_hash_value,
+                    ChunkRun.tokenizer_version == tokenizer_version,
+                    ChunkRun.chunker_version == chunker_version,
+                    ChunkRun.identity_claimed.is_(True),
+                    ChunkRun.status.in_(["running", "completed"]),
+                )
+                .order_by(ChunkRun.created_at.asc(), ChunkRun.id.asc())
+            ).first()
+            if run is None:  # pragma: no cover - protects an impossible concurrent delete
+                raise ApiProblem(409, "artifact_in_progress", "The chunk artifact is currently being created.")
+            return self._chunk_dict(run, session), False
+
+    def complete_chunk_run(self, run_id, drafts):
+        with session_scope() as session:
+            run = session.get(ChunkRun, run_id)
+            if run is None:
+                return None
+            if run.status != "running":
+                return self._chunk_dict(run, session)
             for draft in drafts:
                 session.add(
                     Chunk(
                         id=new_id(),
-                        document_id=document_id,
-                        chunk_run_id=identifier,
+                        document_id=run.document_id,
+                        chunk_run_id=run.id,
                         ordinal=draft.ordinal,
                         text=draft.text,
                         page_numbers=list(draft.page_numbers),
@@ -951,14 +1211,51 @@ class SqlAlchemyRepository(Repository):
                         character_count=draft.character_count,
                     )
                 )
-            session.flush()
-            document = session.get(Document, document_id)
+            completed_at = now_utc()
+            run.status = "completed"
+            run.chunk_count = len(drafts)
+            run.completed_at = completed_at
+            run.duration_ms = 0
+            run.error_code = None
+            run.error_message = None
+            document = session.get(Document, run.document_id)
             if document:
-                document.active_parse_run_id = parse_run_id
-                document.active_chunk_run_id = identifier
+                document.active_parse_run_id = run.parse_run_id
+                document.active_chunk_run_id = run.id
                 document.active_embedding_run_id = None
             session.flush()
             return self._chunk_dict(run, session)
+
+    def fail_chunk_run(self, run_id, code, message):
+        with session_scope() as session:
+            run = session.get(ChunkRun, run_id)
+            if run is None:
+                return None
+            if run.status in {"failed", "interrupted"} or (
+                run.status == "completed" and code != "artifact_incomplete"
+            ):
+                return self._chunk_dict(run, session)
+            run.identity_claimed = None
+            run.status = "failed"
+            run.error_code = code
+            run.error_message = message
+            run.completed_at = now_utc()
+            run.duration_ms = 0
+            session.flush()
+            return self._chunk_dict(run, session)
+
+    def save_chunk_run(self, document_id, parse_run_id, request, drafts):
+        config = _dump(request.config)
+        claim, claimed = self.claim_chunk_run(
+            document_id,
+            parse_run_id,
+            request.strategy,
+            config,
+            config_hash(config),
+            TOKENIZER_VERSION,
+            CHUNKER_VERSION,
+        )
+        return self.complete_chunk_run(claim["id"], drafts) if claimed else claim
 
     @staticmethod
     def _chunk_item(row: Chunk) -> dict[str, Any]:
@@ -983,6 +1280,10 @@ class SqlAlchemyRepository(Repository):
             "parse_run_id": row.parse_run_id,
             "strategy": row.strategy,
             "config": row.config,
+            "config_hash": row.config_hash,
+            "tokenizer_version": row.tokenizer_version,
+            "chunker_version": row.chunker_version,
+            "identity_claimed": row.identity_claimed,
             "status": row.status,
             "chunk_count": row.chunk_count,
             "started_at": row.started_at,
@@ -1001,44 +1302,114 @@ class SqlAlchemyRepository(Repository):
             rows = session.scalars(select(ChunkRun).where(ChunkRun.document_id == document_id).order_by(ChunkRun.created_at.desc())).all()
             return [self._chunk_dict(row, session) for row in rows]
 
-    def save_embedding_run(self, document_id, chunk_run_id, model, dimensions, format_version, values, input_hashes=None):
+    def claim_embedding_run(self, document_id, chunk_run_id, model, dimensions, format_version):
         identifier = new_id()
-        run = EmbeddingRun(
-            id=identifier,
-            document_id=document_id,
-            chunk_run_id=chunk_run_id,
-            model=model,
-            dimensions=dimensions,
-            embedding_format_version=format_version,
-            status="completed",
-            embedding_count=len(values),
-            started_at=now_utc(),
-            completed_at=now_utc(),
-            duration_ms=0,
-        )
+        started_at = now_utc()
+        values = {
+            "id": identifier,
+            "document_id": document_id,
+            "chunk_run_id": chunk_run_id,
+            "model": model,
+            "dimensions": dimensions,
+            "embedding_format_version": format_version,
+            "identity_claimed": True,
+            "status": "running",
+            "embedding_count": 0,
+            "started_at": started_at,
+            "completed_at": None,
+            "duration_ms": None,
+        }
         with session_scope() as session:
-            session.add(run)
-            session.flush([run])
+            result = session.execute(
+                pg_insert(EmbeddingRun)
+                .values(**values)
+                .on_conflict_do_nothing(
+                    index_elements=[
+                        EmbeddingRun.chunk_run_id,
+                        EmbeddingRun.model,
+                        EmbeddingRun.dimensions,
+                        EmbeddingRun.embedding_format_version,
+                        EmbeddingRun.identity_claimed,
+                    ]
+                )
+                .returning(EmbeddingRun.id)
+            )
+            inserted_id = result.scalar_one_or_none()
+            if inserted_id is not None:
+                run = session.get(EmbeddingRun, inserted_id)
+                return self._embedding_dict(run), True
+            run = session.scalars(
+                select(EmbeddingRun)
+                .where(
+                    EmbeddingRun.chunk_run_id == chunk_run_id,
+                    EmbeddingRun.model == model,
+                    EmbeddingRun.dimensions == dimensions,
+                    EmbeddingRun.embedding_format_version == format_version,
+                    EmbeddingRun.identity_claimed.is_(True),
+                    EmbeddingRun.status.in_(["running", "completed"]),
+                )
+                .order_by(EmbeddingRun.created_at.asc(), EmbeddingRun.id.asc())
+            ).first()
+            if run is None:  # pragma: no cover - protects an impossible concurrent delete
+                raise ApiProblem(409, "artifact_in_progress", "The embedding artifact is currently being created.")
+            return self._embedding_dict(run), False
+
+    def complete_embedding_run(self, run_id, values, input_hashes=None, effective_model=None):
+        with session_scope() as session:
+            run = session.get(EmbeddingRun, run_id)
+            if run is None:
+                return None
+            if run.status != "running":
+                return self._embedding_dict(run)
             for chunk_id, vector in values:
                 session.add(
                     ChunkEmbedding(
                         id=new_id(),
-                        embedding_run_id=identifier,
+                        embedding_run_id=run.id,
                         chunk_id=chunk_id,
                         input_hash=(input_hashes or {}).get(chunk_id) or hashlib.sha256(json.dumps(vector).encode()).hexdigest(),
                         embedding=vector,
                     )
                 )
-            session.flush()
-            document = session.get(Document, document_id)
+            completed_at = now_utc()
+            run.status = "completed"
+            run.embedding_count = len(values)
+            run.effective_model = effective_model
+            run.completed_at = completed_at
+            run.duration_ms = 0
+            run.error_code = None
+            run.error_message = None
+            document = session.get(Document, run.document_id)
             if document:
-                chunk = session.get(ChunkRun, chunk_run_id)
+                chunk = session.get(ChunkRun, run.chunk_run_id)
                 if chunk is not None:
                     document.active_parse_run_id = chunk.parse_run_id
-                document.active_chunk_run_id = chunk_run_id
-                document.active_embedding_run_id = identifier
+                document.active_chunk_run_id = run.chunk_run_id
+                document.active_embedding_run_id = run.id
             session.flush()
             return self._embedding_dict(run)
+
+    def fail_embedding_run(self, run_id, code, message):
+        with session_scope() as session:
+            run = session.get(EmbeddingRun, run_id)
+            if run is None:
+                return None
+            if run.status in {"failed", "interrupted"} or (
+                run.status == "completed" and code != "artifact_incomplete"
+            ):
+                return self._embedding_dict(run)
+            run.identity_claimed = None
+            run.status = "failed"
+            run.error_code = code
+            run.error_message = message
+            run.completed_at = now_utc()
+            run.duration_ms = 0
+            session.flush()
+            return self._embedding_dict(run)
+
+    def save_embedding_run(self, document_id, chunk_run_id, model, dimensions, format_version, values, input_hashes=None):
+        claim, claimed = self.claim_embedding_run(document_id, chunk_run_id, model, dimensions, format_version)
+        return self.complete_embedding_run(claim["id"], values, input_hashes) if claimed else claim
 
     @staticmethod
     def _embedding_dict(row: EmbeddingRun) -> dict[str, Any]:
@@ -1049,6 +1420,8 @@ class SqlAlchemyRepository(Repository):
             "model": row.model,
             "dimensions": row.dimensions,
             "embedding_format_version": row.embedding_format_version,
+            "identity_claimed": row.identity_claimed,
+            "effective_model": row.effective_model,
             "status": row.status,
             "embedding_count": row.embedding_count,
             "started_at": row.started_at,
@@ -1349,6 +1722,31 @@ class ScopedRepository(Repository):
             raise ApiProblem(404, "chunk_run_not_found", "The requested document lineage was not found.")
         return self._repository.save_chunk_run(document_id, parse_run_id, request, drafts)
 
+    def claim_chunk_run(self, document_id, parse_run_id, strategy, config, config_hash_value, tokenizer_version, chunker_version):
+        document = self._owned_document(document_id)
+        parse = self.get_parse_row(parse_run_id)
+        if document is None or parse is None or parse.get("document_id") != document_id:
+            raise ApiProblem(404, "chunk_run_not_found", "The requested document lineage was not found.")
+        return self._repository.claim_chunk_run(
+            document_id,
+            parse_run_id,
+            strategy,
+            config,
+            config_hash_value,
+            tokenizer_version,
+            chunker_version,
+        )
+
+    def complete_chunk_run(self, run_id, drafts):
+        if self.get_chunk_row(run_id) is None:
+            return None
+        return self._repository.complete_chunk_run(run_id, drafts)
+
+    def fail_chunk_run(self, run_id, code, message):
+        if self.get_chunk_row(run_id) is None:
+            return None
+        return self._repository.fail_chunk_run(run_id, code, message)
+
     def get_chunk_row(self, run_id):
         return self._owned_document_for_row(self._repository.get_chunk_row(run_id)) and self._repository.get_chunk_row(run_id)
 
@@ -1361,6 +1759,21 @@ class ScopedRepository(Repository):
         if self._owned_document(document_id) is None or self.get_chunk_row(chunk_run_id) is None:
             raise ApiProblem(404, "embedding_run_not_found", "The requested document lineage was not found.")
         return self._repository.save_embedding_run(document_id, chunk_run_id, model, dimensions, format_version, values, input_hashes)
+
+    def claim_embedding_run(self, document_id, chunk_run_id, model, dimensions, format_version):
+        if self._owned_document(document_id) is None or self.get_chunk_row(chunk_run_id) is None:
+            raise ApiProblem(404, "embedding_run_not_found", "The requested document lineage was not found.")
+        return self._repository.claim_embedding_run(document_id, chunk_run_id, model, dimensions, format_version)
+
+    def complete_embedding_run(self, run_id, values, input_hashes=None, effective_model=None):
+        if self.get_embedding_row(run_id) is None:
+            return None
+        return self._repository.complete_embedding_run(run_id, values, input_hashes, effective_model)
+
+    def fail_embedding_run(self, run_id, code, message):
+        if self.get_embedding_row(run_id) is None:
+            return None
+        return self._repository.fail_embedding_run(run_id, code, message)
 
     def get_embedding_row(self, run_id):
         return self._owned_document_for_row(self._repository.get_embedding_row(run_id)) and self._repository.get_embedding_row(run_id)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -287,7 +288,14 @@ def chunk_structured(structured: Any, strategy: str, config: Any) -> list[ChunkD
     raise ValueError(f"Unknown chunk strategy: {strategy}")
 
 
-def config_hash(config: Any) -> str:
+def effective_config(config: Any) -> dict[str, int]:
+    """Return only the validated/defaulted values that affect chunk output."""
+
     size, overlap = _validate_config(config)
-    value = f"{size}:{overlap}:{TOKENIZER_VERSION}:{CHUNKER_VERSION}"
+    return {"chunk_size_tokens": size, "overlap_tokens": overlap}
+
+
+def config_hash(config: Any) -> str:
+    canonical = effective_config(config)
+    value = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(value.encode("utf-8")).hexdigest()

@@ -5,11 +5,14 @@ import uuid
 
 from fastapi.testclient import TestClient
 
+from app.chunking import CHUNKER_VERSION, TOKENIZER_VERSION, chunk_structured, config_hash, effective_config
+from app.errors import ApiProblem
 from app.main import app
 from app.config import Settings
 from app.pipeline import parse_upload, queue_parse_upload, run_parse_worker
-from app.repository import InMemoryRepository, reset_repository
+from app.repository import InMemoryRepository, get_repository, reset_repository
 from app.schemas import (
+    ChunkRunRequest,
     DocumentMetadata,
     ParseResponse,
     ParseSummary,
@@ -99,6 +102,260 @@ def test_document_chunk_and_keyword_experiment_are_persisted(monkeypatch):
     assert detail.json()["activeParseRun"]["markdown"].startswith("# RAG Basics")
     assert detail.json()["activeChunkRun"]["chunks"]
     assert client.get(f"/chunk-runs/{chunk_run_id}").json()["chunks"]
+
+
+def test_chunk_identity_reuses_completed_artifact_and_hashes_effective_config(monkeypatch):
+    parsed = _queue_and_run(monkeypatch)
+    document_id = parsed["documentId"]
+    parse_run_id = parsed["parseRunId"]
+    from app import pipeline
+
+    original_chunk_structured = pipeline.chunk_structured
+    calls = 0
+
+    def counted_chunk_structured(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_chunk_structured(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "chunk_structured", counted_chunk_structured)
+    first = client.post(
+        f"/documents/{document_id}/chunks",
+        json={"parseRunId": parse_run_id, "strategy": "fixed_token", "config": {"chunkSizeTokens": 512}},
+    )
+    second = client.post(
+        f"/documents/{document_id}/chunks",
+        json={
+            "parseRunId": parse_run_id,
+            "strategy": "fixed_token",
+            "config": {"chunkSizeTokens": 512, "overlapTokens": 64},
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["id"] == second.json()["id"]
+    assert first.json()["reusedArtifact"] is False
+    assert second.json()["reusedArtifact"] is True
+    assert calls == 1
+    assert config_hash({"chunk_size_tokens": 512}) == config_hash({"chunk_size_tokens": 512, "overlap_tokens": 64})
+    assert config_hash(effective_config(ChunkRunRequest().config)) == config_hash({"chunk_size_tokens": 512, "overlap_tokens": 64})
+
+    monkeypatch.setattr(pipeline, "CHUNKER_VERSION", "rag-steplab-chunker-test-v2")
+    versioned = client.post(
+        f"/documents/{document_id}/chunks",
+        json={"parseRunId": parse_run_id, "strategy": "fixed_token", "config": {"chunkSizeTokens": 512, "overlapTokens": 64}},
+    )
+    assert versioned.status_code == 200
+    assert versioned.json()["id"] != first.json()["id"]
+    assert versioned.json()["reusedArtifact"] is False
+    assert calls == 2
+
+
+def test_embedding_identity_reuses_completed_artifact_without_gemini_call(monkeypatch):
+    class FakeMetadata:
+        effective_model = "gemini-embedding-2-001"
+
+    class FakeGemini:
+        calls = 0
+        settings = type("Settings", (), {"gemini_embedding_model": "gemini-embedding-2", "gemini_embedding_dimensions": 768})()
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def embed_documents(self, texts):
+            type(self).calls += 1
+            return [[1.0] + [0.0] * 767 for _ in texts], FakeMetadata()
+
+    monkeypatch.setattr("app.pipeline.GeminiService", FakeGemini)
+    parsed = _queue_and_run(monkeypatch)
+    document_id = parsed["documentId"]
+    chunk = client.post(
+        f"/documents/{document_id}/chunks",
+        json={"strategy": "fixed_token", "config": {"chunkSizeTokens": 64, "overlapTokens": 8}},
+    ).json()
+
+    first = client.post(f"/documents/{document_id}/embeddings", json={"chunkRunId": chunk["id"]})
+    second = client.post(f"/documents/{document_id}/embeddings", json={"chunkRunId": chunk["id"]})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["id"] == second.json()["id"]
+    assert first.json()["reusedArtifact"] is False
+    assert second.json()["reusedArtifact"] is True
+    assert first.json()["effectiveModel"] == "gemini-embedding-2-001"
+    assert second.json()["effectiveModel"] == "gemini-embedding-2-001"
+    assert FakeGemini.calls == 1
+
+
+def test_failed_embedding_artifact_is_released_and_recomputed(monkeypatch):
+    class FakeMetadata:
+        effective_model = "gemini-embedding-2-001"
+
+    class FlakyGemini:
+        calls = 0
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def embed_documents(self, texts):
+            type(self).calls += 1
+            if type(self).calls == 1:
+                raise ApiProblem(503, "gemini_embedding_failed", "simulated")
+            return [[1.0] + [0.0] * 767 for _ in texts], FakeMetadata()
+
+    monkeypatch.setattr("app.pipeline.GeminiService", FlakyGemini)
+    parsed = _queue_and_run(monkeypatch)
+    document_id = parsed["documentId"]
+    chunk = client.post(
+        f"/documents/{document_id}/chunks",
+        json={"strategy": "fixed_token", "config": {"chunkSizeTokens": 64, "overlapTokens": 8}},
+    ).json()
+
+    first = client.post(f"/documents/{document_id}/embeddings", json={"chunkRunId": chunk["id"]})
+    assert first.status_code == 503
+
+    rows = get_repository().list_embedding_rows(document_id)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["identity_claimed"] is None
+
+    second = client.post(f"/documents/{document_id}/embeddings", json={"chunkRunId": chunk["id"]})
+    assert second.status_code == 200
+    assert second.json()["reusedArtifact"] is False
+    assert second.json()["id"] != rows[0]["id"]
+    assert FlakyGemini.calls == 2
+
+
+def test_completed_incomplete_chunk_artifact_is_not_reused(monkeypatch):
+    parsed = _queue_and_run(monkeypatch)
+    document_id = parsed["documentId"]
+    request = {"strategy": "fixed_token", "config": {"chunkSizeTokens": 64, "overlapTokens": 8}}
+    first = client.post(f"/documents/{document_id}/chunks", json=request)
+    assert first.status_code == 200
+    run_id = first.json()["id"]
+    repository = get_repository()
+    repository.chunks[run_id].clear()
+
+    incomplete = client.post(f"/documents/{document_id}/chunks", json=request)
+    assert incomplete.status_code == 409
+    assert incomplete.json()["error"]["code"] == "artifact_incomplete"
+
+    retry = client.post(f"/documents/{document_id}/chunks", json=request)
+    assert retry.status_code == 200
+    assert retry.json()["id"] != run_id
+    assert retry.json()["reusedArtifact"] is False
+
+
+def test_completed_incomplete_embedding_artifact_is_not_reused(monkeypatch):
+    class FakeMetadata:
+        effective_model = "gemini-embedding-2-001"
+
+    class CountingGemini:
+        calls = 0
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def embed_documents(self, texts):
+            type(self).calls += 1
+            return [[1.0] + [0.0] * 767 for _ in texts], FakeMetadata()
+
+    monkeypatch.setattr("app.pipeline.GeminiService", CountingGemini)
+    parsed = _queue_and_run(monkeypatch)
+    document_id = parsed["documentId"]
+    chunk = client.post(
+        f"/documents/{document_id}/chunks",
+        json={"strategy": "fixed_token", "config": {"chunkSizeTokens": 64, "overlapTokens": 8}},
+    ).json()
+    first = client.post(f"/documents/{document_id}/embeddings", json={"chunkRunId": chunk["id"]})
+    assert first.status_code == 200
+    embedding_id = first.json()["id"]
+    get_repository().embeddings[embedding_id].clear()
+
+    incomplete = client.post(f"/documents/{document_id}/embeddings", json={"chunkRunId": chunk["id"]})
+    assert incomplete.status_code == 409
+    assert incomplete.json()["error"]["code"] == "artifact_incomplete"
+
+    retry = client.post(f"/documents/{document_id}/embeddings", json={"chunkRunId": chunk["id"]})
+    assert retry.status_code == 200
+    assert retry.json()["id"] != embedding_id
+    assert retry.json()["reusedArtifact"] is False
+    assert CountingGemini.calls == 2
+
+
+def test_artifact_claim_is_fail_closed_for_running_and_failed_rows(monkeypatch):
+    parsed = _queue_and_run(monkeypatch)
+    document_id = parsed["documentId"]
+    parse_run_id = parsed["parseRunId"]
+    repository = get_repository()
+    config = effective_config({"chunk_size_tokens": 512, "overlap_tokens": 64})
+    claim, claimed = repository.claim_chunk_run(
+        document_id,
+        parse_run_id,
+        "fixed_token",
+        config,
+        config_hash(config),
+        TOKENIZER_VERSION,
+        CHUNKER_VERSION,
+    )
+    assert claimed is True
+
+    in_progress = client.post(
+        f"/documents/{document_id}/chunks",
+        json={"parseRunId": parse_run_id, "strategy": "fixed_token", "config": config},
+    )
+    assert in_progress.status_code == 409
+    assert in_progress.json()["error"]["code"] == "artifact_in_progress"
+
+    repository.fail_chunk_run(claim["id"], "chunk_run_failed", "simulated")
+    retry = client.post(
+        f"/documents/{document_id}/chunks",
+        json={"parseRunId": parse_run_id, "strategy": "fixed_token", "config": config},
+    )
+    assert retry.status_code == 200
+    assert retry.json()["id"] != claim["id"]
+    assert retry.json()["reusedArtifact"] is False
+
+
+def test_chunk_claim_race_has_one_owner_and_completed_retry_reuses_it(monkeypatch):
+    parsed = _queue_and_run(monkeypatch)
+    document_id = parsed["documentId"]
+    parse_run_id = parsed["parseRunId"]
+    repository = get_repository()
+    config = effective_config({"chunk_size_tokens": 512, "overlap_tokens": 64})
+
+    def claim_once(_index):
+        return repository.claim_chunk_run(
+            document_id,
+            parse_run_id,
+            "fixed_token",
+            config,
+            config_hash(config),
+            TOKENIZER_VERSION,
+            CHUNKER_VERSION,
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        claims = list(pool.map(claim_once, range(8)))
+    assert sum(owner for _, owner in claims) == 1
+    assert len({row["id"] for row, _ in claims}) == 1
+
+    owner_row = next(row for row, owner in claims if owner)
+    parse = repository.get_parse_row(parse_run_id)
+    repository.complete_chunk_run(owner_row["id"], chunk_structured(parse["structured"], "fixed_token", config))
+    reused, owner = repository.claim_chunk_run(
+        document_id,
+        parse_run_id,
+        "fixed_token",
+        config,
+        config_hash(config),
+        TOKENIZER_VERSION,
+        CHUNKER_VERSION,
+    )
+    assert owner is False
+    assert reused["id"] == owner_row["id"]
+    assert reused["status"] == "completed"
 
 
 def test_all_nine_database_tables_are_declared():

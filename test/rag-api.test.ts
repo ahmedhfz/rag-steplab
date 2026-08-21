@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { getChunkRun, getDocument, getParseRun, listDocuments, waitForParseRun } from "@/lib/rag-api";
+import { getChunkRun, getDocument, getEmbeddingRun, getParseRun, listDocuments, waitForParseRun } from "@/lib/rag-api";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -84,6 +84,28 @@ describe("RAG API contract normalization", () => {
 
     expect(run.documentId).toBe("document-1");
     expect(run.chunks[0]).toMatchObject({ pageNumbers: [2], sourceElementIds: ["element-2"] });
+    expect(run.reusedArtifact).toBe(false);
+  });
+
+  it("carries additive embedding reuse and effective-model provenance fields", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "embedding-run-1",
+      status: "completed",
+      config: {},
+      document_id: "document-1",
+      chunk_run_id: "chunk-run-1",
+      model: "gemini-embedding-2",
+      dimensions: 768,
+      embedding_format_version: "gemini-embedding-2-qa-prefix-v1",
+      embedding_count: 1,
+      effective_model: "gemini-embedding-2-001",
+      reused_artifact: true,
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(getEmbeddingRun("embedding-run-1")).resolves.toMatchObject({
+      effectiveModel: "gemini-embedding-2-001",
+      reusedArtifact: true,
+    });
   });
 
   it("fails closed when a completed run omits required result fields", async () => {

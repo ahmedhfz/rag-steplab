@@ -495,6 +495,7 @@ function normalizeChunkRun(value: unknown): ChunkRun {
     strategy: normalizeChunkStrategy(payload.strategy),
     chunkCount,
     chunks,
+    reusedArtifact: boolean(field(payload, "reusedArtifact", "reused_artifact")),
   };
 }
 
@@ -508,6 +509,8 @@ function normalizeEmbeddingRun(value: unknown): EmbeddingRun {
     dimensions: requiredNumber(payload.dimensions, "embedding dimensions"),
     embeddingFormatVersion: requiredString(field(payload, "embeddingFormatVersion", "embedding_format_version"), "embedding format version"),
     embeddingCount: requiredNumber(field(payload, "embeddingCount", "embedding_count"), "embedding count"),
+    effectiveModel: optionalString(field(payload, "effectiveModel", "effective_model")),
+    reusedArtifact: boolean(field(payload, "reusedArtifact", "reused_artifact")),
   };
 }
 

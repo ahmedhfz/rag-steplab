@@ -91,6 +91,7 @@ export type ChunkRun = RunSummary & {
   strategy: ChunkStrategy;
   chunkCount: number;
   chunks: ChunkItem[];
+  reusedArtifact?: boolean;
 };
 
 export type EmbeddingRun = RunSummary & {
@@ -100,6 +101,8 @@ export type EmbeddingRun = RunSummary & {
   dimensions: number;
   embeddingFormatVersion: string;
   embeddingCount: number;
+  effectiveModel: string | null;
+  reusedArtifact?: boolean;
 };
 
 export type RetrievalConfig = {
