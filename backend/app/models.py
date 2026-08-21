@@ -6,7 +6,7 @@ from datetime import datetime
 import uuid
 from typing import Any
 
-from sqlalchemy import CheckConstraint, Computed, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, Computed, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON
@@ -102,8 +102,21 @@ class ParseRun(Base):
 class ChunkRun(Base):
     __tablename__ = "chunk_runs"
     __table_args__ = (
+        UniqueConstraint(
+            "parse_run_id",
+            "strategy",
+            "config_hash",
+            "tokenizer_version",
+            "chunker_version",
+            "identity_claimed",
+            name="uq_chunk_runs_artifact_identity",
+        ),
         CheckConstraint("strategy IN ('fixed_token', 'recursive_token', 'structure_aware')", name="ck_chunk_runs_strategy"),
         CheckConstraint("chunk_count >= 0", name="ck_chunk_runs_count_nonnegative"),
+        CheckConstraint(
+            "identity_claimed IS NULL OR (identity_claimed AND status IN ('running', 'completed'))",
+            name="ck_chunk_runs_identity_claim",
+        ),
         {"schema": SCHEMA},
     )
 
@@ -119,6 +132,7 @@ class ChunkRun(Base):
     config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     tokenizer_version: Mapped[str] = mapped_column(String(64), nullable=False)
     chunker_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    identity_claimed: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -168,8 +182,20 @@ class Chunk(Base):
 class EmbeddingRun(Base):
     __tablename__ = "embedding_runs"
     __table_args__ = (
+        UniqueConstraint(
+            "chunk_run_id",
+            "model",
+            "dimensions",
+            "embedding_format_version",
+            "identity_claimed",
+            name="uq_embedding_runs_artifact_identity",
+        ),
         CheckConstraint("dimensions > 0", name="ck_embedding_runs_dimensions_positive"),
         CheckConstraint("embedding_count >= 0", name="ck_embedding_runs_count_nonnegative"),
+        CheckConstraint(
+            "identity_claimed IS NULL OR (identity_claimed AND status IN ('running', 'completed'))",
+            name="ck_embedding_runs_identity_claim",
+        ),
         {"schema": SCHEMA},
     )
 
@@ -183,6 +209,8 @@ class EmbeddingRun(Base):
     model: Mapped[str] = mapped_column(String(255), nullable=False)
     dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
     embedding_format_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    identity_claimed: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=True)
+    effective_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")
     embedding_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)

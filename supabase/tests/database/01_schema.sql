@@ -1,6 +1,6 @@
 begin;
 
-select plan(31);
+select plan(36);
 
 select ok(to_regnamespace('rag_lab') is not null, 'rag_lab schema exists');
 
@@ -67,6 +67,77 @@ select ok(
       and indexdef like '%running%'
   ),
   'parse inflight partial unique index exists'
+);
+
+select ok(
+  exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'rag_lab'
+      and table_name = 'chunk_runs'
+      and column_name = 'identity_claimed'
+      and column_default = 'true'
+  ),
+  'chunk artifact identity claim column defaults to true'
+);
+
+select ok(
+  exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'rag_lab'
+      and table_name = 'embedding_runs'
+      and column_name = 'identity_claimed'
+      and column_default = 'true'
+  )
+  and exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'rag_lab'
+      and table_name = 'embedding_runs'
+      and column_name = 'effective_model'
+  ),
+  'embedding artifact claim and effective model provenance columns exist'
+);
+
+select ok(
+  exists (
+    select 1
+    from pg_constraint
+    where connamespace = 'rag_lab'::regnamespace
+      and conrelid = 'rag_lab.chunk_runs'::regclass
+      and conname = 'uq_chunk_runs_artifact_identity'
+      and contype = 'u'
+  ),
+  'chunk artifact identity unique constraint exists'
+);
+
+select ok(
+  exists (
+    select 1
+    from pg_constraint
+    where connamespace = 'rag_lab'::regnamespace
+      and conrelid = 'rag_lab.embedding_runs'::regclass
+      and conname = 'uq_embedding_runs_artifact_identity'
+      and contype = 'u'
+  ),
+  'embedding artifact identity unique constraint exists'
+);
+
+select ok(
+  exists (
+    select 1
+    from information_schema.check_constraints
+    where constraint_schema = 'rag_lab'
+      and constraint_name = 'ck_chunk_runs_identity_claim'
+  )
+  and exists (
+    select 1
+    from information_schema.check_constraints
+    where constraint_schema = 'rag_lab'
+      and constraint_name = 'ck_embedding_runs_identity_claim'
+  ),
+  'artifact identity claims are restricted to active statuses'
 );
 
 select ok(to_regclass('rag_lab.ix_documents_active_parse_run_id') is not null, 'active parse FK index exists');

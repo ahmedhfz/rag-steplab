@@ -34,6 +34,8 @@ from .schemas import (
     ApiError,
     CapabilitiesResponse,
     ChunkRunRequest,
+    ChunkRunResponse,
+    EmbeddingRunResponse,
     ErrorResponse,
     EvaluationDatasetRequest,
     EvaluationRunRequest,
@@ -444,7 +446,7 @@ def get_document(document_id: str, user: CurrentUser = Depends(get_current_user)
         **_document_list_item(document),
         "parseRuns": [_run_summary_dict(row, document, repository) for row in parses],
         "chunkRuns": [{**_run_summary_dict(row, document, repository), "strategy": row.get("strategy"), "chunkCount": row.get("chunk_count", 0)} for row in chunks],
-        "embeddingRuns": [{**_run_summary_dict(row, document, repository), "model": row.get("model"), "dimensions": row.get("dimensions"), "embeddingFormatVersion": row.get("embedding_format_version"), "embeddingCount": row.get("embedding_count", 0)} for row in embeddings],
+        "embeddingRuns": [{**_run_summary_dict(row, document, repository), "model": row.get("model"), "dimensions": row.get("dimensions"), "embeddingFormatVersion": row.get("embedding_format_version"), "embeddingCount": row.get("embedding_count", 0), "effectiveModel": row.get("effective_model")} for row in embeddings],
         "experiments": [_run_summary_dict(row, document, repository) for row in experiments],
         "activeParseRun": _persisted_parse_response(document, active_parse) if active_parse else None,
         "activeChunkRun": active_chunk,
@@ -452,7 +454,7 @@ def get_document(document_id: str, user: CurrentUser = Depends(get_current_user)
     })
 
 
-@app.post("/documents/{document_id}/chunks")
+@app.post("/documents/{document_id}/chunks", response_model=ChunkRunResponse)
 def chunks(document_id: str, request: ChunkRunRequest, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     return _camelize(_guarded(create_chunk_run, document_id, request, repository=_user_repository(user)))
 
@@ -465,7 +467,7 @@ def chunk_run(run_id: str, user: CurrentUser = Depends(get_current_user)) -> dic
     return _camelize(row)
 
 
-@app.post("/documents/{document_id}/embeddings")
+@app.post("/documents/{document_id}/embeddings", response_model=EmbeddingRunResponse)
 def embeddings(document_id: str, request: dict[str, str] | None = None, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     return _camelize(_guarded(create_embedding_run, document_id, (request or {}).get("chunkRunId"), repository=_user_repository(user)))
 
