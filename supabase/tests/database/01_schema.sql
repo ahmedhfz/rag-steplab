@@ -81,9 +81,9 @@ select ok(
       and table_name = 'documents'
       and column_name = 'owner_user_id'
       and data_type = 'uuid'
-      and is_nullable = 'YES'
+      and is_nullable = 'NO'
   ),
-  'documents have a required UUID owner'
+  'documents have a non-null UUID owner'
 );
 
 select ok(
@@ -105,9 +105,11 @@ select ok(
     select 1
     from pg_indexes
     where schemaname = 'rag_lab'
-      and indexname = 'ix_documents_owner_user_sha256'
+      and indexname = 'uq_documents_owner_sha256_canonical'
+      and indexdef like '%UNIQUE INDEX%'
+      and indexdef like '%is_canonical%'
   ),
-  'owner and SHA256 lookup index exists'
+  'canonical owner and SHA256 uniqueness exists'
 );
 
 select ok(
