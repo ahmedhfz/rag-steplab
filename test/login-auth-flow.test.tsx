@@ -6,7 +6,6 @@ const mocks = vi.hoisted(() => ({
   signInWithPassword: vi.fn(),
   signUp: vi.fn(),
   resetPasswordForEmail: vi.fn(),
-  signInWithOAuth: vi.fn(),
   replace: vi.fn(),
 }));
 
@@ -26,7 +25,6 @@ vi.mock("@/lib/supabase/browser", () => ({
       signInWithPassword: mocks.signInWithPassword,
       signUp: mocks.signUp,
       resetPasswordForEmail: mocks.resetPasswordForEmail,
-      signInWithOAuth: mocks.signInWithOAuth,
     },
   }),
   supabaseAuthErrorMessage: () => "İşlem tamamlanamadı. Lütfen tekrar deneyin.",
@@ -41,7 +39,6 @@ beforeEach(() => {
   mocks.signInWithPassword.mockResolvedValue({ error: null });
   mocks.signUp.mockResolvedValue({ data: { session: null }, error: null });
   mocks.resetPasswordForEmail.mockResolvedValue({ error: null });
-  mocks.signInWithOAuth.mockResolvedValue({ error: null });
 });
 
 describe("LoginScreen Supabase auth flows", () => {
@@ -89,15 +86,13 @@ describe("LoginScreen Supabase auth flows", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Şifre yenileme bağlantısı");
   });
 
-  it("starts Google OAuth through the technical callback route", async () => {
+  it("starts Google OAuth through the server-side auth route", async () => {
     const user = userEvent.setup();
     render(<LoginScreen />);
 
-    await user.click(screen.getByRole("button", { name: "Google ile devam et" }));
+    const googleLink = screen.getByRole("link", { name: "Google ile devam et" });
+    await user.click(googleLink);
 
-    expect(mocks.signInWithOAuth).toHaveBeenCalledWith({
-      provider: "google",
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
-    });
+    expect(googleLink).toHaveAttribute("href", "/auth/google");
   });
 });

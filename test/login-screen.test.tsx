@@ -23,7 +23,8 @@ describe("LoginScreen", () => {
     expect(screen.getByRole("heading", { name: "RAG StepLab" })).toBeVisible();
     expect(screen.getByLabelText("E-posta")).toHaveAttribute("placeholder", "ornek@firma.com");
     expect(screen.getByLabelText("Şifre")).toHaveAttribute("type", "password");
-    expect(screen.getByRole("button", { name: "Google ile devam et" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Google ile devam et" }))
+      .toHaveAttribute("href", "/auth/google");
   });
 
   it("supports password visibility and maps missing local auth configuration safely", async () => {

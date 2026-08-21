@@ -110,21 +110,6 @@ export function LoginScreen() {
     }
   }
 
-  async function continueWithGoogle() {
-    setBusy(true);
-    setStatusMessage("");
-    try {
-      const { error } = await getSupabaseBrowserClient().auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo: `${window.location.origin}/auth/callback` },
-      });
-      if (error) throw error;
-    } catch (error) {
-      setBusy(false);
-      setStatusMessage(friendlyAuthError(error));
-    }
-  }
-
   const title = mode === "signup" ? "Hesap oluşturun" : mode === "forgot" ? "Şifrenizi yenileyin" : "Hesabınıza giriş yapın";
   const submitLabel = mode === "signup" ? "Kayıt ol" : mode === "forgot" ? "Bağlantı gönder" : "Giriş yap";
 
@@ -143,7 +128,7 @@ export function LoginScreen() {
               {mode === "signup" && <div className="space-y-1.5"><label className="text-[11px] font-semibold text-slate-700" htmlFor="login-password-confirm">Şifre tekrarı</label><Input autoComplete="new-password" className="h-8 border-slate-200 text-xs shadow-none placeholder:text-[11px] focus-visible:border-slate-400 focus-visible:ring-2 focus-visible:ring-slate-200" id="login-password-confirm" minLength={10} onChange={(event) => setConfirmation(event.target.value)} placeholder="Şifrenizi tekrar girin" required type="password" value={confirmation} /></div>}
               <Button className="h-9 w-full bg-[#4b5c74] text-xs font-semibold text-white hover:bg-[#405069]" disabled={busy} type="submit">{busy ? "Bekleyin…" : submitLabel}</Button>
             </form>
-            {mode === "signin" && <><div className="my-6 flex items-center gap-3 text-[10px] text-slate-500"><span aria-hidden="true" className="h-px flex-1 bg-slate-200" /><span>veya</span><span aria-hidden="true" className="h-px flex-1 bg-slate-200" /></div><Button className="h-9 w-full border-slate-200 bg-white text-xs font-medium text-slate-800 shadow-none hover:bg-slate-50" disabled={busy} onClick={continueWithGoogle} type="button" variant="outline"><GoogleMark />Google ile devam et</Button><div className="mt-5 text-center"><button className="text-xs font-medium text-blue-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200" onClick={() => setAuthMode("forgot")} type="button">Şifremi unuttum</button></div></>}
+            {mode === "signin" && <><div className="my-6 flex items-center gap-3 text-[10px] text-slate-500"><span aria-hidden="true" className="h-px flex-1 bg-slate-200" /><span>veya</span><span aria-hidden="true" className="h-px flex-1 bg-slate-200" /></div><Button asChild className="h-9 w-full border-slate-200 bg-white text-xs font-medium text-slate-800 shadow-none hover:bg-slate-50" variant="outline"><a href="/auth/google"><GoogleMark />Google ile devam et</a></Button><div className="mt-5 text-center"><button className="text-xs font-medium text-blue-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200" onClick={() => setAuthMode("forgot")} type="button">Şifremi unuttum</button></div></>}
             {mode !== "signin" && <div className="mt-5 text-center"><button className="text-xs font-medium text-blue-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200" onClick={() => setAuthMode("signin")} type="button">Giriş ekranına dön</button></div>}
             <p aria-live="polite" className="mt-3 min-h-4 text-center text-[10px] leading-4 text-slate-500" id="login-status" role="status">{statusMessage}</p>
           </div>
