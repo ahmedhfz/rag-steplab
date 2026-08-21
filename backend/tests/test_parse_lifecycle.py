@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import uuid
 import pytest
 from fastapi.testclient import TestClient
 
@@ -65,6 +66,7 @@ def _document(repository: InMemoryRepository) -> dict:
             "media_type": "application/pdf",
             "size_bytes": 8,
             "page_count": 0,
+            "owner_user_id": uuid.UUID("11111111-1111-4111-8111-111111111111"),
         },
         "rag-documents",
         "lesson.pdf",

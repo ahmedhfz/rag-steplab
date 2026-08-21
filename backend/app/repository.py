@@ -112,6 +112,9 @@ class Repository:
 
     persistent = False
 
+    def scoped(self, owner_user_id: uuid.UUID) -> "ScopedRepository":
+        return ScopedRepository(self, owner_user_id)
+
     def create_document(self, metadata: dict[str, Any], storage_bucket: str, storage_path: str, sha256: str) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -280,6 +283,8 @@ class InMemoryRepository(Repository):
             "storage_bucket": storage_bucket,
             "storage_path": storage_path,
             "sha256": sha256,
+            "owner_user_id": metadata.get("owner_user_id"),
+            "is_canonical": metadata.get("is_canonical", True),
             "active_parse_run_id": None,
             "active_chunk_run_id": None,
             "active_embedding_run_id": None,
@@ -646,6 +651,8 @@ class SqlAlchemyRepository(Repository):
             size_bytes=metadata["size_bytes"],
             page_count=metadata.get("page_count", 0),
             sha256=sha256,
+            owner_user_id=metadata.get("owner_user_id"),
+            is_canonical=metadata.get("is_canonical", True),
             storage_bucket=storage_bucket,
             storage_path=storage_path,
         )
@@ -663,6 +670,8 @@ class SqlAlchemyRepository(Repository):
             "size_bytes": row.size_bytes,
             "page_count": row.page_count,
             "sha256": row.sha256,
+            "owner_user_id": row.owner_user_id,
+            "is_canonical": row.is_canonical,
             "storage_bucket": row.storage_bucket,
             "storage_path": row.storage_path,
             "active_parse_run_id": row.active_parse_run_id,
@@ -1189,6 +1198,181 @@ class SqlAlchemyRepository(Repository):
             if dataset_id:
                 query = query.where(EvaluationRun.dataset_id == dataset_id)
             return [self._eval_dict(row) for row in session.scalars(query)]
+
+
+class ScopedRepository(Repository):
+    """Owner-scoped view over the private persistence role.
+
+    The database role is deliberately not exposed to PostgREST. This wrapper
+    makes the verified Supabase subject an explicit boundary for every
+    user-facing repository lookup and write while workers continue using the
+    unscoped repository with trusted internal run IDs.
+    """
+
+    def __init__(self, repository: Repository, owner_user_id: uuid.UUID) -> None:
+        self._repository = repository
+        self.owner_user_id = owner_user_id if isinstance(owner_user_id, uuid.UUID) else uuid.UUID(str(owner_user_id))
+        self.persistent = repository.persistent
+
+    def _owned_document(self, document_id: str) -> dict[str, Any] | None:
+        document = self._repository.get_document_row(document_id)
+        if document is None or document.get("owner_user_id") != self.owner_user_id:
+            return None
+        return document
+
+    def _owned_document_for_row(self, row: dict[str, Any] | None) -> dict[str, Any] | None:
+        return self._owned_document(row["document_id"]) if row and row.get("document_id") else None
+
+    def create_document(self, metadata, storage_bucket, storage_path, sha256):
+        payload = dict(metadata)
+        payload["owner_user_id"] = self.owner_user_id
+        return self._repository.create_document(payload, storage_bucket, storage_path, sha256)
+
+    def save_parse(self, document_id, parsed, *, run_id=None):
+        if self._owned_document(document_id) is None:
+            return None
+        return self._repository.save_parse(document_id, parsed, run_id=run_id)
+
+    def create_parse_run(self, document_id, *, parser_version="unknown", config=None, run_id=None):
+        if self._owned_document(document_id) is None:
+            return None
+        return self._repository.create_parse_run(document_id, parser_version=parser_version, config=config, run_id=run_id)
+
+    def queue_parse_run(self, document_id, *, parser_version="unknown", config=None, run_id=None):
+        return self.create_parse_run(document_id, parser_version=parser_version, config=config, run_id=run_id)
+
+    def set_parse_dispatch(self, run_id, dispatch_id):
+        if self.get_parse_row(run_id) is None:
+            return None
+        return self._repository.set_parse_dispatch(run_id, dispatch_id)
+
+    def find_inflight_parse(self, document_id):
+        if self._owned_document(document_id) is None:
+            return None
+        return self._repository.find_inflight_parse(document_id)
+
+    def mark_parse_running(self, run_id):
+        if self.get_parse_row(run_id) is None:
+            return None
+        return self._repository.mark_parse_running(run_id)
+
+    def update_parse_progress(self, run_id, progress, phase):
+        if self.get_parse_row(run_id) is None:
+            return None
+        return self._repository.update_parse_progress(run_id, progress, phase)
+
+    def complete_parse(self, run_id, parsed, *, parser_version="unknown", execution_metadata=None, duration_ms=None):
+        if self.get_parse_row(run_id) is None:
+            return None
+        return self._repository.complete_parse(run_id, parsed, parser_version=parser_version, execution_metadata=execution_metadata, duration_ms=duration_ms)
+
+    def fail_parse(self, run_id, code, message, *, status="failed", execution_metadata=None, duration_ms=None):
+        if self.get_parse_row(run_id) is None:
+            return None
+        return self._repository.fail_parse(run_id, code, message, status=status, execution_metadata=execution_metadata, duration_ms=duration_ms)
+
+    def get_document_row(self, document_id):
+        return self._owned_document(document_id)
+
+    def list_document_rows(self):
+        return [row for row in self._repository.list_document_rows() if row.get("owner_user_id") == self.owner_user_id]
+
+    def delete_document(self, document_id):
+        if self._owned_document(document_id) is not None:
+            self._repository.delete_document(document_id)
+
+    def get_parse_row(self, run_id):
+        return self._owned_document_for_row(self._repository.get_parse_row(run_id)) and self._repository.get_parse_row(run_id)
+
+    def list_parse_rows(self, document_id):
+        if self._owned_document(document_id) is None:
+            return []
+        return self._repository.list_parse_rows(document_id)
+
+    def save_chunk_run(self, document_id, parse_run_id, request, drafts):
+        document = self._owned_document(document_id)
+        parse = self.get_parse_row(parse_run_id)
+        if document is None or parse is None or parse.get("document_id") != document_id:
+            raise ApiProblem(404, "chunk_run_not_found", "The requested document lineage was not found.")
+        return self._repository.save_chunk_run(document_id, parse_run_id, request, drafts)
+
+    def get_chunk_row(self, run_id):
+        return self._owned_document_for_row(self._repository.get_chunk_row(run_id)) and self._repository.get_chunk_row(run_id)
+
+    def list_chunk_rows(self, document_id):
+        if self._owned_document(document_id) is None:
+            return []
+        return self._repository.list_chunk_rows(document_id)
+
+    def save_embedding_run(self, document_id, chunk_run_id, model, dimensions, format_version, values, input_hashes=None):
+        if self._owned_document(document_id) is None or self.get_chunk_row(chunk_run_id) is None:
+            raise ApiProblem(404, "embedding_run_not_found", "The requested document lineage was not found.")
+        return self._repository.save_embedding_run(document_id, chunk_run_id, model, dimensions, format_version, values, input_hashes)
+
+    def get_embedding_row(self, run_id):
+        return self._owned_document_for_row(self._repository.get_embedding_row(run_id)) and self._repository.get_embedding_row(run_id)
+
+    def list_embedding_rows(self, document_id):
+        if self._owned_document(document_id) is None:
+            return []
+        return self._repository.list_embedding_rows(document_id)
+
+    def get_chunks_for_embedding(self, chunk_run_id, embedding_run_id=None):
+        row = self.get_chunk_row(chunk_run_id)
+        if row is None:
+            return []
+        return self._repository.get_chunks_for_embedding(chunk_run_id, embedding_run_id)
+
+    def retrieve_candidates(self, chunk_run_id, embedding_run_id, query, query_vector, mode, candidate_k):
+        if self.get_chunk_row(chunk_run_id) is None:
+            raise ApiProblem(404, "chunk_run_not_found", "The chunk run was not found.")
+        if embedding_run_id is not None and self.get_embedding_row(embedding_run_id) is None:
+            raise ApiProblem(404, "embedding_run_not_found", "The embedding run was not found.")
+        return self._repository.retrieve_candidates(chunk_run_id, embedding_run_id, query, query_vector, mode, candidate_k)
+
+    def save_experiment(self, row):
+        if self._owned_document(row.get("document_id", "")) is None:
+            raise ApiProblem(404, "experiment_not_found", "The experiment lineage was not found.")
+        return self._repository.save_experiment(row)
+
+    def get_experiment_row(self, experiment_id):
+        return self._owned_document_for_row(self._repository.get_experiment_row(experiment_id)) and self._repository.get_experiment_row(experiment_id)
+
+    def list_experiment_rows(self, document_id=None):
+        if document_id is not None:
+            return [] if self._owned_document(document_id) is None else self._repository.list_experiment_rows(document_id)
+        return [row for row in self._repository.list_experiment_rows() if self._owned_document(row.get("document_id", "")) is not None]
+
+    def save_dataset(self, request, parse_run_id):
+        if self._owned_document(request.document_id) is None or self.get_parse_row(parse_run_id) is None:
+            raise ApiProblem(404, "dataset_not_found", "The evaluation dataset lineage was not found.")
+        return self._repository.save_dataset(request, parse_run_id)
+
+    def list_dataset_rows(self, document_id=None):
+        if document_id is not None:
+            return [] if self._owned_document(document_id) is None else self._repository.list_dataset_rows(document_id)
+        return [row for row in self._repository.list_dataset_rows() if self._owned_document(row.get("document_id", "")) is not None]
+
+    def get_dataset_row(self, dataset_id):
+        row = self._repository.get_dataset_row(dataset_id)
+        return row if self._owned_document_for_row(row) is not None else None
+
+    def save_evaluation(self, row):
+        dataset = self.get_dataset_row(row.get("dataset_id", ""))
+        if dataset is None:
+            raise ApiProblem(404, "evaluation_run_not_found", "The evaluation lineage was not found.")
+        return self._repository.save_evaluation(row)
+
+    def get_evaluation_row(self, run_id):
+        row = self._repository.get_evaluation_row(run_id)
+        if row is None:
+            return None
+        return row if self.get_dataset_row(row.get("dataset_id", "")) is not None else None
+
+    def list_evaluation_rows(self, dataset_id=None):
+        if dataset_id is not None:
+            return [] if self.get_dataset_row(dataset_id) is None else self._repository.list_evaluation_rows(dataset_id)
+        return [row for row in self._repository.list_evaluation_rows() if self.get_dataset_row(row.get("dataset_id", "")) is not None]
 
 
 _repository: Repository | None = None

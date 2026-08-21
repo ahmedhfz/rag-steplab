@@ -76,6 +76,7 @@ class ParseResponse(CamelCaseModel):
     progress: int = Field(default=0, ge=0, le=100)
     run_metadata: dict[str, Any] | None = None
     error: ApiError | None = None
+    reused_document: bool = False
 
 
 class RunTiming(CamelCaseModel):

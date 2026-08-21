@@ -1,6 +1,6 @@
 begin;
 
-select plan(26);
+select plan(31);
 
 select ok(to_regnamespace('rag_lab') is not null, 'rag_lab schema exists');
 
@@ -72,6 +72,48 @@ select ok(
 select ok(to_regclass('rag_lab.ix_documents_active_parse_run_id') is not null, 'active parse FK index exists');
 select ok(to_regclass('rag_lab.ix_documents_active_chunk_run_id') is not null, 'active chunk FK index exists');
 select ok(to_regclass('rag_lab.ix_documents_active_embedding_run_id') is not null, 'active embedding FK index exists');
+
+select ok(
+  exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'rag_lab'
+      and table_name = 'documents'
+      and column_name = 'owner_user_id'
+      and data_type = 'uuid'
+      and is_nullable = 'YES'
+  ),
+  'documents have a required UUID owner'
+);
+
+select ok(
+  exists (
+    select 1
+    from information_schema.table_constraints
+    where constraint_schema = 'rag_lab'
+      and table_name = 'documents'
+      and constraint_name = 'fk_documents_owner_user'
+      and constraint_type = 'FOREIGN KEY'
+  ),
+  'documents owner references auth users'
+);
+
+select ok(to_regclass('rag_lab.ix_documents_owner_user_id') is not null, 'owner lookup index exists');
+
+select ok(
+  exists (
+    select 1
+    from pg_indexes
+    where schemaname = 'rag_lab'
+      and indexname = 'ix_documents_owner_user_sha256'
+  ),
+  'owner and SHA256 lookup index exists'
+);
+
+select ok(
+  not (select relrowsecurity from pg_class where oid = 'rag_lab.documents'::regclass),
+  'application schema remains private without misleading RLS'
+);
 
 select ok(
   exists (

@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 
 import { DocumentApiError, type DocumentApiErrorCode } from "@/lib/document-api";
 import { validatePdfFile, type DocumentFileValidationError } from "@/lib/document-file";
@@ -39,6 +40,7 @@ import type {
   ParseRun,
 } from "@/lib/rag-api-types";
 import type { DocumentActivityEventType } from "@/lib/rag-ui-types";
+import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 export type DocumentParseStatus = "not-started" | "ready" | "queued" | "running" | "completed" | "failed";
 export type PipelineOperationStatus = "locked" | "ready" | "processing" | "completed" | "error" | "stale";
@@ -104,11 +106,17 @@ type DocumentPipelineContextValue = {
 
 const DocumentPipelineContext = createContext<DocumentPipelineContextValue | null>(null);
 const ACTIVE_DOCUMENT_STORAGE_KEY = "rag-steplab-active-document-id";
+const ACTIVE_DOCUMENT_STORAGE_PREFIX = `${ACTIVE_DOCUMENT_STORAGE_KEY}:`;
 
-function rememberActiveDocument(documentId: string | null) {
+function activeDocumentStorageKey(userId?: string | null) {
+  return userId ? `${ACTIVE_DOCUMENT_STORAGE_PREFIX}${userId}` : ACTIVE_DOCUMENT_STORAGE_KEY;
+}
+
+function rememberActiveDocument(documentId: string | null, userId?: string | null) {
   try {
-    if (documentId) window.localStorage.setItem(ACTIVE_DOCUMENT_STORAGE_KEY, documentId);
-    else window.localStorage.removeItem(ACTIVE_DOCUMENT_STORAGE_KEY);
+    const key = activeDocumentStorageKey(userId);
+    if (documentId) window.localStorage.setItem(key, documentId);
+    else window.localStorage.removeItem(key);
   } catch {
     // Kalıcı seçim bir kolaylıktır; storage engeli gerçek pipeline'ı durdurmamalıdır.
   }
@@ -123,6 +131,8 @@ function staleRun<T extends { isStale: boolean }>(run: T | null): T | null {
 }
 
 export function DocumentPipelineProvider({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname() ?? "/";
+  const [authUserId, setAuthUserId] = useState<string | null>(process.env.NODE_ENV === "test" ? "test-user" : null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<DocumentFileValidationError | null>(null);
   const [parseStatus, setParseStatus] = useState<DocumentParseStatus>("not-started");
@@ -158,6 +168,18 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const runIdRef = useRef(0);
   const activityIdRef = useRef(0);
   const controllersRef = useRef(new Map<string, AbortController>());
+
+  useEffect(() => {
+    if (pathname === "/login" || pathname.startsWith("/auth/")) return;
+    try {
+      const supabase = getSupabaseBrowserClient();
+      void supabase.auth.getUser().then(({ data }) => setAuthUserId(data.user?.id ?? null));
+      const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => setAuthUserId(session?.user.id ?? null));
+      return () => listener.subscription.unsubscribe();
+    } catch {
+      return;
+    }
+  }, [pathname]);
 
   const replaceController = useCallback((key: string) => {
     controllersRef.current.get(key)?.abort();
@@ -353,7 +375,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     resetDownstream();
     try {
       const loaded = await loadDocumentRelatedData(documentId, controller.signal);
-      rememberActiveDocument(documentId);
+      rememberActiveDocument(documentId, authUserId);
       setPersistenceStatus("available");
       if ((loaded.parseStatus === "queued" || loaded.parseStatus === "running") && loaded.parseRunId) {
         void resumeParseRun(documentId, loaded.parseRunId, runIdRef.current);
@@ -363,27 +385,34 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       setPersistenceError(asApiError(error, "The selected document could not be loaded."));
       setPersistenceStatus("unavailable");
     }
-  }, [loadDocumentRelatedData, replaceController, resetDownstream, resumeParseRun]);
+  }, [authUserId, loadDocumentRelatedData, replaceController, resetDownstream, resumeParseRun]);
 
   useEffect(() => {
+    if (pathname === "/login" || pathname.startsWith("/auth/")) return;
+    if (!authUserId && process.env.NODE_ENV !== "test") return;
+
     const controller = replaceController("bootstrap");
     void Promise.all([getCapabilities(controller.signal), listDocuments(controller.signal)])
       .then(async ([nextCapabilities, nextDocuments]) => {
         setCapabilities(nextCapabilities);
         setDocuments(nextDocuments);
         let documentId: string | null = null;
+        let legacyDocumentId: string | null = null;
         try {
-          documentId = window.localStorage.getItem(ACTIVE_DOCUMENT_STORAGE_KEY);
+          documentId = window.localStorage.getItem(activeDocumentStorageKey(authUserId));
+          if (!documentId && authUserId) legacyDocumentId = window.localStorage.getItem(ACTIVE_DOCUMENT_STORAGE_KEY);
+          documentId = documentId ?? legacyDocumentId;
         } catch {
           // Browser storage kapalıysa kalıcı backend verisi yine kullanılabilir.
         }
         if (documentId && nextDocuments.some((document) => document.id === documentId)) {
+          if (legacyDocumentId) rememberActiveDocument(documentId, authUserId);
           const loaded = await loadDocumentRelatedData(documentId, controller.signal);
           if ((loaded.parseStatus === "queued" || loaded.parseStatus === "running") && loaded.parseRunId) {
             void resumeParseRun(documentId, loaded.parseRunId, runIdRef.current);
           }
         } else if (documentId) {
-          rememberActiveDocument(null);
+          rememberActiveDocument(null, authUserId);
         }
         setPersistenceStatus("available");
       })
@@ -394,7 +423,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         setPersistenceStatus("unavailable");
       });
     return () => controller.abort();
-  }, [loadDocumentRelatedData, replaceController, resumeParseRun]);
+  }, [authUserId, loadDocumentRelatedData, pathname, replaceController, resumeParseRun]);
 
   const selectFile = useCallback((file: File | undefined) => {
     if (!file) return;
@@ -411,7 +440,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     activeParseRunIdRef.current = null;
     setSelectedFile(file);
     setActiveDocument(null);
-    rememberActiveDocument(null);
+    rememberActiveDocument(null, authUserId);
     setFileError(null);
     setParseStatus("ready");
     setLastReportedParseProgress(0);
@@ -421,7 +450,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setActivity([]);
     resetDownstream();
     addActivity("documentSelected");
-  }, [addActivity, resetDownstream]);
+  }, [addActivity, authUserId, resetDownstream]);
 
   const removeFile = useCallback(() => {
     controllersRef.current.forEach((controller, key) => {
@@ -432,7 +461,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     activeParseRunIdRef.current = null;
     setSelectedFile(null);
     setActiveDocument(null);
-    rememberActiveDocument(null);
+    rememberActiveDocument(null, authUserId);
     setFileError(null);
     setParseStatus("not-started");
     setLastReportedParseProgress(0);
@@ -441,7 +470,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setParseError(null);
     setActivity([]);
     resetDownstream();
-  }, [resetDownstream]);
+  }, [authUserId, resetDownstream]);
 
   const parseSelectedFile = useCallback(async () => {
     if (!selectedFile || parseInFlightRef.current || parseStatus === "queued" || parseStatus === "running") return;
@@ -489,7 +518,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         };
         setDocuments((current) => [document, ...current.filter((item) => item.id !== document.id)]);
         setActiveDocument({ ...document, parseRuns: [], chunkRuns: [], embeddingRuns: [], experiments: [], activeParseRun: result });
-        rememberActiveDocument(document.id);
+        rememberActiveDocument(document.id, authUserId);
         setPersistenceStatus("available");
       }
     } catch (error) {
@@ -506,7 +535,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         controllersRef.current.delete("parse");
       }
     }
-  }, [addActivity, applyParseRunStatus, parseStatus, replaceController, selectedFile]);
+  }, [addActivity, applyParseRunStatus, authUserId, parseStatus, replaceController, selectedFile]);
 
   const reparseActiveDocument = useCallback(async () => {
     const documentId = activeDocument?.id;
