@@ -11,6 +11,20 @@ async function valueFingerprint(value: string | undefined) {
     .join("");
 }
 
+function decodeStorageValue(value: string | undefined) {
+  if (!value) return null;
+  try {
+    const decoded = decodeURIComponent(value);
+    const json = decoded.startsWith("base64-")
+      ? Buffer.from(decoded.slice("base64-".length), "base64url").toString("utf8")
+      : decoded;
+    const parsed: unknown = JSON.parse(json);
+    return typeof parsed === "string" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const response = NextResponse.redirect(new URL("/login?auth_error=oauth_failed", requestUrl));
@@ -31,6 +45,7 @@ export async function GET(request: Request) {
     console.info("oauth_started", {
       pkceCookiePresent: Boolean(pkceCookie),
       pkceCookieFingerprint: await valueFingerprint(pkceCookie?.value),
+      pkceVerifierFingerprint: await valueFingerprint(decodeStorageValue(pkceCookie?.value) ?? undefined),
       pkceCookieLength: pkceCookie?.value.length ?? 0,
     });
     response.headers.set("Location", data.url);
