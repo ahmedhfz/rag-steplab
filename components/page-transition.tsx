@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "motion/react";
 
-export function PageTransition({ pathname, children }: { pathname: string; children: React.ReactNode }) {
+export function PageTransition({ pathname, children }: { pathname?: string; children: React.ReactNode }) {
   return (
     <AnimatePresence initial={false} mode="wait">
       <motion.div
@@ -10,7 +10,7 @@ export function PageTransition({ pathname, children }: { pathname: string; child
         className="min-w-0"
         exit={{ opacity: 0, y: -3 }}
         initial={{ opacity: 0, y: 3 }}
-        key={pathname}
+        key={pathname ?? "page"}
         transition={{ duration: 0.16, ease: "easeOut" }}
       >
         {children}
