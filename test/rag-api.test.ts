@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { getChunkRun, getDocument, getEmbeddingRun, getParseRun, listDocuments, waitForParseRun } from "@/lib/rag-api";
+import { getChunkRun, getDocument, getEmbeddingRun, getParseRun, listDocuments, parseAndPersistDocument, waitForParseRun } from "@/lib/rag-api";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -56,6 +56,25 @@ describe("RAG API contract normalization", () => {
 
     await expect(getDocument("document-1")).resolves.toMatchObject({
       activeParseRun: { documentId: "document-1", parseRunId: "parse-1", markdown: "# RAG Basics" },
+    });
+  });
+
+  it("carries the existing reusedDocument flag through the persisted parse contract", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      document: { fileName: "lesson.pdf", mediaType: "application/pdf", sizeBytes: 100, pageCount: 1 },
+      structured: { pages: [{ pageNumber: 1, elements: [] }], elements: [] },
+      markdown: "# RAG Basics",
+      summary: { pageCount: 1, headingCount: 0, paragraphCount: 0, listCount: 0, tableCount: 0 },
+      documentId: "document-1",
+      parseRunId: "parse-1",
+      status: "completed",
+      reusedDocument: true,
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(parseAndPersistDocument(new File(["%PDF-1.4"], "lesson.pdf", { type: "application/pdf" }))).resolves.toMatchObject({
+      documentId: "document-1",
+      parseRunId: "parse-1",
+      reusedDocument: true,
     });
   });
 

@@ -37,8 +37,8 @@ export function RetrievalScreen() {
   const {
     activeDocument,
     capabilities,
-    chunkRun,
-    embeddingRun,
+    selectedChunkRunId,
+    selectedEmbeddingRunId,
     experimentStatus,
     experimentRun,
     experimentError,
@@ -55,8 +55,8 @@ export function RetrievalScreen() {
   const [targetStage, setTargetStage] = useState<ExperimentTargetStage>("generation");
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const hasChanges = question.length > 0 || topK !== DEFAULT_TOP_K || mode !== DEFAULT_MODE || rerankerEnabled || candidateCount !== 10 || tokenBudget !== 3000 || temperature !== 0.1 || targetStage !== "generation";
-  const activeChunkRunId = chunkRun?.id ?? activeDocument?.activeChunkRunId;
-  const activeEmbeddingRunId = embeddingRun?.id ?? activeDocument?.activeEmbeddingRunId;
+  const activeChunkRunId = selectedChunkRunId;
+  const activeEmbeddingRunId = selectedEmbeddingRunId;
   const needsEmbedding = mode !== "keyword";
   const canAsk = Boolean(question.trim() && activeDocument?.id && activeChunkRunId && (!needsEmbedding || activeEmbeddingRunId) && experimentStatus !== "processing");
   const labels = preferences.locale === "tr" ? {

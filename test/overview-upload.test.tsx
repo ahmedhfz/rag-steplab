@@ -14,6 +14,34 @@ function renderOverview() {
   );
 }
 
+function authoritativeDocumentDetail({
+  documentId,
+  fileName,
+  parseRunId,
+  activeParseRun,
+}: {
+  documentId: string;
+  fileName: string;
+  parseRunId: string;
+  activeParseRun: Record<string, unknown>;
+}) {
+  return {
+    id: documentId,
+    fileName,
+    mediaType: "application/pdf",
+    sizeBytes: 9,
+    pageCount: 1,
+    activeParseRunId: parseRunId,
+    activeChunkRunId: null,
+    activeEmbeddingRunId: null,
+    parseRuns: [{ id: parseRunId, status: "completed", isCompatible: true }],
+    chunkRuns: [],
+    embeddingRuns: [],
+    experiments: [],
+    activeParseRun,
+  };
+}
+
 afterEach(() => {
   cleanup();
   localStorage.clear();
@@ -64,7 +92,9 @@ describe("Overview PDF selection", () => {
         : url.endsWith("/documents") && init?.method !== "POST" ? { documents: [] }
           : url.endsWith("/documents/parse") && init?.method === "POST" ? parseAccepted
             : url.endsWith("/parse-runs/parse-1") ? (parsePollCount++ === 0 ? { id: "parse-1", documentId: "document-1", status: "running" } : completedParse)
-              : { documents: [] };
+              : url.endsWith("/documents/document-1") ? authoritativeDocumentDetail({ documentId: "document-1", fileName: "learning-notes.pdf", parseRunId: "parse-1", activeParseRun: completedParse })
+                : url.includes("/experiments") || url.includes("/evaluation/datasets") ? { items: [] }
+                  : { documents: [] };
       return Promise.resolve(new Response(JSON.stringify(payload), { status: url.endsWith("/documents/parse") ? 202 : 200, headers: { "Content-Type": "application/json" } }));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -77,8 +107,9 @@ describe("Overview PDF selection", () => {
 
     await waitFor(() => expect(screen.getByText("Parse completed")).toBeInTheDocument());
     expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8000/documents/parse", expect.objectContaining({ method: "POST", body: expect.any(FormData) }));
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8000/documents/document-1", expect.any(Object));
     expect(screen.getByText("Pages")).toBeInTheDocument();
-    expect(screen.getByText("Parse completed. You can inspect the returned content or run parsing again.")).toBeInTheDocument();
+    expect(screen.getByText("Reparse the stored source PDF. A successful new parse selects a new default while compatible history remains usable.")).toBeInTheDocument();
     expect(screen.getByTestId("activity-timeline")).toHaveAttribute("data-state", "completed");
     expect(screen.getByTestId("activity-timeline").querySelector('[data-activity-type="parseCompleted"]')).toHaveAttribute("data-activity-status", "completed");
   });
@@ -108,6 +139,12 @@ describe("Overview PDF selection", () => {
         return Promise.resolve(new Response(JSON.stringify(pollCount === 1
           ? { id: "parse-queued", documentId: "document-queued", status: "running", progress: 55 }
           : completedParse), { status: 200 }));
+      }
+      if (url.endsWith("/documents/document-queued")) {
+        return Promise.resolve(new Response(JSON.stringify(authoritativeDocumentDetail({ documentId: "document-queued", fileName: "queued.pdf", parseRunId: "parse-queued", activeParseRun: completedParse })), { status: 200 }));
+      }
+      if (url.includes("/experiments") || url.includes("/evaluation/datasets")) {
+        return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
       }
       return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
     });
@@ -213,6 +250,12 @@ describe("Overview PDF selection", () => {
         return Promise.resolve(new Response(JSON.stringify(pollCount === 2
           ? { id: "parse-recovery", documentId: "document-recovery", status: "running" }
           : completedParse), { status: 200 }));
+      }
+      if (url.endsWith("/documents/document-recovery")) {
+        return Promise.resolve(new Response(JSON.stringify(authoritativeDocumentDetail({ documentId: "document-recovery", fileName: "recovery.pdf", parseRunId: "parse-recovery", activeParseRun: completedParse })), { status: 200 }));
+      }
+      if (url.includes("/experiments") || url.includes("/evaluation/datasets")) {
+        return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
       }
       return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
     });

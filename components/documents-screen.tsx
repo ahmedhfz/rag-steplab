@@ -10,6 +10,7 @@ import { ChunksPipeline } from "@/components/chunks-pipeline";
 import { DocumentLibrary } from "@/components/document-library";
 import { usePreferences } from "@/components/preferences-provider";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { type AppCopy, type DocumentViewKey, UI_COPY } from "@/lib/copy";
 import { formatDocumentFileSize } from "@/lib/document-file";
 import type { DocumentParseResponse, ParsedElement, ParsedPage } from "@/lib/document-parse-types";
@@ -25,6 +26,23 @@ const documentTabs: Array<{ view: DocumentView; href: string }> = [
   { view: "parsed", href: "/documents/parsed" },
   { view: "chunks", href: "/documents/chunks" },
 ];
+
+function ParseRunSelector({ locale }: { locale: "en" | "tr" }) {
+  const { activeDocument, selectedParseRunId, selectParseRun } = useDocumentPipeline();
+  const runs = activeDocument?.parseRuns.filter((run) => run.status === "completed" && run.isCompatible) ?? [];
+  if (!selectedParseRunId || runs.length < 2) return null;
+  return (
+    <div className="mt-4 max-w-sm">
+      <label className="text-xs font-medium" htmlFor="selected-parse-run">{locale === "tr" ? "Seçili parse run" : "Selected parse run"}</label>
+      <Select onValueChange={(value) => void selectParseRun(value)} value={selectedParseRunId}>
+        <SelectTrigger className="mt-2" id="selected-parse-run"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          {runs.map((run) => <SelectItem key={run.id} value={run.id}>{run.id}{run.historicalLineage ? " · historical" : " · active"}</SelectItem>)}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
 
 function EmptyState({ children }: { children: React.ReactNode }) {
   return (
@@ -255,12 +273,14 @@ function ParsedContentTab({ copy, result }: { copy: AppCopy["documents"]; result
 
 export function DocumentsScreen({ view }: { view: DocumentView }) {
   const { preferences } = usePreferences();
-  const { selectedFile, parseResult, activeDocument } = useDocumentPipeline();
+  const { parseResult, activeDocument, pendingUpload } = useDocumentPipeline();
   const copy = UI_COPY[preferences.locale];
   const current = copy.documents.views[view];
-  const documentTitle = selectedFile?.name ?? activeDocument?.fileName ?? copy.documents.noDocumentTitle;
-  const documentMetadata = parseResult
-    ? `${parseResult.document.pageCount} ${copy.documents.pages.toLowerCase()} • ${formatDocumentFileSize(selectedFile?.size ?? parseResult.document.sizeBytes, preferences.locale)}`
+  const documentTitle = pendingUpload?.name ?? activeDocument?.fileName ?? copy.documents.noDocumentTitle;
+  const documentMetadata = pendingUpload
+    ? `${formatDocumentFileSize(pendingUpload.size, preferences.locale)} • ${copy.documents.metadataPending}`
+    : parseResult
+    ? `${parseResult.document.pageCount} ${copy.documents.pages.toLowerCase()} • ${formatDocumentFileSize(parseResult.document.sizeBytes, preferences.locale)}`
     : activeDocument
       ? `${activeDocument.pageCount} ${copy.documents.pages.toLowerCase()} • ${formatDocumentFileSize(activeDocument.sizeBytes, preferences.locale)}`
     : copy.documents.metadataPending;
@@ -278,6 +298,7 @@ export function DocumentsScreen({ view }: { view: DocumentView }) {
             <div className="mt-1 text-xs text-slate-500">{documentMetadata}</div>
           </div>
         </div>
+        <ParseRunSelector locale={preferences.locale} />
       </header>
 
       <nav aria-label={copy.documents.root} className="flex min-w-0 gap-6 overflow-x-auto border-t px-4 sm:px-7">
@@ -293,7 +314,7 @@ export function DocumentsScreen({ view }: { view: DocumentView }) {
         ))}
       </nav>
 
-      {view === "overview" && <><DocumentOverviewTab copy={copy.documents} locale={preferences.locale} persistedDocument={activeDocument} result={parseResult} selectedFile={selectedFile} /><DocumentLibrary locale={preferences.locale} /></>}
+      {view === "overview" && <><DocumentOverviewTab copy={copy.documents} locale={preferences.locale} persistedDocument={activeDocument} result={pendingUpload ? null : parseResult} selectedFile={pendingUpload} /><DocumentLibrary locale={preferences.locale} /></>}
       {view === "parsed" && <ParsedContentTab copy={copy.documents} result={parseResult} />}
       {view === "chunks" && <ChunksPipeline locale={preferences.locale} />}
     </div>

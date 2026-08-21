@@ -23,6 +23,9 @@ export function EvaluationScreen() {
   const copy = UI_COPY[preferences.locale];
   const {
     activeDocument,
+    selectedParseRunId,
+    selectedChunkRunId,
+    selectedEmbeddingRunId,
     capabilities,
     evaluationDatasets,
     evaluationStatus,
@@ -58,9 +61,9 @@ export function EvaluationScreen() {
     hit: "Hit@K", recall: "Recall@K", precision: "Precision@K", mrr: "MRR", citation: "Citation validity", groundedness: "Groundedness", cases: "Cases",
     retrievalNote: "Retrieval metrics use golden relevant elements; generation metrics remain separately visible.",
   };
-  const canCreateDataset = Boolean(activeDocument?.id && activeDocument.activeParseRunId && datasetName.trim() && question.trim() && elementIds.trim() && evaluationStatus !== "processing");
+  const canCreateDataset = Boolean(activeDocument?.id && selectedParseRunId && datasetName.trim() && question.trim() && elementIds.trim() && evaluationStatus !== "processing");
   const selectedDatasetId = datasetId || evaluationDatasets[0]?.id || "";
-  const canRun = Boolean(selectedDatasetId && activeDocument?.activeChunkRunId && activeDocument.activeEmbeddingRunId && evaluationStatus !== "processing");
+  const canRun = Boolean(selectedDatasetId && selectedChunkRunId && selectedEmbeddingRunId && evaluationStatus !== "processing");
   const selectedRuns = useMemo(() => evaluationHistory.filter((run) => compareIds.includes(run.id)), [compareIds, evaluationHistory]);
 
   useEffect(() => {

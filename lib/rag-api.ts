@@ -39,6 +39,7 @@ type DocumentParseResponseWithPersistence = DocumentParseResponse & {
   documentId?: string | null;
   parseRunId?: string | null;
   runMetadata?: Record<string, unknown> | null;
+  reusedDocument?: boolean;
   document: DocumentParseResponse["document"] & { id?: string | null };
 };
 
@@ -333,6 +334,7 @@ function normalizePersistedParseResponse(value: unknown, requirePersistenceIds =
     parseRunId,
     status: "completed",
     runMetadata: payload.runMetadata ?? null,
+    reusedDocument: payload.reusedDocument === true,
   };
 }
 
@@ -359,6 +361,7 @@ function normalizeParseRun(value: unknown, fallbackDocumentId: string | null = n
   const rawStatus = payload.status ?? (result ? "completed" : isParseJobAcceptedResponse(value) ? value.status : null);
   const status = normalizeParseStatus(rawStatus);
   const runMetadata = object(payload.runMetadata ?? payload.run_metadata);
+  const reusedDocument = boolean(payload.reusedDocument ?? payload.reused_document);
   const progress = normalizeProgress(payload.progress ?? runMetadata.progress, status);
   const problem = normalizeProblem(payload.error)
     ?? ((status === "failed" || payload.status === "interrupted") && optionalString(field(payload, "errorCode", "error_code"))
@@ -375,6 +378,7 @@ function normalizeParseRun(value: unknown, fallbackDocumentId: string | null = n
       parseRunId: field(payload, "parseRunId", "parse_run_id") ?? parseRunId,
       status: "completed",
       runMetadata: payload.runMetadata ?? payload.run_metadata ?? null,
+      reusedDocument,
     }, true)
     : null;
   if (status === "completed" && !normalizedResult) invalidResponse("The completed parse run is missing normalized content.");
@@ -386,6 +390,7 @@ function normalizeParseRun(value: unknown, fallbackDocumentId: string | null = n
     result: normalizedResult,
     error: problem,
     runMetadata,
+    reusedDocument: reusedDocument || normalizedResult?.reusedDocument === true,
   };
 }
 
@@ -595,7 +600,8 @@ export async function parseAndPersistDocument(
     if (!initial.result) throw new DocumentApiError("invalid_response", "The completed parse response returned no normalized content.");
     return initial.result;
   }
-  return pollParseRun(initial, signal, onStatus);
+  const result = await pollParseRun(initial, signal, onStatus);
+  return { ...result, reusedDocument: initial.reusedDocument || result.reusedDocument };
 }
 
 export async function getCapabilities(signal?: AbortSignal): Promise<Capabilities> {
