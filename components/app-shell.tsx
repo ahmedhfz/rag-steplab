@@ -331,7 +331,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   if (pathname === "/login" || pathname === "/auth/reset-password") {
     return (
       <MotionConfig reducedMotion="never">
-        <PageTransition pathname={pathname}>{children}</PageTransition>
+        <PageTransition>{children}</PageTransition>
       </MotionConfig>
     );
   }
@@ -406,7 +406,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </header>
 
         <main className="min-w-0">
-          <PageTransition pathname={pathname}>{children}</PageTransition>
+          <PageTransition>{children}</PageTransition>
         </main>
         <footer className="flex min-h-10 items-center justify-center gap-2 border-t px-4 text-[11px] text-slate-500">
           <span>{copy.footer.localProject}</span>
