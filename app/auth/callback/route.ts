@@ -28,12 +28,28 @@ function authErrorCategory(error: unknown) {
   return `${name}:${code}:${status}:${reason}`;
 }
 
-function callbackDiagnostics(request: Request, url: URL) {
+async function valueFingerprint(value: string | undefined) {
+  if (!value) return null;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest))
+    .slice(0, 8)
+    .map((part) => part.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function callbackDiagnostics(request: Request, url: URL) {
   const cookieHeader = request.headers.get("cookie") ?? "";
-  const cookieNames = cookieHeader
+  const cookies = cookieHeader
     .split(";")
-    .map((part) => part.split("=", 1)[0].trim())
-    .filter(Boolean);
+    .map((part) => {
+      const separator = part.indexOf("=");
+      return separator > 0
+        ? { name: part.slice(0, separator).trim(), value: part.slice(separator + 1).trim() }
+        : null;
+    })
+    .filter((cookie): cookie is { name: string; value: string } => Boolean(cookie?.name));
+  const cookieNames = cookies.map((cookie) => cookie.name);
+  const flowCookie = cookies.find((cookie) => /-auth-token-flow-[A-Za-z0-9_-]{8,64}-code-verifier(?:\.\d+)?$/.test(cookie.name));
   const flowId = url.searchParams.get("sb_flow_id");
 
   return {
@@ -42,6 +58,8 @@ function callbackDiagnostics(request: Request, url: URL) {
     flowIdFormatValid: /^[A-Za-z0-9_-]{8,64}$/.test(flowId ?? ""),
     queryKeys: [...new Set(url.searchParams.keys())].sort(),
     cookieCount: cookieNames.length,
+    pkceCookieFingerprint: await valueFingerprint(flowCookie?.value),
+    pkceCookieLength: flowCookie?.value.length ?? 0,
     pkceCookiePresence: {
       flowSlot: cookieNames.some((name) => /-auth-token-flow-[A-Za-z0-9_-]{8,64}-code-verifier(?:\.\d+)?$/.test(name)),
       flowSlotMatchesCallback: flowId
@@ -69,7 +87,7 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error("oauth_callback_failed", {
       category: authErrorCategory(error),
-      diagnostics: callbackDiagnostics(request, url),
+      diagnostics: await callbackDiagnostics(request, url),
     });
     return response;
   }
