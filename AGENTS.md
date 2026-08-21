@@ -135,6 +135,20 @@ UI yalnızca sonuç ekranı olmamalıdır; mümkün olduğunca ara adımları, k
 - Değişiklik sonrası kapsama uygun test, lint, typecheck veya build kontrollerini çalıştır.
 - Secret, kişisel veri, raw document content ve hassas log verilerini güvenli şekilde ele al.
 
+## Debugging ve Deployment Disiplini
+
+- Production ilk debug ortamı değildir. Tercih edilen sıra: kod/log inceleme → local → test → Preview → production smoke.
+- Bir hipotez kanıtlanmadan root cause olarak kabul edilmez; her aşamada gözlenebilir evidence kaydedilir.
+- Her küçük debug bulgusu için yeni PR, CI ve production deploy döngüsü başlatılmaz. Geçici diagnostic sinyalleri mümkün olduğunca tek seferde toplanır.
+- Production deploy esas olarak final validation için kullanılır.
+- External integration hatalarında sınırlar sırayla izole edilir: provider → callback → token/session exchange → application state.
+- Bir layer PASS olarak kanıtlandıysa yeni evidence olmadıkça tekrar tekrar değiştirilmez.
+- Secret, token, authorization code, verifier, raw cookie veya benzeri hassas değerler loglanmaz.
+- Temporary debug code iş bitince kaldırılır.
+- Değişikliğin etkilediği sistemler birlikte değerlendirilir; frontend-only değişiklik için gereksiz database veya Modal deploy çalıştırılmaz.
+- Cross-cutting, security veya deployment değişikliklerinde gerektiğinde full validation çalıştırılır.
+- PR kapandıktan ve ilgili worktree artık gerekmiyorsa güvenli biçimde kaldırılır; ardından `origin/main` fetch edilir ve local `main` yalnız fast-forward ile `origin/main` ile hizalanır. Birleşmemiş değişiklikler silinmez.
+
 ## Learning Principle
 
 Yeni bir RAG kavramı veya teknik özellik eklendiğinde mümkün olduğunca şu sorular cevaplanabilmelidir:

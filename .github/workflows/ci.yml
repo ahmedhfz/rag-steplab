@@ -5,6 +5,13 @@ on:
     branches: [main, "feature/**"]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      full_ci:
+        description: Run every validation and deployment gate applicable to this ref
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -15,8 +22,62 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  detect-changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.classify.outputs.frontend }}
+      backend: ${{ steps.classify.outputs.backend }}
+      database: ${{ steps.classify.outputs.database }}
+      modal: ${{ steps.classify.outputs.modal }}
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+      full_ci: ${{ steps.classify.outputs.full_ci }}
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate classification examples
+        run: node .github/scripts/classify-changes.mjs --self-test
+
+      - name: Classify changed files
+        id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FULL_CI_INPUT: ${{ inputs.full_ci }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$FULL_CI_INPUT" == "true" ]]; then
+            printf 'frontend=true\nbackend=true\ndatabase=true\nmodal=true\ndocs_only=false\nfull_ci=true\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base_sha="$PR_BASE_SHA"
+            head_sha="$PR_HEAD_SHA"
+          elif [[ "$EVENT_BEFORE" =~ ^0+$ || -z "$EVENT_BEFORE" ]]; then
+            base_sha="$(git rev-list --max-parents=0 "$GITHUB_SHA" | tail -n 1)"
+            head_sha="$GITHUB_SHA"
+          else
+            base_sha="$EVENT_BEFORE"
+            head_sha="$GITHUB_SHA"
+          fi
+
+          git diff --name-only "$base_sha" "$head_sha" \
+            | node .github/scripts/classify-changes.mjs > classification.txt
+          cat classification.txt >> "$GITHUB_OUTPUT"
+          cat classification.txt
+
   frontend:
     name: Frontend quality gates
+    if: ${{ needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.full_ci == 'true' }}
+    needs: detect-changes
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -48,6 +109,8 @@ jobs:
 
   backend:
     name: Backend quality gates
+    if: ${{ needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.full_ci == 'true' }}
+    needs: detect-changes
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -87,6 +150,8 @@ jobs:
 
   supabase-migrations:
     name: Supabase migration validation
+    if: ${{ needs.detect-changes.outputs.database == 'true' || needs.detect-changes.outputs.full_ci == 'true' }}
+    needs: detect-changes
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -120,8 +185,18 @@ jobs:
 
   supabase-migrate-production:
     name: Apply Supabase migrations
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [frontend, backend, secret-hygiene, supabase-migrations]
+    if: >-
+      ${{
+        always() &&
+        github.event_name == 'push' &&
+        github.ref == 'refs/heads/main' &&
+        (needs.detect-changes.outputs.database == 'true' || needs.detect-changes.outputs.full_ci == 'true') &&
+        needs.secret-hygiene.result == 'success' &&
+        (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') &&
+        (needs.backend.result == 'success' || needs.backend.result == 'skipped') &&
+        needs.supabase-migrations.result == 'success'
+      }}
+    needs: [detect-changes, frontend, backend, secret-hygiene, supabase-migrations]
     runs-on: ubuntu-latest
     concurrency:
       group: supabase-production-migrations
@@ -162,8 +237,24 @@ jobs:
 
   deploy-modal:
     name: Deploy Modal production
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [frontend, backend, secret-hygiene, supabase-migrations, supabase-migrate-production]
+    if: >-
+      ${{
+        always() &&
+        github.event_name == 'push' &&
+        github.ref == 'refs/heads/main' &&
+        (needs.detect-changes.outputs.modal == 'true' || needs.detect-changes.outputs.full_ci == 'true') &&
+        needs.secret-hygiene.result == 'success' &&
+        needs.backend.result == 'success' &&
+        (
+          needs.supabase-migrations.result == 'success' ||
+          (needs.detect-changes.outputs.database != 'true' && needs.detect-changes.outputs.full_ci != 'true')
+        ) &&
+        (
+          needs.supabase-migrate-production.result == 'success' ||
+          (needs.detect-changes.outputs.database != 'true' && needs.detect-changes.outputs.full_ci != 'true')
+        )
+      }}
+    needs: [detect-changes, backend, secret-hygiene, supabase-migrations, supabase-migrate-production]
     runs-on: ubuntu-latest
     concurrency:
       group: modal-production
@@ -253,3 +344,23 @@ jobs:
           done
           echo "No successful Vercel production deployment found for $GITHUB_SHA."
           exit 1
+
+  ci-result:
+    name: CI result
+    if: always()
+    needs: [detect-changes, frontend, backend, secret-hygiene, supabase-migrations, supabase-migrate-production, deploy-modal]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every executed gate to pass
+        shell: bash
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$NEEDS_JSON" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          failed="$(printf '%s\n' "$NEEDS_JSON" | jq '[.[] | select(.result == "failure" or .result == "cancelled")] | length')"
+          if [ "$failed" != "0" ]; then
+            echo "One or more executed CI gates failed."
+            exit 1
+          fi
+          echo "All executed gates passed; intentional skips are successful."
