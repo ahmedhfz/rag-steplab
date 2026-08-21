@@ -101,15 +101,22 @@ select ok(
 select ok(to_regclass('rag_lab.ix_documents_owner_user_id') is not null, 'owner lookup index exists');
 
 select ok(
-  exists (
+  not exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'rag_lab'
+      and table_name = 'documents'
+      and column_name = 'is_canonical'
+  )
+  and exists (
     select 1
     from pg_indexes
     where schemaname = 'rag_lab'
-      and indexname = 'uq_documents_owner_sha256_canonical'
+      and indexname = 'uq_documents_owner_sha256'
       and indexdef like '%UNIQUE INDEX%'
-      and indexdef like '%is_canonical%'
+      and indexdef not like '%is_canonical%'
   ),
-  'canonical owner and SHA256 uniqueness exists'
+  'documents use direct owner and SHA256 uniqueness without canonical flags'
 );
 
 select ok(
