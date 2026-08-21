@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 
 import { redirectWithSessionCookies, updateSupabaseSession } from "@/lib/supabase/proxy";
 
-const publicRoutes = new Set(["/login", "/auth/callback", "/auth/confirm"]);
+const publicRoutes = new Set(["/login", "/auth/google", "/auth/callback", "/auth/confirm"]);
 
 export async function proxy(request: NextRequest) {
   const { response, authenticated } = await updateSupabaseSession(request);
