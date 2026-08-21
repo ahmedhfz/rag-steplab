@@ -16,8 +16,10 @@ export async function GET(request: Request) {
     return NextResponse.redirect(new URL("/login?auth_error=confirmation_invalid_or_expired", request.url));
   }
 
+  const response = NextResponse.redirect(new URL("/login?auth_error=confirmation_invalid_or_expired", request.url));
+
   try {
-    const supabase = await createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient(response);
     const { error } = tokenHash
       ? await supabase.auth.verifyOtp({
           token_hash: tokenHash,
@@ -25,9 +27,11 @@ export async function GET(request: Request) {
         })
       : await supabase.auth.exchangeCodeForSession(code as string);
     if (error) throw error;
-    return NextResponse.redirect(new URL(recoveryFlow ? "/auth/reset-password" : "/", request.url));
+    response.headers.set("Location", new URL(recoveryFlow ? "/auth/reset-password" : "/", request.url).toString());
+    return response;
   } catch {
     const errorCode = recoveryFlow ? "recovery_invalid_or_expired" : "confirmation_invalid_or_expired";
-    return NextResponse.redirect(new URL(`/login?auth_error=${errorCode}`, request.url));
+    response.headers.set("Location", new URL(`/login?auth_error=${errorCode}`, request.url).toString());
+    return response;
   }
 }
