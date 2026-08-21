@@ -2,6 +2,14 @@ import { NextResponse } from "next/server";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
+function authErrorCategory(error: unknown) {
+  if (!error || typeof error !== "object") return "unknown";
+
+  const name = "name" in error && typeof error.name === "string" ? error.name : "unknown";
+  const code = "code" in error && typeof error.code === "string" ? error.code : "unknown";
+  return `${name}:${code}`;
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
@@ -14,7 +22,8 @@ export async function GET(request: Request) {
     if (error) throw error;
     response.headers.set("Location", new URL("/", request.url).toString());
     return response;
-  } catch {
+  } catch (error) {
+    console.error("oauth_callback_failed", { category: authErrorCategory(error) });
     return response;
   }
 }
