@@ -37,6 +37,8 @@ export function PipelineContextBar() {
   const copy = UI_COPY[preferences.locale];
   const {
     documents,
+    activeDocumentId,
+    activeDocumentMetadata,
     activeDocument,
     selectedParseRunId,
     selectedChunkRunId,
@@ -62,8 +64,8 @@ export function PipelineContextBar() {
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-xs font-medium text-slate-500"><FileText aria-hidden="true" className="size-3.5" />{labels.document}</div>
-          <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocument?.id ?? undefined}>
-            <SelectTrigger aria-label={labels.document} className="mt-2 max-w-xl"><SelectValue placeholder={activeDocument?.fileName ?? (documents.length ? labels.placeholder : labels.noDocument)} /></SelectTrigger>
+          <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? undefined}>
+            <SelectTrigger aria-label={labels.document} className="mt-2 max-w-xl"><SelectValue placeholder={activeDocumentMetadata?.fileName ?? activeDocument?.fileName ?? (documents.length ? labels.placeholder : labels.noDocument)} /></SelectTrigger>
             <SelectContent>{documents.map((document) => <SelectItem key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
           </Select>
         </div>
@@ -72,7 +74,7 @@ export function PipelineContextBar() {
             <span>{labels.lineage}</span>
             {hasHistoricalSelection ? <Badge className="rounded-md border-amber-200 bg-amber-50 text-amber-700" variant="outline">{labels.historical}</Badge> : null}
           </div>
-          <div className={cn("flex gap-2 overflow-x-auto pb-1", !activeDocument && "opacity-70")}>
+          <div className={cn("flex gap-2 overflow-x-auto pb-1", !activeDocumentId && "opacity-70")}>
             {stages.map((stage) => <StageLink key={stage.href} locale={preferences.locale} stage={stage} />)}
           </div>
         </div>

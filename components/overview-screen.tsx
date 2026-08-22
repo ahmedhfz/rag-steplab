@@ -272,6 +272,8 @@ export function OverviewScreen() {
     removeFile: clearSelectedFile,
     parseSelectedFile,
     reparseActiveDocument,
+    activeDocumentId,
+    activeDocumentMetadata,
     activeDocument,
     chunkStatus,
     embeddingStatus,
@@ -279,7 +281,8 @@ export function OverviewScreen() {
     experimentRun,
     evaluationStatus,
   } = useDocumentPipeline();
-  const hasDocument = Boolean(pendingUpload || activeDocument);
+  const visibleDocument = activeDocument ?? activeDocumentMetadata;
+  const hasDocument = Boolean(pendingUpload || activeDocumentId);
   const pipelineState = getPipelineState(
     hasDocument,
     parseStatus,
@@ -448,6 +451,18 @@ export function OverviewScreen() {
                       </TableRow>
                     </TableBody>
                   </Table>
+                </motion.div>
+              ) : visibleDocument ? (
+                <motion.div
+                  animate={{ opacity: 1, y: 0 }}
+                  className="border-y px-4 py-6 text-sm text-slate-600"
+                  exit={{ opacity: 0, y: -3 }}
+                  initial={{ opacity: 0, y: 4 }}
+                  key="selected-document"
+                  transition={{ duration: 0.16, ease: "easeOut" }}
+                >
+                  <p className="truncate font-medium">{visibleDocument.fileName}</p>
+                  <p className="mt-1 text-xs text-slate-500">{formatDocumentFileSize(visibleDocument.sizeBytes, preferences.locale)} · {visibleDocument.pageCount} {copy.documents.pages.toLowerCase()}</p>
                 </motion.div>
               ) : (
                 <motion.div

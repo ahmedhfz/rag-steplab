@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { continueExperiment, getChunkRun, getDocument, getEmbeddingRun, getExperiment, getParseRun, listDocuments, parseAndPersistDocument, rerunGeneration, waitForParseRun } from "@/lib/rag-api";
+import { continueExperiment, getChunkRun, getDocument, getDocumentSummary, getEmbeddingRun, getExperiment, getParseRun, listDocuments, parseAndPersistDocument, rerunGeneration, waitForParseRun } from "@/lib/rag-api";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -57,6 +57,32 @@ describe("RAG API contract normalization", () => {
     await expect(getDocument("document-1")).resolves.toMatchObject({
       activeParseRun: { documentId: "document-1", parseRunId: "parse-1", markdown: "# RAG Basics" },
     });
+  });
+
+  it("normalizes the lightweight document summary without artifact bodies", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "document-1",
+      fileName: "lesson.pdf",
+      mediaType: "application/pdf",
+      sizeBytes: 100,
+      pageCount: 1,
+      activeParseRunId: "parse-1",
+      activeChunkRunId: "chunk-1",
+      activeEmbeddingRunId: null,
+      parseRuns: [{ id: "parse-1", status: "completed", isCompatible: true, upstream: {}, config: {}, timing: {} }],
+      chunkRuns: [{ id: "chunk-1", status: "completed", isCompatible: true, strategy: "fixed_token", chunkCount: 2, upstream: { parseRunId: "parse-1" }, config: {}, timing: {} }],
+      embeddingRuns: [],
+      experiments: [{ id: "experiment-1", status: "completed", isCompatible: true, documentId: "document-1", chunkRunId: "chunk-1", embeddingRunId: null, query: "hello", targetStage: "retrieval", candidateCount: 2, config: {}, timing: {} }],
+      evaluationDatasets: [{ id: "dataset-1", documentId: "document-1", parseRunId: "parse-1", name: "Smoke", version: 1, caseCount: 3, createdAt: null }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getDocumentSummary("document-1")).resolves.toMatchObject({
+      id: "document-1",
+      experiments: [{ id: "experiment-1", candidateCount: 2 }],
+      evaluationDatasets: [{ id: "dataset-1", caseCount: 3 }],
+    });
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8000/documents/document-1/summary", expect.anything());
   });
 
   it("carries the existing reusedDocument flag through the persisted parse contract", async () => {

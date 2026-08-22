@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any
 
 from fastapi import Depends, FastAPI, File, Query, Request, UploadFile
@@ -29,7 +30,9 @@ from .pipeline import (
     queue_parse_upload,
     queue_reparse_document,
     run_lineage_compatibility,
+    SUPPORTED_NORMALIZED_SCHEMA_VERSION,
 )
+from .gemini import EMBEDDING_FORMAT_VERSION
 from .repository import get_repository
 from .schemas import (
     ApiError,
@@ -66,9 +69,19 @@ app.add_middleware(
     allow_origin_regex=settings.cors_origin_regex,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"]
+    allow_headers=["*"],
+    expose_headers=["Server-Timing"],
 )
 _pipeline_semaphore = threading.BoundedSemaphore(max(1, settings.max_concurrent_pipeline_runs))
+
+
+@app.middleware("http")
+async def add_server_timing(request: Request, call_next):
+    started = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - started) * 1000
+    response.headers["Server-Timing"] = f"app;dur={duration_ms:.1f}"
+    return response
 
 
 @app.exception_handler(ApiProblem)
@@ -401,6 +414,172 @@ def _run_summary_dict(row: dict[str, Any], document: dict[str, Any], repository)
     })
 
 
+def _summary_lineage_compatibility(
+    row: dict[str, Any],
+    document: dict[str, Any],
+    bundle: dict[str, Any],
+) -> tuple[bool, str | None]:
+    """Evaluate lineage from projection rows without fetching artifact bodies."""
+    if row.get("status") != "completed":
+        return False, "run_not_completed"
+    document_id = document.get("id")
+    parses = {value["id"]: value for value in bundle.get("parses", [])}
+    chunks = {value["id"]: value for value in bundle.get("chunks", [])}
+    embeddings = {value["id"]: value for value in bundle.get("embeddings", [])}
+
+    def parse_ok(parse_id: str | None) -> bool:
+        parse = parses.get(parse_id or "")
+        return bool(
+            parse
+            and parse.get("document_id") == document_id
+            and parse.get("status") == "completed"
+            and parse.get("normalized_schema_version") == SUPPORTED_NORMALIZED_SCHEMA_VERSION
+            and parse.get("has_structured")
+            and parse.get("has_summary")
+        )
+
+    def chunk_ok(chunk_id: str | None) -> bool:
+        chunk = chunks.get(chunk_id or "")
+        return bool(
+            chunk
+            and chunk.get("document_id") == document_id
+            and chunk.get("status") == "completed"
+            and parse_ok(chunk.get("parse_run_id"))
+        )
+
+    kind = row.get("kind")
+    if kind == "parse":
+        return parse_ok(row.get("id")), None if parse_ok(row.get("id")) else "lineage_incompatible"
+    if kind == "chunk":
+        return chunk_ok(row.get("id")), None if chunk_ok(row.get("id")) else "lineage_incompatible"
+    if kind == "embedding":
+        embedding = embeddings.get(row.get("id", ""))
+        compatible = bool(
+            embedding
+            and embedding.get("document_id") == document_id
+            and embedding.get("status") == "completed"
+            and chunk_ok(embedding.get("chunk_run_id"))
+            and embedding.get("model") == get_settings().gemini_embedding_model
+            and embedding.get("dimensions") == get_settings().gemini_embedding_dimensions
+            and embedding.get("embedding_format_version") == EMBEDDING_FORMAT_VERSION
+        )
+        return compatible, None if compatible else "lineage_incompatible"
+    chunk_id = row.get("chunk_run_id")
+    if not chunk_ok(chunk_id):
+        return False, "chunk_lineage_missing"
+    embedding_id = row.get("embedding_run_id")
+    if embedding_id:
+        embedding = embeddings.get(embedding_id)
+        if not embedding or not chunk_ok(embedding.get("chunk_run_id")) or embedding.get("chunk_run_id") != chunk_id:
+            return False, "lineage_incompatible"
+        if (
+            embedding.get("model") != get_settings().gemini_embedding_model
+            or embedding.get("dimensions") != get_settings().gemini_embedding_dimensions
+            or embedding.get("embedding_format_version") != EMBEDDING_FORMAT_VERSION
+        ):
+            return False, "lineage_incompatible"
+    return True, None
+
+
+def _summary_run_dict(row: dict[str, Any], document: dict[str, Any], bundle: dict[str, Any]) -> dict[str, Any]:
+    compatible, compatibility_reason = _summary_lineage_compatibility(row, document, bundle)
+    kind = row.get("kind")
+    active_key = {
+        "parse": "active_parse_run_id",
+        "chunk": "active_chunk_run_id",
+        "embedding": "active_embedding_run_id",
+    }.get(kind)
+    if kind == "parse":
+        historical = row.get("id") != document.get(active_key or "")
+        progress = _parse_progress(row)
+    elif kind == "chunk":
+        historical = row.get("id") != document.get("active_chunk_run_id") or row.get("parse_run_id") != document.get("active_parse_run_id")
+        progress = None
+    elif kind == "embedding":
+        historical = row.get("id") != document.get("active_embedding_run_id") or row.get("chunk_run_id") != document.get("active_chunk_run_id")
+        progress = None
+    else:
+        historical = row.get("chunk_run_id") != document.get("active_chunk_run_id") or (
+            row.get("embedding_run_id") is not None and row.get("embedding_run_id") != document.get("active_embedding_run_id")
+        )
+        progress = None
+    raw_status = row.get("status", "completed")
+    error_code = row.get("error_code")
+    error_message = row.get("error_message")
+    if raw_status == "interrupted":
+        error_code = "parse_interrupted"
+        error_message = error_message or "The parse run was interrupted before completion."
+    payload: dict[str, Any] = {
+        "id": row["id"],
+        "status": _public_parse_status(raw_status),
+        "progress": progress,
+        "isStale": not compatible,
+        "isCompatible": compatible,
+        "compatibilityReason": compatibility_reason,
+        "historicalLineage": bool(historical and raw_status == "completed"),
+        "upstream": {
+            "documentId": row.get("document_id"),
+            "parseRunId": row.get("parse_run_id"),
+            "chunkRunId": row.get("chunk_run_id"),
+            "embeddingRunId": row.get("embedding_run_id"),
+        },
+        "config": row.get("config", {}),
+        "timing": {
+            "startedAt": row.get("started_at"),
+            "completedAt": row.get("completed_at"),
+            "durationMs": row.get("duration_ms"),
+        },
+        "error": {"code": error_code, "message": error_message} if error_code and error_message else None,
+    }
+    if kind == "chunk":
+        payload.update({"strategy": row.get("strategy"), "chunkCount": row.get("chunk_count", 0)})
+    elif kind == "embedding":
+        payload.update({
+            "model": row.get("model"),
+            "dimensions": row.get("dimensions"),
+            "embeddingFormatVersion": row.get("embedding_format_version"),
+            "embeddingCount": row.get("embedding_count", 0),
+            "effectiveModel": row.get("effective_model"),
+        })
+    elif kind == "experiment":
+        payload.update({
+            "query": row.get("query", ""),
+            "targetStage": row.get("target_stage"),
+            "candidateCount": row.get("candidate_count"),
+            "experimentFingerprint": row.get("experiment_fingerprint"),
+        })
+    return payload
+
+
+def _summary_dataset_dict(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "documentId": row.get("document_id"),
+        "parseRunId": row.get("parse_run_id"),
+        "name": row.get("name", ""),
+        "version": row.get("version", 1),
+        "caseCount": row.get("case_count", 0),
+        "createdAt": row.get("created_at"),
+    }
+
+
+def _summary_evaluation_dict(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "datasetId": row.get("dataset_id"),
+        "status": _public_parse_status(row.get("status")),
+        "config": row.get("config", {}),
+        "results": row.get("aggregate", {}),
+        "timing": {
+            "startedAt": row.get("started_at"),
+            "completedAt": row.get("completed_at"),
+            "durationMs": row.get("duration_ms"),
+        },
+        "error": {"code": row.get("error_code"), "message": row.get("error_message")}
+        if row.get("error_code") and row.get("error_message") else None,
+    }
+
+
 def _document_list_item(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row["id"],
@@ -455,6 +634,24 @@ def get_document(document_id: str, user: CurrentUser = Depends(get_current_user)
     })
 
 
+@app.get("/documents/{document_id}/summary")
+def get_document_summary(document_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    """Return the hot-path document projection without artifact bodies."""
+    repository = _user_repository(user)
+    bundle = repository.get_document_summary_bundle(document_id, owner_user_id=user.id)
+    if bundle is None:
+        raise ApiProblem(404, "document_not_found", "The document was not found.")
+    document = bundle["document"]
+    return _camelize({
+        **_document_list_item(document),
+        "parseRuns": [_summary_run_dict(row, document, bundle) for row in bundle["parses"]],
+        "chunkRuns": [_summary_run_dict(row, document, bundle) for row in bundle["chunks"]],
+        "embeddingRuns": [_summary_run_dict(row, document, bundle) for row in bundle["embeddings"]],
+        "experiments": [_summary_run_dict(row, document, bundle) for row in bundle["experiments"]],
+        "evaluationDatasets": [_summary_dataset_dict(row) for row in bundle["datasets"]],
+    })
+
+
 @app.post("/documents/{document_id}/chunks", response_model=ChunkRunResponse)
 def chunks(document_id: str, request: ChunkRunRequest, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     return _camelize(_guarded(create_chunk_run, document_id, request, repository=_user_repository(user)))
@@ -488,7 +685,18 @@ def experiments(request: ExperimentCreateRequest, user: CurrentUser = Depends(ge
 
 @app.get("/experiments")
 def list_experiments(document_id: str | None = Query(default=None, alias="documentId"), user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    return {"items": _camelize(_user_repository(user).list_experiment_rows(document_id))}
+    repository = _user_repository(user)
+    if document_id is not None:
+        bundle = repository.get_document_summary_bundle(document_id, owner_user_id=user.id)
+        if bundle is None:
+            raise ApiProblem(404, "document_not_found", "The document was not found.")
+        items = [_summary_run_dict(row, bundle["document"], bundle) for row in bundle["experiments"]]
+    else:
+        items = [
+            _summary_run_dict(row, {"id": row.get("document_id")}, {"experiments": [], "parses": [], "chunks": [], "embeddings": []})
+            for row in repository.list_experiment_summary_rows(owner_user_id=user.id)
+        ]
+    return {"items": _camelize(items)}
 
 
 @app.get("/experiments/{experiment_id}")
@@ -516,7 +724,7 @@ def evaluation_dataset(request: EvaluationDatasetRequest, user: CurrentUser = De
 
 @app.get("/evaluation/datasets")
 def list_evaluation_datasets(document_id: str | None = Query(default=None, alias="documentId"), user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    return {"items": _camelize(_user_repository(user).list_dataset_rows(document_id))}
+    return {"items": _camelize([_summary_dataset_dict(row) for row in _user_repository(user).list_dataset_summary_rows(document_id, owner_user_id=user.id)])}
 
 
 @app.get("/evaluation/datasets/{dataset_id}")
@@ -534,7 +742,7 @@ def evaluation_run(request: EvaluationRunRequest, user: CurrentUser = Depends(ge
 
 @app.get("/evaluation/runs")
 def list_evaluation_runs(dataset_id: str | None = Query(default=None, alias="datasetId"), user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    return {"items": _camelize(_user_repository(user).list_evaluation_rows(dataset_id))}
+    return {"items": _camelize([_summary_evaluation_dict(row) for row in _user_repository(user).list_evaluation_summary_rows(dataset_id, owner_user_id=user.id)])}
 
 
 @app.get("/evaluation/runs/{run_id}")

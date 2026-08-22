@@ -3,6 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DocumentPipelineProvider, useDocumentPipeline } from "@/components/document-pipeline-provider";
 
+const navigationState = vi.hoisted(() => ({ pathname: "/" }));
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => navigationState.pathname,
+}));
+
 const capabilities = {
   embeddingModel: "gemini",
   embeddingDimensions: 768,
@@ -89,9 +95,26 @@ function persistedDocument() {
   };
 }
 
+function summaryDocument(documentId: string, fileName: string) {
+  const parseRunId = `${documentId}-parse`;
+  return {
+    ...persistedDocument(),
+    id: documentId,
+    fileName,
+    activeParseRunId: parseRunId,
+    activeChunkRunId: null,
+    parseRuns: [{ id: parseRunId, status: "completed", progress: 100, isCompatible: true, isStale: false, upstream: { documentId, parseRunId: null, chunkRunId: null, embeddingRunId: null }, config: {}, timing: {}, error: null }],
+    chunkRuns: [],
+    embeddingRuns: [],
+    experiments: [],
+    evaluationDatasets: [],
+  };
+}
+
 function Probe() {
   const {
     activeDocument,
+    activeDocumentId,
     pendingUpload,
     persistenceError,
     selectedParseRunId,
@@ -104,6 +127,7 @@ function Probe() {
   return (
     <div>
       <output data-testid="active-document">{activeDocument?.id ?? "none"}</output>
+      <output data-testid="active-document-id">{activeDocumentId ?? "none"}</output>
       <output data-testid="pending-upload">{pendingUpload?.name ?? "none"}</output>
       <output data-testid="selected-parse">{selectedParseRunId ?? "none"}</output>
       <output data-testid="selected-chunk">{selectedChunkRunId ?? "none"}</output>
@@ -119,6 +143,22 @@ function Probe() {
 
 function renderProbe() {
   return render(<DocumentPipelineProvider><Probe /></DocumentPipelineProvider>);
+}
+
+function setupSummaryFetch() {
+  const old = summaryDocument("document-old", "lesson.pdf");
+  const next = summaryDocument("document-new", "new.pdf");
+  localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+  const fetchMock = vi.fn().mockImplementation((url: string) => {
+    const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
+    if (url.endsWith("/capabilities")) return respond(capabilities);
+    if (url.endsWith("/documents")) return respond({ items: [persistedDocument(), { ...persistedDocument(), id: "document-new", fileName: "new.pdf" }] });
+    if (url.endsWith("/documents/document-old/summary")) return respond(old);
+    if (url.endsWith("/documents/document-new/summary")) return respond(next);
+    throw new Error(`unexpected request: ${url}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
 function setupFetch({ newDocumentMode = "error" as "error" | "delayed" } = {}) {
@@ -146,6 +186,7 @@ function setupFetch({ newDocumentMode = "error" as "error" | "delayed" } = {}) {
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  navigationState.pathname = "/";
   vi.restoreAllMocks();
 });
 
@@ -159,6 +200,37 @@ describe("Document pipeline committed state", () => {
 
     expect(screen.getByTestId("active-document")).toHaveTextContent("document-old");
     expect(screen.getByTestId("pending-upload")).toHaveTextContent("pending.pdf");
+  });
+
+  it("switches metadata immediately and uses one summary request without global refetch", async () => {
+    const fetchMock = setupSummaryFetch();
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("active-document-id")).toHaveTextContent("document-old"));
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/capabilities"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents"))).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to new" }));
+    expect(screen.getByTestId("active-document-id")).toHaveTextContent("document-new");
+    await waitFor(() => expect(screen.getByTestId("active-document")).toHaveTextContent("document-new"));
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents/document-new/summary"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/documents/document-new"))).toBe(false);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/capabilities"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents"))).toHaveLength(1);
+  });
+
+  it("does not bootstrap again when only the route changes", async () => {
+    const fetchMock = setupSummaryFetch();
+    const view = renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("active-document-id")).toHaveTextContent("document-old"));
+    navigationState.pathname = "/settings";
+    view.rerender(<DocumentPipelineProvider><Probe /></DocumentPipelineProvider>);
+
+    expect(screen.getByTestId("active-document-id")).toHaveTextContent("document-old");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/capabilities"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents/document-old/summary"))).toHaveLength(1);
   });
 
   it("preserves the committed document when a switch request fails", async () => {
