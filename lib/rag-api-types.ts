@@ -186,24 +186,38 @@ export type ValidatedCitation = {
   sourceElementIds: string[];
 };
 
+export type StageReuseMetadata = {
+  reused: boolean;
+  executed: boolean;
+  sourceExperimentId: string | null;
+  sourceDurationMs: number | null;
+};
+
+export type StageIdentityMetadata = {
+  fingerprint: string | null;
+  resultHash: string | null;
+  reuse: StageReuseMetadata | null;
+  provenance: Record<string, unknown> | null;
+};
+
 export type ExperimentStageResults = {
   retrieval: {
     candidates: RetrievedCandidate[];
     durationMs: number | null;
-  } | null;
+  } & Partial<StageIdentityMetadata> | null;
   reranking: {
     candidates: RerankedCandidate[];
     durationMs: number | null;
     method: string | null;
     executed: boolean;
-  } | null;
+  } & Partial<StageIdentityMetadata> | null;
   context: {
     candidates: ContextCandidate[];
     finalContext: string;
     tokenBudget: number;
     tokenCount: number;
     durationMs: number | null;
-  } | null;
+  } & Partial<StageIdentityMetadata> | null;
   generation: {
     answer: string;
     citations: ValidatedCitation[];
@@ -212,7 +226,7 @@ export type ExperimentStageResults = {
     outputTokens: number | null;
     durationMs: number | null;
     insufficientContext: boolean;
-  } | null;
+  } & Partial<StageIdentityMetadata> | null;
 };
 
 export type ExperimentRun = RunSummary & {
@@ -222,6 +236,10 @@ export type ExperimentRun = RunSummary & {
   query: string;
   targetStage: ExperimentTargetStage;
   stageResults: ExperimentStageResults;
+  experimentFingerprint: string | null;
+  reusedExperiment: boolean;
+  continuedFromExperimentId: string | null;
+  generationRerun: boolean;
 };
 
 export type EvaluationCase = {

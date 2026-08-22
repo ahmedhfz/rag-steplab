@@ -266,6 +266,11 @@ class ExperimentRun(Base):
     )
     query: Mapped[str] = mapped_column(Text, nullable=False)
     target_stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Phase 5 exact-request claim. Historical rows may remain NULL and are
+    # intentionally not considered exact reusable requests without stage
+    # provenance metadata.
+    experiment_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    identity_claimed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     stage_results: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")

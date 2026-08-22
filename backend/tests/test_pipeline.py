@@ -67,6 +67,92 @@ def _queue_and_run(monkeypatch, *, file_name: str = "lesson.pdf"):
     return queued
 
 
+def _phase5_settings() -> Settings:
+    """Use immutable model identifiers so the reuse assertions are cache-safe."""
+    return Settings(
+        app_env="development",
+        local_parse_worker_enabled=False,
+        gemini_embedding_model="gemini-embedding-2",
+        gemini_generation_model="gemini-generation-v1",
+        gemini_rerank_model="gemini-rerank-v1",
+        gemini_judge_model="gemini-judge-v1",
+        gemini_max_retries=0,
+    )
+
+
+class Phase5FakeGemini:
+    calls = {"embed_query": 0, "rerank": 0, "generate": 0, "judge": 0}
+
+    def __init__(self, settings):
+        self.settings = settings
+
+    @classmethod
+    def reset(cls):
+        cls.calls = {"embed_query": 0, "rerank": 0, "generate": 0, "judge": 0}
+
+    def embed_query(self, _query):
+        type(self).calls["embed_query"] += 1
+        return [1.0, 0.0, 0.0], type("Metadata", (), {
+            "configured_model": self.settings.gemini_embedding_model,
+            "effective_model": "gemini-embedding-2-001",
+        })()
+
+    def rerank(self, prompt):
+        type(self).calls["rerank"] += 1
+        identifiers = [line.split(":", 1)[0] for line in prompt.splitlines()[1:] if ":" in line]
+        return identifiers, type("Metadata", (), {
+            "configured_model": self.settings.gemini_rerank_model,
+            "effective_model": "gemini-rerank-v1-001",
+        })()
+
+    def generate_json(self, _prompt, _config):
+        type(self).calls["generate"] += 1
+        return {
+            "insufficientContext": False,
+            "answer": "Retrieval is grounded in the selected context.",
+            "claims": [{"text": "Retrieval is grounded in the selected context.", "citationIds": ["C1"]}],
+        }, type("Metadata", (), {
+            "configured_model": self.settings.gemini_generation_model,
+            "effective_model": "gemini-generation-v1-001",
+        })()
+
+    def judge(self, _prompt):
+        type(self).calls["judge"] += 1
+        return {"groundedness": 0.9, "claimResults": [{"supported": True}]}, type("Metadata", (), {
+            "configured_model": self.settings.gemini_judge_model,
+            "effective_model": "gemini-judge-v1-001",
+        })()
+
+
+def _phase5_document(monkeypatch):
+    monkeypatch.setattr("app.pipeline.get_settings", _phase5_settings)
+    monkeypatch.setattr("app.pipeline.GeminiService", Phase5FakeGemini)
+    Phase5FakeGemini.reset()
+    parsed = _queue_and_run(monkeypatch)
+    document_id = parsed["documentId"]
+    chunk = client.post(
+        f"/documents/{document_id}/chunks",
+        json={"strategy": "fixed_token", "config": {"chunkSizeTokens": 64, "overlapTokens": 8}},
+    ).json()
+    return document_id, chunk["id"]
+
+
+def _phase5_generation_request(document_id: str, chunk_run_id: str, **overrides):
+    payload = {
+        "documentId": document_id,
+        "chunkRunId": chunk_run_id,
+        "query": "retrieval",
+        "targetStage": "generation",
+        "retrieval": {"mode": "keyword", "topK": 1},
+        "reranking": {"enabled": True, "candidateCount": 1},
+        "context": {"tokenBudget": 3000},
+        "generation": {"temperature": 0.1, "maxOutputTokens": 1024},
+    }
+    for key, value in overrides.items():
+        payload[key] = value
+    return payload
+
+
 def test_document_chunk_and_keyword_experiment_are_persisted(monkeypatch):
     payload = _queue_and_run(monkeypatch)
     document_id = payload["documentId"]
@@ -102,6 +188,249 @@ def test_document_chunk_and_keyword_experiment_are_persisted(monkeypatch):
     assert detail.json()["activeParseRun"]["markdown"].startswith("# RAG Basics")
     assert detail.json()["activeChunkRun"]["chunks"]
     assert client.get(f"/chunk-runs/{chunk_run_id}").json()["chunks"]
+
+
+def test_phase5_exact_experiment_reuses_without_provider_calls(monkeypatch):
+    document_id, chunk_run_id = _phase5_document(monkeypatch)
+    from app import pipeline
+
+    retrieval_calls = 0
+    original_retrieval = pipeline._retrieval_stage
+
+    def counted_retrieval(*args, **kwargs):
+        nonlocal retrieval_calls
+        retrieval_calls += 1
+        return original_retrieval(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "_retrieval_stage", counted_retrieval)
+    request = _phase5_generation_request(document_id, chunk_run_id)
+    first = client.post("/experiments", json=request)
+    second = client.post("/experiments", json=request)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["id"] == first.json()["id"]
+    assert second.json()["reusedExperiment"] is True
+    assert retrieval_calls == 1
+    assert Phase5FakeGemini.calls["rerank"] == 1
+    assert Phase5FakeGemini.calls["generate"] == 1
+    assert second.json()["stageResults"]["retrieval"]["reuse"]["executed"] is True
+
+
+def test_phase5_invalidation_matrix_reuses_only_compatible_upstream_stages(monkeypatch):
+    document_id, chunk_run_id = _phase5_document(monkeypatch)
+    from app import pipeline
+
+    retrieval_calls = 0
+    original_retrieval = pipeline._retrieval_stage
+
+    def counted_retrieval(*args, **kwargs):
+        nonlocal retrieval_calls
+        retrieval_calls += 1
+        return original_retrieval(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "_retrieval_stage", counted_retrieval)
+    first = client.post("/experiments", json=_phase5_generation_request(document_id, chunk_run_id)).json()
+    assert retrieval_calls == 1
+    assert Phase5FakeGemini.calls["rerank"] == 1
+    assert Phase5FakeGemini.calls["generate"] == 1
+
+    query_changed = client.post(
+        "/experiments",
+        json=_phase5_generation_request(document_id, chunk_run_id, query="grounded"),
+    )
+    assert query_changed.status_code == 200
+    assert query_changed.json()["stageResults"]["retrieval"]["reuse"]["executed"] is True
+    assert retrieval_calls == 2
+    assert Phase5FakeGemini.calls["rerank"] == 2
+    assert Phase5FakeGemini.calls["generate"] == 2
+
+    reranker_changed = client.post(
+        "/experiments",
+        json=_phase5_generation_request(
+            document_id,
+            chunk_run_id,
+            reranking={"enabled": True, "candidateCount": 2},
+        ),
+    )
+    assert reranker_changed.status_code == 200
+    reranker_results = reranker_changed.json()["stageResults"]
+    assert reranker_results["retrieval"]["reuse"]["reused"] is True
+    assert reranker_results["reranking"]["reuse"]["executed"] is True
+    assert retrieval_calls == 2
+    assert Phase5FakeGemini.calls["rerank"] == 3
+    assert Phase5FakeGemini.calls["generate"] == 3
+
+    context_changed = client.post(
+        "/experiments",
+        json=_phase5_generation_request(document_id, chunk_run_id, context={"tokenBudget": 256}),
+    )
+    assert context_changed.status_code == 200
+    context_results = context_changed.json()["stageResults"]
+    assert context_results["retrieval"]["reuse"]["reused"] is True
+    assert context_results["reranking"]["reuse"]["reused"] is True
+    assert context_results["context"]["reuse"]["executed"] is True
+    assert Phase5FakeGemini.calls["rerank"] == 3
+    assert Phase5FakeGemini.calls["generate"] == 4
+
+    generation_changed = client.post(
+        "/experiments",
+        json=_phase5_generation_request(document_id, chunk_run_id, generation={"temperature": 0.7, "maxOutputTokens": 1024}),
+    )
+    assert generation_changed.status_code == 200
+    generation_results = generation_changed.json()["stageResults"]
+    assert generation_results["retrieval"]["reuse"]["reused"] is True
+    assert generation_results["reranking"]["reuse"]["reused"] is True
+    assert generation_results["context"]["reuse"]["reused"] is True
+    assert generation_results["generation"]["reuse"]["executed"] is True
+    assert retrieval_calls == 2
+    assert Phase5FakeGemini.calls["rerank"] == 3
+    assert Phase5FakeGemini.calls["generate"] == 5
+    assert first["stageResults"]["retrieval"]["fingerprint"] != generation_changed.json()["stageResults"]["retrieval"]["fingerprint"] or first["stageResults"]["generation"]["fingerprint"] != generation_results["generation"]["fingerprint"]
+
+
+def test_phase5_continue_uses_persisted_prefix_and_generation_rerun_creates_new_run(monkeypatch):
+    document_id, chunk_run_id = _phase5_document(monkeypatch)
+    retrieval = {
+        "mode": "keyword",
+        "topK": 1,
+    }
+    partial = client.post(
+        "/experiments",
+        json={
+            "documentId": document_id,
+            "chunkRunId": chunk_run_id,
+            "query": "retrieval",
+            "targetStage": "retrieval",
+            "retrieval": retrieval,
+            "reranking": {"enabled": True, "candidateCount": 1},
+        },
+    )
+    assert partial.status_code == 200
+    partial_id = partial.json()["id"]
+    assert Phase5FakeGemini.calls["rerank"] == 0
+
+    continued = client.post(f"/experiments/{partial_id}/continue")
+    assert continued.status_code == 200
+    continued_payload = continued.json()
+    assert continued_payload["id"] != partial_id
+    assert continued_payload["continuedFromExperimentId"] == partial_id
+    assert continued_payload["stageResults"]["retrieval"]["reuse"]["reused"] is True
+    assert continued_payload["stageResults"]["reranking"]["reuse"]["executed"] is True
+    assert Phase5FakeGemini.calls["rerank"] == 1
+    assert Phase5FakeGemini.calls["generate"] == 0
+
+    full = client.post(
+        "/experiments",
+        json=_phase5_generation_request(document_id, chunk_run_id),
+    )
+    assert full.status_code == 200
+    rerun = client.post(f"/experiments/{full.json()['id']}/rerun-generation")
+    assert rerun.status_code == 200
+    rerun_payload = rerun.json()
+    assert rerun_payload["id"] != full.json()["id"]
+    assert rerun_payload["generationRerun"] is True
+    assert rerun_payload["stageResults"]["retrieval"]["reuse"]["reused"] is True
+    assert rerun_payload["stageResults"]["reranking"]["reuse"]["reused"] is True
+    assert rerun_payload["stageResults"]["context"]["reuse"]["reused"] is True
+    assert rerun_payload["stageResults"]["generation"]["reuse"]["executed"] is True
+    assert Phase5FakeGemini.calls["rerank"] == 1
+    assert Phase5FakeGemini.calls["generate"] == 2
+
+
+def test_phase5_corrupt_or_unversioned_stage_provenance_fails_closed(monkeypatch):
+    document_id, chunk_run_id = _phase5_document(monkeypatch)
+    request = _phase5_generation_request(document_id, chunk_run_id)
+    first = client.post("/experiments", json=request)
+    assert first.status_code == 200
+    repository = get_repository()
+    repository.experiments[first.json()["id"]]["stage_results"]["generation"]["resultHash"] = "corrupt"
+    second = client.post("/experiments", json=request)
+    assert second.status_code == 200
+    assert second.json()["id"] != first.json()["id"]
+    assert Phase5FakeGemini.calls["generate"] == 2
+
+
+def test_phase5_partial_stage_results_are_durable_when_downstream_fails(monkeypatch):
+    document_id, chunk_run_id = _phase5_document(monkeypatch)
+
+    class FailingGeneration(Phase5FakeGemini):
+        def generate_json(self, _prompt, _config):
+            raise ApiProblem(503, "generation_failed", "simulated generation failure")
+
+    monkeypatch.setattr("app.pipeline.GeminiService", FailingGeneration)
+    response = client.post("/experiments", json=_phase5_generation_request(document_id, chunk_run_id))
+    assert response.status_code == 503
+    failed = [row for row in get_repository().list_experiment_rows(document_id) if row.get("status") == "failed"]
+    assert len(failed) == 1
+    assert set(failed[0]["stage_results"]) == {"retrieval", "reranking", "context"}
+
+
+def test_phase5_missing_model_provenance_is_not_reused(monkeypatch):
+    document_id, chunk_run_id = _phase5_document(monkeypatch)
+    request = _phase5_generation_request(document_id, chunk_run_id)
+    first = client.post("/experiments", json=request)
+    assert first.status_code == 200
+    repository = get_repository()
+    generation = repository.experiments[first.json()["id"]]["stage_results"]["generation"]
+    generation["provenance"]["model"]["effectiveModel"] = None
+    generation["provenance"]["model"]["cacheable"] = True
+    from app.pipeline import _stage_result_hash
+
+    generation["resultHash"] = _stage_result_hash(generation)
+    second = client.post("/experiments", json=request)
+    assert second.status_code == 200
+    assert second.json()["id"] != first.json()["id"]
+    assert Phase5FakeGemini.calls["generate"] == 2
+
+
+def test_phase5_exact_claim_race_has_one_owner(monkeypatch):
+    document_id, chunk_run_id = _phase5_document(monkeypatch)
+    repository = get_repository()
+    rows = [
+        {
+            "id": str(uuid.uuid4()),
+            "document_id": document_id,
+            "chunk_run_id": chunk_run_id,
+            "embedding_run_id": None,
+            "query": "retrieval",
+            "target_stage": "retrieval",
+            "experiment_fingerprint": "race-fingerprint",
+            "config": {},
+            "stage_results": {},
+            "status": "running",
+        }
+        for _ in range(8)
+    ]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        claims = list(pool.map(repository.claim_experiment, rows))
+    assert sum(owner for _, owner in claims) == 1
+    assert len({row["id"] for row, _ in claims}) == 1
+    repository.fail_experiment(claims[0][0]["id"], "test_cleanup", "test")
+
+
+def test_phase5_evaluation_reuses_child_experiments(monkeypatch):
+    document_id, chunk_run_id = _phase5_document(monkeypatch)
+    dataset = client.post(
+        "/evaluation/datasets",
+        json={"documentId": document_id, "name": "reuse", "cases": [{"question": "retrieval"}]},
+    )
+    assert dataset.status_code == 200
+    request = {
+        "datasetId": dataset.json()["id"],
+        "chunkRunId": chunk_run_id,
+        "retrieval": {"mode": "keyword", "topK": 1},
+        "reranking": {"enabled": False, "candidateCount": 1},
+        "context": {"tokenBudget": 3000},
+        "generation": {"temperature": 0.1, "maxOutputTokens": 1024},
+        "judge": False,
+    }
+    first = client.post("/evaluation/runs", json=request)
+    second = client.post("/evaluation/runs", json=request)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["childExperimentIds"] == first.json()["childExperimentIds"]
+    assert Phase5FakeGemini.calls["generate"] == 1
 
 
 def test_chunk_identity_reuses_completed_artifact_and_hashes_effective_config(monkeypatch):

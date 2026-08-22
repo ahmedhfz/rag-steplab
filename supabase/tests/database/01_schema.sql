@@ -1,6 +1,6 @@
 begin;
 
-select plan(36);
+select plan(39);
 
 select ok(to_regnamespace('rag_lab') is not null, 'rag_lab schema exists');
 
@@ -122,6 +122,53 @@ select ok(
       and contype = 'u'
   ),
   'embedding artifact identity unique constraint exists'
+);
+
+select ok(
+  exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'rag_lab'
+      and table_name = 'experiment_runs'
+      and column_name = 'experiment_fingerprint'
+  )
+  and exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'rag_lab'
+      and table_name = 'experiment_runs'
+      and column_name = 'identity_claimed'
+  ),
+  'experiment exact identity columns exist'
+);
+
+select ok(
+  exists (
+    select 1
+    from pg_indexes
+    where schemaname = 'rag_lab'
+      and indexname = 'uq_experiment_runs_active_identity'
+      and indexdef like '%WHERE%identity_claimed%'
+  )
+  and exists (
+    select 1
+    from pg_indexes
+    where schemaname = 'rag_lab'
+      and indexname = 'ix_experiment_runs_experiment_fingerprint'
+  ),
+  'experiment identity indexes exist'
+);
+
+select ok(
+  exists (
+    select 1
+    from pg_constraint
+    where connamespace = 'rag_lab'::regnamespace
+      and conrelid = 'rag_lab.experiment_runs'::regclass
+      and conname = 'ck_experiment_runs_identity_claim'
+      and contype = 'c'
+  ),
+  'experiment identity claim only permits running rows'
 );
 
 select ok(

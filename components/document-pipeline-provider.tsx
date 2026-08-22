@@ -12,9 +12,11 @@ import {
   createEvaluationDataset,
   createEvaluationRun,
   createExperiment,
+  continueExperiment,
   getCapabilities,
   getChunkRun,
   getDocument,
+  getExperiment,
   getParseRun,
   getEmbeddingRun,
   listDocuments,
@@ -23,6 +25,7 @@ import {
   listExperiments,
   parseAndPersistDocument,
   reparsePersistedDocument,
+  rerunGeneration,
   waitForParseRun,
 } from "@/lib/rag-api";
 import type {
@@ -132,6 +135,9 @@ type DocumentPipelineContextValue = {
   runChunking: (strategy: ChunkStrategy, config: ChunkConfig) => Promise<ChunkRun | null>;
   runEmbedding: () => Promise<EmbeddingRun | null>;
   runExperiment: (input: Omit<ExperimentRequest, "documentId" | "chunkRunId" | "embeddingRunId">) => Promise<void>;
+  loadExperiment: (experimentId: string) => Promise<void>;
+  continueExperiment: () => Promise<void>;
+  rerunGeneration: () => Promise<void>;
   createDataset: (name: string, cases: EvaluationCase[]) => Promise<void>;
   runEvaluation: (input: EvaluationRunInput) => Promise<void>;
   refreshPersistence: () => Promise<void>;
@@ -891,6 +897,14 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     }
   }, [commitDocumentSnapshot, embeddingStatus, loadDocumentSnapshot, replaceController, selectedChunkRunId, selectedParseRunId]);
 
+  const commitExperimentResult = useCallback((result: ExperimentRun) => {
+    setExperimentRun(result);
+    setExperimentHistory((current) => [result, ...current.filter((run) => run.id !== result.id)]);
+    setExperimentError(result.error ? new DocumentApiError(result.error.code, result.error.message) : null);
+    setExperimentStatus(result.status === "completed" ? "completed" : result.status === "running" ? "processing" : "error");
+    setEvaluationStatus(evaluationDatasets.length > 0 ? "ready" : "locked");
+  }, [evaluationDatasets.length]);
+
   const runExperiment = useCallback(async (input: Omit<ExperimentRequest, "documentId" | "chunkRunId" | "embeddingRunId">) => {
     const documentId = activeDocumentRef.current?.id;
     const chunkRunId = selectedChunkRunId;
@@ -905,10 +919,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     try {
       const result = await createExperiment({ ...input, documentId, chunkRunId, embeddingRunId }, controller.signal);
       if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId || selectedEmbeddingRunId !== embeddingRunId) return;
-      setExperimentRun(result);
-      setExperimentHistory((current) => [result, ...current.filter((run) => run.id !== result.id)]);
-      setExperimentStatus(result.status === "completed" ? "completed" : result.status === "running" ? "processing" : "error");
-      setEvaluationStatus(evaluationDatasets.length > 0 ? "ready" : "locked");
+      commitExperimentResult(result);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId || selectedEmbeddingRunId !== embeddingRunId) return;
@@ -917,7 +928,72 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     } finally {
       removeControllerIfCurrent(controllersRef.current, "experiment", controller);
     }
-  }, [evaluationDatasets.length, experimentStatus, replaceController, selectedChunkRunId, selectedEmbeddingRunId]);
+  }, [commitExperimentResult, experimentStatus, replaceController, selectedChunkRunId, selectedEmbeddingRunId]);
+
+  const loadExperiment = useCallback(async (experimentId: string) => {
+    const documentId = activeDocumentRef.current?.id;
+    if (!documentId || experimentStatus === "processing") return;
+    const epoch = documentEpochRef.current;
+    const controller = replaceController("experiment-load");
+    setExperimentStatus("processing");
+    setExperimentError(null);
+    try {
+      const result = await getExperiment(experimentId, controller.signal);
+      if (documentEpochRef.current !== epoch || activeDocumentRef.current?.id !== documentId) return;
+      commitExperimentResult(result);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (documentEpochRef.current !== epoch || activeDocumentRef.current?.id !== documentId) return;
+      setExperimentError(asApiError(error, "The experiment could not be loaded."));
+      setExperimentStatus("error");
+    } finally {
+      removeControllerIfCurrent(controllersRef.current, "experiment-load", controller);
+    }
+  }, [commitExperimentResult, experimentStatus, replaceController]);
+
+  const continueCurrentExperiment = useCallback(async () => {
+    const documentId = activeDocumentRef.current?.id;
+    const experimentId = experimentRun?.id;
+    if (!documentId || !experimentId || experimentStatus === "processing") return;
+    const epoch = documentEpochRef.current;
+    const controller = replaceController("experiment-continue");
+    setExperimentStatus("processing");
+    setExperimentError(null);
+    try {
+      const result = await continueExperiment(experimentId, controller.signal);
+      if (documentEpochRef.current !== epoch || activeDocumentRef.current?.id !== documentId) return;
+      commitExperimentResult(result);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (documentEpochRef.current !== epoch || activeDocumentRef.current?.id !== documentId) return;
+      setExperimentError(asApiError(error, "The experiment could not continue."));
+      setExperimentStatus("error");
+    } finally {
+      removeControllerIfCurrent(controllersRef.current, "experiment-continue", controller);
+    }
+  }, [commitExperimentResult, experimentRun?.id, experimentStatus, replaceController]);
+
+  const rerunCurrentGeneration = useCallback(async () => {
+    const documentId = activeDocumentRef.current?.id;
+    const experimentId = experimentRun?.id;
+    if (!documentId || !experimentId || experimentStatus === "processing") return;
+    const epoch = documentEpochRef.current;
+    const controller = replaceController("experiment-rerun-generation");
+    setExperimentStatus("processing");
+    setExperimentError(null);
+    try {
+      const result = await rerunGeneration(experimentId, controller.signal);
+      if (documentEpochRef.current !== epoch || activeDocumentRef.current?.id !== documentId) return;
+      commitExperimentResult(result);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (documentEpochRef.current !== epoch || activeDocumentRef.current?.id !== documentId) return;
+      setExperimentError(asApiError(error, "Generation could not be run again."));
+      setExperimentStatus("error");
+    } finally {
+      removeControllerIfCurrent(controllersRef.current, "experiment-rerun-generation", controller);
+    }
+  }, [commitExperimentResult, experimentRun?.id, experimentStatus, replaceController]);
 
   const createDataset = useCallback(async (name: string, cases: EvaluationCase[]) => {
     const documentId = activeDocumentRef.current?.id;
@@ -996,7 +1072,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     experimentStatus, experimentRun, experimentError, experimentHistory,
     evaluationDatasets, evaluationStatus, evaluationRun, evaluationError, evaluationHistory,
     selectFile, selectPersistedDocument, selectParseRun, selectChunkRun, selectEmbeddingRun, removeFile, parseSelectedFile, reparseActiveDocument, runChunking, runEmbedding,
-    runExperiment, createDataset, runEvaluation, refreshPersistence, refreshEvaluationRuns,
+    runExperiment, loadExperiment, continueExperiment: continueCurrentExperiment, rerunGeneration: rerunCurrentGeneration,
+    createDataset, runEvaluation, refreshPersistence, refreshEvaluationRuns,
   }), [
     activeDocument, activity, capabilities, chunkError, chunkRun, chunkStatus, createDataset, documents,
     embeddingError, embeddingRun, embeddingStatus, evaluationDatasets, evaluationError, evaluationHistory,
@@ -1004,7 +1081,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     fileError, lastReportedParseProgress, parseError, parseProgress, parseResult, parseSelectedFile, parseStatus, persistenceError, persistenceStatus,
     pendingUpload, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId,
     reparseActiveDocument,
-    refreshEvaluationRuns, refreshPersistence, removeFile, runChunking, runEmbedding, runEvaluation, runExperiment,
+    continueCurrentExperiment, loadExperiment, refreshEvaluationRuns, refreshPersistence, removeFile, rerunCurrentGeneration,
+    runChunking, runEmbedding, runEvaluation, runExperiment,
     selectChunkRun, selectEmbeddingRun, selectFile, selectParseRun, selectPersistedDocument,
   ]);
 

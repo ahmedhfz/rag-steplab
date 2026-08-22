@@ -7,7 +7,9 @@ generation is persisted as visible stage objects in one experiment row.
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import json
 import logging
 import math
 import re
@@ -40,11 +42,153 @@ from .telemetry import measure_resource_usage
 logger = logging.getLogger(__name__)
 SUPPORTED_NORMALIZED_SCHEMA_VERSION = "normalized-v1"
 
+STAGE_ORDER = ["retrieval", "reranking", "context", "generation"]
+STAGE_FINGERPRINT_SCHEMA_VERSION = "stage-fingerprint-v1"
+EXPERIMENT_FINGERPRINT_SCHEMA_VERSION = "experiment-fingerprint-v1"
+RETRIEVAL_ALGORITHM_VERSION = "retrieval-sql-rrf-v1"
+RERANK_ALGORITHM_VERSION = "gemini-listwise-v1"
+RERANK_PROMPT_VERSION = "rerank-candidate-order-v1"
+CONTEXT_ALGORITHM_VERSION = "greedy-budget-dedup-v1"
+GENERATION_PROMPT_VERSION = "grounded-json-citations-v1"
+GENERATION_VALIDATION_VERSION = "citation-validation-v1"
+
 
 def _safe_model_dump(value: Any) -> dict[str, Any]:
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json", by_alias=False)
     return dict(value)
+
+
+def _canonical_json(value: Any) -> str:
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ApiProblem(500, "fingerprint_invalid", "The experiment fingerprint input is not serializable.") from exc
+
+
+def _fingerprint(value: Any) -> str:
+    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _stage_hash_payload(value: Any) -> Any:
+    """Remove execution bookkeeping while retaining semantic/provenance data."""
+    if isinstance(value, dict):
+        return {
+            key: _stage_hash_payload(item)
+            for key, item in value.items()
+            if key not in {"fingerprint", "fingerprintSchemaVersion", "resultHash", "reuse", "durationMs", "sourceDurationMs"}
+        }
+    if isinstance(value, list):
+        return [_stage_hash_payload(item) for item in value]
+    return value
+
+
+def _stage_result_hash(value: dict[str, Any]) -> str:
+    return _fingerprint(_stage_hash_payload(value))
+
+
+def _model_provenance(
+    configured_model: str | None,
+    effective_model: str | None = None,
+    *,
+    required: bool = True,
+    role: str,
+) -> dict[str, Any]:
+    configured = str(configured_model or "").strip()
+    mutable = configured.lower().endswith("-latest") or configured.lower().endswith(":latest")
+    return {
+        "role": role,
+        "required": required,
+        "configuredModel": configured or None,
+        "modelVersion": configured or None,
+        "effectiveModel": effective_model,
+        "mutable": mutable,
+        "cacheable": bool(configured) and not mutable and (not required or bool(effective_model)),
+    }
+
+
+def _provenance_reusable(value: Any) -> bool:
+    if isinstance(value, dict):
+        if "cacheable" in value and value.get("cacheable") is not True:
+            return False
+        if value.get("mutable") is True:
+            return False
+        if value.get("required") is True and not value.get("effectiveModel"):
+            return False
+        return all(_provenance_reusable(item) for item in value.values())
+    if isinstance(value, list):
+        return all(_provenance_reusable(item) for item in value)
+    return True
+
+
+def _stage_reusable(value: Any, expected_fingerprint: str) -> bool:
+    if not isinstance(value, dict):
+        return False
+    if value.get("status") not in {"completed", "skipped"}:
+        return False
+    if value.get("fingerprintSchemaVersion") != STAGE_FINGERPRINT_SCHEMA_VERSION:
+        return False
+    if value.get("fingerprint") != expected_fingerprint:
+        return False
+    result_hash = value.get("resultHash")
+    if not isinstance(result_hash, str) or result_hash != _stage_result_hash(value):
+        return False
+    provenance = value.get("provenance")
+    if not isinstance(provenance, dict) or not _provenance_reusable(provenance):
+        return False
+    return True
+
+
+def _complete_prefix(stage_results: dict[str, Any]) -> list[str]:
+    prefix: list[str] = []
+    for stage in STAGE_ORDER:
+        value = stage_results.get(stage)
+        if not isinstance(value, dict) or value.get("status") not in {"completed", "skipped"}:
+            break
+        prefix.append(stage)
+    return prefix
+
+
+def _stage_with_identity(
+    value: dict[str, Any],
+    fingerprint: str,
+    *,
+    reused: bool,
+    source_experiment_id: str | None = None,
+) -> dict[str, Any]:
+    result = copy.deepcopy(value)
+    result["fingerprintSchemaVersion"] = STAGE_FINGERPRINT_SCHEMA_VERSION
+    result["fingerprint"] = fingerprint
+    result["resultHash"] = _stage_result_hash(result)
+    result["reuse"] = {
+        "reused": reused,
+        "executed": not reused,
+        "sourceExperimentId": source_experiment_id,
+        "sourceDurationMs": value.get("durationMs") if reused else None,
+    }
+    return result
+
+
+def _experiment_response(
+    row: dict[str, Any],
+    *,
+    reused_experiment: bool = False,
+    continued_from_experiment_id: str | None = None,
+    generation_rerun: bool = False,
+) -> dict[str, Any]:
+    result = copy.deepcopy(row)
+    result["reused_experiment"] = reused_experiment
+    if continued_from_experiment_id is not None:
+        result["continued_from_experiment_id"] = continued_from_experiment_id
+    if generation_rerun:
+        result["generation_rerun"] = True
+    return result
 
 
 def _require_write(repository: Repository, settings: Settings) -> None:
@@ -872,26 +1016,26 @@ def _generation_stage(query: str, context: dict[str, Any], config: Any, service:
 
 
 def _stage_target(target: str) -> list[str]:
-    stages = ["retrieval", "reranking", "context", "generation"]
-    return stages[: stages.index(target) + 1]
+    return STAGE_ORDER[: STAGE_ORDER.index(target) + 1]
 
 
-def create_experiment(request: ExperimentCreateRequest, *, repository: Repository | None = None) -> dict[str, Any]:
-    repository = repository or get_repository()
-    settings = get_settings()
-    _require_write(repository, settings)
-    started_perf = time.perf_counter()
+def _prepare_experiment_lineage(
+    request: ExperimentCreateRequest,
+    repository: Repository,
+    settings: Settings,
+) -> tuple[dict[str, Any], str, str | None, dict[str, Any] | None]:
     document = _document_or_404(repository, request.document_id)
     chunk_run_id = request.chunk_run_id or document.get("active_chunk_run_id")
     if not chunk_run_id:
         raise ApiProblem(409, "chunks_required", "Create chunks before running an experiment.")
-    chunk_run = _require_compatible_chunk(repository, request.document_id, chunk_run_id)
+    _require_compatible_chunk(repository, request.document_id, chunk_run_id)
     embedding_run_id = request.embedding_run_id or document.get("active_embedding_run_id")
     if request.retrieval.mode in {"dense", "hybrid"} and not embedding_run_id:
         raise ApiProblem(409, "embedding_required", "Dense or hybrid retrieval requires embeddings.")
+    embedding = None
     if embedding_run_id:
         try:
-            _require_compatible_embedding(
+            embedding = _require_compatible_embedding(
                 repository,
                 request.document_id,
                 embedding_run_id,
@@ -905,65 +1049,432 @@ def create_experiment(request: ExperimentCreateRequest, *, repository: Repositor
             # Keyword retrieval does not consume an embedding. An active
             # embedding from another historical chunk is simply not selected.
             embedding_run_id = None
-    # Persistent retrieval is executed in PostgreSQL; loading every chunk here
-    # would defeat the SQL candidate limit and make production retrieval scale
-    # with the whole corpus. In-memory storage needs the local rows for tests.
-    chunks = [] if repository.persistent else repository.get_chunks_for_embedding(chunk_run_id, embedding_run_id)
-    service = GeminiService(settings)
-    query_vector = None
-    query_embedding_metadata = None
-    if request.retrieval.mode in {"dense", "hybrid"}:
-        query_vector, query_embedding_metadata = service.embed_query(request.query)
-    stage_results: dict[str, Any] = {}
-    candidate_k = min(200, max(request.retrieval.top_k * 4, 20))
-    if repository.persistent:
-        try:
-            dense_ranked, keyword_ranked = repository.retrieve_candidates(
-                chunk_run_id,
-                embedding_run_id,
-                request.query,
-                query_vector,
-                request.retrieval.mode,
-                candidate_k,
-            )
-            retrieval = _assemble_retrieval(request.retrieval.mode, request.retrieval.top_k, dense_ranked, keyword_ranked)
-        except ValueError as exc:
-            raise ApiProblem(409, "retrieval_config_invalid", str(exc)) from exc
-    else:
-        retrieval = _retrieval_stage(request.query, request.retrieval.mode, request.retrieval.top_k, chunks, query_vector)
-    retrieval["input"] = {"query": request.query, "chunkRunId": chunk_run_id, "embeddingRunId": embedding_run_id}
-    retrieval["config"] = {
-        "mode": request.retrieval.mode,
-        "topK": request.retrieval.top_k,
-        "candidateK": candidate_k,
-        "ftsConfig": "simple",
-        "rrfK": 60,
-        "embeddingFormatVersion": "gemini-embedding-2-qa-prefix-v1" if query_embedding_metadata else None,
-        "embeddingConfiguredModel": query_embedding_metadata.configured_model if query_embedding_metadata else None,
-        "embeddingEffectiveModel": query_embedding_metadata.effective_model if query_embedding_metadata else None,
+    return document, chunk_run_id, embedding_run_id, embedding
+
+
+def _embedding_provenance(embedding: dict[str, Any] | None) -> dict[str, Any] | None:
+    if embedding is None:
+        return None
+    model = _model_provenance(
+        embedding.get("model"),
+        embedding.get("effective_model"),
+        required=True,
+        role="document_embedding",
+    )
+    return {
+        "runId": embedding.get("id"),
+        "model": embedding.get("model"),
+        "dimensions": embedding.get("dimensions"),
+        "formatVersion": embedding.get("embedding_format_version"),
+        "effectiveModel": embedding.get("effective_model"),
+        "modelProvenance": model,
+        "cacheable": model.get("cacheable") is True
+        and embedding.get("embedding_format_version") == EMBEDDING_FORMAT_VERSION
+        and isinstance(embedding.get("dimensions"), int),
     }
-    retrieval["durationMs"] = max(0, round((time.perf_counter() - started_perf) * 1000))
-    stage_results["retrieval"] = retrieval
-    if request.target_stage in {"reranking", "context", "generation"}:
-        stage_started = time.perf_counter()
-        if request.reranking.enabled:
-            reranking = _rerank_stage(retrieval, service, request.reranking.candidate_count)
+
+
+def _retrieval_fingerprint(
+    request: ExperimentCreateRequest,
+    chunk_run_id: str,
+    embedding_run_id: str | None,
+    embedding: dict[str, Any] | None,
+    settings: Settings,
+) -> str:
+    mode = request.retrieval.mode
+    candidate_k = min(200, max(request.retrieval.top_k * 4, 20))
+    return _fingerprint({
+        "schema": STAGE_FINGERPRINT_SCHEMA_VERSION,
+        "stage": "retrieval",
+        "documentId": request.document_id,
+        "chunkRunId": chunk_run_id,
+        "embeddingRunId": embedding_run_id if mode in {"dense", "hybrid"} else None,
+        "query": request.query,
+        "config": {
+            "mode": mode,
+            "topK": request.retrieval.top_k,
+            "candidateK": candidate_k,
+            "ftsConfig": "simple",
+            "rrfK": 60,
+        },
+        "provenance": {
+            "algorithmVersion": RETRIEVAL_ALGORITHM_VERSION,
+            "queryEmbeddingModel": settings.gemini_embedding_model if mode in {"dense", "hybrid"} else None,
+            "queryEmbeddingDimensions": settings.gemini_embedding_dimensions if mode in {"dense", "hybrid"} else None,
+            "embeddingFormatVersion": EMBEDDING_FORMAT_VERSION if mode in {"dense", "hybrid"} else None,
+            "documentEmbedding": _embedding_provenance(embedding) if mode in {"dense", "hybrid"} else None,
+        },
+    })
+
+
+def _reranking_fingerprint(
+    request: ExperimentCreateRequest,
+    retrieval: dict[str, Any],
+    settings: Settings,
+) -> str:
+    return _fingerprint({
+        "schema": STAGE_FINGERPRINT_SCHEMA_VERSION,
+        "stage": "reranking",
+        "upstream": {
+            "fingerprint": retrieval.get("fingerprint"),
+            "resultHash": retrieval.get("resultHash"),
+        },
+        "config": _safe_model_dump(request.reranking),
+        "provenance": {
+            "algorithmVersion": RERANK_ALGORITHM_VERSION,
+            "promptVersion": RERANK_PROMPT_VERSION,
+            "model": settings.gemini_rerank_model if request.reranking.enabled else None,
+        },
+    })
+
+
+def _context_fingerprint(request: ExperimentCreateRequest, reranking: dict[str, Any]) -> str:
+    return _fingerprint({
+        "schema": STAGE_FINGERPRINT_SCHEMA_VERSION,
+        "stage": "context",
+        "upstream": {
+            "fingerprint": reranking.get("fingerprint"),
+            "resultHash": reranking.get("resultHash"),
+        },
+        "config": _safe_model_dump(request.context),
+        "provenance": {
+            "algorithmVersion": CONTEXT_ALGORITHM_VERSION,
+            "tokenizerVersion": TOKENIZER_VERSION,
+        },
+    })
+
+
+def _generation_fingerprint(
+    request: ExperimentCreateRequest,
+    context: dict[str, Any],
+    settings: Settings,
+) -> str:
+    return _fingerprint({
+        "schema": STAGE_FINGERPRINT_SCHEMA_VERSION,
+        "stage": "generation",
+        "upstream": {
+            "fingerprint": context.get("fingerprint"),
+            "resultHash": context.get("resultHash"),
+        },
+        "query": request.query,
+        "config": _safe_model_dump(request.generation),
+        "provenance": {
+            "promptVersion": GENERATION_PROMPT_VERSION,
+            "validationVersion": GENERATION_VALIDATION_VERSION,
+            "model": settings.gemini_generation_model,
+        },
+    })
+
+
+def _experiment_fingerprint(
+    request: ExperimentCreateRequest,
+    chunk_run_id: str,
+    embedding_run_id: str | None,
+    embedding: dict[str, Any] | None,
+    settings: Settings,
+) -> str:
+    return _fingerprint({
+        "schema": EXPERIMENT_FINGERPRINT_SCHEMA_VERSION,
+        "documentId": request.document_id,
+        "chunkRunId": chunk_run_id,
+        "embeddingRunId": embedding_run_id,
+        "query": request.query,
+        "targetStage": request.target_stage,
+        "retrieval": _safe_model_dump(request.retrieval),
+        "reranking": _safe_model_dump(request.reranking),
+        "context": _safe_model_dump(request.context),
+        "generation": _safe_model_dump(request.generation),
+        "provenance": {
+            "retrievalAlgorithmVersion": RETRIEVAL_ALGORITHM_VERSION,
+            "rerankAlgorithmVersion": RERANK_ALGORITHM_VERSION,
+            "rerankPromptVersion": RERANK_PROMPT_VERSION,
+            "contextAlgorithmVersion": CONTEXT_ALGORITHM_VERSION,
+            "tokenizerVersion": TOKENIZER_VERSION,
+            "generationPromptVersion": GENERATION_PROMPT_VERSION,
+            "generationValidationVersion": GENERATION_VALIDATION_VERSION,
+            "embeddingFormatVersion": EMBEDDING_FORMAT_VERSION,
+            "embeddingModel": settings.gemini_embedding_model,
+            "rerankModel": settings.gemini_rerank_model,
+            "generationModel": settings.gemini_generation_model,
+            "documentEmbedding": _embedding_provenance(embedding),
+        },
+    })
+
+
+def _exact_experiment_reusable(
+    row: dict[str, Any],
+    request: ExperimentCreateRequest,
+    chunk_run_id: str,
+    embedding_run_id: str | None,
+    embedding: dict[str, Any] | None,
+    settings: Settings,
+) -> bool:
+    if row.get("status") != "completed":
+        return False
+    results = row.get("stage_results")
+    if not isinstance(results, dict):
+        return False
+    retrieval = results.get("retrieval")
+    retrieval_fp = _retrieval_fingerprint(request, chunk_run_id, embedding_run_id, embedding, settings)
+    if not _stage_reusable(retrieval, retrieval_fp):
+        return False
+    if request.target_stage == "retrieval":
+        return True
+    reranking = results.get("reranking")
+    rerank_fp = _reranking_fingerprint(request, retrieval, settings)
+    if not _stage_reusable(reranking, rerank_fp):
+        return False
+    if request.target_stage == "reranking":
+        return True
+    context = results.get("context")
+    context_fp = _context_fingerprint(request, reranking)
+    if not _stage_reusable(context, context_fp):
+        return False
+    if request.target_stage == "context":
+        return True
+    generation = results.get("generation")
+    return _stage_reusable(generation, _generation_fingerprint(request, context, settings))
+
+
+def _find_reusable_stage(
+    repository: Repository,
+    document_id: str,
+    stage: str,
+    fingerprint: str,
+    *,
+    seed_stage_results: dict[str, Any] | None = None,
+    seed_experiment_id: str | None = None,
+) -> tuple[dict[str, Any], str] | None:
+    if seed_stage_results:
+        seeded = seed_stage_results.get(stage)
+        if _stage_reusable(seeded, fingerprint):
+            return _stage_with_identity(seeded, fingerprint, reused=True, source_experiment_id=seed_experiment_id), seed_experiment_id or "seed"
+    candidate = repository.find_stage_result(document_id, stage, fingerprint)
+    if candidate is None:
+        return None
+    value, source_experiment_id = candidate
+    if not _stage_reusable(value, fingerprint):
+        return None
+    return _stage_with_identity(value, fingerprint, reused=True, source_experiment_id=source_experiment_id), source_experiment_id
+
+
+def _persist_stage(repository: Repository, experiment_id: str, stage: str, value: dict[str, Any]) -> None:
+    if repository.update_experiment_stage(experiment_id, stage, value) is None:
+        raise ApiProblem(500, "persistence_failed", "The experiment stage could not be persisted.")
+
+
+def _run_experiment_stages(
+    request: ExperimentCreateRequest,
+    repository: Repository,
+    settings: Settings,
+    *,
+    experiment_id: str,
+    chunk_run_id: str,
+    embedding_run_id: str | None,
+    embedding: dict[str, Any] | None,
+    seed_stage_results: dict[str, Any] | None = None,
+    seed_experiment_id: str | None = None,
+    force_generation: bool = False,
+) -> dict[str, Any]:
+    target_stages = _stage_target(request.target_stage)
+    stage_results: dict[str, Any] = {}
+    service: GeminiService | None = None
+    chunks: list[dict[str, Any]] | None = None
+    candidate_k = min(200, max(request.retrieval.top_k * 4, 20))
+
+    def get_service() -> GeminiService:
+        nonlocal service
+        service = service or GeminiService(settings)
+        return service
+
+    retrieval_fp = _retrieval_fingerprint(request, chunk_run_id, embedding_run_id, embedding, settings)
+    reusable = _find_reusable_stage(
+        repository,
+        request.document_id,
+        "retrieval",
+        retrieval_fp,
+        seed_stage_results=seed_stage_results,
+        seed_experiment_id=seed_experiment_id,
+    )
+    if reusable is not None:
+        retrieval, _ = reusable
+    else:
+        started = time.perf_counter()
+        query_vector = None
+        query_embedding_metadata = None
+        if request.retrieval.mode in {"dense", "hybrid"}:
+            query_vector, query_embedding_metadata = get_service().embed_query(request.query)
+        if chunks is None and not repository.persistent:
+            chunks = repository.get_chunks_for_embedding(chunk_run_id, embedding_run_id)
+        if repository.persistent:
+            try:
+                dense_ranked, keyword_ranked = repository.retrieve_candidates(
+                    chunk_run_id,
+                    embedding_run_id,
+                    request.query,
+                    query_vector,
+                    request.retrieval.mode,
+                    candidate_k,
+                )
+                retrieval = _assemble_retrieval(request.retrieval.mode, request.retrieval.top_k, dense_ranked, keyword_ranked)
+            except ValueError as exc:
+                raise ApiProblem(409, "retrieval_config_invalid", str(exc)) from exc
         else:
-            reranking = {"status": "skipped", "reason": "disabled", "results": retrieval["results"]}
-        reranking["durationMs"] = max(0, round((time.perf_counter() - stage_started) * 1000))
-        reranking["config"] = {"enabled": request.reranking.enabled, "candidateCount": request.reranking.candidate_count}
+            retrieval = _retrieval_stage(request.query, request.retrieval.mode, request.retrieval.top_k, chunks or [], query_vector)
+        retrieval["input"] = {"query": request.query, "chunkRunId": chunk_run_id, "embeddingRunId": embedding_run_id}
+        retrieval["config"] = {
+            "mode": request.retrieval.mode,
+            "topK": request.retrieval.top_k,
+            "candidateK": candidate_k,
+            "ftsConfig": "simple",
+            "rrfK": 60,
+            "embeddingFormatVersion": query_embedding_metadata and EMBEDDING_FORMAT_VERSION,
+            "embeddingConfiguredModel": query_embedding_metadata.configured_model if query_embedding_metadata else None,
+            "embeddingEffectiveModel": query_embedding_metadata.effective_model if query_embedding_metadata else None,
+        }
+        retrieval["durationMs"] = max(0, round((time.perf_counter() - started) * 1000))
+        query_model = _model_provenance(
+            query_embedding_metadata.configured_model if query_embedding_metadata else None,
+            query_embedding_metadata.effective_model if query_embedding_metadata else None,
+            required=request.retrieval.mode in {"dense", "hybrid"},
+            role="query_embedding",
+        ) if request.retrieval.mode in {"dense", "hybrid"} else {"role": "keyword", "cacheable": True}
+        retrieval["provenance"] = {
+            "algorithmVersion": RETRIEVAL_ALGORITHM_VERSION,
+            "tokenizerVersion": TOKENIZER_VERSION,
+            "embeddingFormatVersion": EMBEDDING_FORMAT_VERSION if request.retrieval.mode in {"dense", "hybrid"} else None,
+            "documentEmbedding": _embedding_provenance(embedding),
+            "model": query_model,
+            "cacheable": query_model.get("cacheable") is True
+            and (
+                request.retrieval.mode not in {"dense", "hybrid"}
+                or (_embedding_provenance(embedding) or {}).get("cacheable") is True
+            ),
+        }
+        retrieval = _stage_with_identity(retrieval, retrieval_fp, reused=False)
+    stage_results["retrieval"] = retrieval
+    _persist_stage(repository, experiment_id, "retrieval", retrieval)
+
+    if len(target_stages) >= 2:
+        rerank_fp = _reranking_fingerprint(request, retrieval, settings)
+        reusable = _find_reusable_stage(
+            repository,
+            request.document_id,
+            "reranking",
+            rerank_fp,
+            seed_stage_results=seed_stage_results,
+            seed_experiment_id=seed_experiment_id,
+        )
+        if reusable is not None:
+            reranking, _ = reusable
+        else:
+            started = time.perf_counter()
+            if request.reranking.enabled:
+                reranking = _rerank_stage(retrieval, get_service(), request.reranking.candidate_count)
+                metadata_model = reranking.get("effectiveModel")
+                configured_model = reranking.get("configuredModel")
+                model = _model_provenance(configured_model, metadata_model, required=True, role="reranker")
+            else:
+                reranking = {"status": "skipped", "reason": "disabled", "results": retrieval["results"]}
+                model = {"role": "reranker", "cacheable": True, "notUsed": True}
+            reranking["durationMs"] = max(0, round((time.perf_counter() - started) * 1000))
+            reranking["config"] = {"enabled": request.reranking.enabled, "candidateCount": request.reranking.candidate_count}
+            reranking["provenance"] = {
+                "algorithmVersion": RERANK_ALGORITHM_VERSION,
+                "promptVersion": RERANK_PROMPT_VERSION,
+                "model": model,
+                "cacheable": model.get("cacheable") is True,
+            }
+            reranking = _stage_with_identity(reranking, rerank_fp, reused=False)
         stage_results["reranking"] = reranking
-    if request.target_stage in {"context", "generation"}:
-        stage_started = time.perf_counter()
-        candidates = stage_results.get("reranking", {}).get("results", retrieval["results"])
-        stage_results["context"] = _context_stage(candidates, request.context.token_budget)
-        stage_results["context"]["durationMs"] = max(0, round((time.perf_counter() - stage_started) * 1000))
-        stage_results["context"]["config"] = {"tokenBudget": request.context.token_budget}
-    if request.target_stage == "generation":
-        stage_started = time.perf_counter()
-        stage_results["generation"] = _generation_stage(request.query, stage_results["context"], request.generation, service)
-        stage_results["generation"]["durationMs"] = max(0, round((time.perf_counter() - stage_started) * 1000))
-        stage_results["generation"]["config"] = _safe_model_dump(request.generation)
+        _persist_stage(repository, experiment_id, "reranking", reranking)
+
+    if len(target_stages) >= 3:
+        reranking = stage_results["reranking"]
+        context_fp = _context_fingerprint(request, reranking)
+        reusable = _find_reusable_stage(
+            repository,
+            request.document_id,
+            "context",
+            context_fp,
+            seed_stage_results=seed_stage_results,
+            seed_experiment_id=seed_experiment_id,
+        )
+        if reusable is not None:
+            context, _ = reusable
+        else:
+            started = time.perf_counter()
+            candidates = reranking.get("results", retrieval["results"])
+            context = _context_stage(candidates, request.context.token_budget)
+            context["durationMs"] = max(0, round((time.perf_counter() - started) * 1000))
+            context["config"] = {"tokenBudget": request.context.token_budget}
+            context["provenance"] = {
+                "algorithmVersion": CONTEXT_ALGORITHM_VERSION,
+                "tokenizerVersion": TOKENIZER_VERSION,
+                "cacheable": True,
+            }
+            context = _stage_with_identity(context, context_fp, reused=False)
+        stage_results["context"] = context
+        _persist_stage(repository, experiment_id, "context", context)
+
+    if len(target_stages) >= 4:
+        context = stage_results["context"]
+        generation_fp = _generation_fingerprint(request, context, settings)
+        reusable = None if force_generation else _find_reusable_stage(
+            repository,
+            request.document_id,
+            "generation",
+            generation_fp,
+            seed_stage_results=seed_stage_results,
+            seed_experiment_id=seed_experiment_id,
+        )
+        if reusable is not None:
+            generation, _ = reusable
+        else:
+            started = time.perf_counter()
+            generation = _generation_stage(request.query, context, request.generation, get_service())
+            generation["durationMs"] = max(0, round((time.perf_counter() - started) * 1000))
+            generation["config"] = _safe_model_dump(request.generation)
+            if context.get("selected"):
+                model = _model_provenance(
+                    generation.get("configuredModel"),
+                    generation.get("effectiveModel"),
+                    required=True,
+                    role="generation",
+                )
+            else:
+                model = {"role": "generation", "cacheable": True, "notUsed": True}
+            generation["provenance"] = {
+                "promptVersion": GENERATION_PROMPT_VERSION,
+                "validationVersion": GENERATION_VALIDATION_VERSION,
+                "model": model,
+                "cacheable": model.get("cacheable") is True,
+            }
+            generation = _stage_with_identity(generation, generation_fp, reused=False)
+        stage_results["generation"] = generation
+        _persist_stage(repository, experiment_id, "generation", generation)
+    return stage_results
+
+
+def _create_experiment(
+    request: ExperimentCreateRequest,
+    *,
+    repository: Repository,
+    seed_stage_results: dict[str, Any] | None = None,
+    seed_experiment_id: str | None = None,
+    continued_from_experiment_id: str | None = None,
+    force_generation: bool = False,
+    allow_exact_reuse: bool = True,
+) -> dict[str, Any]:
+    settings = get_settings()
+    _require_write(repository, settings)
+    _document, chunk_run_id, embedding_run_id, embedding = _prepare_experiment_lineage(request, repository, settings)
+    experiment_fingerprint = _experiment_fingerprint(request, chunk_run_id, embedding_run_id, embedding, settings)
+    if allow_exact_reuse:
+        existing = repository.get_completed_experiment_by_fingerprint(request.document_id, experiment_fingerprint)
+        if existing is not None and _exact_experiment_reusable(existing, request, chunk_run_id, embedding_run_id, embedding, settings):
+            return _experiment_response(existing, reused_experiment=True, continued_from_experiment_id=continued_from_experiment_id)
+
     row = {
         "id": new_id(),
         "document_id": request.document_id,
@@ -971,14 +1482,52 @@ def create_experiment(request: ExperimentCreateRequest, *, repository: Repositor
         "embedding_run_id": embedding_run_id,
         "query": request.query,
         "target_stage": request.target_stage,
+        "experiment_fingerprint": experiment_fingerprint,
         "config": _safe_model_dump(request),
-        "stage_results": stage_results,
-        "status": "completed",
+        "stage_results": {},
+        "status": "running",
         "started_at": now_utc(),
-        "completed_at": now_utc(),
-        "duration_ms": max(0, round((time.perf_counter() - started_perf) * 1000)),
+        "completed_at": None,
+        "duration_ms": None,
     }
-    return repository.save_experiment(row)
+    claimed, owner = repository.claim_experiment(row)
+    if not owner:
+        raise ApiProblem(409, "experiment_in_progress", "The exact experiment is currently being created.")
+    try:
+        _run_experiment_stages(
+            request,
+            repository,
+            settings,
+            experiment_id=claimed["id"],
+            chunk_run_id=chunk_run_id,
+            embedding_run_id=embedding_run_id,
+            embedding=embedding,
+            seed_stage_results=seed_stage_results,
+            seed_experiment_id=seed_experiment_id,
+            force_generation=force_generation,
+        )
+        completed = repository.complete_experiment(claimed["id"])
+        if completed is None:
+            raise ApiProblem(500, "persistence_failed", "The experiment could not be completed.")
+        return _experiment_response(
+            completed,
+            continued_from_experiment_id=continued_from_experiment_id,
+            generation_rerun=force_generation,
+        )
+    except ApiProblem as exc:
+        repository.fail_experiment(claimed["id"], exc.code, exc.message)
+        raise
+    except Exception as exc:
+        repository.fail_experiment(
+            claimed["id"],
+            "experiment_failed",
+            "The experiment failed before completion.",
+        )
+        raise exc
+
+
+def create_experiment(request: ExperimentCreateRequest, *, repository: Repository | None = None) -> dict[str, Any]:
+    return _create_experiment(request, repository=repository or get_repository())
 
 
 def continue_experiment(experiment_id: str, *, repository: Repository | None = None) -> dict[str, Any]:
@@ -986,16 +1535,54 @@ def continue_experiment(experiment_id: str, *, repository: Repository | None = N
     row = repository.get_experiment_row(experiment_id)
     if row is None:
         raise ApiProblem(404, "experiment_not_found", "The experiment was not found.")
-    order = ["retrieval", "reranking", "context", "generation"]
-    current = order.index(row["target_stage"])
-    if current >= len(order) - 1:
-        return row
-    request_data = row["config"]
-    request_data["target_stage"] = order[current + 1]
-    request_data["document_id"] = row["document_id"]
-    request_data["chunk_run_id"] = row["chunk_run_id"]
-    request_data["embedding_run_id"] = row.get("embedding_run_id")
-    return create_experiment(ExperimentCreateRequest.model_validate(request_data), repository=repository)
+    if row.get("status") == "running":
+        raise ApiProblem(409, "experiment_in_progress", "The experiment is still running.")
+    prefix = _complete_prefix(row.get("stage_results") or {})
+    if not prefix:
+        raise ApiProblem(409, "experiment_prefix_missing", "The experiment has no persisted completed stage prefix.")
+    if len(prefix) >= len(STAGE_ORDER):
+        return _experiment_response(row, reused_experiment=True)
+    request_data = copy.deepcopy(row.get("config") or {})
+    request_data.update({
+        "document_id": row["document_id"],
+        "chunk_run_id": row["chunk_run_id"],
+        "embedding_run_id": row.get("embedding_run_id"),
+        "target_stage": STAGE_ORDER[len(prefix)],
+    })
+    return _create_experiment(
+        ExperimentCreateRequest.model_validate(request_data),
+        repository=repository,
+        seed_stage_results=row.get("stage_results") or {},
+        seed_experiment_id=row["id"],
+        continued_from_experiment_id=row["id"],
+    )
+
+
+def rerun_generation(experiment_id: str, *, repository: Repository | None = None) -> dict[str, Any]:
+    repository = repository or get_repository()
+    row = repository.get_experiment_row(experiment_id)
+    if row is None:
+        raise ApiProblem(404, "experiment_not_found", "The experiment was not found.")
+    if row.get("status") == "running":
+        raise ApiProblem(409, "experiment_in_progress", "The experiment is still running.")
+    prefix = _complete_prefix(row.get("stage_results") or {})
+    if len(prefix) < 3:
+        raise ApiProblem(409, "context_required", "A completed context stage is required before rerunning generation.")
+    request_data = copy.deepcopy(row.get("config") or {})
+    request_data.update({
+        "document_id": row["document_id"],
+        "chunk_run_id": row["chunk_run_id"],
+        "embedding_run_id": row.get("embedding_run_id"),
+        "target_stage": "generation",
+    })
+    return _create_experiment(
+        ExperimentCreateRequest.model_validate(request_data),
+        repository=repository,
+        seed_stage_results=row.get("stage_results") or {},
+        seed_experiment_id=row["id"],
+        force_generation=True,
+        allow_exact_reuse=False,
+    )
 
 
 def create_dataset(request: EvaluationDatasetRequest, *, repository: Repository | None = None) -> dict[str, Any]:
