@@ -129,8 +129,8 @@ type DocumentPipelineContextValue = {
   removeFile: () => void;
   parseSelectedFile: () => Promise<void>;
   reparseActiveDocument: () => Promise<void>;
-  runChunking: (strategy: ChunkStrategy, config: ChunkConfig) => Promise<void>;
-  runEmbedding: () => Promise<void>;
+  runChunking: (strategy: ChunkStrategy, config: ChunkConfig) => Promise<ChunkRun | null>;
+  runEmbedding: () => Promise<EmbeddingRun | null>;
   runExperiment: (input: Omit<ExperimentRequest, "documentId" | "chunkRunId" | "embeddingRunId">) => Promise<void>;
   createDataset: (name: string, cases: EvaluationCase[]) => Promise<void>;
   runEvaluation: (input: EvaluationRunInput) => Promise<void>;
@@ -824,10 +824,10 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     }
   }, [commitDocumentSnapshot, loadDocumentSnapshot, replaceController, selectedChunkRunId, selectedParseRunId]);
 
-  const runChunking = useCallback(async (strategy: ChunkStrategy, config: ChunkConfig) => {
+  const runChunking = useCallback(async (strategy: ChunkStrategy, config: ChunkConfig): Promise<ChunkRun | null> => {
     const documentId = activeDocumentRef.current?.id;
     const parseRunId = selectedParseRunId;
-    if (!documentId || !parseRunId || chunkStatus === "processing") return;
+    if (!documentId || !parseRunId || chunkStatus === "processing") return null;
     const epoch = documentEpochRef.current;
     const selectionVersion = selectionRequestRef.current;
     const controller = replaceController("chunk");
@@ -838,28 +838,30 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setEvaluationRun(null);
     try {
       const result = await createChunkRun(documentId, strategy, config, parseRunId, controller.signal);
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedParseRunId !== parseRunId) return;
+      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedParseRunId !== parseRunId) return null;
       const snapshot = await loadDocumentSnapshot(documentId, controller.signal, {
         selectedParseRunId: parseRunId,
         selectedChunkRunId: result.id,
         selectedEmbeddingRunId: null,
       });
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedParseRunId !== parseRunId) return;
+      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedParseRunId !== parseRunId) return null;
       commitDocumentSnapshot(snapshot);
+      return result;
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedParseRunId !== parseRunId) return;
+      if (error instanceof DOMException && error.name === "AbortError") return null;
+      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedParseRunId !== parseRunId) return null;
       setChunkError(asApiError(error, "Chunking could not be completed."));
       setChunkStatus("error");
+      return null;
     } finally {
       removeControllerIfCurrent(controllersRef.current, "chunk", controller);
     }
   }, [chunkStatus, commitDocumentSnapshot, loadDocumentSnapshot, replaceController, selectedParseRunId]);
 
-  const runEmbedding = useCallback(async () => {
+  const runEmbedding = useCallback(async (): Promise<EmbeddingRun | null> => {
     const documentId = activeDocumentRef.current?.id;
     const chunkRunId = selectedChunkRunId;
-    if (!documentId || !chunkRunId || embeddingStatus === "processing") return;
+    if (!documentId || !chunkRunId || embeddingStatus === "processing") return null;
     const epoch = documentEpochRef.current;
     const selectionVersion = selectionRequestRef.current;
     const controller = replaceController("embedding");
@@ -869,19 +871,21 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setEvaluationRun(null);
     try {
       const result = await createEmbeddingRun(documentId, chunkRunId, controller.signal);
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId) return;
+      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId) return null;
       const snapshot = await loadDocumentSnapshot(documentId, controller.signal, {
         selectedParseRunId,
         selectedChunkRunId: chunkRunId,
         selectedEmbeddingRunId: result.id,
       });
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId) return;
+      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId) return null;
       commitDocumentSnapshot(snapshot);
+      return result;
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId) return;
+      if (error instanceof DOMException && error.name === "AbortError") return null;
+      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId) return null;
       setEmbeddingError(asApiError(error, "Embeddings could not be created."));
       setEmbeddingStatus("error");
+      return null;
     } finally {
       removeControllerIfCurrent(controllersRef.current, "embedding", controller);
     }

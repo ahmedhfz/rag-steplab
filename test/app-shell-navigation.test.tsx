@@ -62,6 +62,14 @@ beforeEach(() => {
 });
 
 describe("AppShell navigation contract", () => {
+  it("renders the Phase 4 grouped navigation in order", () => {
+    renderShell("/documents");
+    const navigation = screen.getByRole("navigation", { name: "Primary navigation" });
+    expect(navigation).toHaveTextContent(/Overview[\s\S]*Pipeline[\s\S]*Documents[\s\S]*Parse[\s\S]*Chunking[\s\S]*Embeddings[\s\S]*Experiment[\s\S]*Playground[\s\S]*Evaluation[\s\S]*System[\s\S]*Settings/);
+    expect(within(navigation).getByRole("link", { name: "Documents" })).toHaveAttribute("href", "/documents");
+    expect(within(navigation).getByRole("link", { name: "Playground" })).toHaveAttribute("href", "/playground");
+  });
+
   it("keeps the page content visible when the pathname changes in the same shell", () => {
     navigationState.pathname = "/documents";
     const { rerender } = render(
@@ -70,7 +78,7 @@ describe("AppShell navigation contract", () => {
       </PreferencesProvider>,
     );
 
-    navigationState.pathname = "/documents/parsed";
+    navigationState.pathname = "/parse";
     rerender(
       <PreferencesProvider>
         <AppShell><p>Parsed content</p></AppShell>
@@ -83,9 +91,9 @@ describe("AppShell navigation contract", () => {
   });
 
   it.each([
-    ["/documents/parsed", "Documents", "/documents"],
-    ["/documents/chunks", "Chunks", "/documents/chunks"],
-    ["/retrieval", "Retrieval", "/retrieval"],
+    ["/parse", "Parse", "/parse"],
+    ["/chunking", "Chunking", "/chunking"],
+    ["/playground", "Playground", "/playground"],
   ])("marks the correct route as current for %s", (pathname, name, href) => {
     renderShell(pathname);
 

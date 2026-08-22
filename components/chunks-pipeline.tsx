@@ -27,7 +27,9 @@ const strategyNotes: Record<ChunkStrategy, { en: string; tr: string }> = {
   },
 };
 
-export function ChunksPipeline({ locale }: { locale: AppLocale }) {
+export type PipelineStage = "both" | "chunking" | "embeddings";
+
+export function ChunksPipeline({ locale, stage = "both" }: { locale: AppLocale; stage?: PipelineStage }) {
   const {
     activeDocument,
     selectedParseRunId,
@@ -50,6 +52,7 @@ export function ChunksPipeline({ locale }: { locale: AppLocale }) {
   const [strategy, setStrategy] = useState<ChunkStrategy>("structure_aware");
   const [chunkSize, setChunkSize] = useState(512);
   const [overlap, setOverlap] = useState(64);
+  const [reuseNotice, setReuseNotice] = useState<"chunk" | "embedding" | null>(null);
   const labels = locale === "tr" ? {
     chunkTitle: "Chunking deneyi",
     chunkDescription: "Canonical ordered parse elementlerinden gerçek chunk'lar üretir; her chunk kaynak element ve sayfalarını korur.",
@@ -59,7 +62,7 @@ export function ChunksPipeline({ locale }: { locale: AppLocale }) {
     embeddingTitle: "Embedding ve pgvector index",
     embeddingDescription: "Aktif chunk run'ın her chunk'ını Gemini document embedding olarak yazar ve exact pgvector aramasına hazırlar.",
     runEmbedding: "Embedding oluştur", embeddingLocked: "Önce başarılı, güncel bir chunk run gerekir.", embeddingEmpty: "Henüz gerçek bir embedding run yok.",
-    model: "Model", dimensions: "Boyut", count: "Vektör", format: "Format", persistenceUnavailable: "Kalıcı backend kullanılamıyor.",
+    model: "Model", dimensions: "Boyut", count: "Vektör", format: "Format", persistenceUnavailable: "Kalıcı backend kullanılamıyor.", reuseNotice: "Mevcut artifact yeniden kullanıldı.",
   } : {
     chunkTitle: "Chunking experiment",
     chunkDescription: "Creates real chunks from canonical ordered parse elements while preserving source elements and pages.",
@@ -69,18 +72,28 @@ export function ChunksPipeline({ locale }: { locale: AppLocale }) {
     embeddingTitle: "Embedding and pgvector index",
     embeddingDescription: "Writes every active chunk as a Gemini document embedding and prepares exact pgvector search.",
     runEmbedding: "Create embeddings", embeddingLocked: "A successful, current chunk run is required first.", embeddingEmpty: "No real embedding run exists yet.",
-    model: "Model", dimensions: "Dimensions", count: "Vectors", format: "Format", persistenceUnavailable: "The persistence backend is unavailable.",
+    model: "Model", dimensions: "Dimensions", count: "Vectors", format: "Format", persistenceUnavailable: "The persistence backend is unavailable.", reuseNotice: "The existing artifact was reused.",
   };
   const compatibleChunkRuns = activeDocument?.chunkRuns.filter((run) => run.status === "completed" && run.isCompatible && run.upstream.parseRunId === selectedParseRunId) ?? [];
   const compatibleEmbeddingRuns = activeDocument?.embeddingRuns.filter((run) => run.status === "completed" && run.isCompatible && run.upstream.chunkRunId === selectedChunkRunId) ?? [];
   const showChunkSelector = compatibleChunkRuns.length > 1 || (compatibleChunkRuns.length > 0 && !selectedChunkRunId);
   const showEmbeddingSelector = compatibleEmbeddingRuns.length > 1 || (compatibleEmbeddingRuns.length > 0 && !selectedEmbeddingRunId);
   const canChunk = Boolean(activeDocument?.id && selectedParseRunId && persistenceStatus === "available" && chunkStatus !== "processing");
-  const canEmbed = Boolean(activeDocument?.id && selectedChunkRunId && chunkStatus !== "stale" && embeddingStatus !== "processing");
+  const canEmbed = Boolean(activeDocument?.id && compatibleChunkRuns.some((run) => run.id === selectedChunkRunId) && embeddingStatus !== "processing");
+
+  async function handleChunk() {
+    const result = await runChunking(strategy, { chunkSizeTokens: chunkSize, overlapTokens: overlap });
+    setReuseNotice(result?.reusedArtifact ? "chunk" : null);
+  }
+
+  async function handleEmbedding() {
+    const result = await runEmbedding();
+    setReuseNotice(result?.reusedArtifact ? "embedding" : null);
+  }
 
   return (
     <div>
-      <StageSection description={labels.chunkDescription} locale={locale} status={chunkStatus} title={labels.chunkTitle}>
+      {stage !== "embeddings" ? <StageSection description={labels.chunkDescription} locale={locale} status={chunkStatus} title={labels.chunkTitle}>
         {showChunkSelector ? <div className="mb-4 max-w-sm"><label className="text-xs font-medium" htmlFor="selected-chunk-run">{locale === "tr" ? "Seçili chunk run" : "Selected chunk run"}</label><Select onValueChange={(value) => void selectChunkRun(value)} value={selectedChunkRunId ?? undefined}><SelectTrigger className="mt-2" id="selected-chunk-run"><SelectValue placeholder={locale === "tr" ? "Chunk run seç" : "Select a chunk run"} /></SelectTrigger><SelectContent>{compatibleChunkRuns.map((run) => <SelectItem key={run.id} value={run.id}>{run.id}{run.historicalLineage ? " · historical" : " · active"}</SelectItem>)}</SelectContent></Select></div> : null}
         <div className="grid gap-4 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
           <div className="space-y-4 border p-4">
@@ -100,12 +113,13 @@ export function ChunksPipeline({ locale }: { locale: AppLocale }) {
               <label className="text-xs font-medium" htmlFor="chunk-size">{labels.chunkSize}<Input className="mt-2" id="chunk-size" max={4096} min={32} onChange={(event) => setChunkSize(Number(event.target.value))} type="number" value={chunkSize} /></label>
               <label className="text-xs font-medium" htmlFor="chunk-overlap">{labels.overlap}<Input className="mt-2" id="chunk-overlap" max={1024} min={0} onChange={(event) => setOverlap(Number(event.target.value))} type="number" value={overlap} /></label>
             </div>
-            <Button aria-describedby={!canChunk ? "chunk-disabled-reason" : undefined} aria-busy={chunkStatus === "processing"} className="w-full gap-2" disabled={!canChunk || overlap >= chunkSize} onClick={() => void runChunking(strategy, { chunkSizeTokens: chunkSize, overlapTokens: overlap })}>
+            <Button aria-describedby={!canChunk ? "chunk-disabled-reason" : undefined} aria-busy={chunkStatus === "processing"} className="w-full gap-2" disabled={!canChunk || overlap >= chunkSize} onClick={() => void handleChunk()}>
               <Play aria-hidden="true" className="size-4" />{labels.runChunk}
             </Button>
             {!canChunk ? <DisabledReason id="chunk-disabled-reason">{persistenceStatus === "unavailable" ? labels.persistenceUnavailable : labels.chunkLocked}</DisabledReason> : null}
             {overlap >= chunkSize ? <p className="text-xs text-red-700" role="alert">Overlap must be smaller than the chunk target.</p> : null}
             <PipelineErrorMessage message={chunkError?.message} />
+            {reuseNotice === "chunk" ? <p className="border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800" data-testid="chunk-reuse-notice" role="status">{labels.reuseNotice}</p> : null}
           </div>
           <div className="min-w-0">
             {chunkRun ? (
@@ -134,17 +148,18 @@ export function ChunksPipeline({ locale }: { locale: AppLocale }) {
             ) : <EmptyPipelineState>{parseResult && !activeDocument ? labels.chunkLocked : labels.chunkEmpty}</EmptyPipelineState>}
           </div>
         </div>
-      </StageSection>
+      </StageSection> : null}
 
-      <StageSection description={labels.embeddingDescription} locale={locale} status={embeddingStatus} title={labels.embeddingTitle}>
+      {stage !== "chunking" ? <StageSection description={labels.embeddingDescription} locale={locale} status={embeddingStatus} title={labels.embeddingTitle}>
         {showEmbeddingSelector ? <div className="mb-4 max-w-sm"><label className="text-xs font-medium" htmlFor="selected-embedding-run">{locale === "tr" ? "Seçili embedding run" : "Selected embedding run"}</label><Select onValueChange={(value) => void selectEmbeddingRun(value)} value={selectedEmbeddingRunId ?? undefined}><SelectTrigger className="mt-2" id="selected-embedding-run"><SelectValue placeholder={locale === "tr" ? "Embedding run seç" : "Select an embedding run"} /></SelectTrigger><SelectContent>{compatibleEmbeddingRuns.map((run) => <SelectItem key={run.id} value={run.id}>{run.id}{run.historicalLineage ? " · historical" : " · active"}</SelectItem>)}</SelectContent></Select></div> : null}
         <div className="grid gap-4 md:grid-cols-[220px_minmax(0,1fr)]">
           <div>
-            <Button aria-describedby={!canEmbed ? "embedding-disabled-reason" : undefined} aria-busy={embeddingStatus === "processing"} className="w-full gap-2" disabled={!canEmbed} onClick={() => void runEmbedding()}>
+            <Button aria-describedby={!canEmbed ? "embedding-disabled-reason" : undefined} aria-busy={embeddingStatus === "processing"} className="w-full gap-2" disabled={!canEmbed} onClick={() => void handleEmbedding()}>
               <Braces aria-hidden="true" className="size-4" />{labels.runEmbedding}
             </Button>
             {!canEmbed ? <DisabledReason id="embedding-disabled-reason">{labels.embeddingLocked}</DisabledReason> : null}
             <PipelineErrorMessage message={embeddingError?.message} />
+            {reuseNotice === "embedding" ? <p className="border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800" data-testid="embedding-reuse-notice" role="status">{labels.reuseNotice}</p> : null}
           </div>
           {embeddingRun ? (
             <div>
@@ -160,7 +175,7 @@ export function ChunksPipeline({ locale }: { locale: AppLocale }) {
             </div>
           ) : <EmptyPipelineState><Database aria-hidden="true" className="mr-2 size-4" />{labels.embeddingEmpty}</EmptyPipelineState>}
         </div>
-      </StageSection>
+      </StageSection> : null}
     </div>
   );
 }

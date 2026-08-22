@@ -168,6 +168,13 @@ function normalizeRun(value: unknown): RunSummary {
       durationMs: optionalNumber(timing.durationMs ?? payload.duration_ms),
     },
     error: normalizedError ?? (payload.status === "interrupted" ? { code: "parse_interrupted", message: "The parse run was interrupted before completion." } : null),
+    strategy: typeof payload.strategy === "string" ? normalizeChunkStrategy(payload.strategy) : null,
+    chunkCount: optionalNumber(field(payload, "chunkCount", "chunk_count")),
+    model: optionalString(payload.model),
+    dimensions: optionalNumber(payload.dimensions),
+    embeddingFormatVersion: optionalString(field(payload, "embeddingFormatVersion", "embedding_format_version")),
+    embeddingCount: optionalNumber(field(payload, "embeddingCount", "embedding_count")),
+    effectiveModel: optionalString(field(payload, "effectiveModel", "effective_model")),
   };
 }
 

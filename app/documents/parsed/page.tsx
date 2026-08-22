@@ -1,5 +1,5 @@
-import { DocumentsScreen } from "@/components/documents-screen";
+import { permanentRedirect } from "next/navigation";
 
 export default function ParsedContentPage() {
-  return <DocumentsScreen view="parsed" />;
+  permanentRedirect("/parse");
 }
