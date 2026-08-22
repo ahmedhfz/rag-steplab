@@ -21,10 +21,11 @@ function parseStatusLabel(status: DocumentParseStatus, copy: AppCopy) {
   return copy.overview.noDocumentSelected;
 }
 
-function parseDisabledReason(status: DocumentParseStatus, hasPendingUpload: boolean, hasActiveDocument: boolean, locale: "en" | "tr") {
+function parseDisabledReason(status: DocumentParseStatus, hasPendingUpload: boolean, hasActiveDocument: boolean, hasVisibleDocument: boolean, locale: "en" | "tr") {
   if (status === "queued" || status === "running") return locale === "tr" ? "Ayrıştırma devam ediyor." : "Parsing is already running.";
   if (hasPendingUpload) return locale === "tr" ? "Seçili PDF gerçek parser'a gönderilmeye hazır." : "The selected PDF is ready for the real parser.";
   if (hasActiveDocument) return locale === "tr" ? "Saklanan kaynak PDF'i yeniden ayrıştırabilirsiniz." : "Reparse the stored source PDF when you need a fresh parse.";
+  if (hasVisibleDocument) return locale === "tr" ? "Doküman özeti yükleniyor." : "The document summary is loading.";
   return locale === "tr" ? "Önce bir PDF seçin veya kalıcı bir doküman açın." : "Select a PDF or open a persisted document first.";
 }
 
@@ -40,6 +41,7 @@ export function DocumentUploadPanel() {
     fileError,
     parseStatus,
     parseError,
+    activeDocumentMetadata,
     activeDocument,
     selectFile,
     removeFile,
@@ -47,6 +49,8 @@ export function DocumentUploadPanel() {
     reparseActiveDocument,
   } = useDocumentPipeline();
   const hasPendingUpload = Boolean(pendingUpload);
+  const visibleDocument = activeDocument ?? activeDocumentMetadata;
+  const hasVisibleDocument = Boolean(visibleDocument);
   const hasActiveDocument = Boolean(activeDocument);
   const isProcessing = parseStatus === "queued" || parseStatus === "running";
   const canParse = (hasPendingUpload || hasActiveDocument) && !isProcessing;
@@ -91,8 +95,8 @@ export function DocumentUploadPanel() {
             <TableHeader><TableRow><TableHead>{copy.overview.fileName}</TableHead><TableHead>{copy.overview.size}</TableHead><TableHead>{copy.overview.status}</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
             <TableBody><TableRow><TableCell className="min-w-48 font-medium">{pendingUpload.name}</TableCell><TableCell>{formatDocumentFileSize(pendingUpload.size, preferences.locale)}</TableCell><TableCell className="text-xs text-slate-600">{parseStatusLabel(parseStatus, copy)}</TableCell><TableCell><Button aria-label={copy.overview.removeSelected} onClick={clearFile} size="icon-sm" variant="ghost"><X aria-hidden="true" className="size-4" /></Button></TableCell></TableRow></TableBody>
           </Table>
-        ) : activeDocument ? (
-          <div className="flex items-center gap-3 px-4 py-4"><FileText aria-hidden="true" className="size-5 text-slate-500" /><div className="min-w-0"><p className="truncate text-sm font-medium">{activeDocument.fileName}</p><p className="mt-1 text-xs text-slate-500">{formatDocumentFileSize(activeDocument.sizeBytes, preferences.locale)} · {parseStatusLabel(parseStatus, copy)}</p></div></div>
+        ) : visibleDocument ? (
+          <div className="flex items-center gap-3 px-4 py-4"><FileText aria-hidden="true" className="size-5 text-slate-500" /><div className="min-w-0"><p className="truncate text-sm font-medium">{visibleDocument.fileName}</p><p className="mt-1 text-xs text-slate-500">{formatDocumentFileSize(visibleDocument.sizeBytes, preferences.locale)} · {parseStatusLabel(parseStatus, copy)}</p></div></div>
         ) : <p className="px-4 py-5 text-sm text-slate-500">{copy.overview.noDocumentSelected}</p>}
       </div>
 
@@ -100,7 +104,7 @@ export function DocumentUploadPanel() {
         <div><p className="text-sm font-medium">{copy.overview.parse}</p><p className="mt-1 text-xs text-slate-500">{copy.overview.backendActionNotConnected}</p></div>
         <Button aria-describedby={!canParse ? "documents-parse-disabled-reason" : undefined} aria-busy={isProcessing} disabled={!canParse} onClick={() => void (hasPendingUpload ? parseSelectedFile() : reparseActiveDocument())}>{hasPendingUpload || !hasActiveDocument ? copy.overview.parseDocument : copy.overview.reparseDocument}</Button>
       </div>
-      <p className="pt-3 text-xs text-slate-500" id="documents-parse-disabled-reason">{parseDisabledReason(parseStatus, hasPendingUpload, hasActiveDocument, preferences.locale)}</p>
+      <p className="pt-3 text-xs text-slate-500" id="documents-parse-disabled-reason">{parseDisabledReason(parseStatus, hasPendingUpload, hasActiveDocument, hasVisibleDocument, preferences.locale)}</p>
       {parseError ? <p className="mt-2 text-xs text-red-700" role="alert">{parseError.message}</p> : null}
     </section>
   );

@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
@@ -108,6 +108,129 @@ def _run_summary(row: dict[str, Any], *, stale: bool = False) -> RunSummary:
     )
 
 
+def _summary_parse_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Return parse history metadata without normalized document content."""
+    return {
+        "kind": "parse",
+        "id": row["id"],
+        "document_id": row.get("document_id"),
+        "parser_name": row.get("parser_name"),
+        "parser_version": row.get("parser_version"),
+        "normalized_schema_version": row.get("normalized_schema_version"),
+        "has_structured": bool(row.get("structured") is not None) if "structured" in row else bool(row.get("has_structured")),
+        "has_summary": bool(row.get("summary") is not None) if "summary" in row else bool(row.get("has_summary")),
+        "status": row.get("status", "completed"),
+        "error_code": row.get("error_code"),
+        "error_message": row.get("error_message"),
+        "execution_metadata": copy.deepcopy(row.get("execution_metadata") or {}),
+        "started_at": row.get("started_at"),
+        "completed_at": row.get("completed_at"),
+        "duration_ms": row.get("duration_ms"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "config": copy.deepcopy(row.get("config") or {}),
+    }
+
+
+def _summary_chunk_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Return chunk history metadata; child chunk text is deliberately absent."""
+    return {
+        "kind": "chunk",
+        "id": row["id"],
+        "document_id": row.get("document_id"),
+        "parse_run_id": row.get("parse_run_id"),
+        "strategy": row.get("strategy"),
+        "config": copy.deepcopy(row.get("config") or {}),
+        "status": row.get("status", "completed"),
+        "chunk_count": row.get("chunk_count", 0),
+        "error_code": row.get("error_code"),
+        "error_message": row.get("error_message"),
+        "started_at": row.get("started_at"),
+        "completed_at": row.get("completed_at"),
+        "duration_ms": row.get("duration_ms"),
+        "created_at": row.get("created_at"),
+    }
+
+
+def _summary_embedding_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "kind": "embedding",
+        "id": row["id"],
+        "document_id": row.get("document_id"),
+        "chunk_run_id": row.get("chunk_run_id"),
+        "model": row.get("model"),
+        "dimensions": row.get("dimensions"),
+        "embedding_format_version": row.get("embedding_format_version"),
+        "effective_model": row.get("effective_model"),
+        "status": row.get("status", "completed"),
+        "embedding_count": row.get("embedding_count", 0),
+        "error_code": row.get("error_code"),
+        "error_message": row.get("error_message"),
+        "started_at": row.get("started_at"),
+        "completed_at": row.get("completed_at"),
+        "duration_ms": row.get("duration_ms"),
+        "created_at": row.get("created_at"),
+    }
+
+
+def _summary_experiment_row(row: dict[str, Any]) -> dict[str, Any]:
+    stage_results = row.get("stage_results") if "stage_results" in row else None
+    retrieval = stage_results.get("retrieval") if isinstance(stage_results, dict) else None
+    candidates = retrieval.get("results", retrieval.get("candidates", [])) if isinstance(retrieval, dict) else None
+    return {
+        "kind": "experiment",
+        "id": row["id"],
+        "document_id": row.get("document_id"),
+        "chunk_run_id": row.get("chunk_run_id"),
+        "embedding_run_id": row.get("embedding_run_id"),
+        "query": row.get("query", ""),
+        "target_stage": row.get("target_stage"),
+        "experiment_fingerprint": row.get("experiment_fingerprint"),
+        "config": copy.deepcopy(row.get("config") or {}),
+        "candidate_count": len(candidates) if isinstance(candidates, list) else row.get("candidate_count"),
+        "status": row.get("status", "completed"),
+        "error_code": row.get("error_code"),
+        "error_message": row.get("error_message"),
+        "started_at": row.get("started_at"),
+        "completed_at": row.get("completed_at"),
+        "duration_ms": row.get("duration_ms"),
+        "created_at": row.get("created_at"),
+    }
+
+
+def _summary_dataset_row(row: dict[str, Any]) -> dict[str, Any]:
+    cases = row.get("cases") if "cases" in row else None
+    return {
+        "kind": "dataset",
+        "id": row["id"],
+        "document_id": row.get("document_id"),
+        "parse_run_id": row.get("parse_run_id"),
+        "name": row.get("name", ""),
+        "version": row.get("version", 1),
+        "case_count": len(cases) if isinstance(cases, list) else row.get("case_count", 0),
+        "created_at": row.get("created_at"),
+    }
+
+
+def _summary_evaluation_row(row: dict[str, Any]) -> dict[str, Any]:
+    results = row.get("results") if "results" in row else {}
+    aggregate = results.get("aggregate", results) if isinstance(results, dict) else {}
+    return {
+        "kind": "evaluation",
+        "id": row["id"],
+        "dataset_id": row.get("dataset_id"),
+        "config": copy.deepcopy(row.get("config") or {}),
+        "status": row.get("status", "completed"),
+        "error_code": row.get("error_code"),
+        "error_message": row.get("error_message"),
+        "aggregate": copy.deepcopy(aggregate if isinstance(aggregate, dict) else {}),
+        "started_at": row.get("started_at"),
+        "completed_at": row.get("completed_at"),
+        "duration_ms": row.get("duration_ms"),
+        "created_at": row.get("created_at"),
+    }
+
+
 class Repository:
     """Small interface shared by hosted SQL and test/local memory storage."""
 
@@ -195,6 +318,14 @@ class Repository:
         raise NotImplementedError
 
     def list_parse_rows(self, document_id: str) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def get_document_summary_bundle(
+        self,
+        document_id: str,
+        *,
+        owner_user_id: uuid.UUID | str | None = None,
+    ) -> dict[str, Any] | None:
         raise NotImplementedError
 
     def save_chunk_run(self, document_id: str, parse_run_id: str, request: ChunkRunRequest, drafts: list[Any]) -> dict[str, Any]:
@@ -313,10 +444,26 @@ class Repository:
     def list_experiment_rows(self, document_id: str | None = None) -> list[dict[str, Any]]:
         raise NotImplementedError
 
+    def list_experiment_summary_rows(
+        self,
+        document_id: str | None = None,
+        *,
+        owner_user_id: uuid.UUID | str | None = None,
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
     def save_dataset(self, request: EvaluationDatasetRequest, parse_run_id: str) -> dict[str, Any]:
         raise NotImplementedError
 
     def list_dataset_rows(self, document_id: str | None = None) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def list_dataset_summary_rows(
+        self,
+        document_id: str | None = None,
+        *,
+        owner_user_id: uuid.UUID | str | None = None,
+    ) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     def get_dataset_row(self, dataset_id: str) -> dict[str, Any] | None:
@@ -329,6 +476,14 @@ class Repository:
         raise NotImplementedError
 
     def list_evaluation_rows(self, dataset_id: str | None = None) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def list_evaluation_summary_rows(
+        self,
+        dataset_id: str | None = None,
+        *,
+        owner_user_id: uuid.UUID | str | None = None,
+    ) -> list[dict[str, Any]]:
         raise NotImplementedError
 
 
@@ -560,6 +715,21 @@ class InMemoryRepository(Repository):
         rows = [row for row in self.parses.values() if row["document_id"] == document_id]
         rows.sort(key=lambda row: row.get("created_at") or now_utc(), reverse=True)
         return copy.deepcopy(rows)
+
+    def get_document_summary_bundle(self, document_id, *, owner_user_id=None):
+        document = self.get_document_row(document_id)
+        if document is None:
+            return None
+        if owner_user_id is not None and document.get("owner_user_id") != uuid.UUID(str(owner_user_id)):
+            return None
+        return {
+            "document": document,
+            "parses": [_summary_parse_row(row) for row in self.list_parse_rows(document_id)],
+            "chunks": [_summary_chunk_row(row) for row in self.list_chunk_rows(document_id)],
+            "embeddings": [_summary_embedding_row(row) for row in self.list_embedding_rows(document_id)],
+            "experiments": [_summary_experiment_row(row) for row in self.list_experiment_rows(document_id)],
+            "datasets": [_summary_dataset_row(row) for row in self.list_dataset_rows(document_id)],
+        }
 
     def claim_chunk_run(
         self,
@@ -952,6 +1122,17 @@ class InMemoryRepository(Repository):
             values = [row for row in values if row["document_id"] == document_id]
         return copy.deepcopy(list(values))
 
+    def list_experiment_summary_rows(self, document_id=None, *, owner_user_id=None):
+        owner = uuid.UUID(str(owner_user_id)) if owner_user_id is not None else None
+        values = self.experiments.values()
+        rows = [
+            row for row in values
+            if (document_id is None or row.get("document_id") == document_id)
+            and (owner is None or self.documents.get(row.get("document_id"), {}).get("owner_user_id") == owner)
+        ]
+        rows.sort(key=lambda row: row.get("created_at") or now_utc(), reverse=True)
+        return [_summary_experiment_row(row) for row in copy.deepcopy(rows)]
+
     def save_dataset(self, request, parse_run_id):
         identifier = new_id()
         row = {
@@ -972,6 +1153,17 @@ class InMemoryRepository(Repository):
             values = [row for row in values if row["document_id"] == document_id]
         return copy.deepcopy(list(values))
 
+    def list_dataset_summary_rows(self, document_id=None, *, owner_user_id=None):
+        owner = uuid.UUID(str(owner_user_id)) if owner_user_id is not None else None
+        values = self.datasets.values()
+        rows = [
+            row for row in values
+            if (document_id is None or row.get("document_id") == document_id)
+            and (owner is None or self.documents.get(row.get("document_id"), {}).get("owner_user_id") == owner)
+        ]
+        rows.sort(key=lambda row: row.get("created_at") or now_utc(), reverse=True)
+        return [_summary_dataset_row(row) for row in copy.deepcopy(rows)]
+
     def get_dataset_row(self, dataset_id):
         return copy.deepcopy(self.datasets.get(dataset_id))
 
@@ -990,6 +1182,19 @@ class InMemoryRepository(Repository):
         if dataset_id:
             values = [row for row in values if row["dataset_id"] == dataset_id]
         return copy.deepcopy(list(values))
+
+    def list_evaluation_summary_rows(self, dataset_id=None, *, owner_user_id=None):
+        owner = uuid.UUID(str(owner_user_id)) if owner_user_id is not None else None
+        rows = [
+            row for row in self.evaluations.values()
+            if (dataset_id is None or row.get("dataset_id") == dataset_id)
+            and (
+                owner is None
+                or self.documents.get(self.datasets.get(row.get("dataset_id"), {}).get("document_id"), {}).get("owner_user_id") == owner
+            )
+        ]
+        rows.sort(key=lambda row: row.get("created_at") or now_utc(), reverse=True)
+        return [_summary_evaluation_row(row) for row in copy.deepcopy(rows)]
 
 
 def _orm_dict(row: Any, fields: Iterable[str]) -> dict[str, Any]:
@@ -1240,6 +1445,164 @@ class SqlAlchemyRepository(Repository):
         with session_scope() as session:
             return [self._parse_dict(row) for row in session.scalars(select(ParseRun).where(ParseRun.document_id == document_id).order_by(ParseRun.created_at.desc()))]
 
+    @staticmethod
+    def _owner_uuid(owner_user_id):
+        return uuid.UUID(str(owner_user_id)) if owner_user_id is not None else None
+
+    def _summary_parse_rows(self, session, document_id, owner_user_id=None):
+        query = select(
+            ParseRun.id,
+            ParseRun.document_id,
+            ParseRun.parser_name,
+            ParseRun.parser_version,
+            ParseRun.normalized_schema_version,
+            ParseRun.structured.is_not(None).label("has_structured"),
+            ParseRun.summary.is_not(None).label("has_summary"),
+            ParseRun.status,
+            ParseRun.error_code,
+            ParseRun.error_message,
+            ParseRun.execution_metadata,
+            ParseRun.started_at,
+            ParseRun.completed_at,
+            ParseRun.duration_ms,
+            ParseRun.created_at,
+            ParseRun.updated_at,
+        ).where(ParseRun.document_id == document_id).order_by(ParseRun.created_at.desc())
+        if owner_user_id is not None:
+            query = query.join(Document, Document.id == ParseRun.document_id).where(Document.owner_user_id == self._owner_uuid(owner_user_id))
+        return [_summary_parse_row(dict(row)) for row in session.execute(query).mappings().all()]
+
+    def _summary_chunk_rows(self, session, document_id, owner_user_id=None):
+        query = select(
+            ChunkRun.id,
+            ChunkRun.document_id,
+            ChunkRun.parse_run_id,
+            ChunkRun.strategy,
+            ChunkRun.config,
+            ChunkRun.status,
+            ChunkRun.chunk_count,
+            ChunkRun.error_code,
+            ChunkRun.error_message,
+            ChunkRun.started_at,
+            ChunkRun.completed_at,
+            ChunkRun.duration_ms,
+            ChunkRun.created_at,
+        ).where(ChunkRun.document_id == document_id).order_by(ChunkRun.created_at.desc())
+        if owner_user_id is not None:
+            query = query.join(Document, Document.id == ChunkRun.document_id).where(Document.owner_user_id == self._owner_uuid(owner_user_id))
+        return [_summary_chunk_row(dict(row)) for row in session.execute(query).mappings().all()]
+
+    def _summary_embedding_rows(self, session, document_id, owner_user_id=None):
+        query = select(
+            EmbeddingRun.id,
+            EmbeddingRun.document_id,
+            EmbeddingRun.chunk_run_id,
+            EmbeddingRun.model,
+            EmbeddingRun.dimensions,
+            EmbeddingRun.embedding_format_version,
+            EmbeddingRun.effective_model,
+            EmbeddingRun.status,
+            EmbeddingRun.embedding_count,
+            EmbeddingRun.error_code,
+            EmbeddingRun.error_message,
+            EmbeddingRun.started_at,
+            EmbeddingRun.completed_at,
+            EmbeddingRun.duration_ms,
+            EmbeddingRun.created_at,
+        ).where(EmbeddingRun.document_id == document_id).order_by(EmbeddingRun.created_at.desc())
+        if owner_user_id is not None:
+            query = query.join(Document, Document.id == EmbeddingRun.document_id).where(Document.owner_user_id == self._owner_uuid(owner_user_id))
+        return [_summary_embedding_row(dict(row)) for row in session.execute(query).mappings().all()]
+
+    def _summary_experiment_rows(self, session, document_id=None, owner_user_id=None):
+        candidate_count = func.coalesce(
+            func.jsonb_array_length(ExperimentRun.stage_results["retrieval"]["results"]),
+            func.jsonb_array_length(ExperimentRun.stage_results["retrieval"]["candidates"]),
+        ).label("candidate_count")
+        query = select(
+            ExperimentRun.id,
+            ExperimentRun.document_id,
+            ExperimentRun.chunk_run_id,
+            ExperimentRun.embedding_run_id,
+            ExperimentRun.query,
+            ExperimentRun.target_stage,
+            ExperimentRun.experiment_fingerprint,
+            ExperimentRun.config,
+            candidate_count,
+            ExperimentRun.status,
+            ExperimentRun.error_code,
+            ExperimentRun.error_message,
+            ExperimentRun.started_at,
+            ExperimentRun.completed_at,
+            ExperimentRun.duration_ms,
+            ExperimentRun.created_at,
+        ).order_by(ExperimentRun.created_at.desc())
+        if document_id is not None:
+            query = query.where(ExperimentRun.document_id == document_id)
+        if owner_user_id is not None:
+            query = query.join(Document, Document.id == ExperimentRun.document_id).where(Document.owner_user_id == self._owner_uuid(owner_user_id))
+        return [_summary_experiment_row(dict(row)) for row in session.execute(query).mappings().all()]
+
+    def _summary_dataset_rows(self, session, document_id=None, owner_user_id=None):
+        query = select(
+            EvaluationDataset.id,
+            EvaluationDataset.document_id,
+            EvaluationDataset.parse_run_id,
+            EvaluationDataset.name,
+            EvaluationDataset.version,
+            func.jsonb_array_length(EvaluationDataset.cases).label("case_count"),
+            EvaluationDataset.created_at,
+        ).order_by(EvaluationDataset.created_at.desc())
+        if document_id is not None:
+            query = query.where(EvaluationDataset.document_id == document_id)
+        if owner_user_id is not None:
+            query = query.join(Document, Document.id == EvaluationDataset.document_id).where(Document.owner_user_id == self._owner_uuid(owner_user_id))
+        return [_summary_dataset_row(dict(row)) for row in session.execute(query).mappings().all()]
+
+    def _summary_evaluation_rows(self, session, dataset_id=None, owner_user_id=None):
+        query = select(
+            EvaluationRun.id,
+            EvaluationRun.dataset_id,
+            EvaluationRun.config,
+            EvaluationRun.status,
+            EvaluationRun.error_code,
+            EvaluationRun.error_message,
+            EvaluationRun.results["aggregate"].label("aggregate"),
+            EvaluationRun.started_at,
+            EvaluationRun.completed_at,
+            EvaluationRun.duration_ms,
+            EvaluationRun.created_at,
+        ).order_by(EvaluationRun.created_at.desc())
+        if dataset_id is not None:
+            query = query.where(EvaluationRun.dataset_id == dataset_id)
+        if owner_user_id is not None:
+            query = query.join(EvaluationDataset, EvaluationDataset.id == EvaluationRun.dataset_id).join(
+                Document, Document.id == EvaluationDataset.document_id
+            ).where(Document.owner_user_id == self._owner_uuid(owner_user_id))
+        rows = []
+        for row in session.execute(query).mappings().all():
+            value = dict(row)
+            value["results"] = {"aggregate": value.pop("aggregate") or {}}
+            rows.append(_summary_evaluation_row(value))
+        return rows
+
+    def get_document_summary_bundle(self, document_id, *, owner_user_id=None):
+        with session_scope() as session:
+            document_query = select(Document).where(Document.id == document_id)
+            if owner_user_id is not None:
+                document_query = document_query.where(Document.owner_user_id == self._owner_uuid(owner_user_id))
+            document = session.scalars(document_query).first()
+            if document is None:
+                return None
+            return {
+                "document": self._document_dict(document),
+                "parses": self._summary_parse_rows(session, document_id, owner_user_id),
+                "chunks": self._summary_chunk_rows(session, document_id, owner_user_id),
+                "embeddings": self._summary_embedding_rows(session, document_id, owner_user_id),
+                "experiments": self._summary_experiment_rows(session, document_id, owner_user_id),
+                "datasets": self._summary_dataset_rows(session, document_id, owner_user_id),
+            }
+
     def claim_chunk_run(
         self,
         document_id,
@@ -1388,8 +1751,7 @@ class SqlAlchemyRepository(Repository):
             "character_count": row.character_count,
         }
 
-    def _chunk_dict(self, row: ChunkRun, session) -> dict[str, Any]:
-        chunks = session.scalars(select(Chunk).where(Chunk.chunk_run_id == row.id).order_by(Chunk.ordinal)).all()
+    def _chunk_dict_with_chunks(self, row: ChunkRun, chunks: list[Chunk]) -> dict[str, Any]:
         return {
             "id": row.id,
             "document_id": row.document_id,
@@ -1408,6 +1770,10 @@ class SqlAlchemyRepository(Repository):
             "chunks": [self._chunk_item(chunk) for chunk in chunks],
         }
 
+    def _chunk_dict(self, row: ChunkRun, session) -> dict[str, Any]:
+        chunks = session.scalars(select(Chunk).where(Chunk.chunk_run_id == row.id).order_by(Chunk.ordinal)).all()
+        return self._chunk_dict_with_chunks(row, chunks)
+
     def get_chunk_row(self, run_id):
         with session_scope() as session:
             row = session.get(ChunkRun, run_id)
@@ -1415,8 +1781,19 @@ class SqlAlchemyRepository(Repository):
 
     def list_chunk_rows(self, document_id):
         with session_scope() as session:
-            rows = session.scalars(select(ChunkRun).where(ChunkRun.document_id == document_id).order_by(ChunkRun.created_at.desc())).all()
-            return [self._chunk_dict(row, session) for row in rows]
+            pairs = session.execute(
+                select(ChunkRun, Chunk)
+                .outerjoin(Chunk, Chunk.chunk_run_id == ChunkRun.id)
+                .where(ChunkRun.document_id == document_id)
+                .order_by(ChunkRun.created_at.desc(), Chunk.ordinal)
+            ).all()
+            grouped: dict[str, tuple[ChunkRun, list[Chunk]]] = {}
+            for run, chunk in pairs:
+                if run.id not in grouped:
+                    grouped[run.id] = (run, [])
+                if chunk is not None:
+                    grouped[run.id][1].append(chunk)
+            return [self._chunk_dict_with_chunks(run, chunks) for run, chunks in grouped.values()]
 
     def claim_embedding_run(self, document_id, chunk_run_id, model, dimensions, format_version):
         identifier = new_id()
@@ -1784,6 +2161,10 @@ class SqlAlchemyRepository(Repository):
                 query = query.where(ExperimentRun.document_id == document_id)
             return [self._exp_dict(row) for row in session.scalars(query)]
 
+    def list_experiment_summary_rows(self, document_id=None, *, owner_user_id=None):
+        with session_scope() as session:
+            return self._summary_experiment_rows(session, document_id, owner_user_id)
+
     @staticmethod
     def _dataset_dict(row: EvaluationDataset) -> dict[str, Any]:
         return {
@@ -1809,6 +2190,10 @@ class SqlAlchemyRepository(Repository):
             if document_id:
                 query = query.where(EvaluationDataset.document_id == document_id)
             return [self._dataset_dict(row) for row in session.scalars(query)]
+
+    def list_dataset_summary_rows(self, document_id=None, *, owner_user_id=None):
+        with session_scope() as session:
+            return self._summary_dataset_rows(session, document_id, owner_user_id)
 
     def get_dataset_row(self, dataset_id):
         with session_scope() as session:
@@ -1858,6 +2243,10 @@ class SqlAlchemyRepository(Repository):
             if dataset_id:
                 query = query.where(EvaluationRun.dataset_id == dataset_id)
             return [self._eval_dict(row) for row in session.scalars(query)]
+
+    def list_evaluation_summary_rows(self, dataset_id=None, *, owner_user_id=None):
+        with session_scope() as session:
+            return self._summary_evaluation_rows(session, dataset_id, owner_user_id)
 
 
 class ScopedRepository(Repository):
@@ -1933,6 +2322,12 @@ class ScopedRepository(Repository):
 
     def get_document_row(self, document_id):
         return self._owned_document(document_id)
+
+    def get_document_summary_bundle(self, document_id, *, owner_user_id=None):
+        requested_owner = self.owner_user_id if owner_user_id is None else uuid.UUID(str(owner_user_id))
+        if requested_owner != self.owner_user_id:
+            return None
+        return self._repository.get_document_summary_bundle(document_id, owner_user_id=self.owner_user_id)
 
     def get_document_by_sha256(self, sha256, *, owner_user_id=None):
         if owner_user_id is not None and uuid.UUID(str(owner_user_id)) != self.owner_user_id:
@@ -2078,6 +2473,12 @@ class ScopedRepository(Repository):
             return [] if self._owned_document(document_id) is None else self._repository.list_experiment_rows(document_id)
         return [row for row in self._repository.list_experiment_rows() if self._owned_document(row.get("document_id", "")) is not None]
 
+    def list_experiment_summary_rows(self, document_id=None, *, owner_user_id=None):
+        requested_owner = self.owner_user_id if owner_user_id is None else uuid.UUID(str(owner_user_id))
+        if requested_owner != self.owner_user_id:
+            return []
+        return self._repository.list_experiment_summary_rows(document_id, owner_user_id=self.owner_user_id)
+
     def save_dataset(self, request, parse_run_id):
         if self._owned_document(request.document_id) is None or self.get_parse_row(parse_run_id) is None:
             raise ApiProblem(404, "dataset_not_found", "The evaluation dataset lineage was not found.")
@@ -2087,6 +2488,12 @@ class ScopedRepository(Repository):
         if document_id is not None:
             return [] if self._owned_document(document_id) is None else self._repository.list_dataset_rows(document_id)
         return [row for row in self._repository.list_dataset_rows() if self._owned_document(row.get("document_id", "")) is not None]
+
+    def list_dataset_summary_rows(self, document_id=None, *, owner_user_id=None):
+        requested_owner = self.owner_user_id if owner_user_id is None else uuid.UUID(str(owner_user_id))
+        if requested_owner != self.owner_user_id:
+            return []
+        return self._repository.list_dataset_summary_rows(document_id, owner_user_id=self.owner_user_id)
 
     def get_dataset_row(self, dataset_id):
         row = self._repository.get_dataset_row(dataset_id)
@@ -2108,6 +2515,12 @@ class ScopedRepository(Repository):
         if dataset_id is not None:
             return [] if self.get_dataset_row(dataset_id) is None else self._repository.list_evaluation_rows(dataset_id)
         return [row for row in self._repository.list_evaluation_rows() if self.get_dataset_row(row.get("dataset_id", "")) is not None]
+
+    def list_evaluation_summary_rows(self, dataset_id=None, *, owner_user_id=None):
+        requested_owner = self.owner_user_id if owner_user_id is None else uuid.UUID(str(owner_user_id))
+        if requested_owner != self.owner_user_id:
+            return []
+        return self._repository.list_evaluation_summary_rows(dataset_id, owner_user_id=self.owner_user_id)
 
 
 _repository: Repository | None = None

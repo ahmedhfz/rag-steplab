@@ -71,6 +71,36 @@ export type DocumentDetail = PersistedDocument & {
   activeParseRun: PersistedParseResponse | null;
 };
 
+export type ExperimentSummary = RunSummary & {
+  documentId: string;
+  chunkRunId: string;
+  embeddingRunId: string | null;
+  query: string;
+  targetStage: ExperimentTargetStage;
+  candidateCount: number | null;
+  experimentFingerprint: string | null;
+};
+
+export type EvaluationDatasetSummary = {
+  id: string;
+  documentId: string;
+  parseRunId: string;
+  name: string;
+  version: number;
+  caseCount: number;
+  createdAt: string | null;
+};
+
+export type DocumentSummary = PersistedDocument & {
+  parseRuns: RunSummary[];
+  chunkRuns: RunSummary[];
+  embeddingRuns: RunSummary[];
+  experiments: ExperimentSummary[];
+  evaluationDatasets: EvaluationDatasetSummary[];
+  /** Only populated by the legacy compatibility fallback; summary responses omit it. */
+  activeParseRun?: PersistedParseResponse | null;
+};
+
 export type PersistedParseResponse = DocumentParseResponse & {
   documentId: string | null;
   parseRunId: string | null;

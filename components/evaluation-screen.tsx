@@ -33,6 +33,7 @@ export function EvaluationScreen() {
     evaluationError,
     evaluationHistory,
     createDataset,
+    loadEvaluationDataset,
     runEvaluation,
     refreshEvaluationRuns,
   } = useDocumentPipeline();
@@ -67,8 +68,11 @@ export function EvaluationScreen() {
   const selectedRuns = useMemo(() => evaluationHistory.filter((run) => compareIds.includes(run.id)), [compareIds, evaluationHistory]);
 
   useEffect(() => {
-    if (selectedDatasetId) void refreshEvaluationRuns(selectedDatasetId);
-  }, [refreshEvaluationRuns, selectedDatasetId]);
+    if (selectedDatasetId) {
+      void loadEvaluationDataset(selectedDatasetId);
+      void refreshEvaluationRuns(selectedDatasetId);
+    }
+  }, [loadEvaluationDataset, refreshEvaluationRuns, selectedDatasetId]);
 
   function handleCreateDataset() {
     if (!canCreateDataset) return;
@@ -113,7 +117,7 @@ export function EvaluationScreen() {
           <div>
             <Button aria-describedby={!canCreateDataset ? "dataset-disabled-reason" : undefined} aria-busy={evaluationStatus === "processing"} className="w-full gap-2" disabled={!canCreateDataset} onClick={handleCreateDataset}><Database aria-hidden="true" className="size-4" />{labels.create}</Button>
             {!canCreateDataset ? <DisabledReason id="dataset-disabled-reason">{labels.needDocument}</DisabledReason> : null}
-            {evaluationDatasets.length ? <div className="mt-4 space-y-2">{evaluationDatasets.map((dataset) => <article className="border p-3" key={dataset.id}><div className="text-sm font-medium">{dataset.name} · v{dataset.version}</div><div className="mt-1 font-mono text-[10px] text-slate-500">{dataset.id}</div><div className="mt-2 text-xs text-slate-500">{dataset.cases.length} {labels.cases}</div></article>)}</div> : <EmptyPipelineState>{copy.evaluation.emptyDescription}</EmptyPipelineState>}
+            {evaluationDatasets.length ? <div className="mt-4 space-y-2">{evaluationDatasets.map((dataset) => <article className="border p-3" key={dataset.id}><div className="text-sm font-medium">{dataset.name} · v{dataset.version}</div><div className="mt-1 font-mono text-[10px] text-slate-500">{dataset.id}</div><div className="mt-2 text-xs text-slate-500">{dataset.caseCount} {labels.cases}</div></article>)}</div> : <EmptyPipelineState>{copy.evaluation.emptyDescription}</EmptyPipelineState>}
           </div>
         </div>
       </StageSection>

@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 export function DocumentLibrary({ locale }: { locale: AppLocale }) {
   const {
     documents,
-    activeDocument,
+    activeDocumentId,
     persistenceStatus,
     persistenceError,
     refreshPersistence,
@@ -60,7 +60,7 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
           ) : documents.length === 0 ? <EmptyPipelineState>{labels.empty}</EmptyPipelineState> : (
             <div className="grid gap-2 md:grid-cols-2">
               {documents.map((document) => {
-                const isActive = document.id === activeDocument?.id;
+                const isActive = document.id === activeDocumentId;
                 return (
                   <button
                     aria-pressed={isActive}

@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { UI_COPY } from "@/lib/copy";
-import type { ExperimentTargetStage, RetrievalMode, StageReuseMetadata } from "@/lib/rag-api-types";
+import type { ExperimentRun, ExperimentTargetStage, ExperimentSummary, RetrievalMode, StageReuseMetadata } from "@/lib/rag-api-types";
 
 const DEFAULT_TOP_K = "5";
 const DEFAULT_MODE: RetrievalMode = "dense";
@@ -29,6 +29,10 @@ function experimentRetrievalMode(config: Record<string, unknown>) {
     if (typeof mode === "string") return mode;
   }
   return typeof config.retrievalMode === "string" ? config.retrievalMode : typeof config.mode === "string" ? config.mode : "—";
+}
+
+function isExperimentDetail(run: ExperimentRun | ExperimentSummary): run is ExperimentRun {
+  return "stageResults" in run;
 }
 
 function StageReuseBadge({
@@ -109,7 +113,7 @@ export function RetrievalScreen() {
     retrievalDescription: "Dense, keyword, or RRF hybrid candidates remain separate from later ranking decisions.", rerankingDescription: "Optional reranking receives retrieval candidates and records rank changes as its own stage.", contextDescription: "Candidates are explicitly selected or excluded before the final context reaches Gemini.", generationDescription: "The answer uses only final context; every citation is validated against persisted provenance.",
     reused: "Reused", executed: "Executed", source: "Source", load: "Load", continue: "Continue", runAgain: "Run generation again", exactReuse: "Exact experiment loaded",
   };
-  const selectedComparisonRuns = useMemo(() => experimentHistory.filter((run) => compareIds.includes(run.id)), [compareIds, experimentHistory]);
+  const selectedComparisonRuns = useMemo(() => experimentHistory.filter((run): run is ExperimentRun => compareIds.includes(run.id) && isExperimentDetail(run)), [compareIds, experimentHistory]);
   const results = experimentRun?.stageResults;
   const canContinue = Boolean(experimentRun && experimentRun.status === "completed" && experimentRun.targetStage !== "generation" && experimentStatus !== "processing");
   const canRerunGeneration = Boolean(experimentRun && experimentRun.status === "completed" && results?.generation && experimentStatus !== "processing");
@@ -200,7 +204,7 @@ export function RetrievalScreen() {
       <section className="border-t px-4 py-6 sm:px-7">
         <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold">{labels.history}</h2><p className="mt-1 text-xs text-slate-500">{labels.selectedRuns}: {compareIds.length}/2</p></div><div className="flex flex-wrap gap-2"><Button className="gap-2" disabled={!canContinue} onClick={() => void continueExperiment()} size="sm" variant="outline">{labels.continue}</Button><Button className="gap-2" disabled={!canRerunGeneration} onClick={() => void rerunGeneration()} size="sm" variant="outline">{labels.runAgain}</Button><Button aria-describedby={!experimentRun ? "trace-disabled-reason" : undefined} className="gap-2" disabled={!experimentRun} onClick={() => experimentRun && void navigator.clipboard.writeText(JSON.stringify(experimentRun, null, 2))} size="sm" variant="outline"><Copy aria-hidden="true" className="size-4" />{copy.retrieval.copyTrace}</Button></div></div>
         {!experimentRun ? <DisabledReason id="trace-disabled-reason">{copy.retrieval.traceUnavailable}</DisabledReason> : null}
-        {experimentHistory.length ? <div className="mt-4 overflow-x-auto border-t"><Table><TableHeader><TableRow><TableHead>{labels.compare}</TableHead><TableHead>{labels.run}</TableHead><TableHead>{copy.retrieval.mode}</TableHead><TableHead>{copy.retrieval.question}</TableHead><TableHead>{labels.candidates}</TableHead><TableHead>{labels.duration}</TableHead><TableHead>{labels.load}</TableHead></TableRow></TableHeader><TableBody>{experimentHistory.map((run) => <TableRow key={run.id}><TableCell><input aria-label={`${labels.compare} ${run.id}`} checked={compareIds.includes(run.id)} disabled={!compareIds.includes(run.id) && compareIds.length >= 2} onChange={() => toggleCompare(run.id)} type="checkbox" /></TableCell><TableCell className="max-w-44 truncate font-mono text-xs" title={run.id}>{run.id}</TableCell><TableCell>{experimentRetrievalMode(run.config)}</TableCell><TableCell className="max-w-72 whitespace-normal">{run.query}</TableCell><TableCell>{run.stageResults.retrieval?.candidates.length ?? 0}</TableCell><TableCell>{run.timing.durationMs === null ? "—" : `${run.timing.durationMs} ms`}</TableCell><TableCell><Button aria-label={`${labels.load} ${run.id}`} onClick={() => void loadExperiment(run.id)} size="sm" variant="ghost">{labels.load}</Button></TableCell></TableRow>)}</TableBody></Table></div> : <EmptyPipelineState>{copy.retrieval.noTrace}</EmptyPipelineState>}
+        {experimentHistory.length ? <div className="mt-4 overflow-x-auto border-t"><Table><TableHeader><TableRow><TableHead>{labels.compare}</TableHead><TableHead>{labels.run}</TableHead><TableHead>{copy.retrieval.mode}</TableHead><TableHead>{copy.retrieval.question}</TableHead><TableHead>{labels.candidates}</TableHead><TableHead>{labels.duration}</TableHead><TableHead>{labels.load}</TableHead></TableRow></TableHeader><TableBody>{experimentHistory.map((run) => <TableRow key={run.id}><TableCell><input aria-label={`${labels.compare} ${run.id}`} checked={compareIds.includes(run.id)} disabled={!compareIds.includes(run.id) && compareIds.length >= 2} onChange={() => toggleCompare(run.id)} type="checkbox" /></TableCell><TableCell className="max-w-44 truncate font-mono text-xs" title={run.id}>{run.id}</TableCell><TableCell>{experimentRetrievalMode(run.config)}</TableCell><TableCell className="max-w-72 whitespace-normal">{run.query}</TableCell><TableCell>{isExperimentDetail(run) ? run.stageResults.retrieval?.candidates.length ?? 0 : run.candidateCount ?? 0}</TableCell><TableCell>{run.timing.durationMs === null ? "—" : `${run.timing.durationMs} ms`}</TableCell><TableCell><Button aria-label={`${labels.load} ${run.id}`} onClick={() => void loadExperiment(run.id)} size="sm" variant="ghost">{labels.load}</Button></TableCell></TableRow>)}</TableBody></Table></div> : <EmptyPipelineState>{copy.retrieval.noTrace}</EmptyPipelineState>}
         {selectedComparisonRuns.length ? <div className="mt-4 grid gap-3 md:grid-cols-2">{selectedComparisonRuns.map((run) => <div className="border p-4" key={run.id}><div className="break-all font-mono text-xs">{run.id}</div><dl className="mt-3 grid grid-cols-2 gap-2 text-xs"><div><dt className="text-slate-500">{copy.retrieval.mode}</dt><dd className="mt-1">{experimentRetrievalMode(run.config)}</dd></div><div><dt className="text-slate-500">{labels.duration}</dt><dd className="mt-1">{run.timing.durationMs ?? "—"} ms</dd></div><div><dt className="text-slate-500">{labels.candidates}</dt><dd className="mt-1">{run.stageResults.retrieval?.candidates.length ?? 0}</dd></div><div><dt className="text-slate-500">{labels.citations}</dt><dd className="mt-1">{run.stageResults.generation?.citations.filter((citation) => citation.valid).length ?? 0}</dd></div></dl></div>)}</div> : null}
       </section>
     </div>

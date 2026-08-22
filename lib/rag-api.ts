@@ -14,13 +14,16 @@ import type {
   ChunkStrategy,
   ContextCandidate,
   DocumentDetail,
+  DocumentSummary,
   EmbeddingRun,
   EvaluationCase,
   EvaluationDataset,
+  EvaluationDatasetSummary,
   EvaluationMetrics,
   EvaluationRun,
   ExperimentRequest,
   ExperimentRun,
+  ExperimentSummary,
   ExperimentStageResults,
   PersistedDocument,
   PersistedParseResponse,
@@ -577,6 +580,34 @@ function normalizeExperiment(value: unknown): ExperimentRun {
   };
 }
 
+function normalizeExperimentSummary(value: unknown): ExperimentSummary {
+  const payload = requiredObject(value, "experiment summary");
+  const run = normalizeRun(payload);
+  return {
+    ...run,
+    documentId: requiredString(field(payload, "documentId", "document_id"), "experiment document id"),
+    chunkRunId: requiredString(field(payload, "chunkRunId", "chunk_run_id"), "experiment chunk run id"),
+    embeddingRunId: optionalString(field(payload, "embeddingRunId", "embedding_run_id")),
+    query: string(payload.query),
+    targetStage: normalizeTargetStage(field(payload, "targetStage", "target_stage")),
+    candidateCount: optionalNumber(field(payload, "candidateCount", "candidate_count")),
+    experimentFingerprint: optionalString(field(payload, "experimentFingerprint", "experiment_fingerprint")),
+  };
+}
+
+function normalizeDatasetSummary(value: unknown): EvaluationDatasetSummary {
+  const payload = requiredObject(value, "evaluation dataset summary");
+  return {
+    id: requiredString(payload.id, "evaluation dataset id"),
+    documentId: requiredString(field(payload, "documentId", "document_id"), "evaluation document id"),
+    parseRunId: requiredString(field(payload, "parseRunId", "parse_run_id"), "evaluation parse run id"),
+    name: requiredString(payload.name, "evaluation dataset name"),
+    version: requiredNumber(payload.version, "evaluation dataset version"),
+    caseCount: requiredNumber(field(payload, "caseCount", "case_count"), "evaluation dataset case count"),
+    createdAt: optionalString(field(payload, "createdAt", "created_at")),
+  };
+}
+
 function listPayload(value: unknown, key: string): unknown[] {
   if (Array.isArray(value)) return value;
   const payload = requiredObject(value, `${key} list envelope`);
@@ -675,6 +706,41 @@ export async function getDocument(documentId: string, signal?: AbortSignal): Pro
   };
 }
 
+export async function getDocumentSummary(documentId: string, signal?: AbortSignal): Promise<DocumentSummary> {
+  try {
+    const payload = object(await request(`/documents/${encodeURIComponent(documentId)}/summary`, { signal }));
+    return {
+      ...normalizeDocument(payload),
+      parseRuns: requiredArray(payload.parseRuns, normalizeRun, "parse run history"),
+      chunkRuns: requiredArray(payload.chunkRuns, normalizeRun, "chunk run history"),
+      embeddingRuns: requiredArray(payload.embeddingRuns, normalizeRun, "embedding run history"),
+      experiments: requiredArray(payload.experiments, normalizeExperimentSummary, "experiment history"),
+      evaluationDatasets: requiredArray(payload.evaluationDatasets ?? payload.datasets, normalizeDatasetSummary, "evaluation dataset history"),
+    };
+  } catch (error) {
+    // Older previews may not expose the additive endpoint yet. Keep the
+    // legacy contract as a temporary compatibility path; production hot paths
+    // use the summary endpoint above and never request this fallback.
+    if (!(error instanceof DocumentApiError) || (error.status !== 404 && error.code !== "invalid_response")) throw error;
+    const legacy = await getDocument(documentId, signal);
+    return {
+      ...legacy,
+      experiments: legacy.experiments.map((run) => ({
+        ...run,
+        documentId,
+        chunkRunId: run.upstream.chunkRunId ?? "",
+        embeddingRunId: run.upstream.embeddingRunId ?? null,
+        query: "",
+        targetStage: "generation" as const,
+        candidateCount: null,
+        experimentFingerprint: null,
+      })),
+      evaluationDatasets: [],
+      activeParseRun: legacy.activeParseRun,
+    };
+  }
+}
+
 export async function getParseRun(runId: string, signal?: AbortSignal, documentId?: string | null): Promise<ParseRun> {
   try {
     return normalizeParseRun(
@@ -726,9 +792,9 @@ export async function rerunGeneration(experimentId: string, signal?: AbortSignal
   return normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}/rerun-generation`, { method: "POST", signal }));
 }
 
-export async function listExperiments(documentId: string, signal?: AbortSignal): Promise<ExperimentRun[]> {
+export async function listExperiments(documentId: string, signal?: AbortSignal): Promise<ExperimentSummary[]> {
   const payload = await request(`/experiments?documentId=${encodeURIComponent(documentId)}`, { signal });
-  return listPayload(payload, "experiments").map(normalizeExperiment);
+  return listPayload(payload, "experiments").map(normalizeExperimentSummary);
 }
 
 export async function createEvaluationDataset(input: { documentId: string; parseRunId: string; name: string; cases: EvaluationCase[] }, signal?: AbortSignal): Promise<EvaluationDataset> {
@@ -756,9 +822,13 @@ function normalizeDataset(value: unknown): EvaluationDataset {
   };
 }
 
-export async function listEvaluationDatasets(documentId: string, signal?: AbortSignal): Promise<EvaluationDataset[]> {
+export async function listEvaluationDatasets(documentId: string, signal?: AbortSignal): Promise<EvaluationDatasetSummary[]> {
   const payload = await request(`/evaluation/datasets?documentId=${encodeURIComponent(documentId)}`, { signal });
-  return listPayload(payload, "datasets").map(normalizeDataset);
+  return listPayload(payload, "datasets").map(normalizeDatasetSummary);
+}
+
+export async function getEvaluationDataset(datasetId: string, signal?: AbortSignal): Promise<EvaluationDataset> {
+  return normalizeDataset(await request(`/evaluation/datasets/${encodeURIComponent(datasetId)}`, { signal }));
 }
 
 export async function createEvaluationRun(input: {

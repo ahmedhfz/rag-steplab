@@ -283,12 +283,12 @@ function parseOperationStatus(status: "not-started" | "ready" | "queued" | "runn
 }
 
 function DocumentPipelineSummary({ locale }: { locale: "en" | "tr" }) {
-  const { activeDocument, selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId, parseStatus, chunkStatus, embeddingStatus } = useDocumentPipeline();
+  const { activeDocumentId, selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId, parseStatus, chunkStatus, embeddingStatus } = useDocumentPipeline();
   const labels = locale === "tr"
     ? { title: "Pipeline durum özeti", document: "Doküman", parse: "Ayrıştırma", chunking: "Parçalama", embeddings: "Embedding", noSelection: "Seçim yok" }
     : { title: "Pipeline status summary", document: "Document", parse: "Parse", chunking: "Chunking", embeddings: "Embeddings", noSelection: "Not selected" };
   const stages = [
-    { href: "/documents", label: labels.document, status: activeDocument ? "completed" as const : "locked" as const },
+    { href: "/documents", label: labels.document, status: activeDocumentId ? "completed" as const : "locked" as const },
     { href: "/parse", label: labels.parse, status: parseOperationStatus(parseStatus), id: selectedParseRunId },
     { href: "/chunking", label: labels.chunking, status: chunkStatus, id: selectedChunkRunId },
     { href: "/embeddings", label: labels.embeddings, status: embeddingStatus, id: selectedEmbeddingRunId },
@@ -297,7 +297,7 @@ function DocumentPipelineSummary({ locale }: { locale: "en" | "tr" }) {
     <section className="border-t px-4 py-6 sm:px-7">
       <h2 className="text-sm font-semibold">{labels.title}</h2>
       <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        {stages.map((stage) => <Link className="border p-3 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400" href={stage.href} key={stage.href}><div className="flex items-center justify-between gap-2"><span className="text-xs font-medium">{stage.label}</span><OperationStatusBadge locale={locale} status={stage.status} /></div><p className="mt-2 truncate font-mono text-[10px] text-slate-500">{"id" in stage ? stage.id ?? labels.noSelection : activeDocument?.id ?? labels.noSelection}</p></Link>)}
+        {stages.map((stage) => <Link className="border p-3 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400" href={stage.href} key={stage.href}><div className="flex items-center justify-between gap-2"><span className="text-xs font-medium">{stage.label}</span><OperationStatusBadge locale={locale} status={stage.status} /></div><p className="mt-2 truncate font-mono text-[10px] text-slate-500">{"id" in stage ? stage.id ?? labels.noSelection : activeDocumentId ?? labels.noSelection}</p></Link>)}
       </div>
     </section>
   );
@@ -317,18 +317,19 @@ function DocumentsNextCta({ locale, hasPersistedDocument }: { locale: "en" | "tr
 
 export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
   const { preferences } = usePreferences();
-  const { parseResult, activeDocument, pendingUpload } = useDocumentPipeline();
+  const { parseResult, activeDocument, activeDocumentMetadata, pendingUpload } = useDocumentPipeline();
   const copy = UI_COPY[preferences.locale];
   const effectiveView = view ?? "overview";
   const current = copy.documents.views[effectiveView];
   const isLegacyView = view !== undefined;
-  const documentTitle = pendingUpload?.name ?? activeDocument?.fileName ?? copy.documents.noDocumentTitle;
+  const visibleDocument = activeDocument ?? activeDocumentMetadata;
+  const documentTitle = pendingUpload?.name ?? visibleDocument?.fileName ?? copy.documents.noDocumentTitle;
   const documentMetadata = pendingUpload
     ? `${formatDocumentFileSize(pendingUpload.size, preferences.locale)} • ${copy.documents.metadataPending}`
     : parseResult
     ? `${parseResult.document.pageCount} ${copy.documents.pages.toLowerCase()} • ${formatDocumentFileSize(parseResult.document.sizeBytes, preferences.locale)}`
-    : activeDocument
-      ? `${activeDocument.pageCount} ${copy.documents.pages.toLowerCase()} • ${formatDocumentFileSize(activeDocument.sizeBytes, preferences.locale)}`
+    : visibleDocument
+      ? `${visibleDocument.pageCount} ${copy.documents.pages.toLowerCase()} • ${formatDocumentFileSize(visibleDocument.sizeBytes, preferences.locale)}`
     : copy.documents.metadataPending;
 
   return (
@@ -363,8 +364,8 @@ export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
 
       {!isLegacyView && <DocumentUploadPanel />}
       {!isLegacyView && <DocumentPipelineSummary locale={preferences.locale} />}
-      {!isLegacyView && <DocumentsNextCta hasPersistedDocument={Boolean(activeDocument)} locale={preferences.locale} />}
-      {effectiveView === "overview" && <><DocumentOverviewTab copy={copy.documents} locale={preferences.locale} persistedDocument={activeDocument} result={pendingUpload ? null : parseResult} selectedFile={pendingUpload} /><DocumentLibrary locale={preferences.locale} /></>}
+      {!isLegacyView && <DocumentsNextCta hasPersistedDocument={Boolean(visibleDocument)} locale={preferences.locale} />}
+      {effectiveView === "overview" && <><DocumentOverviewTab copy={copy.documents} locale={preferences.locale} persistedDocument={visibleDocument} result={pendingUpload ? null : parseResult} selectedFile={pendingUpload} /><DocumentLibrary locale={preferences.locale} /></>}
       {effectiveView === "parsed" && <ParsedContentTab copy={copy.documents} result={parseResult} />}
       {effectiveView === "chunks" && <ChunksPipeline locale={preferences.locale} />}
     </div>

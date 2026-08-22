@@ -7,6 +7,8 @@
     "dev:frontend": "next dev",
     "build": "next build",
     "lint": "eslint .",
+    "perf:phase6a": "node scripts/measure-phase6a.mjs",
+    "perf:phase6a:fixture": "python scripts/measure-phase6a-fixture.py",
     "test": "vitest run",
     "typecheck": "tsc --noEmit --incremental false"
   },
