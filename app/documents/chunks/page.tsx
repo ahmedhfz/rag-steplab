@@ -1,5 +1,5 @@
-import { DocumentsScreen } from "@/components/documents-screen";
+import { permanentRedirect } from "next/navigation";
 
 export default function DocumentChunksPage() {
-  return <DocumentsScreen view="chunks" />;
+  permanentRedirect("/chunking");
 }

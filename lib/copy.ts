@@ -2,7 +2,7 @@ import type { DocumentActivityEventType, PipelineStepKey, PipelineStepState } fr
 
 export type AppLocale = "en" | "tr";
 export type DetailLevel = "guided" | "technical";
-export type AppNavKey = "overview" | "documents" | "chunks" | "retrieval" | "evaluation" | "settings";
+export type AppNavKey = "overview" | "documents" | "parse" | "chunking" | "embeddings" | "playground" | "evaluation" | "settings" | "chunks" | "retrieval";
 export type DocumentViewKey = "overview" | "parsed" | "chunks";
 
 type DocumentViewCopy = {
@@ -14,7 +14,11 @@ export type AppCopy = {
   productName: string;
   learningMode: string;
   detailLevel: Record<DetailLevel, string>;
-  nav: Record<AppNavKey, string>;
+  nav: Record<AppNavKey, string> & {
+    pipeline: string;
+    experiment: string;
+    system: string;
+  };
   status: Record<PipelineStepState, string>;
   guides: string;
   help: string;
@@ -198,7 +202,11 @@ export const UI_COPY = {
     productName: "RAG StepLab",
     learningMode: "Learning mode",
     detailLevel: { guided: "Guided", technical: "Technical" },
-    nav: { overview: "Overview", documents: "Documents", chunks: "Chunks", retrieval: "Retrieval", evaluation: "Evaluation", settings: "Settings" },
+    nav: {
+      overview: "Overview", documents: "Documents", parse: "Parse", chunking: "Chunking", embeddings: "Embeddings",
+      playground: "Playground", evaluation: "Evaluation", settings: "Settings", chunks: "Chunks", retrieval: "Retrieval",
+      pipeline: "Pipeline", experiment: "Experiment", system: "System",
+    },
     status: { "Not started": "Not started", Ready: "Ready", Processing: "Processing", Completed: "Completed", Error: "Error", Locked: "Locked", Stale: "Stale" },
     guides: "Guides",
     help: "Help",
@@ -324,7 +332,7 @@ export const UI_COPY = {
       noChunks: "No chunks are available until parsing and chunking complete.",
     },
     retrieval: {
-      title: "Retrieval Playground",
+      title: "Playground",
       question: "Question",
       questionPlaceholder: "Enter a question to prepare a retrieval request",
       clearQuestion: "Clear question",
@@ -397,7 +405,11 @@ export const UI_COPY = {
     productName: "RAG StepLab",
     learningMode: "Öğrenme modu",
     detailLevel: { guided: "Yönlendirmeli", technical: "Teknik" },
-    nav: { overview: "Genel Bakış", documents: "Dokümanlar", chunks: "Parçalar", retrieval: "Getirme", evaluation: "Değerlendirme", settings: "Ayarlar" },
+    nav: {
+      overview: "Genel Bakış", documents: "Dokümanlar", parse: "Ayrıştırma", chunking: "Parçalama", embeddings: "Embedding",
+      playground: "Deney Alanı", evaluation: "Değerlendirme", settings: "Ayarlar", chunks: "Parçalar", retrieval: "Getirme",
+      pipeline: "Pipeline", experiment: "Deney", system: "Sistem",
+    },
     status: { "Not started": "Başlatılmadı", Ready: "Hazır", Processing: "İşleniyor", Completed: "Tamamlandı", Error: "Hata", Locked: "Kilitli", Stale: "Eski" },
     guides: "Rehberler",
     help: "Yardım",
@@ -523,7 +535,7 @@ export const UI_COPY = {
       noChunks: "Ayrıştırma ve parçalama tamamlanana kadar içerik parçası bulunmaz.",
     },
     retrieval: {
-      title: "Getirme Deney Alanı",
+      title: "Deney Alanı",
       question: "Soru",
       questionPlaceholder: "Getirme isteği hazırlamak için soru girin",
       clearQuestion: "Soruyu temizle",

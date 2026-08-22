@@ -1,5 +1,5 @@
 import { DocumentsScreen } from "@/components/documents-screen";
 
 export default function DocumentsPage() {
-  return <DocumentsScreen view="overview" />;
+  return <DocumentsScreen />;
 }

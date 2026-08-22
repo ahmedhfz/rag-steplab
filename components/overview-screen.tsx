@@ -491,7 +491,7 @@ export function OverviewScreen() {
             <div className="flex items-center justify-between gap-4">
                 <h3 className="text-sm font-semibold">{copy.overview.parseSummary}</h3>
                 <Button asChild size="sm" variant="outline">
-                  <Link href="/documents/parsed">{copy.overview.openParsedContent} <FileText className="size-4" /></Link>
+                  <Link href="/parse">{copy.overview.openParsedContent} <FileText className="size-4" /></Link>
                 </Button>
               </div>
             {!pendingUpload && parseResult ? (

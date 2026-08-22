@@ -6,12 +6,14 @@ import {
   ArrowLeft,
   BarChart3,
   Beaker,
+  Braces,
   BookOpen,
   CircleHelp,
   FileText,
   Grid2X2,
   Home,
   LogOut,
+  ListFilter,
   Menu,
   Search,
   Settings,
@@ -28,19 +30,37 @@ import { type AppCopy, type AppNavKey, UI_COPY } from "@/lib/copy";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { cn } from "@/lib/utils";
 
-const navItems: Array<{ key: AppNavKey; href: string; icon: LucideIcon }> = [
-  { key: "overview", href: "/", icon: Home },
-  { key: "documents", href: "/documents", icon: FileText },
-  { key: "chunks", href: "/documents/chunks", icon: Grid2X2 },
-  { key: "retrieval", href: "/retrieval", icon: Search },
-  { key: "evaluation", href: "/evaluation", icon: BarChart3 },
-  { key: "settings", href: "/settings", icon: Settings },
+type NavItem = { key: AppNavKey; href: string; icon: LucideIcon };
+type NavGroup = { label?: "pipeline" | "experiment" | "system"; items: NavItem[] };
+
+const navGroups: NavGroup[] = [
+  { items: [{ key: "overview", href: "/", icon: Home }] },
+  {
+    label: "pipeline",
+    items: [
+      { key: "documents", href: "/documents", icon: FileText },
+      { key: "parse", href: "/parse", icon: ListFilter },
+      { key: "chunking", href: "/chunking", icon: Grid2X2 },
+      { key: "embeddings", href: "/embeddings", icon: Braces },
+    ],
+  },
+  {
+    label: "experiment",
+    items: [
+      { key: "playground", href: "/playground", icon: Search },
+      { key: "evaluation", href: "/evaluation", icon: BarChart3 },
+    ],
+  },
+  { label: "system", items: [{ key: "settings", href: "/settings", icon: Settings }] },
 ];
 
 function isNavItemActive(key: AppNavKey, pathname: string) {
   if (key === "overview") return pathname === "/";
-  if (key === "documents") return pathname === "/documents" || pathname === "/documents/parsed";
-  if (key === "chunks") return pathname === "/documents/chunks";
+  if (key === "documents") return pathname === "/documents";
+  if (key === "parse") return pathname === "/parse" || pathname === "/documents/parsed";
+  if (key === "chunking") return pathname === "/chunking" || pathname === "/documents/chunks";
+  if (key === "embeddings") return pathname === "/embeddings";
+  if (key === "playground") return pathname === "/playground" || pathname === "/retrieval";
   return pathname === `/${key}`;
 }
 
@@ -193,7 +213,7 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
                 <nav aria-label={copy.guides} className="mt-3 grid gap-1 border-t pt-2 text-sm">
                   <Link className="rounded px-2 py-1.5 hover:bg-slate-100" href="/" onClick={closeAfterNavigation}>{copy.nav.overview}</Link>
                   <Link className="rounded px-2 py-1.5 hover:bg-slate-100" href="/documents" onClick={closeAfterNavigation}>{copy.nav.documents}</Link>
-                  <Link className="rounded px-2 py-1.5 hover:bg-slate-100" href="/retrieval" onClick={closeAfterNavigation}>{copy.nav.retrieval}</Link>
+                  <Link className="rounded px-2 py-1.5 hover:bg-slate-100" href="/playground" onClick={closeAfterNavigation}>{copy.nav.playground}</Link>
                 </nav>
               </div>
             )}
@@ -227,24 +247,29 @@ function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: st
       </div>
 
       <nav aria-label={copy.common.primaryNavigation} className="flex-1 space-y-1.5 px-3 py-5">
-        {navItems.map((item) => {
-          const isActive = isNavItemActive(item.key, pathname);
-          return (
-            <Link
-              aria-current={isActive ? "page" : undefined}
-              className={cn(
-                "flex h-11 items-center gap-3 rounded-md px-3 text-sm text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-950",
-                isActive && "bg-slate-100 font-medium text-slate-950",
-              )}
-              href={item.href}
-              key={item.key}
-              onClick={onNavigate}
-            >
-              <item.icon aria-hidden="true" className="size-[19px] stroke-[1.65]" />
-              {copy.nav[item.key]}
-            </Link>
-          );
-        })}
+        {navGroups.map((group) => (
+          <div className="space-y-1.5" key={group.label ?? "overview"}>
+            {group.label ? <p className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">{copy.nav[group.label]}</p> : null}
+            {group.items.map((item) => {
+              const isActive = isNavItemActive(item.key, pathname);
+              return (
+                <Link
+                  aria-current={isActive ? "page" : undefined}
+                  className={cn(
+                    "flex h-11 items-center gap-3 rounded-md px-3 text-sm text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-950",
+                    isActive && "bg-slate-100 font-medium text-slate-950",
+                  )}
+                  href={item.href}
+                  key={item.key}
+                  onClick={onNavigate}
+                >
+                  <item.icon aria-hidden="true" className="size-[19px] stroke-[1.65]" />
+                  {copy.nav[item.key]}
+                </Link>
+              );
+            })}
+          </div>
+        ))}
       </nav>
 
       <div className="border-t px-3 py-3">
@@ -256,9 +281,11 @@ function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: st
 
 function getPageTitle(pathname: string, copy: AppCopy) {
   if (pathname === "/") return copy.nav.overview;
-  if (pathname === "/documents/chunks") return copy.nav.chunks;
+  if (pathname === "/parse" || pathname === "/documents/parsed") return copy.nav.parse;
+  if (pathname === "/chunking" || pathname === "/documents/chunks") return copy.nav.chunking;
+  if (pathname === "/embeddings") return copy.nav.embeddings;
   if (pathname.startsWith("/documents")) return copy.nav.documents;
-  if (pathname === "/retrieval") return copy.nav.retrieval;
+  if (pathname === "/playground" || pathname === "/retrieval") return copy.nav.playground;
   if (pathname === "/evaluation") return copy.nav.evaluation;
   if (pathname === "/settings") return copy.nav.settings;
   return copy.productName;

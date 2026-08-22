@@ -23,7 +23,7 @@ describe("DocumentsScreen", () => {
     expect(screen.getByRole("heading", { name: "Parsed Content" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("href", "/documents");
     expect(screen.getByRole("link", { name: "Parsed Content" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "Chunks" })).toHaveAttribute("href", "/documents/chunks");
+    expect(screen.getByRole("link", { name: "Chunks" })).toHaveAttribute("href", "/chunking");
     expect(screen.getByText("No pages are available until parsing completes.")).toBeInTheDocument();
     expect(screen.getByText("Select a parsed page to inspect its elements.")).toBeInTheDocument();
   });

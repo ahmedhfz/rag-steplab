@@ -39,6 +39,14 @@ export type RunSummary = {
   config: Record<string, unknown>;
   timing: RunTiming;
   error: ApiProblem | null;
+  // Document detail history already carries these stage-specific fields.
+  strategy?: ChunkStrategy | null;
+  chunkCount?: number | null;
+  model?: string | null;
+  dimensions?: number | null;
+  embeddingFormatVersion?: string | null;
+  embeddingCount?: number | null;
+  effectiveModel?: string | null;
 };
 
 export type PersistedDocument = {

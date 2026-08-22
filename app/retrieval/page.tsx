@@ -1,5 +1,5 @@
-import { RetrievalScreen } from "@/components/retrieval-screen";
+import { permanentRedirect } from "next/navigation";
 
 export default function RetrievalPage() {
-  return <RetrievalScreen />;
+  permanentRedirect("/playground");
 }
