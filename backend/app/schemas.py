@@ -212,6 +212,10 @@ class ExperimentResponse(RunSummary):
     query: str
     target_stage: ExperimentTargetStage
     stage_results: dict[str, Any] = Field(default_factory=dict)
+    experiment_fingerprint: str | None = None
+    reused_experiment: bool = False
+    continued_from_experiment_id: str | None = None
+    generation_rerun: bool = False
 
 
 class EvaluationCase(CamelCaseModel):

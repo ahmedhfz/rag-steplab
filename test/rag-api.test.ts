@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { getChunkRun, getDocument, getEmbeddingRun, getParseRun, listDocuments, parseAndPersistDocument, waitForParseRun } from "@/lib/rag-api";
+import { continueExperiment, getChunkRun, getDocument, getEmbeddingRun, getExperiment, getParseRun, listDocuments, parseAndPersistDocument, rerunGeneration, waitForParseRun } from "@/lib/rag-api";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -125,6 +125,54 @@ describe("RAG API contract normalization", () => {
       effectiveModel: "gemini-embedding-2-001",
       reusedArtifact: true,
     });
+  });
+
+  it("normalizes stage reuse metadata and keeps history/continue/rerun endpoints explicit", async () => {
+    const payload = {
+      id: "experiment-1",
+      status: "completed",
+      documentId: "document-1",
+      chunkRunId: "chunk-run-1",
+      embeddingRunId: null,
+      query: "retrieval",
+      targetStage: "retrieval",
+      experimentFingerprint: "experiment-fingerprint",
+      reusedExperiment: true,
+      stageResults: {
+        retrieval: {
+          status: "completed",
+          fingerprint: "retrieval-fingerprint",
+          resultHash: "result-hash",
+          reuse: { reused: true, executed: false, sourceExperimentId: "source-run", sourceDurationMs: 12 },
+          provenance: { cacheable: true, algorithmVersion: "retrieval-sql-rrf-v1" },
+          results: [{
+            chunkId: "chunk-1",
+            rank: 1,
+            text: "Grounded source text",
+            documentId: "document-1",
+            pageNumbers: [1],
+            sourceElementIds: ["element-1"],
+            headingPath: [],
+          }],
+        },
+      },
+    };
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getExperiment("experiment-1")).resolves.toMatchObject({
+      id: "experiment-1",
+      experimentFingerprint: "experiment-fingerprint",
+      reusedExperiment: true,
+      stageResults: { retrieval: { reuse: { reused: true, executed: false, sourceExperimentId: "source-run" } } },
+    });
+    await continueExperiment("experiment-1");
+    await rerunGeneration("experiment-1");
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
+      ["http://127.0.0.1:8000/experiments/experiment-1", undefined],
+      ["http://127.0.0.1:8000/experiments/experiment-1/continue", "POST"],
+      ["http://127.0.0.1:8000/experiments/experiment-1/rerun-generation", "POST"],
+    ]);
   });
 
   it("fails closed when a completed run omits required result fields", async () => {

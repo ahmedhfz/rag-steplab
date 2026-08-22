@@ -25,6 +25,7 @@ from .pipeline import (
     create_evaluation,
     create_experiment,
     continue_experiment,
+    rerun_generation,
     queue_parse_upload,
     queue_reparse_document,
     run_lineage_compatibility,
@@ -501,6 +502,11 @@ def get_experiment(experiment_id: str, user: CurrentUser = Depends(get_current_u
 @app.post("/experiments/{experiment_id}/continue")
 def continue_run(experiment_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     return _camelize(_guarded(continue_experiment, experiment_id, repository=_user_repository(user)))
+
+
+@app.post("/experiments/{experiment_id}/rerun-generation")
+def rerun_generation_run(experiment_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    return _camelize(_guarded(rerun_generation, experiment_id, repository=_user_repository(user)))
 
 
 @app.post("/evaluation/datasets")

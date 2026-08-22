@@ -29,6 +29,7 @@ import type {
   RerankedCandidate,
   RunStatus,
   RunSummary,
+  StageReuseMetadata,
   ValidatedCitation,
 } from "@/lib/rag-api-types";
 import { getSupabaseAccessToken } from "@/lib/supabase/browser";
@@ -94,6 +95,26 @@ function requiredNumber(value: unknown, label: string) {
 
 function optionalNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function normalizeReuse(value: unknown): StageReuseMetadata | null {
+  const payload = object(value);
+  if (Object.keys(payload).length === 0) return null;
+  return {
+    reused: boolean(payload.reused),
+    executed: boolean(payload.executed),
+    sourceExperimentId: optionalString(field(payload, "sourceExperimentId", "source_experiment_id")),
+    sourceDurationMs: optionalNumber(field(payload, "sourceDurationMs", "source_duration_ms")),
+  };
+}
+
+function normalizeStageIdentity(value: JsonObject) {
+  return {
+    fingerprint: optionalString(value.fingerprint),
+    resultHash: optionalString(field(value, "resultHash", "result_hash")),
+    reuse: normalizeReuse(value.reuse),
+    provenance: Object.keys(object(value.provenance)).length ? object(value.provenance) : null,
+  };
 }
 
 function boolean(value: unknown, fallback = false) {
@@ -276,16 +297,19 @@ function normalizeStageResults(value: unknown): ExperimentStageResults {
   const excludedContext = array(context.excluded, (item) => ({ ...object(item), selected: false, tokenCount: object(item).localTokenCount ?? object(item).tokenCount }));
   return {
     retrieval: Object.keys(retrieval).length === 0 ? null : {
+      ...normalizeStageIdentity(retrieval),
       candidates: requiredArray(retrieval.candidates ?? retrieval.results, normalizeRetrievedCandidate, "retrieval results"),
       durationMs: optionalNumber(field(retrieval, "durationMs", "duration_ms")),
     },
     reranking: Object.keys(reranking).length === 0 ? null : {
+      ...normalizeStageIdentity(reranking),
       candidates: requiredArray(reranking.candidates ?? reranking.results, normalizeRerankedCandidate, "reranking results"),
       durationMs: optionalNumber(field(reranking, "durationMs", "duration_ms")),
       method: optionalString(reranking.method ?? reranking.effectiveModel ?? reranking.model),
       executed: reranking.status !== "skipped",
     },
     context: Object.keys(context).length === 0 ? null : {
+      ...normalizeStageIdentity(context),
       candidates: array(context.candidates ?? context.selections ?? [...selectedContext, ...excludedContext], normalizeContextCandidate),
       finalContext: requiredText(context.finalContext ?? context.formattedContext ?? context.text, "final context"),
       tokenBudget: requiredNumber(field(context, "tokenBudget", "token_budget"), "context token budget"),
@@ -293,6 +317,7 @@ function normalizeStageResults(value: unknown): ExperimentStageResults {
       durationMs: optionalNumber(field(context, "durationMs", "duration_ms")),
     },
     generation: Object.keys(generation).length === 0 ? null : {
+      ...normalizeStageIdentity(generation),
       answer: typeof generation.answer === "string" ? generation.answer : invalidResponse("The backend response is missing the generated answer."),
       citations: requiredArray(generation.citations, (item) => normalizeCitation(item, generationValidity), "generation citations"),
       model: optionalString(generation.effectiveModel ?? generation.configuredModel ?? generation.model),
@@ -545,6 +570,10 @@ function normalizeExperiment(value: unknown): ExperimentRun {
     query: requiredString(payload.query, "experiment query"),
     targetStage,
     stageResults,
+    experimentFingerprint: optionalString(field(payload, "experimentFingerprint", "experiment_fingerprint")),
+    reusedExperiment: boolean(field(payload, "reusedExperiment", "reused_experiment")),
+    continuedFromExperimentId: optionalString(field(payload, "continuedFromExperimentId", "continued_from_experiment_id")),
+    generationRerun: boolean(field(payload, "generationRerun", "generation_rerun")),
   };
 }
 
@@ -683,6 +712,18 @@ export async function createEmbeddingRun(documentId: string, chunkRunId: string,
 
 export async function createExperiment(input: ExperimentRequest, signal?: AbortSignal): Promise<ExperimentRun> {
   return normalizeExperiment(await request("/experiments", { method: "POST", body: JSON.stringify(input), signal }));
+}
+
+export async function getExperiment(experimentId: string, signal?: AbortSignal): Promise<ExperimentRun> {
+  return normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}`, { signal }));
+}
+
+export async function continueExperiment(experimentId: string, signal?: AbortSignal): Promise<ExperimentRun> {
+  return normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}/continue`, { method: "POST", signal }));
+}
+
+export async function rerunGeneration(experimentId: string, signal?: AbortSignal): Promise<ExperimentRun> {
+  return normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}/rerun-generation`, { method: "POST", signal }));
 }
 
 export async function listExperiments(documentId: string, signal?: AbortSignal): Promise<ExperimentRun[]> {

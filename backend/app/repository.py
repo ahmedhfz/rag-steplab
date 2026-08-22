@@ -281,6 +281,32 @@ class Repository:
     def save_experiment(self, row: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
 
+    def get_completed_experiment_by_fingerprint(
+        self, document_id: str, experiment_fingerprint: str
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def claim_experiment(self, row: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        """Claim one exact request; ``True`` means this caller owns execution."""
+        raise NotImplementedError
+
+    def update_experiment_stage(
+        self, experiment_id: str, stage: str, result: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def complete_experiment(self, experiment_id: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def fail_experiment(self, experiment_id: str, code: str, message: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def find_stage_result(
+        self, document_id: str, stage: str, fingerprint: str
+    ) -> tuple[dict[str, Any], str] | None:
+        """Find a persisted, candidate stage and its owning experiment ID."""
+        raise NotImplementedError
+
     def get_experiment_row(self, experiment_id: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
@@ -826,6 +852,96 @@ class InMemoryRepository(Repository):
         payload.setdefault("created_at", now_utc())
         self.experiments[payload["id"]] = payload
         return copy.deepcopy(payload)
+
+    def get_completed_experiment_by_fingerprint(self, document_id, experiment_fingerprint):
+        with self._lock:
+            rows = [
+                row
+                for row in self.experiments.values()
+                if row.get("document_id") == document_id
+                and row.get("experiment_fingerprint") == experiment_fingerprint
+                and row.get("status") == "completed"
+            ]
+            rows.sort(key=lambda row: (row.get("created_at") or now_utc(), row.get("id", "")), reverse=True)
+            return copy.deepcopy(rows[0]) if rows else None
+
+    def claim_experiment(self, row):
+        with self._lock:
+            existing = next(
+                (
+                    value
+                    for value in self.experiments.values()
+                    if value.get("document_id") == row.get("document_id")
+                    and value.get("experiment_fingerprint") == row.get("experiment_fingerprint")
+                    and value.get("identity_claimed") is True
+                    and value.get("status") == "running"
+                ),
+                None,
+            )
+            if existing is not None:
+                return copy.deepcopy(existing), False
+            payload = copy.deepcopy(row)
+            payload.setdefault("id", new_id())
+            payload.setdefault("created_at", now_utc())
+            payload.setdefault("started_at", now_utc())
+            payload.setdefault("stage_results", {})
+            payload["status"] = "running"
+            payload["identity_claimed"] = True
+            self.experiments[payload["id"]] = payload
+            return copy.deepcopy(payload), True
+
+    def update_experiment_stage(self, experiment_id, stage, result):
+        with self._lock:
+            row = self.experiments.get(experiment_id)
+            if row is None:
+                return None
+            stage_results = copy.deepcopy(row.get("stage_results") or {})
+            stage_results[stage] = copy.deepcopy(result)
+            row["stage_results"] = stage_results
+            return copy.deepcopy(row)
+
+    def complete_experiment(self, experiment_id):
+        with self._lock:
+            row = self.experiments.get(experiment_id)
+            if row is None:
+                return None
+            row["status"] = "completed"
+            row["identity_claimed"] = None
+            row["completed_at"] = row.get("completed_at") or now_utc()
+            started = row.get("started_at")
+            if row.get("duration_ms") is None and started is not None:
+                row["duration_ms"] = max(0, round((row["completed_at"] - started).total_seconds() * 1000))
+            return copy.deepcopy(row)
+
+    def fail_experiment(self, experiment_id, code, message):
+        with self._lock:
+            row = self.experiments.get(experiment_id)
+            if row is None:
+                return None
+            row["status"] = "failed"
+            row["identity_claimed"] = None
+            row["error_code"] = code
+            row["error_message"] = message
+            row["completed_at"] = row.get("completed_at") or now_utc()
+            started = row.get("started_at")
+            if row.get("duration_ms") is None and started is not None:
+                row["duration_ms"] = max(0, round((row["completed_at"] - started).total_seconds() * 1000))
+            return copy.deepcopy(row)
+
+    def find_stage_result(self, document_id, stage, fingerprint):
+        with self._lock:
+            rows = [
+                row
+                for row in self.experiments.values()
+                if row.get("document_id") == document_id
+                and row.get("status") in {"completed", "failed"}
+                and isinstance((row.get("stage_results") or {}).get(stage), dict)
+                and (row.get("stage_results") or {})[stage].get("fingerprint") == fingerprint
+            ]
+            rows.sort(key=lambda row: (row.get("created_at") or now_utc(), row.get("id", "")), reverse=True)
+            if not rows:
+                return None
+            return copy.deepcopy(rows[0]["stage_results"][stage]), rows[0]["id"]
 
     def get_experiment_row(self, experiment_id):
         return copy.deepcopy(self.experiments.get(experiment_id))
@@ -1514,9 +1630,13 @@ class SqlAlchemyRepository(Repository):
             "embedding_run_id": row.embedding_run_id,
             "query": row.query,
             "target_stage": row.target_stage,
+            "experiment_fingerprint": row.experiment_fingerprint,
+            "identity_claimed": row.identity_claimed,
             "config": row.config,
             "stage_results": row.stage_results,
             "status": row.status,
+            "error_code": row.error_code,
+            "error_message": row.error_message,
             "started_at": row.started_at,
             "completed_at": row.completed_at,
             "duration_ms": row.duration_ms,
@@ -1525,13 +1645,132 @@ class SqlAlchemyRepository(Repository):
 
     def save_experiment(self, row):
         entity = ExperimentRun(**{key: row.get(key) for key in (
-            "id", "document_id", "chunk_run_id", "embedding_run_id", "query", "target_stage", "config", "stage_results", "status", "error_code", "error_message", "started_at", "completed_at", "duration_ms"
+            "id", "document_id", "chunk_run_id", "embedding_run_id", "query", "target_stage", "experiment_fingerprint", "identity_claimed", "config", "stage_results", "status", "error_code", "error_message", "started_at", "completed_at", "duration_ms"
         ) if row.get(key) is not None})
         entity.id = entity.id or new_id()
         with session_scope() as session:
             session.add(entity)
             session.flush()
             return self._exp_dict(entity)
+
+    def get_completed_experiment_by_fingerprint(self, document_id, experiment_fingerprint):
+        with session_scope() as session:
+            row = session.scalars(
+                select(ExperimentRun)
+                .where(
+                    ExperimentRun.document_id == document_id,
+                    ExperimentRun.experiment_fingerprint == experiment_fingerprint,
+                    ExperimentRun.status == "completed",
+                )
+                .order_by(ExperimentRun.created_at.desc(), ExperimentRun.id.desc())
+            ).first()
+            return self._exp_dict(row) if row else None
+
+    def claim_experiment(self, row):
+        identifier = row.get("id") or new_id()
+        started_at = row.get("started_at") or now_utc()
+        values = {
+            "id": identifier,
+            "document_id": row["document_id"],
+            "chunk_run_id": row["chunk_run_id"],
+            "embedding_run_id": row.get("embedding_run_id"),
+            "query": row["query"],
+            "target_stage": row["target_stage"],
+            "experiment_fingerprint": row.get("experiment_fingerprint"),
+            "identity_claimed": True,
+            "config": _dump(row.get("config", {})),
+            "stage_results": _dump(row.get("stage_results", {})),
+            "status": "running",
+            "started_at": started_at,
+            "completed_at": None,
+            "duration_ms": None,
+        }
+        with session_scope() as session:
+            result = session.execute(
+                pg_insert(ExperimentRun)
+                .values(**values)
+                .on_conflict_do_nothing(
+                    index_elements=[ExperimentRun.document_id, ExperimentRun.experiment_fingerprint],
+                    index_where=ExperimentRun.identity_claimed.is_(True),
+                )
+                .returning(ExperimentRun.id)
+            )
+            inserted_id = result.scalar_one_or_none()
+            if inserted_id is not None:
+                claimed = session.get(ExperimentRun, inserted_id)
+                return self._exp_dict(claimed), True
+            existing = session.scalars(
+                select(ExperimentRun)
+                .where(
+                    ExperimentRun.document_id == row["document_id"],
+                    ExperimentRun.experiment_fingerprint == row.get("experiment_fingerprint"),
+                    ExperimentRun.identity_claimed.is_(True),
+                    ExperimentRun.status == "running",
+                )
+                .order_by(ExperimentRun.created_at.asc(), ExperimentRun.id.asc())
+            ).first()
+            if existing is None:  # pragma: no cover - protects an impossible concurrent delete
+                raise ApiProblem(409, "experiment_in_progress", "The experiment is currently being created.")
+            return self._exp_dict(existing), False
+
+    def update_experiment_stage(self, experiment_id, stage, result):
+        with session_scope() as session:
+            row = session.get(ExperimentRun, experiment_id)
+            if row is None:
+                return None
+            stage_results = dict(row.stage_results or {})
+            stage_results[stage] = _dump(result)
+            row.stage_results = stage_results
+            session.flush()
+            return self._exp_dict(row)
+
+    def complete_experiment(self, experiment_id):
+        with session_scope() as session:
+            row = session.get(ExperimentRun, experiment_id)
+            if row is None:
+                return None
+            if row.status == "completed":
+                return self._exp_dict(row)
+            row.status = "completed"
+            row.identity_claimed = None
+            row.completed_at = row.completed_at or now_utc()
+            if row.duration_ms is None and row.started_at is not None:
+                row.duration_ms = max(0, round((row.completed_at - row.started_at).total_seconds() * 1000))
+            session.flush()
+            return self._exp_dict(row)
+
+    def fail_experiment(self, experiment_id, code, message):
+        with session_scope() as session:
+            row = session.get(ExperimentRun, experiment_id)
+            if row is None:
+                return None
+            if row.status == "completed":
+                return self._exp_dict(row)
+            row.status = "failed"
+            row.identity_claimed = None
+            row.error_code = code
+            row.error_message = message
+            row.completed_at = row.completed_at or now_utc()
+            if row.duration_ms is None and row.started_at is not None:
+                row.duration_ms = max(0, round((row.completed_at - row.started_at).total_seconds() * 1000))
+            session.flush()
+            return self._exp_dict(row)
+
+    def find_stage_result(self, document_id, stage, fingerprint):
+        with session_scope() as session:
+            rows = session.scalars(
+                select(ExperimentRun)
+                .where(
+                    ExperimentRun.document_id == document_id,
+                    ExperimentRun.status.in_(["completed", "failed"]),
+                )
+                .order_by(ExperimentRun.created_at.desc(), ExperimentRun.id.desc())
+            ).all()
+            for row in rows:
+                value = (row.stage_results or {}).get(stage)
+                if isinstance(value, dict) and value.get("fingerprint") == fingerprint:
+                    return copy.deepcopy(value), row.id
+            return None
 
     def get_experiment_row(self, experiment_id):
         with session_scope() as session:
@@ -1800,6 +2039,36 @@ class ScopedRepository(Repository):
         if self._owned_document(row.get("document_id", "")) is None:
             raise ApiProblem(404, "experiment_not_found", "The experiment lineage was not found.")
         return self._repository.save_experiment(row)
+
+    def get_completed_experiment_by_fingerprint(self, document_id, experiment_fingerprint):
+        if self._owned_document(document_id) is None:
+            return None
+        return self._repository.get_completed_experiment_by_fingerprint(document_id, experiment_fingerprint)
+
+    def claim_experiment(self, row):
+        if self._owned_document(row.get("document_id", "")) is None:
+            raise ApiProblem(404, "experiment_not_found", "The experiment lineage was not found.")
+        return self._repository.claim_experiment(row)
+
+    def update_experiment_stage(self, experiment_id, stage, result):
+        if self.get_experiment_row(experiment_id) is None:
+            return None
+        return self._repository.update_experiment_stage(experiment_id, stage, result)
+
+    def complete_experiment(self, experiment_id):
+        if self.get_experiment_row(experiment_id) is None:
+            return None
+        return self._repository.complete_experiment(experiment_id)
+
+    def fail_experiment(self, experiment_id, code, message):
+        if self.get_experiment_row(experiment_id) is None:
+            return None
+        return self._repository.fail_experiment(experiment_id, code, message)
+
+    def find_stage_result(self, document_id, stage, fingerprint):
+        if self._owned_document(document_id) is None:
+            return None
+        return self._repository.find_stage_result(document_id, stage, fingerprint)
 
     def get_experiment_row(self, experiment_id):
         return self._owned_document_for_row(self._repository.get_experiment_row(experiment_id)) and self._repository.get_experiment_row(experiment_id)
