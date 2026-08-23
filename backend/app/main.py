@@ -26,6 +26,8 @@ from .pipeline import (
     create_dataset,
     create_embedding_run,
     create_evaluation,
+    queue_evaluation,
+    run_queued_evaluation,
     create_experiment,
     queue_experiment,
     run_queued_experiment,
@@ -568,9 +570,11 @@ def _summary_run_dict(row: dict[str, Any], document: dict[str, Any], bundle: dic
         public_duration = None
     payload: dict[str, Any] = {
         "id": row["id"],
+        "runNumber": row.get("run_number"),
         "createdAt": row.get("created_at"),
         "status": _public_parse_status(raw_status),
         "progress": progress,
+        "runMetadata": dict(row.get("execution_metadata") or {}) if kind == "parse" else None,
         "isStale": not compatible,
         "isCompatible": compatible,
         "compatibilityReason": compatibility_reason,
@@ -984,9 +988,32 @@ def get_evaluation_dataset(dataset_id: str, user: CurrentUser = Depends(get_curr
     return _camelize(row)
 
 
-@app.post("/evaluation/runs")
-def evaluation_run(request: EvaluationRunRequest, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    return _camelize(_guarded(create_evaluation, request, repository=_user_repository(user)))
+@app.post("/evaluation/runs", response_model=None)
+def evaluation_run(
+    request: EvaluationRunRequest,
+    background_tasks: BackgroundTasks,
+    async_run: bool = Query(default=False, alias="async"),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any] | JSONResponse:
+    repository = _user_repository(user)
+    if not async_run:
+        return _camelize(_guarded(create_evaluation, request, repository=repository))
+    if not _pipeline_semaphore.acquire(blocking=False):
+        raise ApiProblem(429, "pipeline_busy", "Another pipeline run is currently in progress.")
+    try:
+        queued = queue_evaluation(request, repository=repository)
+        background_tasks.add_task(_run_queued_evaluation_and_release, request, queued["id"], repository)
+        return JSONResponse(status_code=202, content=jsonable_encoder(_camelize(queued)))
+    except Exception:
+        _pipeline_semaphore.release()
+        raise
+
+
+def _run_queued_evaluation_and_release(request: EvaluationRunRequest, evaluation_id: str, repository) -> None:
+    try:
+        run_queued_evaluation(request, evaluation_id, repository=repository)
+    finally:
+        _pipeline_semaphore.release()
 
 
 @app.get("/evaluation/runs")

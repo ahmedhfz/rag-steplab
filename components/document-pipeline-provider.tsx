@@ -12,7 +12,7 @@ import {
   createEmbeddingRun,
   createDocumentPipeline,
   createEvaluationDataset,
-  createEvaluationRun,
+  createEvaluationRunAsync,
   createExperimentAsync,
   continueExperiment,
   getCapabilities,
@@ -33,6 +33,7 @@ import {
   rerunGeneration,
   waitForParseRun,
   updateDocumentPipeline,
+  waitForEvaluationRun,
 } from "@/lib/rag-api";
 import type {
   Capabilities,
@@ -115,6 +116,7 @@ type DocumentPipelineContextValue = {
   parseStatus: DocumentParseStatus;
   parseProgress: number;
   parseProgressEstimated: boolean;
+  parsePhase: string | null;
   parseResult: DocumentParseResponse | null;
   parseError: DocumentApiError | null;
   activity: DocumentActivityEvent[];
@@ -143,6 +145,7 @@ type DocumentPipelineContextValue = {
   evaluationRun: EvaluationRun | null;
   evaluationError: DocumentApiError | null;
   evaluationHistory: EvaluationRun[];
+  uploadNotice: "created" | "reused" | null;
   pipelines: DocumentPipeline[];
   activePipelineId: string | null;
   activePipeline: DocumentPipeline | null;
@@ -302,6 +305,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const [fileError, setFileError] = useState<DocumentFileValidationError | null>(null);
   const [parseStatus, setParseStatus] = useState<DocumentParseStatus>("not-started");
   const [parseProgress, setParseProgress] = useState(0);
+  const [parsePhase, setParsePhase] = useState<string | null>(null);
   // Docling exposes coarse stage checkpoints, so the UI may interpolate between
   // them while the long-running conversion itself is still in progress.
   const [lastReportedParseProgress, setLastReportedParseProgress] = useState(0);
@@ -335,6 +339,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const [evaluationRun, setEvaluationRun] = useState<EvaluationRun | null>(null);
   const [evaluationError, setEvaluationError] = useState<DocumentApiError | null>(null);
   const [evaluationHistory, setEvaluationHistory] = useState<EvaluationRun[]>([]);
+  const [uploadNotice, setUploadNotice] = useState<"created" | "reused" | null>(null);
   const [pipelines, setPipelines] = useState<DocumentPipeline[]>([]);
   const [activePipelineId, setActivePipelineId] = useState<string | null>(null);
   const runIdRef = useRef(0);
@@ -452,6 +457,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setParseStatus(run.status);
     setLastReportedParseProgress(run.progress);
     setParseProgress((current) => Math.max(current, run.progress));
+    setParsePhase(typeof run.runMetadata?.phase === "string" ? run.runMetadata.phase : null);
     if (run.status === "failed") {
       const problem = run.error ?? { code: "parse_failed", message: "The parse run failed." };
       setParseError(new DocumentApiError(problem.code, problem.message));
@@ -519,6 +525,9 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       : selectedParseSummary?.progress ?? (snapshot.parseResult ? 100 : 0);
     setLastReportedParseProgress(loadedParseProgress);
     setParseProgress(loadedParseProgress);
+    setParsePhase(snapshot.inFlightParseRunId
+      ? snapshot.detail.parseRuns.find((run) => run.id === snapshot.inFlightParseRunId)?.phase ?? null
+      : selectedParseSummary?.phase ?? (snapshot.parseResult ? "completed" : null));
   }, [rememberSelection]);
 
   const buildDocumentSnapshot = useCallback((
@@ -915,6 +924,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const controller = replaceController("document-upload");
     try {
       const response = await uploadDocument(file, controller.signal);
+      setUploadNotice(response.reusedDocument ? "reused" : "created");
       setDocuments((current) => [response.document, ...current.filter((item) => item.id !== response.document.id)]);
       // Keep an upload race from stealing focus from a document selected while
       // the storage request was in flight.
@@ -983,6 +993,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setParseStatus("ready");
     setLastReportedParseProgress(0);
     setParseProgress(0);
+    setParsePhase(null);
     setParseError(null);
     setActivity([]);
     addActivity("documentSelected");
@@ -1053,6 +1064,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         setParseStatus("completed");
         setLastReportedParseProgress(100);
         setParseProgress(100);
+        setParsePhase("completed");
         addActivity("parseCompleted");
       }
     } catch (error) {
@@ -1081,6 +1093,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setParseStatus("queued");
     setLastReportedParseProgress(0);
     setParseProgress(0);
+    setParsePhase("queued");
     setParseError(null);
     addActivity("parseRequested");
     addActivity("parsing");
@@ -1115,6 +1128,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       setParseResult(result);
       setLastReportedParseProgress(100);
       setParseProgress(100);
+      setParsePhase("completed");
       setEvaluationRun(null);
       addActivity("parseCompleted");
       setDocuments((current) => current.map((document) => document.id === documentId ? {
@@ -1765,12 +1779,17 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setEvaluationStatus("processing");
     setEvaluationError(null);
     try {
-      const result = await createEvaluationRun({
+      const result = await createEvaluationRunAsync({
         ...input,
         pipelineId: activePipelineRef.current?.id ?? null,
         chunkRunId,
         embeddingRunId,
-      }, controller.signal);
+      }, controller.signal, (progressRun) => {
+        if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
+        setEvaluationRun(progressRun);
+        setEvaluationHistory((current) => [progressRun, ...current.filter((run) => run.id !== progressRun.id)]);
+        setEvaluationStatus(progressRun.status === "completed" ? "completed" : progressRun.status === "failed" ? "error" : "processing");
+      });
       if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId || (input.retrieval.mode !== "keyword" && selectedEmbeddingRunId !== embeddingRunId)) return;
       setEvaluationRun(result);
       setEvaluationHistory((current) => [result, ...current.filter((run) => run.id !== result.id)]);
@@ -1793,14 +1812,25 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       const runs = await listEvaluationRuns(datasetId, controller.signal);
       if (documentEpochRef.current !== epoch || activeDocumentRef.current?.id !== documentId) return;
       setEvaluationHistory(runs);
-      const latestRun = runs.find((run) => run.status === "completed");
+      const latestRun = runs.find((run) => run.status === "queued" || run.status === "running")
+        ?? runs.find((run) => run.status === "completed" || run.status === "failed");
       if (!latestRun) {
         setEvaluationRun(null);
         return;
       }
-      const detail = await getEvaluationRun(latestRun.id, controller.signal);
+      setEvaluationRun(latestRun);
+      setEvaluationStatus(latestRun.status === "queued" || latestRun.status === "running" ? "processing" : latestRun.status === "completed" ? "completed" : "error");
+      const detail = latestRun.status === "queued" || latestRun.status === "running"
+        ? await waitForEvaluationRun(latestRun.id, controller.signal, (progress) => {
+          if (documentEpochRef.current !== epoch || activeDocumentRef.current?.id !== documentId) return;
+          setEvaluationRun(progress);
+          setEvaluationHistory((current) => [progress, ...current.filter((run) => run.id !== progress.id)]);
+        })
+        : await getEvaluationRun(latestRun.id, controller.signal);
       if (documentEpochRef.current !== epoch || activeDocumentRef.current?.id !== documentId) return;
       setEvaluationRun(detail);
+      setEvaluationHistory((current) => [detail, ...current.filter((run) => run.id !== detail.id)]);
+      setEvaluationStatus(detail.status === "completed" ? "completed" : detail.status === "failed" ? "error" : "processing");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setEvaluationError(asApiError(error, "Evaluation history could not be loaded."));
@@ -1815,7 +1845,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   );
 
   const value = useMemo<DocumentPipelineContextValue>(() => ({
-    pendingUpload, fileError, parseStatus, parseProgress,
+    pendingUpload, fileError, parseStatus, parseProgress, parsePhase,
     parseProgressEstimated: parseProgress > lastReportedParseProgress,
     parseResult, parseError, activity,
     persistenceStatus, persistenceError, capabilities, documents, activeDocumentId, activeDocumentMetadata, activeDocument,
@@ -1823,6 +1853,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     chunkStatus, chunkRun, chunkError, embeddingStatus, embeddingRun, embeddingError,
     experimentStatus, experimentRun, experimentError, experimentHistory,
     evaluationDatasets, evaluationStatus, evaluationRun, evaluationError, evaluationHistory,
+    uploadNotice,
     pipelines, activePipelineId, activePipeline,
     selectFile, addDocument, selectPersistedDocument, selectParseRun, selectChunkRun, selectEmbeddingRun, removeFile, parseSelectedFile, reparseActiveDocument, parseActiveDocument, runChunking, runEmbedding,
     runExperiment, loadExperiment, loadEvaluationDataset, continueExperiment: continueCurrentExperiment, rerunGeneration: rerunCurrentGeneration,
@@ -1832,8 +1863,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     activeDocument, activeDocumentId, activeDocumentMetadata, activePipeline, activePipelineId, activity, capabilities, chunkError, chunkRun, chunkStatus, createDataset, documents,
     embeddingError, embeddingRun, embeddingStatus, evaluationDatasets, evaluationError, evaluationHistory,
     evaluationRun, evaluationStatus, experimentError, experimentHistory, experimentRun, experimentStatus,
-    fileError, lastReportedParseProgress, parseError, parseProgress, parseResult, parseSelectedFile, parseStatus, persistenceError, persistenceStatus,
-    pendingUpload, pipelines, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId,
+    fileError, lastReportedParseProgress, parseError, parsePhase, parseProgress, parseResult, parseSelectedFile, parseStatus, persistenceError, persistenceStatus,
+    pendingUpload, pipelines, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId, uploadNotice,
     addDocument, reparseActiveDocument, parseActiveDocument,
     continueCurrentExperiment, loadEvaluationDataset, loadExperiment, refreshEvaluationRuns, refreshPersistence, removeFile, rerunCurrentGeneration,
     runChunking, runEmbedding, runEvaluation, runExperiment,

@@ -40,6 +40,7 @@ function ArtifactHistory({
   onSelect: (id: string) => Promise<void>;
   kind: "chunk" | "embedding";
 }) {
+  const { preferences } = usePreferences();
   const labels = locale === "tr"
     ? { empty: "Bu upstream için henüz run yok.", selected: "Seçili", active: "Varsayılan", historical: "Geçmiş", status: "Durum", run: "Run", upstream: "Upstream", select: "Seç" }
     : { empty: "No runs exist for this upstream yet.", selected: "Selected", active: "Default", historical: "Historical", status: "Status", run: "Run", upstream: "Upstream", select: "Select" };
@@ -57,12 +58,12 @@ function ArtifactHistory({
             <div className="flex flex-col gap-3 border p-3 sm:flex-row sm:items-center sm:justify-between" data-testid={`${kind}-history-row`} key={run.id}>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="break-all font-mono font-medium">{run.id}</span>
+                  <span className={preferences.detailLevel === "technical" ? "break-all font-mono font-medium" : "font-semibold"}>{preferences.detailLevel === "technical" ? run.id : `${kind === "chunk" ? "C" : "E"}${run.runNumber ?? "—"}`}</span>
                   {isSelected ? <span className="rounded border border-slate-300 px-1.5 py-0.5 text-[10px]">{labels.selected}</span> : null}
                   {run.id === defaultId ? <span className="rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">{labels.active}</span> : null}
                   {run.historicalLineage ? <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">{labels.historical}</span> : null}
                 </div>
-                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500"><span>{labels.status}: {runStatusLabel(run, locale)}</span><span>{labels.upstream}: {upstream || "—"}</span></div>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500"><span>{labels.status}: {runStatusLabel(run, locale)}</span><span>{labels.upstream}: {preferences.detailLevel === "technical" ? upstream || "—" : Object.values(run.upstream).filter(Boolean).length ? `${Object.values(run.upstream).filter(Boolean).length} artifact` : "—"}</span></div>
                 {run.error?.message ? <p className="mt-1 text-xs text-red-700">{run.error.message}</p> : null}
                 {!run.isCompatible && run.compatibilityReason ? <p className="mt-1 text-xs text-orange-700">{run.compatibilityReason}</p> : null}
                 {kind === "chunk" && run.strategy ? <p className="mt-1 text-[11px] text-slate-500">{run.strategy}{run.chunkCount === null || run.chunkCount === undefined ? "" : ` · ${run.chunkCount} chunks`}</p> : null}
@@ -108,8 +109,8 @@ export function EmbeddingsScreen() {
     ? { title: "Embeddings", description: "Seçili chunk input'u, effective model provenance'ı ve embedding sürümlerini inceleyin.", history: "Embedding version history", input: "Seçili chunk input", noInput: "Embedding için tamamlanmış uyumlu bir chunk seçin.", next: "Playground'a git", nextReason: "Playground için önce tamamlanmış bir chunk run gerekir." }
     : { title: "Embeddings", description: "Inspect the selected chunk input, effective model provenance, and embedding versions.", history: "Embedding version history", input: "Selected chunk input", noInput: "Select a compatible completed chunk before creating embeddings.", next: "Go to Playground", nextReason: "A completed chunk run is required before using Playground." };
   const selectedChunk = activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId);
-  const selectedChunkNumber = selectedChunk && activeDocument ? [...activeDocument.chunkRuns].sort((a, b) => String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? "")) || a.id.localeCompare(b.id)).findIndex((run) => run.id === selectedChunk.id) + 1 : 0;
-  const selectedParseNumber = selectedChunk?.upstream.parseRunId && activeDocument ? [...activeDocument.parseRuns].sort((a, b) => String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? "")) || a.id.localeCompare(b.id)).findIndex((run) => run.id === selectedChunk.upstream.parseRunId) + 1 : 0;
+  const selectedChunkNumber = selectedChunk?.runNumber ?? 0;
+  const selectedParseNumber = selectedChunk?.upstream.parseRunId && activeDocument ? activeDocument.parseRuns.find((run) => run.id === selectedChunk.upstream.parseRunId)?.runNumber ?? 0 : 0;
   const canPlayground = Boolean(activeDocument?.id && selectedChunk?.status === "completed" && selectedChunk.isCompatible && selectedChunkRunId);
 
   return (

@@ -91,6 +91,7 @@ ExperimentStageStatus = Literal["completed", "skipped"]
 
 class RunSummary(CamelCaseModel):
     id: str
+    run_number: int | None = Field(default=None, ge=1)
     created_at: datetime | None = None
     status: RunStatus
     progress: int | None = Field(default=None, ge=0, le=100)

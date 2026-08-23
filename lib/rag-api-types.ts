@@ -29,6 +29,8 @@ export type RunTiming = {
 
 export type RunSummary = {
   id: string;
+  runNumber?: number | null;
+  phase?: string | null;
   createdAt?: string | null;
   status: RunStatus;
   progress: number | null;
@@ -339,6 +341,11 @@ export type EvaluationMetrics = {
 
 export type EvaluationCaseResult = {
   question: string;
+  expectedElementIds: string[];
+  retrievedElementIds: string[];
+  referenceAnswer: string | null;
+  answer: string | null;
+  citations: ValidatedCitation[];
   hitAtK: number;
   precisionAtK: number;
   recallAtK: number;

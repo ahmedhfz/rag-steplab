@@ -56,6 +56,24 @@ def test_upload_only_persists_document_without_parse_and_reuses_same_owner_sha()
     assert summary.json()["parseRuns"] == []
 
 
+def test_private_source_preview_uses_authenticated_proxy_without_storage_metadata():
+    uploaded = client.post("/documents", files={"file": ("lesson.pdf", b"%PDF-1.7", "application/pdf")})
+    assert uploaded.status_code == 201
+    document_id = uploaded.json()["document"]["id"]
+
+    descriptor = client.get(f"/documents/{document_id}/source-url")
+    assert descriptor.status_code == 200
+    assert descriptor.json() == {
+        "sourceUrl": f"/documents/{document_id}/source",
+        "expiresIn": 60,
+        "mode": "proxy",
+    }
+    source = client.get(descriptor.json()["sourceUrl"])
+    assert source.status_code == 200
+    assert source.headers["cache-control"] == "private, no-store"
+    assert source.content == b"%PDF-1.7"
+
+
 def test_explicit_parse_after_upload_creates_one_parse_run(monkeypatch):
     monkeypatch.setattr("app.main._dispatch_queued_parse", lambda parse: parse)
 
@@ -171,3 +189,40 @@ def test_async_experiment_queues_json_serializable_lifecycle(monkeypatch):
 
     assert response.status_code == 202
     assert response.json()["startedAt"] == "2026-08-23T20:00:00+00:00"
+
+
+def test_async_evaluation_returns_real_queued_case_lifecycle(monkeypatch):
+    import importlib
+
+    main_module = importlib.import_module("app.main")
+    monkeypatch.setattr(
+        "app.main.queue_evaluation",
+        lambda *_args, **_kwargs: {
+            "id": "evaluation-1",
+            "dataset_id": "dataset-1",
+            "config": {},
+            "child_experiment_ids": [],
+            "results": {"aggregate": {"caseCount": 0}, "caseResults": []},
+            "status": "queued",
+            "started_at": None,
+            "completed_at": None,
+            "duration_ms": None,
+        },
+    )
+    monkeypatch.setattr(
+        "app.main._run_queued_evaluation_and_release",
+        lambda *_args: main_module._pipeline_semaphore.release(),
+    )
+
+    response = client.post(
+        "/evaluation/runs?async=true",
+        json={
+            "datasetId": "dataset-1",
+            "chunkRunId": "chunk-1",
+            "retrieval": {"mode": "keyword", "topK": 3},
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "queued"
+    assert response.json()["results"]["caseResults"] == []

@@ -74,6 +74,7 @@ class ParseRun(Base):
     document_id: Mapped[str] = mapped_column(
         ForeignKey(f"{SCHEMA}.documents.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    run_number: Mapped[int] = mapped_column(Integer, nullable=False)
     parser_name: Mapped[str] = mapped_column(String(128), nullable=False, default="docling")
     parser_version: Mapped[str] = mapped_column(String(128), nullable=False, default="unknown")
     normalized_schema_version: Mapped[str] = mapped_column(
@@ -124,6 +125,7 @@ class ChunkRun(Base):
     document_id: Mapped[str] = mapped_column(
         ForeignKey(f"{SCHEMA}.documents.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    run_number: Mapped[int] = mapped_column(Integer, nullable=False)
     parse_run_id: Mapped[str] = mapped_column(
         ForeignKey(f"{SCHEMA}.parse_runs.id", ondelete="RESTRICT"), nullable=False, index=True
     )
@@ -203,6 +205,7 @@ class EmbeddingRun(Base):
     document_id: Mapped[str] = mapped_column(
         ForeignKey(f"{SCHEMA}.documents.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    run_number: Mapped[int] = mapped_column(Integer, nullable=False)
     chunk_run_id: Mapped[str] = mapped_column(
         ForeignKey(f"{SCHEMA}.chunk_runs.id", ondelete="RESTRICT"), nullable=False, index=True
     )
