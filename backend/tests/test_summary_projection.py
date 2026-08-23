@@ -77,6 +77,9 @@ def test_summary_endpoint_excludes_artifact_bodies():
     for forbidden in ("structured", "markdown", "chunks", "stageResults", "caseResults"):
         assert forbidden not in serialized
     assert payload["experiments"][0]["candidateCount"] == 4
+    assert payload["experiments"][0]["documentId"] == document["id"]
+    assert payload["experiments"][0]["chunkRunId"] == "chunk-summary"
+    assert payload["experiments"][0]["embeddingRunId"] is None
     assert payload["experiments"][0]["stageStatuses"] == {"retrieval": "completed"}
     assert payload["evaluationDatasets"][0]["caseCount"] == 1
     assert payload["evaluationRuns"][0]["id"] == "evaluation-summary"

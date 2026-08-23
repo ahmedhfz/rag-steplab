@@ -605,6 +605,11 @@ def _summary_run_dict(row: dict[str, Any], document: dict[str, Any], bundle: dic
         })
     elif kind == "experiment":
         payload.update({
+            # Hafif summary geçerli kalmalı; böylece istemci eski artifact
+            # endpoint'ine düşmeden deney lineage'ını normalize edebilir.
+            "documentId": row.get("document_id"),
+            "chunkRunId": row.get("chunk_run_id"),
+            "embeddingRunId": row.get("embedding_run_id"),
             "query": row.get("query", ""),
             "targetStage": row.get("target_stage"),
             "candidateCount": row.get("candidate_count"),
