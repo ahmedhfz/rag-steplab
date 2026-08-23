@@ -11,8 +11,8 @@ import { cn } from "@/lib/utils";
 export function DocumentLibrary({ locale }: { locale: AppLocale }) {
   const { documents, activeDocumentId, persistenceStatus, persistenceError, selectPersistedDocument } = useDocumentPipeline();
   const labels = locale === "tr"
-    ? { title: "PDF kitaplığı", loading: "Dokümanlar yükleniyor…", empty: "Henüz PDF eklenmedi.", unavailable: "Doküman servisi kullanılamıyor.", active: "Aktif", pages: "sayfa" }
-    : { title: "PDF library", loading: "Loading documents…", empty: "No PDF has been added yet.", unavailable: "The document service is unavailable.", active: "Active", pages: "pages" };
+    ? { title: "PDF kitaplığı", loading: "Dokümanlar yükleniyor…", empty: "Henüz PDF eklenmedi.", unavailable: "Doküman servisi kullanılamıyor.", active: "Aktif", pages: "sayfa", notParsed: "Ayrıştırılmadı", parsing: "Ayrıştırılıyor", parsed: "Ayrıştırıldı", failed: "Ayrıştırma başarısız" }
+    : { title: "PDF library", loading: "Loading documents…", empty: "No PDF has been added yet.", unavailable: "The document service is unavailable.", active: "Active", pages: "pages", notParsed: "Not parsed", parsing: "Parsing", parsed: "Parsed", failed: "Parse failed" };
 
   return (
     <section className="border-t px-4 py-6 sm:px-7">
@@ -35,7 +35,7 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                       <FileText aria-hidden="true" className="size-5 shrink-0 text-slate-500" />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium">{document.fileName}</span>
-                        <span className="mt-1 block text-xs text-slate-500">{document.pageCount} {labels.pages} · {formatDocumentFileSize(document.sizeBytes, locale)}</span>
+                        <span className="mt-1 block text-xs text-slate-500">{document.latestParseStatus === "completed" ? `${document.pageCount} ${labels.pages}` : document.latestParseStatus === "running" || document.latestParseStatus === "queued" ? labels.parsing : document.latestParseStatus === "failed" ? labels.failed : labels.notParsed} · {formatDocumentFileSize(document.sizeBytes, locale)}</span>
                       </span>
                       {isActive ? <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">{labels.active}</span> : null}
                     </button>

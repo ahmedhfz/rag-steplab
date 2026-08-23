@@ -13,7 +13,7 @@ import {
   createDocumentPipeline,
   createEvaluationDataset,
   createEvaluationRun,
-  createExperiment,
+  createExperimentAsync,
   continueExperiment,
   getCapabilities,
   getChunkRun,
@@ -55,7 +55,7 @@ import type {
 import type { DocumentActivityEventType } from "@/lib/rag-ui-types";
 
 export type DocumentParseStatus = "not-started" | "ready" | "queued" | "running" | "completed" | "failed";
-export type PipelineOperationStatus = "locked" | "ready" | "processing" | "completed" | "error" | "stale";
+export type PipelineOperationStatus = "locked" | "ready" | "processing" | "completed" | "skipped" | "error" | "stale";
 export type PersistenceStatus = "checking" | "available" | "unavailable";
 
 export type DocumentActivityEvent = {
@@ -100,6 +100,7 @@ type PipelineMutationContext = {
 
 type EvaluationRunInput = {
   datasetId: string;
+  pipelineId?: string | null;
   judge: boolean;
   retrieval: ExperimentRequest["retrieval"];
   reranking: ExperimentRequest["reranking"];
@@ -165,7 +166,7 @@ type DocumentPipelineContextValue = {
   loadEvaluationDataset: (datasetId: string) => Promise<EvaluationDataset | null>;
   continueExperiment: () => Promise<void>;
   rerunGeneration: () => Promise<void>;
-  createDataset: (name: string, cases: EvaluationCase[]) => Promise<void>;
+  createDataset: (name: string, cases: EvaluationCase[], baseDatasetId?: string | null) => Promise<void>;
   runEvaluation: (input: EvaluationRunInput) => Promise<void>;
   refreshPersistence: () => Promise<void>;
   refreshEvaluationRuns: (datasetId: string) => Promise<void>;
@@ -783,7 +784,10 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       pipelinesPromise,
       getDocumentSummary(documentId, signal).then((detail) => ({ detail, fetchedAt: Date.now() })),
     ]);
-    const pipeline = nextPipelines.find((item) => item.id === pipelineId) ?? null;
+    const pipeline = nextPipelines.find((item) => item.id === pipelineId)
+      ?? nextPipelines.find((item) => item.isDefault || item.name === "Default Pipeline")
+      ?? nextPipelines[0]
+      ?? null;
     const snapshot = buildDocumentSnapshot(
       loadedSummary.detail,
       pipeline ? pipelineSelection(pipeline) : undefined,
@@ -1548,7 +1552,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const runExperiment = useCallback(async (input: Omit<ExperimentRequest, "documentId" | "chunkRunId" | "embeddingRunId">) => {
     const documentId = activeDocumentRef.current?.id;
     const chunkRunId = selectedChunkRunId;
-    const embeddingRunId = selectedEmbeddingRunId;
+    const embeddingRunId = input.retrieval.mode === "keyword" ? null : selectedEmbeddingRunId;
     if (!documentId || !chunkRunId || experimentStatus === "processing") return;
     if (input.retrieval.mode !== "keyword" && !embeddingRunId) return;
     const epoch = documentEpochRef.current;
@@ -1557,8 +1561,19 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setExperimentStatus("processing");
     setExperimentError(null);
     try {
-      const result = await createExperiment({ ...input, documentId, chunkRunId, embeddingRunId }, controller.signal);
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId || selectedEmbeddingRunId !== embeddingRunId) return;
+      const result = await createExperimentAsync({
+        ...input,
+        documentId,
+        chunkRunId,
+        embeddingRunId,
+        pipelineId: activePipelineRef.current?.id ?? null,
+      }, controller.signal, (progressRun) => {
+        if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
+        setExperimentRun(progressRun);
+        setExperimentHistory((current) => [progressRun, ...current.filter((run) => run.id !== progressRun.id)]);
+        setExperimentStatus(progressRun.status === "running" ? "processing" : progressRun.status === "completed" ? "completed" : "error");
+      });
+      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId || (input.retrieval.mode !== "keyword" && selectedEmbeddingRunId !== embeddingRunId)) return;
       commitExperimentResult(result);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
@@ -1702,7 +1717,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     }
   }, [commitExperimentResult, experimentRun?.id, experimentStatus, replaceController]);
 
-  const createDataset = useCallback(async (name: string, cases: EvaluationCase[]) => {
+  const createDataset = useCallback(async (name: string, cases: EvaluationCase[], baseDatasetId?: string | null) => {
     const documentId = activeDocumentRef.current?.id;
     const parseRunId = selectedParseRunId;
     if (!documentId || !parseRunId) return;
@@ -1713,7 +1728,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setEvaluationStatus("processing");
     setEvaluationError(null);
     try {
-      const dataset = await createEvaluationDataset({ documentId, parseRunId, name, cases }, controller.signal);
+      const dataset = await createEvaluationDataset({ documentId, parseRunId, name, cases, baseDatasetId }, controller.signal);
       if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedParseRunId !== parseRunId || selectedChunkRunId !== chunkRunId) return;
       const summary: EvaluationDatasetSummary = {
         id: dataset.id,
@@ -1721,6 +1736,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         parseRunId: dataset.parseRunId,
         name: dataset.name,
         version: dataset.version,
+        seriesId: dataset.seriesId,
         caseCount: dataset.cases.length,
         createdAt: dataset.createdAt,
       };
@@ -1738,8 +1754,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
 
   const runEvaluation = useCallback(async (input: EvaluationRunInput) => {
     const chunkRunId = selectedChunkRunId;
-    const embeddingRunId = selectedEmbeddingRunId;
-    if (!chunkRunId || !embeddingRunId || evaluationStatus === "processing") return;
+    const embeddingRunId = input.retrieval.mode === "keyword" ? null : selectedEmbeddingRunId;
+    if (!chunkRunId || (input.retrieval.mode !== "keyword" && !embeddingRunId) || evaluationStatus === "processing") return;
     const documentId = activeDocumentRef.current?.id;
     if (!documentId) return;
     const epoch = documentEpochRef.current;
@@ -1748,14 +1764,19 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setEvaluationStatus("processing");
     setEvaluationError(null);
     try {
-      const result = await createEvaluationRun({ ...input, chunkRunId, embeddingRunId }, controller.signal);
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId || selectedEmbeddingRunId !== embeddingRunId) return;
+      const result = await createEvaluationRun({
+        ...input,
+        pipelineId: activePipelineRef.current?.id ?? null,
+        chunkRunId,
+        embeddingRunId,
+      }, controller.signal);
+      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId || (input.retrieval.mode !== "keyword" && selectedEmbeddingRunId !== embeddingRunId)) return;
       setEvaluationRun(result);
       setEvaluationHistory((current) => [result, ...current.filter((run) => run.id !== result.id)]);
       setEvaluationStatus(result.status === "completed" ? "completed" : result.status === "running" ? "processing" : "error");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId || selectedEmbeddingRunId !== embeddingRunId) return;
+      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId || (input.retrieval.mode !== "keyword" && selectedEmbeddingRunId !== embeddingRunId)) return;
       setEvaluationError(asApiError(error, "Evaluation could not be completed."));
       setEvaluationStatus("error");
     } finally {

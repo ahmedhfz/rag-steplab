@@ -91,6 +91,7 @@ ExperimentStageStatus = Literal["completed", "skipped"]
 
 class RunSummary(CamelCaseModel):
     id: str
+    created_at: datetime | None = None
     status: RunStatus
     progress: int | None = Field(default=None, ge=0, le=100)
     is_stale: bool = False
@@ -113,6 +114,8 @@ class DocumentListItem(CamelCaseModel):
     active_parse_run_id: str | None = None
     active_chunk_run_id: str | None = None
     active_embedding_run_id: str | None = None
+    latest_parse_status: ParseStatus | None = None
+    latest_parse_error: dict[str, str] | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -154,6 +157,7 @@ class DocumentPipelineResponse(CamelCaseModel):
     chunk_run_id: str | None = None
     embedding_run_id: str | None = None
     revision: int = Field(ge=1)
+    is_default: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -230,6 +234,7 @@ class GenerationConfig(CamelCaseModel):
 
 class ExperimentCreateRequest(CamelCaseModel):
     document_id: str
+    pipeline_id: str | None = None
     chunk_run_id: str | None = None
     embedding_run_id: str | None = None
     query: str = Field(min_length=1, max_length=4000)
@@ -264,6 +269,7 @@ class EvaluationDatasetRequest(CamelCaseModel):
     parse_run_id: str | None = None
     name: str = Field(min_length=1, max_length=200)
     cases: list[EvaluationCase] = Field(min_length=1, max_length=10)
+    base_dataset_id: str | None = None
 
 
 class EvaluationDatasetResponse(CamelCaseModel):
@@ -272,12 +278,14 @@ class EvaluationDatasetResponse(CamelCaseModel):
     parse_run_id: str
     name: str
     version: int
+    series_id: str | None = None
     cases: list[EvaluationCase]
     created_at: datetime | None = None
 
 
 class EvaluationRunRequest(CamelCaseModel):
     dataset_id: str
+    pipeline_id: str | None = None
     chunk_run_id: str | None = None
     embedding_run_id: str | None = None
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)

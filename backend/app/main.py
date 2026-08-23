@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, Query, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
@@ -25,6 +26,8 @@ from .pipeline import (
     create_embedding_run,
     create_evaluation,
     create_experiment,
+    queue_experiment,
+    run_queued_experiment,
     continue_experiment,
     rerun_generation,
     queue_parse_upload,
@@ -39,6 +42,7 @@ from .document_pipelines import (
 )
 from .gemini import EMBEDDING_FORMAT_VERSION
 from .repository import get_repository
+from .storage import get_storage
 from .schemas import (
     ApiError,
     CapabilitiesResponse,
@@ -196,6 +200,7 @@ def _parse_response(document: dict[str, Any], parse: dict[str, Any], *, reused_d
     metadata.setdefault("parserVersion", parse.get("parser_version", "unknown"))
     metadata.setdefault("normalizedSchemaVersion", parse.get("normalized_schema_version", "normalized-v1"))
     metadata["status"] = status
+    metadata["durationMs"] = parse.get("duration_ms") if parse.get("duration_ms") != 0 else None
     return ParseResponse(
         document=_document_metadata(document),
         structured=structured_value,
@@ -430,8 +435,12 @@ def _run_summary_dict(row: dict[str, Any], document: dict[str, Any], repository)
     if raw_status == "interrupted":
         error_code = "parse_interrupted"
         error_message = error_message or "The parse run was interrupted before completion."
+    public_duration = row.get("duration_ms")
+    if public_duration == 0:
+        public_duration = None
     return _camelize({
         "id": row["id"],
+        "createdAt": row.get("created_at"),
         "status": status,
         "progress": _parse_progress(row) if "structured" in row else None,
         # Kept as a wire-compatible alias for older clients. It no longer
@@ -450,7 +459,7 @@ def _run_summary_dict(row: dict[str, Any], document: dict[str, Any], repository)
         "timing": {
             "startedAt": row.get("started_at"),
             "completedAt": row.get("completed_at"),
-            "durationMs": row.get("duration_ms"),
+            "durationMs": public_duration,
         },
         "error": {"code": error_code, "message": error_message}
         if error_code and error_message
@@ -553,8 +562,12 @@ def _summary_run_dict(row: dict[str, Any], document: dict[str, Any], bundle: dic
     if raw_status == "interrupted":
         error_code = "parse_interrupted"
         error_message = error_message or "The parse run was interrupted before completion."
+    public_duration = row.get("duration_ms")
+    if public_duration == 0:
+        public_duration = None
     payload: dict[str, Any] = {
         "id": row["id"],
+        "createdAt": row.get("created_at"),
         "status": _public_parse_status(raw_status),
         "progress": progress,
         "isStale": not compatible,
@@ -571,7 +584,7 @@ def _summary_run_dict(row: dict[str, Any], document: dict[str, Any], bundle: dic
         "timing": {
             "startedAt": row.get("started_at"),
             "completedAt": row.get("completed_at"),
-            "durationMs": row.get("duration_ms"),
+            "durationMs": public_duration,
         },
         "error": {"code": error_code, "message": error_message} if error_code and error_message else None,
     }
@@ -603,22 +616,27 @@ def _summary_dataset_dict(row: dict[str, Any]) -> dict[str, Any]:
         "parseRunId": row.get("parse_run_id"),
         "name": row.get("name", ""),
         "version": row.get("version", 1),
+        "seriesId": row.get("series_id"),
         "caseCount": row.get("case_count", 0),
         "createdAt": row.get("created_at"),
     }
 
 
 def _summary_evaluation_dict(row: dict[str, Any]) -> dict[str, Any]:
+    public_duration = row.get("duration_ms")
+    if public_duration == 0:
+        public_duration = None
     return {
         "id": row["id"],
+        "createdAt": row.get("created_at"),
         "datasetId": row.get("dataset_id"),
-        "status": _public_parse_status(row.get("status")),
+        "status": _public_parse_status(row.get("status") or "completed"),
         "config": row.get("config", {}),
         "results": row.get("aggregate", {}),
         "timing": {
             "startedAt": row.get("started_at"),
             "completedAt": row.get("completed_at"),
-            "durationMs": row.get("duration_ms"),
+            "durationMs": public_duration,
         },
         "error": {"code": row.get("error_code"), "message": row.get("error_message")}
         if row.get("error_code") and row.get("error_message") else None,
@@ -636,23 +654,31 @@ def _document_list_item(row: dict[str, Any]) -> dict[str, Any]:
         "activeParseRunId": row.get("active_parse_run_id"),
         "activeChunkRunId": row.get("active_chunk_run_id"),
         "activeEmbeddingRunId": row.get("active_embedding_run_id"),
+        "latestParseStatus": row.get("latest_parse_status"),
+        "latestParseError": (
+            {"code": row.get("latest_parse_error_code"), "message": row.get("latest_parse_error_message")}
+            if row.get("latest_parse_error_code") and row.get("latest_parse_error_message") else None
+        ),
         "createdAt": row.get("created_at"),
         "updatedAt": row.get("updated_at"),
     }
 
 
 def _summary_document_evaluation_dict(row: dict[str, Any]) -> dict[str, Any]:
+    public_duration = row.get("duration_ms")
+    if public_duration == 0:
+        public_duration = None
     return {
         "id": row["id"],
         "datasetId": row.get("dataset_id"),
         "parseRunId": row.get("parse_run_id"),
         "chunkRunId": row.get("chunk_run_id"),
         "embeddingRunId": row.get("embedding_run_id"),
-        "status": _public_parse_status(row.get("status")),
+        "status": _public_parse_status(row.get("status") or "completed"),
         "timing": {
             "startedAt": row.get("started_at"),
             "completedAt": row.get("completed_at"),
-            "durationMs": row.get("duration_ms"),
+            "durationMs": public_duration,
         },
         "error": {"code": row.get("error_code"), "message": row.get("error_message")}
         if row.get("error_code") and row.get("error_message")
@@ -669,6 +695,7 @@ def _document_pipeline_response(row: dict[str, Any]) -> DocumentPipelineResponse
         chunk_run_id=row.get("chunk_run_id"),
         embedding_run_id=row.get("embedding_run_id"),
         revision=row["revision"],
+        is_default=bool(row.get("is_default", row.get("name") == "Default Pipeline")),
         created_at=row.get("created_at"),
         updated_at=row.get("updated_at"),
     )
@@ -684,7 +711,24 @@ def _persisted_parse_response(document: dict[str, Any], parse: dict[str, Any]) -
 
 @app.get("/documents")
 def list_documents(user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    return {"items": [_document_list_item(row) for row in _user_repository(user).list_document_rows()]}
+    repository = _user_repository(user)
+    items = []
+    for row in repository.list_document_rows():
+        parses = repository.list_parse_rows(row["id"])
+        latest = max(
+            parses,
+            key=lambda item: (item.get("created_at") or datetime.min.replace(tzinfo=timezone.utc), item.get("id", "")),
+            default=None,
+        )
+        if latest is not None:
+            row = {
+                **row,
+                "latest_parse_status": _public_parse_status(latest.get("status")),
+                "latest_parse_error_code": latest.get("error_code"),
+                "latest_parse_error_message": latest.get("error_message"),
+            }
+        items.append(_document_list_item(row))
+    return {"items": items}
 
 
 @app.get("/documents/{document_id}")
@@ -729,6 +773,41 @@ def get_document_summary(document_id: str, user: CurrentUser = Depends(get_curre
         "evaluationDatasets": [_summary_dataset_dict(row) for row in bundle["datasets"]],
         "evaluationRuns": [_summary_document_evaluation_dict(row) for row in bundle["evaluations"]],
     })
+
+
+@app.get("/documents/{document_id}/source-url")
+def document_source_url(document_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    """Return a short-lived signed URL, or an authenticated proxy URL.
+
+    Storage paths and service credentials never cross this boundary.
+    """
+    repository = _user_repository(user)
+    document = repository.get_document_row(document_id)
+    if document is None:
+        raise ApiProblem(404, "document_not_found", "The document was not found.")
+    storage = get_storage()
+    signed_url = storage.create_signed_url(document["storage_path"], 60)
+    if signed_url:
+        return {"sourceUrl": signed_url, "expiresIn": 60, "mode": "signed"}
+    return {
+        "sourceUrl": f"/documents/{document_id}/source",
+        "expiresIn": 60,
+        "mode": "proxy",
+    }
+
+
+@app.get("/documents/{document_id}/source")
+def document_source(document_id: str, user: CurrentUser = Depends(get_current_user)) -> Response:
+    """Authenticated, non-cacheable PDF proxy used only when signing is unavailable."""
+    document = _user_repository(user).get_document_row(document_id)
+    if document is None:
+        raise ApiProblem(404, "document_not_found", "The document was not found.")
+    content = get_storage().download(document["storage_path"])
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Cache-Control": "private, no-store", "Content-Disposition": "inline"},
+    )
 
 
 @app.get("/documents/{document_id}/pipelines", response_model=list[DocumentPipelineResponse])
@@ -797,9 +876,35 @@ def embedding_run(run_id: str, user: CurrentUser = Depends(get_current_user)) ->
     return _camelize(row)
 
 
-@app.post("/experiments")
-def experiments(request: ExperimentCreateRequest, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    return _camelize(_guarded(create_experiment, request, repository=_user_repository(user)))
+@app.post("/experiments", response_model=None)
+def experiments(
+    request: ExperimentCreateRequest,
+    background_tasks: BackgroundTasks,
+    async_run: bool = Query(default=False, alias="async"),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any] | JSONResponse:
+    repository = _user_repository(user)
+    if not async_run:
+        return _camelize(_guarded(create_experiment, request, repository=repository))
+    if not _pipeline_semaphore.acquire(blocking=False):
+        raise ApiProblem(429, "pipeline_busy", "Another pipeline run is currently in progress.")
+    try:
+        queued = queue_experiment(request, repository=repository)
+        if queued.get("status") == "completed":
+            _pipeline_semaphore.release()
+            return _camelize(queued)
+        background_tasks.add_task(_run_queued_experiment_and_release, request, queued["id"], repository)
+        return JSONResponse(status_code=202, content=_camelize(queued))
+    except Exception:
+        _pipeline_semaphore.release()
+        raise
+
+
+def _run_queued_experiment_and_release(request: ExperimentCreateRequest, experiment_id: str, repository) -> None:
+    try:
+        run_queued_experiment(request, experiment_id, repository=repository)
+    finally:
+        _pipeline_semaphore.release()
 
 
 @app.get("/experiments")
@@ -824,6 +929,30 @@ def get_experiment(experiment_id: str, user: CurrentUser = Depends(get_current_u
     if row is None:
         raise ApiProblem(404, "experiment_not_found", "The experiment was not found.")
     return _camelize(row)
+
+
+@app.get("/experiments/{experiment_id}/status")
+def get_experiment_status(experiment_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    row = _user_repository(user).get_experiment_row(experiment_id)
+    if row is None:
+        raise ApiProblem(404, "experiment_not_found", "The experiment was not found.")
+    stage_results = row.get("stage_results") or {}
+    return _camelize({
+        "id": row["id"],
+        "status": _public_parse_status(row.get("status") or "completed"),
+        "stageStatuses": {
+            stage: (stage_results.get(stage) or {}).get("status")
+            for stage in ("retrieval", "reranking", "context", "generation")
+            if isinstance(stage_results.get(stage), dict) and (stage_results.get(stage) or {}).get("status")
+        },
+        "timing": {
+            "startedAt": row.get("started_at"),
+            "completedAt": row.get("completed_at"),
+            "durationMs": None if row.get("duration_ms") == 0 else row.get("duration_ms"),
+        },
+        "error": {"code": row.get("error_code"), "message": row.get("error_message")}
+        if row.get("error_code") and row.get("error_message") else None,
+    })
 
 
 @app.post("/experiments/{experiment_id}/continue")
@@ -861,7 +990,20 @@ def evaluation_run(request: EvaluationRunRequest, user: CurrentUser = Depends(ge
 
 @app.get("/evaluation/runs")
 def list_evaluation_runs(dataset_id: str | None = Query(default=None, alias="datasetId"), user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    return {"items": _camelize([_summary_evaluation_dict(row) for row in _user_repository(user).list_evaluation_summary_rows(dataset_id, owner_user_id=user.id)])}
+    repository = _user_repository(user)
+    items = []
+    for row in repository.list_evaluation_summary_rows(dataset_id, owner_user_id=user.id):
+        payload = _summary_evaluation_dict(row)
+        dataset = repository.get_dataset_row(row.get("dataset_id", ""))
+        if dataset:
+            config = row.get("config") or {}
+            payload.update({
+                "parseRunId": dataset.get("parse_run_id"),
+                "chunkRunId": config.get("chunk_run_id"),
+                "embeddingRunId": config.get("embedding_run_id"),
+            })
+        items.append(_camelize(payload))
+    return {"items": items}
 
 
 @app.get("/evaluation/runs/{run_id}")
@@ -870,3 +1012,24 @@ def get_evaluation_run(run_id: str, user: CurrentUser = Depends(get_current_user
     if row is None:
         raise ApiProblem(404, "evaluation_run_not_found", "The evaluation run was not found.")
     return _camelize(row)
+
+
+@app.get("/evaluation/runs/{run_id}/status")
+def get_evaluation_run_status(run_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    repository = _user_repository(user)
+    row = repository.get_evaluation_row(run_id)
+    if row is None:
+        raise ApiProblem(404, "evaluation_run_not_found", "The evaluation run was not found.")
+    results = row.get("results") or {}
+    aggregate = results.get("aggregate", {}) if isinstance(results, dict) else {}
+    dataset = repository.get_dataset_row(row["dataset_id"])
+    return _camelize({
+        "id": row["id"],
+        "status": _public_parse_status(row.get("status") or "completed"),
+        "completedCases": len(results.get("caseResults", [])) if isinstance(results, dict) and isinstance(results.get("caseResults"), list) else 0,
+        "totalCases": len(dataset.get("cases", [])) if dataset else 0,
+        "results": aggregate,
+        "timing": {"startedAt": row.get("started_at"), "completedAt": row.get("completed_at"), "durationMs": None if row.get("duration_ms") == 0 else row.get("duration_ms")},
+        "error": {"code": row.get("error_code"), "message": row.get("error_message")}
+        if row.get("error_code") and row.get("error_message") else None,
+    })

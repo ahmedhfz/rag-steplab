@@ -108,8 +108,8 @@ export function EmbeddingsScreen() {
     ? { title: "Embeddings", description: "Seçili chunk input'u, effective model provenance'ı ve embedding sürümlerini inceleyin.", history: "Embedding version history", input: "Seçili chunk input", noInput: "Embedding için tamamlanmış uyumlu bir chunk seçin.", next: "Playground'a git", nextReason: "Playground için önce tamamlanmış bir chunk run gerekir." }
     : { title: "Embeddings", description: "Inspect the selected chunk input, effective model provenance, and embedding versions.", history: "Embedding version history", input: "Selected chunk input", noInput: "Select a compatible completed chunk before creating embeddings.", next: "Go to Playground", nextReason: "A completed chunk run is required before using Playground." };
   const selectedChunk = activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId);
-  const selectedChunkNumber = selectedChunk && activeDocument ? activeDocument.chunkRuns.findIndex((run) => run.id === selectedChunk.id) + 1 : 0;
-  const selectedParseNumber = selectedChunk?.upstream.parseRunId && activeDocument ? activeDocument.parseRuns.findIndex((run) => run.id === selectedChunk.upstream.parseRunId) + 1 : 0;
+  const selectedChunkNumber = selectedChunk && activeDocument ? [...activeDocument.chunkRuns].sort((a, b) => String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? "")) || a.id.localeCompare(b.id)).findIndex((run) => run.id === selectedChunk.id) + 1 : 0;
+  const selectedParseNumber = selectedChunk?.upstream.parseRunId && activeDocument ? [...activeDocument.parseRuns].sort((a, b) => String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? "")) || a.id.localeCompare(b.id)).findIndex((run) => run.id === selectedChunk.upstream.parseRunId) + 1 : 0;
   const canPlayground = Boolean(activeDocument?.id && selectedChunk?.status === "completed" && selectedChunk.isCompatible && selectedChunkRunId);
 
   return (

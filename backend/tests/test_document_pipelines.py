@@ -75,7 +75,9 @@ def test_pipeline_crud_keeps_compatible_historical_lineage_and_revisions():
 
     listed = client.get(f"/documents/{document['id']}/pipelines")
     assert listed.status_code == 200
-    assert [row["id"] for row in listed.json()] == [pipeline["id"]]
+    listed_rows = listed.json()
+    assert pipeline["id"] in [row["id"] for row in listed_rows]
+    assert any(row["isDefault"] and row["name"] == "Default Pipeline" for row in listed_rows)
 
     updated = client.patch(f"/document-pipelines/{pipeline['id']}", json={
         "expectedRevision": 1,
@@ -94,7 +96,10 @@ def test_pipeline_crud_keeps_compatible_historical_lineage_and_revisions():
     assert conflict.json()["error"]["code"] == "pipeline_conflict"
 
     assert client.delete(f"/document-pipelines/{pipeline['id']}").status_code == 204
-    assert client.get(f"/documents/{document['id']}/pipelines").json() == []
+    remaining = client.get(f"/documents/{document['id']}/pipelines").json()
+    assert len(remaining) == 1
+    assert remaining[0]["isDefault"] is True
+    assert client.delete(f"/document-pipelines/{remaining[0]['id']}").json()["error"]["code"] == "default_pipeline_required"
 
 
 def test_pipeline_name_is_case_insensitively_unique_per_document():

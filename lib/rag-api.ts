@@ -181,6 +181,7 @@ function normalizeRun(value: unknown): RunSummary {
   const normalizedError = normalizeProblem(payload.error) ?? (errorCode && errorMessage ? { code: errorCode, message: errorMessage } : null);
   return {
     id: requiredString(payload.id, "run id"),
+    createdAt: optionalString(field(payload, "createdAt", "created_at")),
     status,
     progress: progress ?? (status === "running" ? 8 : status === "queued" ? 0 : null),
     isStale: boolean(field(payload, "isStale", "is_stale")),
@@ -217,6 +218,11 @@ function normalizeDocument(value: unknown): PersistedDocument {
     activeParseRunId: optionalString(field(payload, "activeParseRunId", "active_parse_run_id")),
     activeChunkRunId: optionalString(field(payload, "activeChunkRunId", "active_chunk_run_id")),
     activeEmbeddingRunId: optionalString(field(payload, "activeEmbeddingRunId", "active_embedding_run_id")),
+    latestParseStatus: (() => {
+      const value = field(payload, "latestParseStatus", "latest_parse_status");
+      return value === "queued" || value === "running" || value === "completed" || value === "failed" ? value : null;
+    })(),
+    latestParseError: normalizeProblem(field(payload, "latestParseError", "latest_parse_error")),
     createdAt: optionalString(field(payload, "createdAt", "created_at")),
     updatedAt: optionalString(field(payload, "updatedAt", "updated_at")),
   };
@@ -610,6 +616,7 @@ function normalizeEvaluationRunSummary(value: unknown): EvaluationRunSummary {
   const timing = object(payload.timing);
   return {
     id: requiredString(payload.id, "evaluation run id"),
+    createdAt: optionalString(field(payload, "createdAt", "created_at")),
     datasetId: requiredString(field(payload, "datasetId", "dataset_id"), "evaluation dataset id"),
     parseRunId: requiredString(field(payload, "parseRunId", "parse_run_id"), "evaluation parse run id"),
     chunkRunId: optionalString(field(payload, "chunkRunId", "chunk_run_id")),
@@ -634,6 +641,7 @@ function normalizeDocumentPipeline(value: unknown): DocumentPipeline {
     chunkRunId: optionalString(field(payload, "chunkRunId", "chunk_run_id")),
     embeddingRunId: optionalString(field(payload, "embeddingRunId", "embedding_run_id")),
     revision: requiredNumber(payload.revision, "pipeline revision"),
+    isDefault: Boolean(field(payload, "isDefault", "is_default")),
     createdAt: optionalString(field(payload, "createdAt", "created_at")),
     updatedAt: optionalString(field(payload, "updatedAt", "updated_at")),
   };
@@ -647,6 +655,7 @@ function normalizeDatasetSummary(value: unknown): EvaluationDatasetSummary {
     parseRunId: requiredString(field(payload, "parseRunId", "parse_run_id"), "evaluation parse run id"),
     name: requiredString(payload.name, "evaluation dataset name"),
     version: requiredNumber(payload.version, "evaluation dataset version"),
+    seriesId: optionalString(field(payload, "seriesId", "series_id")),
     caseCount: requiredNumber(field(payload, "caseCount", "case_count"), "evaluation dataset case count"),
     createdAt: optionalString(field(payload, "createdAt", "created_at")),
   };
@@ -799,6 +808,36 @@ export async function getDocumentSummary(documentId: string, signal?: AbortSigna
   }
 }
 
+export async function getDocumentSourceUrl(
+  documentId: string,
+  signal?: AbortSignal,
+): Promise<{ sourceUrl: string; mode: "signed" | "proxy"; expiresIn: number }> {
+  const payload = requiredObject(await request(`/documents/${encodeURIComponent(documentId)}/source-url`, { signal }), "document source URL");
+  const sourceUrl = requiredString(payload.sourceUrl, "document source URL");
+  const mode = payload.mode === "signed" ? "signed" : "proxy";
+  return {
+    sourceUrl: mode === "proxy" ? `${getApiBaseUrl()}${sourceUrl}` : sourceUrl,
+    mode,
+    expiresIn: requiredNumber(payload.expiresIn, "document source URL expiry"),
+  };
+}
+
+export async function getDocumentSourcePreviewUrl(
+  documentId: string,
+  signal?: AbortSignal,
+): Promise<{ sourceUrl: string; mode: "signed" | "proxy"; expiresIn: number; revoke: () => void }> {
+  const descriptor = await getDocumentSourceUrl(documentId, signal);
+  if (descriptor.mode === "signed") {
+    return { ...descriptor, revoke: () => undefined };
+  }
+  const token = await getSupabaseAccessToken();
+  const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+  const response = await fetch(descriptor.sourceUrl, { headers, signal, credentials: "omit" });
+  if (!response.ok) throw new DocumentApiError("source_unavailable", "The private PDF source could not be loaded.", response.status);
+  const objectUrl = URL.createObjectURL(await response.blob());
+  return { ...descriptor, sourceUrl: objectUrl, revoke: () => URL.revokeObjectURL(objectUrl) };
+}
+
 export async function listDocumentPipelines(documentId: string, signal?: AbortSignal): Promise<DocumentPipeline[]> {
   const payload = await request(`/documents/${encodeURIComponent(documentId)}/pipelines`, { signal });
   return listPayload(payload, "pipelines").map(normalizeDocumentPipeline);
@@ -871,8 +910,51 @@ export async function createExperiment(input: ExperimentRequest, signal?: AbortS
   return normalizeExperiment(await request("/experiments", { method: "POST", body: JSON.stringify(input), signal }));
 }
 
+export async function createExperimentAsync(
+  input: ExperimentRequest,
+  signal?: AbortSignal,
+  onProgress?: (run: ExperimentRun) => void,
+): Promise<ExperimentRun> {
+  let run = normalizeExperiment(await request("/experiments?async=true", { method: "POST", body: JSON.stringify(input), signal }));
+  onProgress?.(run);
+  while (run.status === "queued" || run.status === "running") {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(resolve, 650);
+      signal?.addEventListener("abort", () => {
+        window.clearTimeout(timeout);
+        reject(new DOMException("Aborted", "AbortError"));
+      }, { once: true });
+    });
+    run = await getExperiment(run.id, signal);
+    onProgress?.(run);
+  }
+  return run;
+}
+
 export async function getExperiment(experimentId: string, signal?: AbortSignal): Promise<ExperimentRun> {
   return normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}`, { signal }));
+}
+
+export async function getExperimentStatus(experimentId: string, signal?: AbortSignal): Promise<{
+  id: string;
+  status: RunStatus;
+  stageStatuses: Record<string, string>;
+  timing: { startedAt: string | null; completedAt: string | null; durationMs: number | null };
+  error: ApiProblem | null;
+}> {
+  const payload = requiredObject(await request(`/experiments/${encodeURIComponent(experimentId)}/status`, { signal }), "experiment status");
+  const timing = object(payload.timing);
+  return {
+    id: requiredString(payload.id, "experiment status id"),
+    status: normalizeStatus(payload.status),
+    stageStatuses: Object.fromEntries(Object.entries(object(payload.stageStatuses ?? payload.stage_statuses)).filter(([, value]) => typeof value === "string")) as Record<string, string>,
+    timing: {
+      startedAt: optionalString(field(timing, "startedAt", "started_at")),
+      completedAt: optionalString(field(timing, "completedAt", "completed_at")),
+      durationMs: optionalNumber(field(timing, "durationMs", "duration_ms")),
+    },
+    error: normalizeProblem(payload.error),
+  };
 }
 
 export async function continueExperiment(experimentId: string, signal?: AbortSignal): Promise<ExperimentRun> {
@@ -888,7 +970,7 @@ export async function listExperiments(documentId: string, signal?: AbortSignal):
   return listPayload(payload, "experiments").map(normalizeExperimentSummary);
 }
 
-export async function createEvaluationDataset(input: { documentId: string; parseRunId: string; name: string; cases: EvaluationCase[] }, signal?: AbortSignal): Promise<EvaluationDataset> {
+export async function createEvaluationDataset(input: { documentId: string; parseRunId: string; name: string; cases: EvaluationCase[]; baseDatasetId?: string | null }, signal?: AbortSignal): Promise<EvaluationDataset> {
   const payload = object(await request("/evaluation/datasets", { method: "POST", body: JSON.stringify(input), signal }));
   return normalizeDataset(payload);
 }
@@ -901,6 +983,7 @@ function normalizeDataset(value: unknown): EvaluationDataset {
     parseRunId: requiredString(field(payload, "parseRunId", "parse_run_id"), "evaluation parse run id"),
     name: requiredString(payload.name, "evaluation dataset name"),
     version: requiredNumber(payload.version, "evaluation dataset version"),
+    seriesId: optionalString(field(payload, "seriesId", "series_id")),
     cases: requiredArray(payload.cases, (item) => {
       const evaluationCase = requiredObject(item, "evaluation case");
       return {
@@ -924,8 +1007,9 @@ export async function getEvaluationDataset(datasetId: string, signal?: AbortSign
 
 export async function createEvaluationRun(input: {
   datasetId: string;
+  pipelineId?: string | null;
   chunkRunId: string;
-  embeddingRunId: string;
+  embeddingRunId: string | null;
   retrieval: ExperimentRequest["retrieval"];
   reranking: ExperimentRequest["reranking"];
   context: ExperimentRequest["context"];
@@ -937,10 +1021,25 @@ export async function createEvaluationRun(input: {
 
 function normalizeEvaluationRun(value: unknown): EvaluationRun {
   const payload = requiredObject(value, "evaluation run");
+  const resultsPayload = requiredObject(payload.results, "evaluation results");
+  const rawCaseResults = resultsPayload.caseResults;
   return {
     ...normalizeRun(payload),
     datasetId: requiredString(field(payload, "datasetId", "dataset_id"), "evaluation dataset id"),
-    results: normalizeMetrics(requiredObject(payload.results, "evaluation results")),
+    results: normalizeMetrics(resultsPayload),
+    caseResults: Array.isArray(rawCaseResults)
+      ? rawCaseResults.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))).map((item) => ({
+        question: string(item.question),
+        hitAtK: optionalNumber(item.hitAtK) ?? 0,
+        precisionAtK: optionalNumber(item.precisionAtK) ?? 0,
+        recallAtK: optionalNumber(item.recallAtK) ?? 0,
+        mrr: optionalNumber(item.mrr) ?? 0,
+        citationValidity: optionalNumber(item.citationValidity) ?? 0,
+        groundedness: optionalNumber(item.groundedness) ?? 0,
+        groundednessDetail: object(item.groundednessDetail),
+        experimentId: string(item.experimentId),
+      }))
+      : [],
   };
 }
 

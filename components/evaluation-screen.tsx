@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { BarChart3, Database, Play } from "lucide-react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
-import { DisabledReason, EmptyPipelineState, MetricCard, PipelineErrorMessage, RunMetadata, StageSection } from "@/components/pipeline-learning-ui";
+import { DisabledReason, EmptyPipelineState, LearningHint, MetricCard, PipelineErrorMessage, RunMetadata, StageSection } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { UI_COPY } from "@/lib/copy";
 import type { RetrievalMode } from "@/lib/rag-api-types";
+import { firstBlocker } from "@/lib/blockers";
 
 function metric(value: number | null) {
   return value === null ? "—" : value.toFixed(3);
@@ -23,6 +24,7 @@ export function EvaluationScreen() {
   const copy = UI_COPY[preferences.locale];
   const {
     activeDocument,
+    parseResult,
     selectedParseRunId,
     selectedChunkRunId,
     selectedEmbeddingRunId,
@@ -41,7 +43,9 @@ export function EvaluationScreen() {
   const [question, setQuestion] = useState("");
   const [elementIds, setElementIds] = useState("");
   const [referenceAnswer, setReferenceAnswer] = useState("");
+  const [additionalCases, setAdditionalCases] = useState<Array<{ question: string; elements: string; reference: string }>>([]);
   const [datasetId, setDatasetId] = useState("");
+  const [baseDatasetId, setBaseDatasetId] = useState<string | null>(null);
   const [mode, setMode] = useState<RetrievalMode>("hybrid");
   const [topK, setTopK] = useState("5");
   const [reranker, setReranker] = useState(false);
@@ -51,20 +55,22 @@ export function EvaluationScreen() {
     dataset: "Evaluation dataset", datasetDescription: "Golden soru ve ilgili parse element ID'lerini kalıcı bir dataset sürümü olarak kaydeder.",
     name: "Dataset adı", question: "Golden soru", relevant: "İlgili element ID'leri", relevantHint: "Virgülle ayırın; gerçek parse element ID'lerini kullanın.", reference: "Referans cevap (opsiyonel)", create: "Dataset oluştur",
     needDocument: "Önce kalıcı parse run içeren bir doküman seçin.", selectDataset: "Dataset seç", run: "Evaluation çalıştır", judge: "Gemini judge", judgeModel: "Judge model",
-    needPipeline: "Evaluation için aktif chunk ve embedding run gerekir.", metrics: "Ölçümler", history: "Evaluation geçmişi ve karşılaştırma", compare: "Karşılaştır", advanced: "Gelişmiş ayarlar",
+    needPipeline: "Evaluation için aktif chunk ve embedding run gerekir.", metrics: "Ölçümler", history: "Evaluation geçmişi ve karşılaştırma", compare: "Karşılaştır", advanced: "Gelişmiş ayarlar", addCase: "Case ekle", removeCase: "Case'i kaldır", sourcePicker: "Parse source elementlerinden seç", newVersion: "Seçili dataset'ten yeni sürüm oluştur",
     hit: "Hit@K", recall: "Recall@K", precision: "Precision@K", mrr: "MRR", citation: "Citation validity", groundedness: "Groundedness", cases: "Case sayısı",
     retrievalNote: "Retrieval metrikleri golden relevant elementlerle hesaplanır; generation metrikleri ayrı gösterilir.",
   } : {
     dataset: "Evaluation dataset", datasetDescription: "Persists golden questions and relevant parse element IDs as a versioned dataset.",
     name: "Dataset name", question: "Golden question", relevant: "Relevant element IDs", relevantHint: "Comma-separated; use real parsed element IDs.", reference: "Reference answer (optional)", create: "Create dataset",
     needDocument: "Select a persisted document with a parse run first.", selectDataset: "Select dataset", run: "Run evaluation", judge: "Gemini judge", judgeModel: "Judge model",
-    needPipeline: "Evaluation requires active chunk and embedding runs.", metrics: "Metrics", history: "Evaluation history and comparison", compare: "Compare", advanced: "Advanced settings",
+    needPipeline: "Evaluation requires active chunk and embedding runs.", metrics: "Metrics", history: "Evaluation history and comparison", compare: "Compare", advanced: "Advanced settings", addCase: "Add case", removeCase: "Remove case", sourcePicker: "Select from parsed source elements", newVersion: "Create a new version from the selected dataset",
     hit: "Hit@K", recall: "Recall@K", precision: "Precision@K", mrr: "MRR", citation: "Citation validity", groundedness: "Groundedness", cases: "Cases",
     retrievalNote: "Retrieval metrics use golden relevant elements; generation metrics remain separately visible.",
   };
-  const canCreateDataset = Boolean(activeDocument?.id && selectedParseRunId && datasetName.trim() && question.trim() && elementIds.trim() && evaluationStatus !== "processing");
+  const datasetBlocker = firstBlocker(preferences.locale, [[evaluationStatus === "processing", "processing"], [!activeDocument?.id, "missing_document"], [!selectedParseRunId, "missing_parse"], [!datasetName.trim(), "invalid_config"], [!question.trim(), "missing_question"], [!elementIds.trim(), "missing_sources"], [additionalCases.some((item) => !item.question.trim()), "missing_question"], [additionalCases.some((item) => !item.elements.trim()), "missing_sources"]]);
+  const canCreateDataset = !datasetBlocker;
   const selectedDatasetId = datasetId || evaluationDatasets[0]?.id || "";
-  const canRun = Boolean(selectedDatasetId && selectedChunkRunId && selectedEmbeddingRunId && evaluationStatus !== "processing");
+  const evaluationBlocker = firstBlocker(preferences.locale, [[evaluationStatus === "processing", "processing"], [!activeDocument?.id, "missing_document"], [!selectedDatasetId, "missing_dataset"], [!selectedChunkRunId, "missing_chunk"], [mode !== "keyword" && !selectedEmbeddingRunId, "missing_embedding"]]);
+  const canRun = !evaluationBlocker;
   const selectedRuns = useMemo(() => evaluationHistory.filter((run) => compareIds.includes(run.id)), [compareIds, evaluationHistory]);
 
   useEffect(() => {
@@ -80,7 +86,11 @@ export function EvaluationScreen() {
       question: question.trim(),
       relevantElementIds: elementIds.split(",").map((value) => value.trim()).filter(Boolean),
       referenceAnswer: referenceAnswer.trim() || null,
-    }]);
+    }, ...additionalCases.map((item) => ({
+      question: item.question.trim(),
+      relevantElementIds: item.elements.split(",").map((value) => value.trim()).filter(Boolean),
+      referenceAnswer: item.reference.trim() || null,
+    }))], baseDatasetId);
   }
 
   function handleRun() {
@@ -107,17 +117,20 @@ export function EvaluationScreen() {
       </section>
 
       <StageSection description={labels.datasetDescription} locale={preferences.locale} status={evaluationDatasets.length ? "completed" : activeDocument?.activeParseRunId ? "ready" : "locked"} title={labels.dataset}>
+        <LearningHint locale={preferences.locale}>{preferences.locale === "tr" ? "Golden case, bir soruyu ve beklenen kaynak elementlerini birlikte saklar. Böylece retrieval sonucu ölçülebilir olur." : "A golden case stores a question and its expected source elements together, making retrieval measurable."}</LearningHint>
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.7fr)]">
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-xs font-medium" htmlFor="dataset-name">{labels.name}<Input className="mt-2" id="dataset-name" onChange={(event) => setDatasetName(event.target.value)} value={datasetName} /></label>
             <label className="text-xs font-medium" htmlFor="golden-question">{labels.question}<Input className="mt-2" id="golden-question" onChange={(event) => setQuestion(event.target.value)} value={question} /></label>
-            <label className="text-xs font-medium" htmlFor="relevant-elements">{labels.relevant}<Input aria-describedby="relevant-elements-hint" className="mt-2 font-mono" id="relevant-elements" onChange={(event) => setElementIds(event.target.value)} placeholder="element-1, element-4" value={elementIds} /><span className="mt-1 block text-[11px] leading-4 text-slate-500" id="relevant-elements-hint">{labels.relevantHint}</span></label>
+            <label className="text-xs font-medium" htmlFor="relevant-elements">{labels.relevant}<Input aria-describedby="relevant-elements-hint" className="mt-2 font-mono" id="relevant-elements" onChange={(event) => setElementIds(event.target.value)} placeholder="element-1, element-4" value={elementIds} /><span className="mt-1 block text-[11px] leading-4 text-slate-500" id="relevant-elements-hint">{labels.relevantHint}</span>{parseResult?.structured.pages.length ? <div className="mt-2 flex max-h-28 flex-wrap gap-1 overflow-y-auto rounded border p-2"><span className="sr-only">{labels.sourcePicker}</span>{parseResult.structured.pages.flatMap((page) => page.elements).map((element) => { const selected = elementIds.split(",").map((value) => value.trim()).includes(element.id); return <button aria-pressed={selected} className={selected ? "rounded bg-sky-100 px-2 py-1 text-[10px] text-sky-900" : "rounded border px-2 py-1 text-[10px] text-slate-600 hover:bg-slate-50"} key={element.id} onClick={() => setElementIds((current) => { const values = current.split(",").map((value) => value.trim()).filter(Boolean); return values.includes(element.id) ? values.filter((value) => value !== element.id).join(", ") : [...values, element.id].join(", "); })} type="button">{element.type} · {element.id.slice(0, 12)}</button>; })}</div> : null}</label>
             <label className="text-xs font-medium" htmlFor="reference-answer">{labels.reference}<Input className="mt-2" id="reference-answer" onChange={(event) => setReferenceAnswer(event.target.value)} value={referenceAnswer} /></label>
           </div>
+          {additionalCases.length ? <div className="mt-4 space-y-3 sm:col-span-2"><h3 className="text-xs font-semibold">{preferences.locale === "tr" ? "Ek golden case'ler" : "Additional golden cases"}</h3>{additionalCases.map((item, index) => <div className="grid gap-3 border p-3 sm:grid-cols-3" key={`case-${index}`}><label className="text-xs font-medium" htmlFor={`case-question-${index}`}>{labels.question}<Input className="mt-2" id={`case-question-${index}`} onChange={(event) => setAdditionalCases((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, question: event.target.value } : entry))} value={item.question} /></label><label className="text-xs font-medium" htmlFor={`case-elements-${index}`}>{labels.relevant}<Input className="mt-2 font-mono" id={`case-elements-${index}`} onChange={(event) => setAdditionalCases((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, elements: event.target.value } : entry))} value={item.elements} /></label><div className="flex items-end"><Button onClick={() => setAdditionalCases((current) => current.filter((_, entryIndex) => entryIndex !== index))} size="sm" variant="ghost">{labels.removeCase}</Button></div></div>)}</div> : null}
+          <Button className="sm:col-span-2 sm:w-fit" onClick={() => setAdditionalCases((current) => [...current, { question: "", elements: "", reference: "" }])} size="sm" type="button" variant="outline">{labels.addCase}</Button>
           <div>
             <Button aria-describedby={!canCreateDataset ? "dataset-disabled-reason" : undefined} aria-busy={evaluationStatus === "processing"} className="w-full gap-2" disabled={!canCreateDataset} onClick={handleCreateDataset}><Database aria-hidden="true" className="size-4" />{labels.create}</Button>
-            {!canCreateDataset ? <DisabledReason id="dataset-disabled-reason">{labels.needDocument}</DisabledReason> : null}
-            {evaluationDatasets.length ? <div className="mt-4 space-y-2">{evaluationDatasets.map((dataset) => <article className="border p-3" key={dataset.id}><div className="text-sm font-medium" title={dataset.id}>{dataset.name} · v{dataset.version}</div><div className="mt-2 text-xs text-slate-500">{dataset.caseCount} {labels.cases}</div></article>)}</div> : <EmptyPipelineState>{copy.evaluation.emptyDescription}</EmptyPipelineState>}
+            {!canCreateDataset ? <DisabledReason id="dataset-disabled-reason">{datasetBlocker?.message}</DisabledReason> : null}
+            {evaluationDatasets.length ? <div className="mt-4 space-y-2">{evaluationDatasets.map((dataset) => <article className={dataset.id === baseDatasetId ? "border border-sky-300 bg-sky-50 p-3" : "border p-3"} key={dataset.id}><button className="w-full text-left" onClick={() => { setDatasetId(dataset.id); setBaseDatasetId(dataset.id); }} type="button"><div className="text-sm font-medium">{dataset.name} · v{dataset.version}</div><div className="mt-2 text-xs text-slate-500">{dataset.caseCount} {labels.cases}</div></button></article>)}</div> : <EmptyPipelineState>{copy.evaluation.emptyDescription}</EmptyPipelineState>}
           </div>
         </div>
       </StageSection>
@@ -125,20 +138,20 @@ export function EvaluationScreen() {
       <StageSection description={labels.retrievalNote} locale={preferences.locale} status={evaluationStatus} title={labels.metrics}>
         <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
           <div className="space-y-3 border p-4">
-            <label className="text-xs font-medium" htmlFor="evaluation-dataset">{labels.selectDataset}<Select onValueChange={setDatasetId} value={selectedDatasetId}><SelectTrigger className="mt-2" id="evaluation-dataset"><SelectValue placeholder={labels.selectDataset} /></SelectTrigger><SelectContent>{evaluationDatasets.map((dataset) => <SelectItem key={dataset.id} value={dataset.id}>{dataset.name} · v{dataset.version}</SelectItem>)}</SelectContent></Select></label>
+            <label className="text-xs font-medium" htmlFor="evaluation-dataset">{labels.selectDataset}<Select onValueChange={(value) => { setDatasetId(value); setBaseDatasetId(value); }} value={selectedDatasetId}><SelectTrigger className="mt-2" id="evaluation-dataset"><SelectValue placeholder={labels.selectDataset} /></SelectTrigger><SelectContent>{evaluationDatasets.map((dataset) => <SelectItem key={dataset.id} value={dataset.id}>{dataset.name} · v{dataset.version}</SelectItem>)}</SelectContent></Select></label>
             <details className="border px-3 py-2"><summary className="cursor-pointer text-xs font-semibold">{labels.advanced}</summary><div className="mt-3 space-y-3"><label className="text-xs font-medium" htmlFor="evaluation-mode">Mode<Select onValueChange={(value) => setMode(value as RetrievalMode)} value={mode}><SelectTrigger className="mt-2" id="evaluation-mode"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="dense">Dense</SelectItem><SelectItem value="keyword">Keyword</SelectItem><SelectItem value="hybrid">Hybrid</SelectItem></SelectContent></Select></label>
             <label className="text-xs font-medium" htmlFor="evaluation-top-k">Top-K<Select onValueChange={setTopK} value={topK}><SelectTrigger className="mt-2" id="evaluation-top-k"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="3">3</SelectItem><SelectItem value="5">5</SelectItem><SelectItem value="10">10</SelectItem></SelectContent></Select></label>
             <label className="flex items-center justify-between gap-3 text-xs font-medium" htmlFor="evaluation-reranker">Reranker<Switch checked={reranker} id="evaluation-reranker" onCheckedChange={setReranker} /></label>
             <label className="flex items-center justify-between gap-3 text-xs font-medium" htmlFor="evaluation-judge"><span>{labels.judge}<span className="mt-1 block font-normal text-slate-500">{labels.judgeModel}: {capabilities?.judgeModel || "—"}</span></span><Switch checked={judge} id="evaluation-judge" onCheckedChange={setJudge} /></label></div></details>
             <Button aria-describedby={!canRun ? "evaluation-disabled-reason" : undefined} aria-busy={evaluationStatus === "processing"} className="w-full gap-2" disabled={!canRun} onClick={handleRun}><Play aria-hidden="true" className="size-4" />{labels.run}</Button>
-            {!canRun ? <DisabledReason id="evaluation-disabled-reason">{labels.needPipeline}</DisabledReason> : null}
+            {!canRun ? <DisabledReason id="evaluation-disabled-reason">{evaluationBlocker?.message}</DisabledReason> : null}
             <PipelineErrorMessage message={evaluationError?.message} />
           </div>
           <div>
             {evaluationRun ? <><RunMetadata locale={preferences.locale} run={evaluationRun} /><div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">{[
               [labels.hit, metric(evaluationRun.results.hitAtK)], [labels.recall, metric(evaluationRun.results.recallAtK)], [labels.precision, metric(evaluationRun.results.precisionAtK)], [labels.mrr, metric(evaluationRun.results.mrr)],
               [labels.citation, metric(evaluationRun.results.citationValidity)], [labels.groundedness, metric(evaluationRun.results.groundedness)], [labels.cases, evaluationRun.results.caseCount === null ? "—" : String(evaluationRun.results.caseCount)], [labels.judgeModel, evaluationRun.results.judgeModel ?? "—"],
-            ].map(([label, value]) => <MetricCard key={label} label={label} value={value} />)}</div></> : <div className="flex min-h-64 flex-col items-center justify-center border-y px-5 text-center"><BarChart3 aria-hidden="true" className="size-9 text-slate-500" /><h2 className="mt-4 text-sm font-semibold">{copy.evaluation.emptyTitle}</h2><p className="mt-2 max-w-md text-sm leading-6 text-slate-500">{copy.evaluation.emptyDescription}</p><p className="mt-2 text-xs text-slate-500">{copy.evaluation.emptyNote}</p></div>}
+            ].map(([label, value]) => <MetricCard key={label} label={label} value={value} />)}</div>{evaluationRun.caseResults?.length ? <div className="mt-4 space-y-2" aria-label={preferences.locale === "tr" ? "Case tanıları" : "Case diagnostics"}>{evaluationRun.caseResults.map((item, index) => <article className="border p-3 text-xs" key={item.experimentId || `${item.question}-${index}`}><div className="font-medium">{index + 1}. {item.question}</div><div className="mt-2 grid grid-cols-2 gap-2 text-slate-600 sm:grid-cols-5"><span>Hit {item.hitAtK.toFixed(3)}</span><span>Recall {item.recallAtK.toFixed(3)}</span><span>Precision {item.precisionAtK.toFixed(3)}</span><span>MRR {item.mrr.toFixed(3)}</span><span>{item.experimentId ? item.experimentId.slice(0, 8) : "—"}</span></div></article>)}</div> : null}</> : <div className="flex min-h-64 flex-col items-center justify-center border-y px-5 text-center"><BarChart3 aria-hidden="true" className="size-9 text-slate-500" /><h2 className="mt-4 text-sm font-semibold">{copy.evaluation.emptyTitle}</h2><p className="mt-2 max-w-md text-sm leading-6 text-slate-500">{copy.evaluation.emptyDescription}</p><p className="mt-2 text-xs text-slate-500">{copy.evaluation.emptyNote}</p></div>}
           </div>
         </div>
       </StageSection>

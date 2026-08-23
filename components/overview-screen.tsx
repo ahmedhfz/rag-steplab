@@ -19,7 +19,7 @@ import type { PipelineStepDefinition, PipelineStepKey, PipelineStepState } from 
 const pipelineSteps: PipelineStepDefinition[] = [
   { key: "document", icon: "document" }, { key: "parse", icon: "parse" },
   { key: "chunk", icon: "chunk" }, { key: "embed", icon: "embed" },
-  { key: "index", icon: "index" }, { key: "retrieve", icon: "retrieve" },
+  { key: "retrieve", icon: "retrieve" },
   { key: "rerank", icon: "rerank" }, { key: "context", icon: "context" },
   { key: "generate", icon: "generate" }, { key: "evaluate", icon: "evaluate" },
 ];
@@ -29,8 +29,12 @@ const pipelineIcons: Record<PipelineStepKey, LucideIcon> = {
   retrieve: Search, rerank: ArrowUpDown, context: Blocks, generate: CircleEllipsis, evaluate: BarChart3,
 };
 
-function runNumber(runs: Array<{ id: string }>, id: string | null) {
-  const index = id ? runs.findIndex((run) => run.id === id) : -1;
+function runNumber(runs: Array<{ id: string; createdAt?: string | null }>, id: string | null) {
+  const ordered = [...runs].sort((left, right) => {
+    const byDate = String(left.createdAt ?? "").localeCompare(String(right.createdAt ?? ""));
+    return byDate || left.id.localeCompare(right.id);
+  });
+  const index = id ? ordered.findIndex((run) => run.id === id) : -1;
   return index >= 0 ? index + 1 : null;
 }
 
@@ -65,17 +69,18 @@ export function OverviewScreen() {
     activePipeline, selectPersistedDocument, selectPipeline, createPipeline, renamePipeline, deletePipeline,
   } = useDocumentPipeline();
   const [editing, setEditing] = useState<"create" | "rename" | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [pipelineName, setPipelineName] = useState("");
   const labels = preferences.locale === "tr" ? {
     description: "Seçili dokümanın gerçek RAG lineage’ını ve adım durumlarını inceleyin.", document: "Doküman", chooseDocument: "Doküman seçin",
-    pipeline: "Pipeline", noPipeline: "Pipeline yok (yerel çalışma alanı)", newPipeline: "Yeni", rename: "Yeniden adlandır", remove: "Sil",
+    pipeline: "Indexing pipeline", noPipeline: "Indexing pipeline seçin", newPipeline: "Yeni", rename: "Yeniden adlandır", remove: "Sil",
     save: "Kaydet", cancel: "Vazgeç", namePlaceholder: "Pipeline adı", lineage: "Seçili lineage", continue: "Devam et",
     empty: "Henüz doküman yok. RAG akışına başlamak için Documents ekranından bir PDF ekleyin.", documentsCta: "Dokümanlara git",
     confirmDelete: "Bu pipeline silinsin mi? Artifact’lar silinmez.",
     loading: "Doküman workspace’i yükleniyor…", unavailable: "Doküman servisi kullanılamıyor.",
   } : {
     description: "Inspect the selected document's real RAG lineage and stage states.", document: "Document", chooseDocument: "Select a document",
-    pipeline: "Pipeline", noPipeline: "No pipeline (local workspace)", newPipeline: "New", rename: "Rename", remove: "Delete",
+    pipeline: "Indexing pipeline", noPipeline: "Select an indexing pipeline", newPipeline: "New", rename: "Rename", remove: "Delete",
     save: "Save", cancel: "Cancel", namePlaceholder: "Pipeline name", lineage: "Selected lineage", continue: "Continue",
     empty: "No documents yet. Add a PDF from Documents to begin the RAG flow.", documentsCta: "Go to Documents",
     confirmDelete: "Delete this pipeline? Artifacts will not be deleted.",
@@ -119,8 +124,9 @@ export function OverviewScreen() {
       <section className="px-4 py-7 sm:px-8 sm:py-9">
         <h1 className="text-[22px] font-semibold tracking-[-0.025em]">{copy.overview.title}</h1>
         <p className="mt-2 text-sm text-slate-600">{labels.description}</p>
-        <div className="technical-scrollbar mt-7 overflow-x-auto pb-3">
-          <div className="flex min-w-[1180px] items-start">
+        <div className="mt-7 grid gap-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400 sm:grid-cols-3"><span className="border-l-2 border-slate-300 pl-2">{preferences.locale === "tr" ? "Bilgi hazırlama / indexing" : "Knowledge preparation / indexing"}</span><span className="border-l-2 border-sky-300 pl-2">{preferences.locale === "tr" ? "Sorgu pipeline'ı" : "Query pipeline"}</span><span className="border-l-2 border-emerald-300 pl-2">{preferences.locale === "tr" ? "Kalite" : "Quality"}</span></div>
+        <div className="technical-scrollbar mt-3 overflow-x-auto pb-3">
+          <div className="flex min-w-[980px] items-start">
             {pipelineSteps.map((step, index) => {
               const Icon = pipelineIcons[step.icon];
               return (
@@ -156,9 +162,10 @@ export function OverviewScreen() {
               <div className="mt-2 flex flex-wrap gap-2">
                 <Button onClick={() => { setEditing("create"); setPipelineName(""); }} size="sm" variant="secondary">{labels.newPipeline}</Button>
                 <Button disabled={!activePipeline} onClick={() => { setEditing("rename"); setPipelineName(activePipeline?.name ?? ""); }} size="sm" variant="ghost">{labels.rename}</Button>
-                <Button disabled={!activePipeline} onClick={() => { if (activePipeline && window.confirm(labels.confirmDelete)) void deletePipeline(activePipeline.id); }} size="sm" variant="ghost">{labels.remove}</Button>
+                <Button disabled={!activePipeline} onClick={() => setConfirmDelete(true)} size="sm" variant="ghost">{labels.remove}</Button>
               </div>
               {editing ? <div className="mt-3 flex gap-2"><Input aria-label={labels.namePlaceholder} maxLength={100} onChange={(event) => setPipelineName(event.target.value)} placeholder={labels.namePlaceholder} value={pipelineName} /><Button disabled={!pipelineName.trim()} onClick={() => void savePipelineName()} size="sm">{labels.save}</Button><Button onClick={() => setEditing(null)} size="sm" variant="ghost">{labels.cancel}</Button></div> : null}
+              {confirmDelete && activePipeline ? <div aria-labelledby="delete-pipeline-title" aria-modal="true" className="fixed inset-0 z-50 grid place-items-center bg-slate-950/30 p-4" role="dialog"><div className="w-full max-w-sm border bg-white p-5 shadow-xl"><h2 className="text-sm font-semibold" id="delete-pipeline-title">{labels.remove}</h2><p className="mt-2 text-sm leading-5 text-slate-600">{labels.confirmDelete}</p><div className="mt-5 flex justify-end gap-2"><Button onClick={() => setConfirmDelete(false)} variant="outline">{labels.cancel}</Button><Button onClick={() => { void deletePipeline(activePipeline.id); setConfirmDelete(false); }} variant="destructive">{labels.remove}</Button></div></div></div> : null}
             </div>
             <div className="flex flex-wrap items-center justify-between gap-4 border-t pt-5 lg:col-span-2">
               <div><p className="text-xs text-slate-500">{labels.lineage}</p><p className="mt-1 font-semibold tracking-wide">P{parseNumber ?? "—"} → C{chunkNumber ?? "—"} → E{embeddingNumber ?? "—"}</p></div>
