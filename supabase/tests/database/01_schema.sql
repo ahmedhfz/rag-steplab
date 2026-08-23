@@ -1,6 +1,6 @@
 begin;
 
-select plan(47);
+select plan(48);
 
 select ok(to_regnamespace('rag_lab') is not null, 'rag_lab schema exists');
 
