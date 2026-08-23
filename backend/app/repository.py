@@ -2026,7 +2026,7 @@ class SqlAlchemyRepository(Repository):
                         SELECT 1 AS kind_order, p.created_at AS sort_created, p.id AS sort_id,
                                'parse' AS kind,
                                jsonb_build_object(
-                                   'id', p.id, 'document_id', p.document_id,
+                                   'id', p.id, 'run_number', p.run_number, 'document_id', p.document_id,
                                    'parser_name', p.parser_name, 'parser_version', p.parser_version,
                                    'normalized_schema_version', p.normalized_schema_version,
                                    'has_structured', p.structured IS NOT NULL,
@@ -2045,7 +2045,7 @@ class SqlAlchemyRepository(Repository):
 
                         SELECT 2, c.created_at, c.id, 'chunk',
                                jsonb_build_object(
-                                   'id', c.id, 'document_id', c.document_id,
+                                   'id', c.id, 'run_number', c.run_number, 'document_id', c.document_id,
                                    'parse_run_id', c.parse_run_id, 'strategy', c.strategy,
                                    'config', c.config, 'status', c.status,
                                    'chunk_count', c.chunk_count, 'error_code', c.error_code,
@@ -2060,7 +2060,7 @@ class SqlAlchemyRepository(Repository):
 
                         SELECT 3, e.created_at, e.id, 'embedding',
                                jsonb_build_object(
-                                   'id', e.id, 'document_id', e.document_id,
+                                   'id', e.id, 'run_number', e.run_number, 'document_id', e.document_id,
                                    'chunk_run_id', e.chunk_run_id, 'model', e.model,
                                    'dimensions', e.dimensions,
                                    'embedding_format_version', e.embedding_format_version,

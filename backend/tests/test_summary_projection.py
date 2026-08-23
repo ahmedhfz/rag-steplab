@@ -71,6 +71,7 @@ def test_summary_endpoint_excludes_artifact_bodies():
     assert response.status_code == 200
     payload = response.json()
     assert payload["parseRuns"][0]["id"] == parse["id"]
+    assert payload["parseRuns"][0]["runNumber"] == parse["run_number"]
     assert payload["parseRuns"][0]["isCompatible"] is True
     serialized = response.text
     for forbidden in ("structured", "markdown", "chunks", "stageResults", "caseResults"):
@@ -146,6 +147,9 @@ def test_sql_summary_bundle_uses_constant_projection_queries(monkeypatch):
     assert "'stage_results'" not in sql
     assert "evaluation_datasets.cases," not in sql
     assert "evaluation_runs.results" not in sql
+    assert "p.run_number" in sql
+    assert "c.run_number" in sql
+    assert "e.run_number" in sql
 
 
 def test_summary_contract_keeps_document_ownership_boundary():
