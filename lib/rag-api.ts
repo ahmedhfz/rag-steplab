@@ -191,9 +191,10 @@ function normalizeRun(value: unknown): RunSummary {
     upstream: Object.fromEntries(Object.entries(upstream).map(([key, item]) => [key, optionalString(item)])),
     config,
     timing: {
-      startedAt: optionalString(timing.startedAt ?? payload.started_at),
-      completedAt: optionalString(timing.completedAt ?? payload.completed_at),
-      durationMs: optionalNumber(timing.durationMs ?? payload.duration_ms),
+      startedAt: optionalString(timing.startedAt ?? field(payload, "startedAt", "started_at")),
+      completedAt: optionalString(timing.completedAt ?? field(payload, "completedAt", "completed_at")),
+      // Detay ve özet endpoint'leri farklı isimlendirme kullanabilir; süreyi uydurmadan ikisini de kabul et.
+      durationMs: optionalNumber(timing.durationMs ?? field(payload, "durationMs", "duration_ms")),
     },
     error: normalizedError ?? (payload.status === "interrupted" ? { code: "parse_interrupted", message: "The parse run was interrupted before completion." } : null),
     strategy: typeof payload.strategy === "string" ? normalizeChunkStrategy(payload.strategy) : null,
