@@ -116,6 +116,13 @@ class DocumentListItem(CamelCaseModel):
     updated_at: datetime | None = None
 
 
+class DocumentUploadResponse(CamelCaseModel):
+    """The upload-only contract deliberately contains no parse artifact/run."""
+
+    document: DocumentListItem
+    reused_document: bool = False
+
+
 class DocumentDetail(DocumentListItem):
     parse_runs: list[RunSummary] = Field(default_factory=list)
     chunk_runs: list[RunSummary] = Field(default_factory=list)

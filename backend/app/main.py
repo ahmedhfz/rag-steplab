@@ -29,6 +29,7 @@ from .pipeline import (
     rerun_generation,
     queue_parse_upload,
     queue_reparse_document,
+    persist_document_upload,
     run_lineage_compatibility,
     SUPPORTED_NORMALIZED_SCHEMA_VERSION,
 )
@@ -45,6 +46,7 @@ from .schemas import (
     EvaluationRunRequest,
     ExperimentCreateRequest,
     DocumentMetadata,
+    DocumentUploadResponse,
     ParseSummary,
     ParseResponse,
     StructuredContent,
@@ -312,6 +314,41 @@ async def parse_document(
     return JSONResponse(
         status_code=202,
         content=payload.model_dump(by_alias=True, exclude_none=True, mode="json"),
+    )
+
+
+@app.post(
+    "/documents",
+    response_model=DocumentUploadResponse,
+    status_code=201,
+    responses={200: {"model": DocumentUploadResponse}},
+)
+async def upload_document(
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(get_current_user),
+) -> JSONResponse:
+    """Store a private source PDF; parsing is an explicit Parse-page action."""
+
+    file_name = file.filename or ""
+    content_type = file.content_type or ""
+    try:
+        content = await file.read(get_settings().max_file_size_bytes + 1)
+    finally:
+        await file.close()
+    _ensure_file(content, file_name, content_type)
+    document, reused_document = await run_in_threadpool(
+        persist_document_upload,
+        content,
+        file_name,
+        repository=_user_repository(user),
+    )
+    payload = DocumentUploadResponse(
+        document=_document_list_item(document),
+        reused_document=reused_document,
+    )
+    return JSONResponse(
+        status_code=200 if reused_document else 201,
+        content=payload.model_dump(by_alias=True, mode="json"),
     )
 
 

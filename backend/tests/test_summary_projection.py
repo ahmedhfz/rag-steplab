@@ -1,5 +1,4 @@
 from contextlib import contextmanager
-from types import SimpleNamespace
 import uuid
 
 from fastapi.testclient import TestClient
@@ -88,45 +87,43 @@ def test_summary_endpoint_excludes_artifact_bodies():
 
 
 def test_sql_summary_bundle_uses_constant_projection_queries(monkeypatch):
-    document = SimpleNamespace(
-        id="document-1",
-        file_name="projection.pdf",
-        media_type="application/pdf",
-        size_bytes=32,
-        page_count=1,
-        sha256="sha",
-        owner_user_id=OWNER_ID,
-        storage_bucket="documents",
-        storage_path="projection.pdf",
-        active_parse_run_id="parse-1",
-        active_chunk_run_id="chunk-1",
-        active_embedding_run_id="embedding-1",
-        created_at=None,
-        updated_at=None,
-    )
+    document = {
+        "id": "document-1",
+        "file_name": "projection.pdf",
+        "media_type": "application/pdf",
+        "size_bytes": 32,
+        "page_count": 1,
+        "sha256": "sha",
+        "owner_user_id": OWNER_ID,
+        "storage_bucket": "documents",
+        "storage_path": "projection.pdf",
+        "active_parse_run_id": "parse-1",
+        "active_chunk_run_id": "chunk-1",
+        "active_embedding_run_id": "embedding-1",
+        "created_at": None,
+        "updated_at": None,
+    }
 
     class Result:
+        def __init__(self, row=None):
+            self.row = row
+
         def mappings(self):
             return self
 
+        def first(self):
+            return self.row
+
         def all(self):
             return []
-
-    class Scalars:
-        def first(self):
-            return document
 
     class Session:
         def __init__(self):
             self.statements = []
 
-        def scalars(self, statement):
-            self.statements.append(statement)
-            return Scalars()
-
         def execute(self, statement):
             self.statements.append(statement)
-            return Result()
+            return Result(document if len(self.statements) == 1 else None)
 
     session = Session()
 

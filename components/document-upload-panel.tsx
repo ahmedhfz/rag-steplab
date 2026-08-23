@@ -1,111 +1,131 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { CloudUpload, FileText, X } from "lucide-react";
-import { motion } from "motion/react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { FilePlus, Upload, X } from "lucide-react";
 
-import { useDocumentPipeline, type DocumentParseStatus } from "@/components/document-pipeline-provider";
+import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { type AppCopy, UI_COPY } from "@/lib/copy";
-import { formatDocumentFileSize } from "@/lib/document-file";
-import { cn } from "@/lib/utils";
+import { validatePdfFile, type DocumentFileValidationError, formatDocumentFileSize } from "@/lib/document-file";
 
-function parseStatusLabel(status: DocumentParseStatus, copy: AppCopy) {
-  if (status === "queued") return copy.overview.parseQueued;
-  if (status === "running") return copy.overview.parseRunning;
-  if (status === "completed") return copy.overview.parseCompleted;
-  if (status === "failed") return copy.overview.parseFailed;
-  if (status === "ready") return copy.overview.parseReady;
-  return copy.overview.noDocumentSelected;
+function validationMessage(error: DocumentFileValidationError, copy: AppCopy["overview"]) {
+  if (error === "invalidPdf") return copy.invalidPdf;
+  return copy.fileTooLarge;
 }
 
-function parseDisabledReason(status: DocumentParseStatus, hasPendingUpload: boolean, hasActiveDocument: boolean, hasVisibleDocument: boolean, locale: "en" | "tr") {
-  if (status === "queued" || status === "running") return locale === "tr" ? "Ayrıştırma devam ediyor." : "Parsing is already running.";
-  if (hasPendingUpload) return locale === "tr" ? "Seçili PDF gerçek parser'a gönderilmeye hazır." : "The selected PDF is ready for the real parser.";
-  if (hasActiveDocument) return locale === "tr" ? "Saklanan kaynak PDF'i yeniden ayrıştırabilirsiniz." : "Reparse the stored source PDF when you need a fresh parse.";
-  if (hasVisibleDocument) return locale === "tr" ? "Doküman özeti yükleniyor." : "The document summary is loading.";
-  return locale === "tr" ? "Önce bir PDF seçin veya kalıcı bir doküman açın." : "Select a PDF or open a persisted document first.";
-}
-
+/** Documents owns persistence; parsing starts only from the Parse screen. */
 export function DocumentUploadPanel() {
   const { preferences } = usePreferences();
   const copy = UI_COPY[preferences.locale];
+  const { addDocument } = useDocumentPipeline();
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const chooseButtonRef = useRef<HTMLButtonElement>(null);
-  const dragDepthRef = useRef(0);
-  const [isDragging, setIsDragging] = useState(false);
-  const {
-    pendingUpload,
-    fileError,
-    parseStatus,
-    parseError,
-    activeDocumentMetadata,
-    activeDocument,
-    selectFile,
-    removeFile,
-    parseSelectedFile,
-    reparseActiveDocument,
-  } = useDocumentPipeline();
-  const hasPendingUpload = Boolean(pendingUpload);
-  const visibleDocument = activeDocument ?? activeDocumentMetadata;
-  const hasVisibleDocument = Boolean(visibleDocument);
-  const hasActiveDocument = Boolean(activeDocument);
-  const isProcessing = parseStatus === "queued" || parseStatus === "running";
-  const canParse = (hasPendingUpload || hasActiveDocument) && !isProcessing;
+  const chooseRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [validationError, setValidationError] = useState<DocumentFileValidationError | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  function chooseFile(event: React.ChangeEvent<HTMLInputElement>) {
-    selectFile(event.target.files?.[0]);
-    event.target.value = "";
+  const closeDialog = useCallback(() => {
+    if (isSubmitting) return;
+    setOpen(false);
+    setFile(null);
+    setValidationError(null);
+    setSubmitError(null);
+    window.setTimeout(() => triggerRef.current?.focus(), 0);
+  }, [isSubmitting]);
+
+  useEffect(() => {
+    if (!open) return;
+    const timeout = window.setTimeout(() => chooseRef.current?.focus(), 0);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeDialog();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [closeDialog, open]);
+
+  function openDialog() {
+    setFile(null);
+    setValidationError(null);
+    setSubmitError(null);
+    setOpen(true);
   }
 
-  function clearFile() {
-    removeFile();
-    chooseButtonRef.current?.focus();
+  function chooseFile(nextFile: File | undefined) {
+    if (!nextFile) return;
+    const error = validatePdfFile(nextFile);
+    setFile(nextFile);
+    setValidationError(error);
+    setSubmitError(null);
   }
+
+  async function submit() {
+    if (!file || validationError || isSubmitting) return;
+    setIsSubmitting(true);
+    setSubmitError(null);
+    try {
+      await addDocument(file);
+      setOpen(false);
+      setFile(null);
+      window.setTimeout(() => triggerRef.current?.focus(), 0);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : copy.overview.unknownParseError);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  const dialogLabels = preferences.locale === "tr"
+    ? { close: "Kapat", title: "PDF ekle", submit: "Dokümanı kaydet", selected: "Seçilen dosya", empty: "Henüz PDF seçilmedi", saving: "Kaydediliyor…" }
+    : { close: "Close", title: "Add PDF", submit: "Save document", selected: "Selected file", empty: "No PDF selected yet", saving: "Saving…" };
 
   return (
-    <section className="border-t px-4 py-6 sm:px-7" data-testid="document-upload-panel">
-      <div className="flex items-start gap-3"><FileText aria-hidden="true" className="mt-0.5 size-5 text-slate-500" /><div><h2 className="text-sm font-semibold">{copy.overview.uploadDocument}</h2><p className="mt-1 text-xs leading-5 text-slate-500">{copy.overview.fileRequirements}</p></div></div>
-      <motion.div
-        animate={{ opacity: 1, scale: isDragging ? 1.01 : 1 }}
-        aria-describedby={fileError ? "documents-file-requirements documents-file-error" : "documents-file-requirements"}
-        aria-label={copy.overview.uploadDocument}
-        className={cn("mt-5 flex min-h-36 flex-col items-center justify-center rounded-md border border-dashed bg-white px-5 text-center transition-[background-color,border-color,box-shadow] duration-150", isDragging && "border-slate-950 bg-slate-50")}
-        data-state={isDragging ? "drag-active" : "idle"}
-        onDragEnter={(event) => { event.preventDefault(); dragDepthRef.current += 1; setIsDragging(true); }}
-        onDragLeave={(event) => { event.preventDefault(); dragDepthRef.current = Math.max(0, dragDepthRef.current - 1); if (dragDepthRef.current === 0) setIsDragging(false); }}
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => { event.preventDefault(); dragDepthRef.current = 0; setIsDragging(false); selectFile(event.dataTransfer.files[0]); }}
-        role="group"
-        transition={{ duration: 0.14, ease: "easeOut" }}
-      >
-        <CloudUpload aria-hidden="true" className="size-7 stroke-[1.5] text-slate-600" />
-        <p className="mt-2 text-sm text-slate-600">{copy.overview.dropPdf}</p>
-        <input accept="application/pdf,.pdf" aria-describedby={fileError ? "documents-file-requirements documents-file-error" : "documents-file-requirements"} aria-invalid={fileError ? true : undefined} aria-label={copy.overview.choosePdf} className="sr-only" onChange={chooseFile} ref={fileInputRef} type="file" />
-        <Button className="mt-3" onClick={() => fileInputRef.current?.click()} ref={chooseButtonRef} variant="outline">{copy.overview.choosePdf}</Button>
-      </motion.div>
-      <p className="mt-2 text-xs text-slate-500" id="documents-file-requirements">{copy.overview.fileRequirements}&nbsp;•&nbsp;{copy.overview.noFileSent}</p>
-      {fileError ? <p className="mt-2 text-xs text-red-700" id="documents-file-error" role="alert">{fileError === "invalidPdf" ? copy.overview.invalidPdf : copy.overview.fileTooLarge}</p> : null}
-
-      <div aria-live="polite" className="mt-5 overflow-x-auto border-y">
-        {pendingUpload ? (
-          <Table>
-            <TableHeader><TableRow><TableHead>{copy.overview.fileName}</TableHead><TableHead>{copy.overview.size}</TableHead><TableHead>{copy.overview.status}</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
-            <TableBody><TableRow><TableCell className="min-w-48 font-medium">{pendingUpload.name}</TableCell><TableCell>{formatDocumentFileSize(pendingUpload.size, preferences.locale)}</TableCell><TableCell className="text-xs text-slate-600">{parseStatusLabel(parseStatus, copy)}</TableCell><TableCell><Button aria-label={copy.overview.removeSelected} onClick={clearFile} size="icon-sm" variant="ghost"><X aria-hidden="true" className="size-4" /></Button></TableCell></TableRow></TableBody>
-          </Table>
-        ) : visibleDocument ? (
-          <div className="flex items-center gap-3 px-4 py-4"><FileText aria-hidden="true" className="size-5 text-slate-500" /><div className="min-w-0"><p className="truncate text-sm font-medium">{visibleDocument.fileName}</p><p className="mt-1 text-xs text-slate-500">{formatDocumentFileSize(visibleDocument.sizeBytes, preferences.locale)} · {parseStatusLabel(parseStatus, copy)}</p></div></div>
-        ) : <p className="px-4 py-5 text-sm text-slate-500">{copy.overview.noDocumentSelected}</p>}
+    <section className="flex items-center justify-between gap-3" data-testid="document-upload-panel">
+      <div>
+        <h2 className="text-sm font-semibold">{preferences.locale === "tr" ? "PDF ekle" : "Add PDF"}</h2>
+        <p className="mt-1 text-xs text-slate-500">{copy.overview.fileRequirements}</p>
       </div>
+      <Button className="gap-2" onClick={openDialog} ref={triggerRef} type="button">
+        <FilePlus aria-hidden="true" className="size-4" />
+        {preferences.locale === "tr" ? "PDF ekle" : "Add PDF"}
+      </Button>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-b pb-4">
-        <div><p className="text-sm font-medium">{copy.overview.parse}</p><p className="mt-1 text-xs text-slate-500">{copy.overview.backendActionNotConnected}</p></div>
-        <Button aria-describedby={!canParse ? "documents-parse-disabled-reason" : undefined} aria-busy={isProcessing} disabled={!canParse} onClick={() => void (hasPendingUpload ? parseSelectedFile() : reparseActiveDocument())}>{hasPendingUpload || !hasActiveDocument ? copy.overview.parseDocument : copy.overview.reparseDocument}</Button>
-      </div>
-      <p className="pt-3 text-xs text-slate-500" id="documents-parse-disabled-reason">{parseDisabledReason(parseStatus, hasPendingUpload, hasActiveDocument, hasVisibleDocument, preferences.locale)}</p>
-      {parseError ? <p className="mt-2 text-xs text-red-700" role="alert">{parseError.message}</p> : null}
+      {open ? (
+        <div aria-describedby="add-pdf-description" aria-labelledby="add-pdf-title" aria-modal="true" className="fixed inset-0 z-50 grid place-items-center bg-slate-950/35 p-4" role="dialog" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDialog(); }}>
+          <div className="w-full max-w-lg rounded-lg border bg-white p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-base font-semibold" id="add-pdf-title">{dialogLabels.title}</h2>
+                <p className="mt-1 text-sm leading-5 text-slate-600" id="add-pdf-description">{copy.overview.fileRequirements}</p>
+              </div>
+              <Button aria-label={dialogLabels.close} disabled={isSubmitting} onClick={closeDialog} size="icon-sm" type="button" variant="ghost"><X aria-hidden="true" className="size-4" /></Button>
+            </div>
+            <div className="mt-5 rounded-md border border-dashed p-5 text-center">
+              <Upload aria-hidden="true" className="mx-auto size-6 text-slate-500" />
+              <p className="mt-2 text-sm text-slate-600">{copy.overview.choosePdf}</p>
+              <input accept="application/pdf,.pdf" aria-describedby="add-pdf-description" aria-label={copy.overview.choosePdf} className="sr-only" onChange={(event) => { chooseFile(event.target.files?.[0]); event.target.value = ""; }} ref={fileInputRef} type="file" />
+              <Button className="mt-3" onClick={() => fileInputRef.current?.click()} ref={chooseRef} type="button" variant="outline">{copy.overview.choosePdf}</Button>
+              <p className="mt-2 text-xs text-slate-500">{copy.overview.noFileSent}</p>
+            </div>
+            {file ? <div className="mt-4 flex items-center justify-between gap-3 border px-3 py-2 text-sm"><span className="min-w-0 truncate"><span className="font-medium">{dialogLabels.selected}: </span>{file.name}<span className="ml-2 text-xs text-slate-500">{formatDocumentFileSize(file.size, preferences.locale)}</span></span><Button aria-label={dialogLabels.close} onClick={() => { setFile(null); setValidationError(null); }} size="icon-xs" type="button" variant="ghost"><X aria-hidden="true" className="size-3.5" /></Button></div> : <p className="mt-4 text-sm text-slate-500">{dialogLabels.empty}</p>}
+            {validationError ? <p className="mt-3 text-sm text-red-700" role="alert">{validationMessage(validationError, copy.overview)}</p> : null}
+            {submitError ? <p className="mt-3 text-sm text-red-700" role="alert">{submitError}</p> : null}
+            <div className="mt-5 flex justify-end gap-2">
+              <Button disabled={isSubmitting} onClick={closeDialog} type="button" variant="outline">{dialogLabels.close}</Button>
+              <Button aria-busy={isSubmitting} disabled={!file || Boolean(validationError) || isSubmitting} onClick={() => void submit()} type="button">{isSubmitting ? dialogLabels.saving : dialogLabels.submit}</Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

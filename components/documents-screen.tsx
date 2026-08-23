@@ -2,15 +2,12 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowUpRight, FileText } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
-import { ChunksPipeline } from "@/components/chunks-pipeline";
 import { DocumentUploadPanel } from "@/components/document-upload-panel";
 import { DocumentLibrary } from "@/components/document-library";
-import { PipelineContextBar } from "@/components/pipeline-context-bar";
-import { OperationStatusBadge } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -274,78 +271,19 @@ export function ParsedContentTab({ copy, result }: { copy: AppCopy["documents"];
   );
 }
 
-function parseOperationStatus(status: "not-started" | "ready" | "queued" | "running" | "completed" | "failed") {
-  if (status === "completed") return "completed" as const;
-  if (status === "queued" || status === "running") return "processing" as const;
-  if (status === "failed") return "error" as const;
-  if (status === "ready") return "ready" as const;
-  return "locked" as const;
-}
-
-function DocumentPipelineSummary({ locale }: { locale: "en" | "tr" }) {
-  const { activeDocumentId, selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId, parseStatus, chunkStatus, embeddingStatus } = useDocumentPipeline();
-  const labels = locale === "tr"
-    ? { title: "Pipeline durum özeti", document: "Doküman", parse: "Ayrıştırma", chunking: "Parçalama", embeddings: "Embedding", noSelection: "Seçim yok" }
-    : { title: "Pipeline status summary", document: "Document", parse: "Parse", chunking: "Chunking", embeddings: "Embeddings", noSelection: "Not selected" };
-  const stages = [
-    { href: "/documents", label: labels.document, status: activeDocumentId ? "completed" as const : "locked" as const },
-    { href: "/parse", label: labels.parse, status: parseOperationStatus(parseStatus), id: selectedParseRunId },
-    { href: "/chunking", label: labels.chunking, status: chunkStatus, id: selectedChunkRunId },
-    { href: "/embeddings", label: labels.embeddings, status: embeddingStatus, id: selectedEmbeddingRunId },
-  ];
-  return (
-    <section className="border-t px-4 py-6 sm:px-7">
-      <h2 className="text-sm font-semibold">{labels.title}</h2>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        {stages.map((stage) => <Link className="border p-3 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400" href={stage.href} key={stage.href}><div className="flex items-center justify-between gap-2"><span className="text-xs font-medium">{stage.label}</span><OperationStatusBadge locale={locale} status={stage.status} /></div><p className="mt-2 truncate font-mono text-[10px] text-slate-500">{"id" in stage ? stage.id ?? labels.noSelection : activeDocumentId ?? labels.noSelection}</p></Link>)}
-      </div>
-    </section>
-  );
-}
-
-function DocumentsNextCta({ locale, hasPersistedDocument }: { locale: "en" | "tr"; hasPersistedDocument: boolean }) {
-  const labels = locale === "tr"
-    ? { next: "Parse aşamasına git", reason: "Önce Documents ekranında bir PDF'i kalıcı olarak ayrıştırın." }
-    : { next: "Go to Parse", reason: "Parse becomes available after a PDF is persisted from Documents." };
-  return (
-    <section className="border-t px-4 py-5 sm:px-7">
-      {hasPersistedDocument ? <Button asChild size="sm" variant="outline"><Link href="/parse">{labels.next}<ArrowUpRight aria-hidden="true" className="ml-2 size-4" /></Link></Button> : <Button aria-describedby="documents-next-disabled-reason" disabled size="sm" variant="outline">{labels.next}</Button>}
-      {!hasPersistedDocument ? <p className="mt-2 text-xs text-slate-500" id="documents-next-disabled-reason">{labels.reason}</p> : null}
-    </section>
-  );
-}
-
 export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
   const { preferences } = usePreferences();
-  const { parseResult, activeDocument, activeDocumentMetadata, pendingUpload } = useDocumentPipeline();
   const copy = UI_COPY[preferences.locale];
   const effectiveView = view ?? "overview";
   const current = copy.documents.views[effectiveView];
   const isLegacyView = view !== undefined;
-  const visibleDocument = activeDocument ?? activeDocumentMetadata;
-  const documentTitle = pendingUpload?.name ?? visibleDocument?.fileName ?? copy.documents.noDocumentTitle;
-  const documentMetadata = pendingUpload
-    ? `${formatDocumentFileSize(pendingUpload.size, preferences.locale)} • ${copy.documents.metadataPending}`
-    : parseResult
-    ? `${parseResult.document.pageCount} ${copy.documents.pages.toLowerCase()} • ${formatDocumentFileSize(parseResult.document.sizeBytes, preferences.locale)}`
-    : visibleDocument
-      ? `${visibleDocument.pageCount} ${copy.documents.pages.toLowerCase()} • ${formatDocumentFileSize(visibleDocument.sizeBytes, preferences.locale)}`
-    : copy.documents.metadataPending;
 
   return (
     <div>
-      {!isLegacyView ? <PipelineContextBar /> : null}
-      <header className="px-4 py-6 sm:px-7">
+      <header className="border-b px-4 py-6 sm:px-7">
         <div className="text-xs text-slate-500">{copy.documents.root}{isLegacyView ? <>&nbsp;&nbsp;›&nbsp;&nbsp;{current.title}</> : null}</div>
-        <h1 className="mt-4 text-[22px] font-semibold tracking-[-0.025em]">{isLegacyView ? current.title : copy.documents.root}</h1>
-        <p className="mt-1 text-sm text-slate-500">{isLegacyView ? current.description : preferences.locale === "tr" ? "PDF yükleyin, kalıcı doküman kütüphanesini ve pipeline durumunu inceleyin." : "Upload PDFs, inspect the persisted document library, and review pipeline status."}</p>
-        <div className="mt-6 flex items-center gap-4">
-          <FileText aria-hidden="true" className="size-10 stroke-[1.25] text-slate-500" />
-          <div className="min-w-0">
-            <div className="truncate font-semibold" title={documentTitle}>{documentTitle}</div>
-            <div className="mt-1 text-xs text-slate-500">{documentMetadata}</div>
-          </div>
-        </div>
+        <h1 className="mt-3 text-[22px] font-semibold tracking-[-0.025em]">{isLegacyView ? current.title : copy.documents.root}</h1>
+        <p className="mt-1 max-w-2xl text-sm text-slate-500">{isLegacyView ? current.description : preferences.locale === "tr" ? "PDF kitaplığını yönetin." : "Manage the PDF library."}</p>
         {isLegacyView ? <ParseRunSelector locale={preferences.locale} /> : null}
       </header>
 
@@ -362,12 +300,8 @@ export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
         ))}
       </nav> : null}
 
-      {!isLegacyView && <DocumentUploadPanel />}
-      {!isLegacyView && <DocumentPipelineSummary locale={preferences.locale} />}
-      {!isLegacyView && <DocumentsNextCta hasPersistedDocument={Boolean(visibleDocument)} locale={preferences.locale} />}
-      {effectiveView === "overview" && <><DocumentOverviewTab copy={copy.documents} locale={preferences.locale} persistedDocument={visibleDocument} result={pendingUpload ? null : parseResult} selectedFile={pendingUpload} /><DocumentLibrary locale={preferences.locale} /></>}
-      {effectiveView === "parsed" && <ParsedContentTab copy={copy.documents} result={parseResult} />}
-      {effectiveView === "chunks" && <ChunksPipeline locale={preferences.locale} />}
+      {!isLegacyView ? <section className="border-b px-4 py-5 sm:px-7"><DocumentUploadPanel /></section> : null}
+      {effectiveView === "overview" ? <DocumentLibrary locale={preferences.locale} /> : null}
     </div>
   );
 }

@@ -21,6 +21,7 @@ import {
   getParseRun,
   getEmbeddingRun,
   listDocuments,
+  uploadDocument,
   listEvaluationRuns,
   parseAndPersistDocument,
   reparsePersistedDocument,
@@ -128,6 +129,7 @@ type DocumentPipelineContextValue = {
   evaluationError: DocumentApiError | null;
   evaluationHistory: EvaluationRun[];
   selectFile: (file: File | undefined) => void;
+  addDocument: (file: File) => Promise<PersistedDocument | null>;
   selectPersistedDocument: (documentId: string) => Promise<void>;
   selectParseRun: (runId: string) => Promise<void>;
   selectChunkRun: (runId: string) => Promise<void>;
@@ -135,6 +137,7 @@ type DocumentPipelineContextValue = {
   removeFile: () => void;
   parseSelectedFile: () => Promise<void>;
   reparseActiveDocument: () => Promise<void>;
+  parseActiveDocument: () => Promise<void>;
   runChunking: (strategy: ChunkStrategy, config: ChunkConfig) => Promise<ChunkRun | null>;
   runEmbedding: () => Promise<EmbeddingRun | null>;
   runExperiment: (input: Omit<ExperimentRequest, "documentId" | "chunkRunId" | "embeddingRunId">) => Promise<void>;
@@ -718,8 +721,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     }
   }, [loadThenCommitDocument, replaceController, resumeParseRun]);
 
-  const selectPersistedDocument = useCallback(async (documentId: string) => {
-    const metadata = documents.find((document) => document.id === documentId);
+  const selectPersistedDocument = useCallback(async (documentId: string, metadataOverride?: PersistedDocument) => {
+    const metadata = metadataOverride ?? documents.find((document) => document.id === documentId);
     if (!metadata) return;
     const previousDocument = activeDocumentRef.current;
     const previousMetadata = activeDocumentMetadata;
@@ -751,7 +754,9 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setParseStatus("not-started");
     setParseError(null);
     setPersistenceError(null);
-    setPersistenceStatus("checking");
+    // The document list is already authoritative. Detail hydration must not
+    // replace it with a global loading state or hide the instant selection.
+    setPersistenceStatus("available");
     rememberActiveDocument(documentId, authUserId);
     const selectionToken = selectionRequestRef.current;
     try {
@@ -771,9 +776,33 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         setActiveDocumentId(previousDocumentId);
       }
       setPersistenceError(asApiError(error, "The selected document could not be loaded."));
-      setPersistenceStatus(previousDocument || previousMetadata ? "available" : "unavailable");
+      setPersistenceStatus(documents.length > 0 ? "available" : "unavailable");
     }
   }, [activeDocumentId, activeDocumentMetadata, authUserId, documents, loadThenCommitDocument, replaceController, resumeParseRun]);
+
+  const addDocument = useCallback(async (file: File): Promise<PersistedDocument | null> => {
+    const validationError = validatePdfFile(file);
+    if (validationError) {
+      throw new DocumentApiError(
+        validationError === "invalidPdf" ? "invalid_file_type" : "file_too_large",
+        validationError === "invalidPdf" ? "Only PDF files are supported." : "The PDF must be 50 MB or smaller.",
+      );
+    }
+    const selectionToken = selectionRequestRef.current;
+    const controller = replaceController("document-upload");
+    try {
+      const response = await uploadDocument(file, controller.signal);
+      setDocuments((current) => [response.document, ...current.filter((item) => item.id !== response.document.id)]);
+      // Keep an upload race from stealing focus from a document selected while
+      // the storage request was in flight.
+      if (selectionRequestRef.current === selectionToken) {
+        await selectPersistedDocument(response.document.id, response.document);
+      }
+      return response.document;
+    } finally {
+      removeControllerIfCurrent(controllersRef.current, "document-upload", controller);
+    }
+  }, [replaceController, selectPersistedDocument]);
 
   useEffect(() => {
     if (!authUserId && process.env.NODE_ENV !== "test") return;
@@ -978,6 +1007,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       }
     }
   }, [addActivity, applyParseRunStatus, commitDocumentSnapshot, loadDocumentSnapshot, parseStatus, replaceController]);
+
+  const parseActiveDocument = reparseActiveDocument;
 
   const selectParseRun = useCallback(async (runId: string) => {
     const document = activeDocumentRef.current;
@@ -1356,7 +1387,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     chunkStatus, chunkRun, chunkError, embeddingStatus, embeddingRun, embeddingError,
     experimentStatus, experimentRun, experimentError, experimentHistory,
     evaluationDatasets, evaluationStatus, evaluationRun, evaluationError, evaluationHistory,
-    selectFile, selectPersistedDocument, selectParseRun, selectChunkRun, selectEmbeddingRun, removeFile, parseSelectedFile, reparseActiveDocument, runChunking, runEmbedding,
+    selectFile, addDocument, selectPersistedDocument, selectParseRun, selectChunkRun, selectEmbeddingRun, removeFile, parseSelectedFile, reparseActiveDocument, parseActiveDocument, runChunking, runEmbedding,
     runExperiment, loadExperiment, loadEvaluationDataset, continueExperiment: continueCurrentExperiment, rerunGeneration: rerunCurrentGeneration,
     createDataset, runEvaluation, refreshPersistence, refreshEvaluationRuns,
   }), [
@@ -1365,7 +1396,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     evaluationRun, evaluationStatus, experimentError, experimentHistory, experimentRun, experimentStatus,
     fileError, lastReportedParseProgress, parseError, parseProgress, parseResult, parseSelectedFile, parseStatus, persistenceError, persistenceStatus,
     pendingUpload, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId,
-    reparseActiveDocument,
+    addDocument, reparseActiveDocument, parseActiveDocument,
     continueCurrentExperiment, loadEvaluationDataset, loadExperiment, refreshEvaluationRuns, refreshPersistence, removeFile, rerunCurrentGeneration,
     runChunking, runEmbedding, runEvaluation, runExperiment,
     selectChunkRun, selectEmbeddingRun, selectFile, selectParseRun, selectPersistedDocument,

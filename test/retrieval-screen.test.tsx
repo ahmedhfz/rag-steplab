@@ -24,14 +24,10 @@ describe("RetrievalScreen", () => {
     renderRetrieval();
 
     expect(screen.getByRole("textbox", { name: "Question" })).toHaveAccessibleName("Question");
-    expect(screen.getByRole("combobox", { name: "Top-K" })).toHaveTextContent("5");
-    expect(screen.getByRole("combobox", { name: "Mode" })).toHaveTextContent("Dense");
-
-    const ask = screen.getByRole("button", { name: "Ask" });
-    expect(ask).toBeDisabled();
-    expect(ask).toHaveAccessibleDescription("Select a persisted document and complete chunking first.");
-
-    expect(screen.getByRole("switch", { name: "Reranker" })).toBeEnabled();
+    const run = screen.getByRole("button", { name: "Run experiment" });
+    expect(run).toBeDisabled();
+    expect(run).toHaveAccessibleDescription("Select a persisted document and complete chunking first.");
+    expect(screen.getByText("Advanced settings")).toBeInTheDocument();
 
     const copyTrace = screen.getByRole("button", { name: "Copy trace" });
     expect(copyTrace).toBeDisabled();
@@ -54,6 +50,8 @@ describe("RetrievalScreen", () => {
     await user.click(screen.getByRole("button", { name: "Clear question" }));
     expect(question).toHaveValue("");
 
+    await user.click(screen.getByText("Advanced settings"));
+    expect(screen.getByRole("switch", { name: "Reranker" })).toBeEnabled();
     await user.click(screen.getByRole("combobox", { name: "Top-K" }));
     await user.click(screen.getByRole("option", { name: "10" }));
     await user.click(screen.getByRole("combobox", { name: "Mode" }));
