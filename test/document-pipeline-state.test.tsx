@@ -157,6 +157,7 @@ function Probe() {
     selectedChunkRunId,
     selectedEmbeddingRunId,
     activePipelineId,
+    evaluationDatasets,
     selectFile,
     selectParseRun,
     selectChunkRun,
@@ -174,6 +175,7 @@ function Probe() {
       <output data-testid="selected-chunk">{selectedChunkRunId ?? "none"}</output>
       <output data-testid="selected-embedding">{selectedEmbeddingRunId ?? "none"}</output>
       <output data-testid="active-pipeline">{activePipelineId ?? "none"}</output>
+      <output data-testid="evaluation-dataset-count">{evaluationDatasets.length}</output>
       <output data-testid="artifact-count">{activeDocument?.chunkRuns.length ?? 0}</output>
       <output data-testid="persistence-error">{persistenceError?.code ?? "none"}</output>
       <button onClick={() => selectFile(new File(["%PDF-1.4"], "pending.pdf", { type: "application/pdf" }))} type="button">Select pending upload</button>
@@ -240,6 +242,30 @@ afterEach(() => {
 });
 
 describe("Document pipeline committed state", () => {
+  it("hydrates persisted evaluation datasets when the summary falls back to the legacy document response", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    const detail = documentDetail();
+    const dataset = { id: "dataset-1", documentId: "document-old", parseRunId: "parse-new", name: "Smoke", version: 1, caseCount: 1, createdAt: null };
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/pipelines")) return respond([]);
+      if (url.endsWith("/documents/document-old/summary")) return respond({
+        ...summaryDocument("document-old", "lesson.pdf"),
+        evaluationRuns: [{ id: "evaluation-1", status: "invalid" }],
+      });
+      if (url.endsWith("/documents/document-old")) return respond(detail);
+      if (url.includes("/evaluation/datasets?documentId=document-old")) return respond({ items: [dataset] });
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("evaluation-dataset-count")).toHaveTextContent("1"));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/evaluation/datasets?documentId=document-old"))).toBe(true);
+  });
+
   it("reloads and reconciles server pipeline state before one revision-conflict retry", async () => {
     localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
     localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
