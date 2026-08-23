@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi.testclient import TestClient
 
 from app.errors import ApiProblem
@@ -127,3 +129,45 @@ def test_returns_safe_error_when_docling_cannot_parse(monkeypatch):
         "code": "docling_error",
         "message": "Docling could not parse this PDF.",
     }
+
+
+def test_async_experiment_queues_json_serializable_lifecycle(monkeypatch):
+    import importlib
+
+    main_module = importlib.import_module("app.main")
+    started_at = datetime(2026, 8, 23, 20, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        "app.main.queue_experiment",
+        lambda *_args, **_kwargs: {
+            "id": "experiment-1",
+            "document_id": "document-1",
+            "chunk_run_id": "chunk-1",
+            "embedding_run_id": "embedding-1",
+            "query": "retrieval",
+            "target_stage": "retrieval",
+            "status": "running",
+            "stage_results": {},
+            "started_at": started_at,
+            "completed_at": None,
+            "duration_ms": None,
+        },
+    )
+    monkeypatch.setattr(
+        "app.main._run_queued_experiment_and_release",
+        lambda *_args: main_module._pipeline_semaphore.release(),
+    )
+
+    response = client.post(
+        "/experiments?async=true",
+        json={
+            "documentId": "document-1",
+            "chunkRunId": "chunk-1",
+            "embeddingRunId": "embedding-1",
+            "query": "retrieval",
+            "targetStage": "retrieval",
+            "retrieval": {"mode": "dense", "topK": 3},
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["startedAt"] == "2026-08-23T20:00:00+00:00"

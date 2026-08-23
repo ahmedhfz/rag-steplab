@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
@@ -894,7 +895,7 @@ def experiments(
             _pipeline_semaphore.release()
             return _camelize(queued)
         background_tasks.add_task(_run_queued_experiment_and_release, request, queued["id"], repository)
-        return JSONResponse(status_code=202, content=_camelize(queued))
+        return JSONResponse(status_code=202, content=jsonable_encoder(_camelize(queued)))
     except Exception:
         _pipeline_semaphore.release()
         raise
