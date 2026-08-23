@@ -156,8 +156,14 @@ def test_sql_repository_revision_update_is_atomic(monkeypatch):
 
 def test_scoped_detail_reads_each_artifact_once():
     class CountingRepository(InMemoryRepository):
+        parse_reads = 0
         chunk_reads = 0
         embedding_reads = 0
+        experiment_reads = 0
+
+        def get_parse_row(self, run_id):
+            self.parse_reads += 1
+            return super().get_parse_row(run_id)
 
         def get_chunk_row(self, run_id, *, owner_user_id=None):
             self.chunk_reads += 1
@@ -166,6 +172,10 @@ def test_scoped_detail_reads_each_artifact_once():
         def get_embedding_row(self, run_id, *, owner_user_id=None):
             self.embedding_reads += 1
             return super().get_embedding_row(run_id, owner_user_id=owner_user_id)
+
+        def get_experiment_row(self, experiment_id):
+            self.experiment_reads += 1
+            return super().get_experiment_row(experiment_id)
 
     repository = CountingRepository()
     document, historical_parse, _ = _lineage(repository)
@@ -177,12 +187,23 @@ def test_scoped_detail_reads_each_artifact_once():
         "id": "embedding-detail", "document_id": document["id"],
         "chunk_run_id": "chunk-detail", "status": "completed",
     }
+    repository.experiments["experiment-detail"] = {
+        "id": "experiment-detail", "document_id": document["id"], "status": "completed",
+    }
     scoped = repository.scoped(OWNER_ID)
 
+    assert scoped.get_parse_row(historical_parse["id"]) is not None
     assert scoped.get_chunk_row("chunk-detail") is not None
     assert scoped.get_embedding_row("embedding-detail") is not None
+    assert scoped.get_experiment_row("experiment-detail") is not None
+    assert repository.parse_reads == 1
     assert repository.chunk_reads == 1
     assert repository.embedding_reads == 1
+    assert repository.experiment_reads == 1
+
+    other_scoped = repository.scoped(uuid.UUID("22222222-2222-4222-8222-222222222222"))
+    assert other_scoped.get_parse_row(historical_parse["id"]) is None
+    assert other_scoped.get_experiment_row("experiment-detail") is None
 
 
 def test_sql_pipeline_list_keeps_owner_check_in_one_statement(monkeypatch):

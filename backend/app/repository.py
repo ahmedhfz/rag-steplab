@@ -2863,7 +2863,8 @@ class ScopedRepository(Repository):
         )
 
     def get_parse_row(self, run_id):
-        return self._owned_document_for_row(self._repository.get_parse_row(run_id)) and self._repository.get_parse_row(run_id)
+        row = self._repository.get_parse_row(run_id)
+        return row if self._owned_document_for_row(row) is not None else None
 
     def list_parse_rows(self, document_id):
         if self._owned_document(document_id) is None:
@@ -2987,7 +2988,8 @@ class ScopedRepository(Repository):
         return self._repository.find_stage_result(document_id, stage, fingerprint)
 
     def get_experiment_row(self, experiment_id):
-        return self._owned_document_for_row(self._repository.get_experiment_row(experiment_id)) and self._repository.get_experiment_row(experiment_id)
+        row = self._repository.get_experiment_row(experiment_id)
+        return row if self._owned_document_for_row(row) is not None else None
 
     def list_experiment_rows(self, document_id=None):
         if document_id is not None:

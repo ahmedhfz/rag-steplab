@@ -74,6 +74,7 @@ type LineageSelectionStore = Record<string, DocumentLineageSelection>;
 
 type DocumentSnapshot = {
   detail: DocumentSummary;
+  summaryFetchedAt?: number;
   selection: DocumentLineageSelection;
   parseResult: DocumentParseResponse | null;
   parseStatus: DocumentParseStatus;
@@ -88,6 +89,13 @@ type DocumentSnapshot = {
   experimentStatus: PipelineOperationStatus;
   experimentRun: ExperimentRun | null;
   evaluationStatus: PipelineOperationStatus;
+};
+
+type PipelineMutationContext = {
+  documentId: string;
+  pipelineId: string;
+  requestId: number;
+  documentEpoch: number;
 };
 
 type EvaluationRunInput = {
@@ -339,6 +347,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const activityIdRef = useRef(0);
   const controllersRef = useRef(new Map<string, AbortController>());
   const artifactCacheRef = useRef(new Map<string, ParseRun | ChunkRun | EmbeddingRun | ExperimentRun | EvaluationDataset>());
+  const pipelineRevisionRef = useRef(new Map<string, number>());
+  const pipelineMutationQueueRef = useRef(new Map<string, Promise<boolean>>());
   const persistActivePipelineSelectionRef = useRef<(selection: DocumentLineageSelection) => Promise<boolean>>(async () => false);
 
   const replaceController = useCallback((key: string) => {
@@ -366,6 +376,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     activeDocumentRef.current = null;
     activeDocumentSummaryLoadedAtRef.current = 0;
     activePipelineRef.current = null;
+    pipelineRevisionRef.current.clear();
+    pipelineMutationQueueRef.current.clear();
     lineageSelectionsRef.current = {};
     artifactCacheRef.current.clear();
     setActiveDocument(null);
@@ -452,9 +464,14 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     rememberLineageSelections(next, authUserId);
   }, [authUserId]);
 
-  const commitDocumentSnapshot = useCallback((snapshot: DocumentSnapshot, persistSelection = true) => {
+  const commitDocumentSnapshot = useCallback((
+    snapshot: DocumentSnapshot,
+    persistSelection = true,
+    summaryFetchedAt?: number,
+  ) => {
     activeDocumentRef.current = snapshot.detail;
-    activeDocumentSummaryLoadedAtRef.current = Date.now();
+    const fetchedAt = summaryFetchedAt ?? snapshot.summaryFetchedAt;
+    if (fetchedAt !== undefined) activeDocumentSummaryLoadedAtRef.current = fetchedAt;
     setActiveDocumentId(snapshot.detail.id);
     setActiveDocumentMetadata({
       id: snapshot.detail.id,
@@ -587,7 +604,10 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     strictSelection = false,
   ): Promise<DocumentSnapshot> => {
     const detail = await getDocumentSummary(documentId, signal);
-    return buildDocumentSnapshot(detail, selectionOverride, strictSelection);
+    return {
+      ...buildDocumentSnapshot(detail, selectionOverride, strictSelection),
+      summaryFetchedAt: Date.now(),
+    };
   }, [buildDocumentSnapshot]);
 
   const hydrateParseDetail = useCallback(async (documentId: string, runId: string, expectedSelection = selectionRequestRef.current) => {
@@ -759,13 +779,13 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         || (error.status !== 404 && error.code !== "invalid_response")) throw error;
       return [] as DocumentPipeline[];
     });
-    const [nextPipelines, detail] = await Promise.all([
+    const [nextPipelines, loadedSummary] = await Promise.all([
       pipelinesPromise,
-      getDocumentSummary(documentId, signal),
+      getDocumentSummary(documentId, signal).then((detail) => ({ detail, fetchedAt: Date.now() })),
     ]);
     const pipeline = nextPipelines.find((item) => item.id === pipelineId) ?? null;
     const snapshot = buildDocumentSnapshot(
-      detail,
+      loadedSummary.detail,
       pipeline ? pipelineSelection(pipeline) : undefined,
       Boolean(pipeline),
     );
@@ -775,10 +795,11 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     runIdRef.current += 1;
     parseInFlightRef.current = false;
     setPipelines(nextPipelines);
+    pipelineRevisionRef.current = new Map(nextPipelines.map((item) => [item.id, item.revision]));
     activePipelineRef.current = pipeline;
     setActivePipelineId(pipeline?.id ?? null);
     rememberActivePipeline(pipeline?.id ?? null, authUserId);
-    commitDocumentSnapshot(snapshot, !pipeline);
+    commitDocumentSnapshot({ ...snapshot, summaryFetchedAt: loadedSummary.fetchedAt }, !pipeline);
     rememberActiveDocument(documentId, authUserId);
     setPersistenceError(null);
     setPersistenceStatus("available");
@@ -1117,11 +1138,41 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const parseActiveDocument = reparseActiveDocument;
 
   const replacePipelineState = useCallback((pipeline: DocumentPipeline) => {
+    pipelineRevisionRef.current.set(pipeline.id, pipeline.revision);
     activePipelineRef.current = pipeline;
     setActivePipelineId(pipeline.id);
     setPipelines((current) => current.map((item) => item.id === pipeline.id ? pipeline : item));
     setPersistenceError(null);
   }, []);
+
+  const pipelineMutationIsCurrent = useCallback((context: PipelineMutationContext) => (
+    selectionRequestRef.current === context.requestId
+    && documentEpochRef.current === context.documentEpoch
+    && activeDocumentRef.current?.id === context.documentId
+    && activePipelineRef.current?.id === context.pipelineId
+  ), []);
+
+  const recordPipelineResponse = useCallback((
+    pipeline: DocumentPipeline,
+    context: PipelineMutationContext,
+  ) => {
+    pipelineRevisionRef.current.set(pipeline.id, pipeline.revision);
+    if (pipelineMutationIsCurrent(context)) {
+      replacePipelineState(pipeline);
+      return;
+    }
+    const active = activePipelineRef.current;
+    const next = active?.id === pipeline.id
+      ? {
+          ...pipeline,
+          parseRunId: active.parseRunId,
+          chunkRunId: active.chunkRunId,
+          embeddingRunId: active.embeddingRunId,
+        }
+      : pipeline;
+    if (active?.id === pipeline.id) activePipelineRef.current = next;
+    setPipelines((items) => items.map((item) => item.id === pipeline.id ? next : item));
+  }, [pipelineMutationIsCurrent, replacePipelineState]);
 
   const persistActivePipelineSelection = useCallback(async (
     selection: DocumentLineageSelection,
@@ -1131,57 +1182,89 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (activeDocumentRef.current) rememberSelection(activeDocumentRef.current.id, selection);
       return true;
     }
-    const input = {
-      expectedRevision: current.revision,
-      parseRunId: selection.selectedParseRunId,
-      chunkRunId: selection.selectedChunkRunId,
-      embeddingRunId: selection.selectedEmbeddingRunId,
+    const context: PipelineMutationContext = {
+      documentId: current.documentId,
+      pipelineId: current.id,
+      requestId: selectionRequestRef.current,
+      documentEpoch: documentEpochRef.current,
     };
-    try {
-      replacePipelineState(await updateDocumentPipeline(current.id, input));
-      return true;
-    } catch (error) {
-      if (!(error instanceof DocumentApiError) || error.code !== "pipeline_conflict") {
-        setPersistenceError(asApiError(error, "Pipeline selection could not be saved."));
-        return false;
-      }
-      const controller = replaceController(`pipeline-conflict:${current.id}`);
+    pipelineRevisionRef.current.set(current.id, pipelineRevisionRef.current.get(current.id) ?? current.revision);
+
+    const persist = async (): Promise<boolean> => {
+      const expectedRevision = pipelineRevisionRef.current.get(context.pipelineId) ?? current.revision;
+      const input = {
+        expectedRevision,
+        parseRunId: selection.selectedParseRunId,
+        chunkRunId: selection.selectedChunkRunId,
+        embeddingRunId: selection.selectedEmbeddingRunId,
+      };
       try {
-        // Conflict sonrası önce server state yüklenir ve UI onunla reconcile edilir.
-        const nextPipelines = await listDocumentPipelines(current.documentId, controller.signal);
-        setPipelines(nextPipelines);
-        const refreshed = nextPipelines.find((item) => item.id === current.id) ?? null;
-        if (!refreshed || activePipelineRef.current?.id !== current.id) return false;
-        activePipelineRef.current = refreshed;
-        setActivePipelineId(refreshed.id);
-        const snapshot = await loadDocumentSnapshot(
-          refreshed.documentId,
-          controller.signal,
-          pipelineSelection(refreshed),
-          true,
-        );
-        commitDocumentSnapshot(snapshot, false);
-        const desiredAlreadyPersisted = refreshed.parseRunId === selection.selectedParseRunId
-          && refreshed.chunkRunId === selection.selectedChunkRunId
-          && refreshed.embeddingRunId === selection.selectedEmbeddingRunId;
-        if (desiredAlreadyPersisted) return true;
-        if (activePipelineRef.current?.id !== refreshed.id) return false;
-        const retried = await updateDocumentPipeline(refreshed.id, {
-          ...input,
-          expectedRevision: refreshed.revision,
-        }, controller.signal);
-        replacePipelineState(retried);
+        recordPipelineResponse(await updateDocumentPipeline(context.pipelineId, input), context);
         return true;
-      } catch (reconcileError) {
-        if (!(reconcileError instanceof DOMException && reconcileError.name === "AbortError")) {
-          setPersistenceError(asApiError(reconcileError, "Pipeline conflict could not be reconciled."));
+      } catch (error) {
+        const conflict = error instanceof DocumentApiError && error.code === "pipeline_conflict";
+        if (!pipelineMutationIsCurrent(context)) return false;
+        const controller = replaceController(`pipeline-conflict:${context.pipelineId}`);
+        try {
+          const nextPipelines = await listDocumentPipelines(context.documentId, controller.signal);
+          nextPipelines.forEach((item) => pipelineRevisionRef.current.set(item.id, item.revision));
+          if (!pipelineMutationIsCurrent(context)) return false;
+          setPipelines(nextPipelines);
+          const refreshed = nextPipelines.find((item) => item.id === context.pipelineId) ?? null;
+          if (!refreshed || !pipelineMutationIsCurrent(context)) return false;
+          pipelineRevisionRef.current.set(refreshed.id, refreshed.revision);
+          activePipelineRef.current = refreshed;
+          setActivePipelineId(refreshed.id);
+          const snapshot = await loadDocumentSnapshot(
+            refreshed.documentId,
+            controller.signal,
+            pipelineSelection(refreshed),
+            true,
+          );
+          if (!pipelineMutationIsCurrent(context)) return false;
+          // Snapshot commit, geç bir conflict cevabının yeni seçimi ezebileceği son kritik sınırdır.
+          commitDocumentSnapshot(snapshot, false);
+          if (!conflict) {
+            if (pipelineMutationIsCurrent(context)) {
+              setPersistenceError(asApiError(error, "Pipeline selection could not be saved."));
+            }
+            return false;
+          }
+          const desiredAlreadyPersisted = refreshed.parseRunId === selection.selectedParseRunId
+            && refreshed.chunkRunId === selection.selectedChunkRunId
+            && refreshed.embeddingRunId === selection.selectedEmbeddingRunId;
+          if (desiredAlreadyPersisted) return true;
+          if (!pipelineMutationIsCurrent(context)) return false;
+          const retried = await updateDocumentPipeline(refreshed.id, {
+            ...input,
+            expectedRevision: refreshed.revision,
+          }, controller.signal);
+          recordPipelineResponse(retried, context);
+          if (!pipelineMutationIsCurrent(context) || activeDocumentRef.current?.id !== context.documentId) return false;
+          commitDocumentSnapshot(buildDocumentSnapshot(activeDocumentRef.current, selection, true), false);
+          return true;
+        } catch (reconcileError) {
+          if (!(reconcileError instanceof DOMException && reconcileError.name === "AbortError")
+            && pipelineMutationIsCurrent(context)) {
+            setPersistenceError(asApiError(reconcileError, "Pipeline conflict could not be reconciled."));
+          }
+          return false;
+        } finally {
+          removeControllerIfCurrent(controllersRef.current, `pipeline-conflict:${context.pipelineId}`, controller);
         }
-        return false;
-      } finally {
-        removeControllerIfCurrent(controllersRef.current, `pipeline-conflict:${current.id}`, controller);
       }
-    }
-  }, [commitDocumentSnapshot, loadDocumentSnapshot, rememberSelection, replaceController, replacePipelineState]);
+    };
+
+    const previous = pipelineMutationQueueRef.current.get(current.id) ?? Promise.resolve(true);
+    const queued = previous.catch(() => false).then(persist);
+    pipelineMutationQueueRef.current.set(current.id, queued);
+    void queued.finally(() => {
+      if (pipelineMutationQueueRef.current.get(current.id) === queued) {
+        pipelineMutationQueueRef.current.delete(current.id);
+      }
+    });
+    return queued;
+  }, [buildDocumentSnapshot, commitDocumentSnapshot, loadDocumentSnapshot, pipelineMutationIsCurrent, recordPipelineResponse, rememberSelection, replaceController]);
   useEffect(() => {
     persistActivePipelineSelectionRef.current = persistActivePipelineSelection;
   }, [persistActivePipelineSelection]);
@@ -1201,6 +1284,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         : await loadDocumentSnapshot(document.id, controller.signal, selection, Boolean(pipeline));
       if (selectionRequestRef.current !== requestId || activeDocumentRef.current?.id !== document.id) return;
       activePipelineRef.current = pipeline;
+      if (pipeline) pipelineRevisionRef.current.set(pipeline.id, pipeline.revision);
       setActivePipelineId(pipeline?.id ?? null);
       rememberActivePipeline(pipeline?.id ?? null, authUserId);
       commitDocumentSnapshot(snapshot, !pipeline);
@@ -1225,6 +1309,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         embeddingRunId: selectedEmbeddingRunId,
       }, controller.signal);
       setPipelines((current) => [...current, pipeline]);
+      pipelineRevisionRef.current.set(pipeline.id, pipeline.revision);
       activePipelineRef.current = pipeline;
       setActivePipelineId(pipeline.id);
       rememberActivePipeline(pipeline.id, authUserId);
@@ -1241,6 +1326,14 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const renamePipeline = useCallback(async (pipelineId: string, name: string) => {
     const current = pipelines.find((item) => item.id === pipelineId);
     if (!current) return null;
+    const mutationContext: PipelineMutationContext | null = activePipelineRef.current?.id === pipelineId
+      ? {
+          documentId: current.documentId,
+          pipelineId,
+          requestId: selectionRequestRef.current,
+          documentEpoch: documentEpochRef.current,
+        }
+      : null;
     try {
       const updated = await updateDocumentPipeline(pipelineId, { expectedRevision: current.revision, name });
       setPipelines((items) => items.map((item) => item.id === updated.id ? updated : item));
@@ -1253,11 +1346,13 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
           const refreshed = await listDocumentPipelines(current.documentId);
           setPipelines(refreshed);
           const latest = refreshed.find((item) => item.id === pipelineId);
-          if (latest && activePipelineRef.current?.id === pipelineId) {
+          refreshed.forEach((item) => pipelineRevisionRef.current.set(item.id, item.revision));
+          if (latest && mutationContext && pipelineMutationIsCurrent(mutationContext)) {
             replacePipelineState(latest);
             const controller = replaceController(`pipeline-rename-conflict:${pipelineId}`);
             try {
               const snapshot = await loadDocumentSnapshot(latest.documentId, controller.signal, pipelineSelection(latest), true);
+              if (!pipelineMutationIsCurrent(mutationContext)) return null;
               commitDocumentSnapshot(snapshot, false);
             } finally {
               removeControllerIfCurrent(controllersRef.current, `pipeline-rename-conflict:${pipelineId}`, controller);
@@ -1265,9 +1360,10 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
           }
           if (latest?.name === name) return latest;
           if (latest) {
+            if (mutationContext && !pipelineMutationIsCurrent(mutationContext)) return null;
             const updated = await updateDocumentPipeline(pipelineId, { expectedRevision: latest.revision, name });
             setPipelines((items) => items.map((item) => item.id === updated.id ? updated : item));
-            if (activePipelineRef.current?.id === updated.id) replacePipelineState(updated);
+            if (mutationContext && pipelineMutationIsCurrent(mutationContext)) replacePipelineState(updated);
             return updated;
           }
         } catch (reconcileError) {
@@ -1278,7 +1374,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       setPersistenceError(asApiError(error, "Pipeline could not be renamed."));
       return null;
     }
-  }, [commitDocumentSnapshot, loadDocumentSnapshot, pipelines, replaceController, replacePipelineState]);
+  }, [commitDocumentSnapshot, loadDocumentSnapshot, pipelineMutationIsCurrent, pipelines, replaceController, replacePipelineState]);
 
   const deletePipeline = useCallback(async (pipelineId: string) => {
     const current = pipelines.find((item) => item.id === pipelineId);
@@ -1304,8 +1400,10 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const summary = document?.parseRuns.find((run) => run.id === runId);
     if (!document || !completedCompatibleRun(summary)) return;
     const selection = { selectedParseRunId: runId, selectedChunkRunId: null, selectedEmbeddingRunId: null };
-    if (!await persistActivePipelineSelection(selection)) return;
     const requestId = ++selectionRequestRef.current;
+    const pipeline = activePipelineRef.current;
+    if (pipeline) replacePipelineState({ ...pipeline, parseRunId: runId, chunkRunId: null, embeddingRunId: null });
+    else rememberSelection(document.id, selection);
     setSelectedParseRunId(runId);
     setSelectedChunkRunId(null);
     setSelectedEmbeddingRunId(null);
@@ -1317,16 +1415,19 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setExperimentRun(null);
     setExperimentStatus("ready");
     setEvaluationRun(null);
-    await hydrateParseDetail(document.id, runId, requestId);
-  }, [hydrateParseDetail, persistActivePipelineSelection]);
+    void hydrateParseDetail(document.id, runId, requestId);
+    void persistActivePipelineSelection(selection);
+  }, [hydrateParseDetail, persistActivePipelineSelection, rememberSelection, replacePipelineState]);
 
   const selectChunkRun = useCallback(async (runId: string) => {
     const document = activeDocumentRef.current;
     const summary = document?.chunkRuns.find((run) => run.id === runId);
     if (!document || !completedCompatibleRun(summary) || summary?.upstream.parseRunId !== selectedParseRunId) return;
     const selection = { selectedParseRunId, selectedChunkRunId: runId, selectedEmbeddingRunId: null };
-    if (!await persistActivePipelineSelection(selection)) return;
     const requestId = ++selectionRequestRef.current;
+    const pipeline = activePipelineRef.current;
+    if (pipeline) replacePipelineState({ ...pipeline, chunkRunId: runId, embeddingRunId: null });
+    else rememberSelection(document.id, selection);
     setSelectedChunkRunId(runId);
     setSelectedEmbeddingRunId(null);
     setChunkRun(null);
@@ -1336,24 +1437,28 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setExperimentRun(null);
     setExperimentStatus("ready");
     setEvaluationRun(null);
-    await hydrateChunkDetail(document.id, runId, requestId);
-  }, [hydrateChunkDetail, persistActivePipelineSelection, selectedParseRunId]);
+    void hydrateChunkDetail(document.id, runId, requestId);
+    void persistActivePipelineSelection(selection);
+  }, [hydrateChunkDetail, persistActivePipelineSelection, rememberSelection, replacePipelineState, selectedParseRunId]);
 
   const selectEmbeddingRun = useCallback(async (runId: string) => {
     const document = activeDocumentRef.current;
     const summary = document?.embeddingRuns.find((run) => run.id === runId);
     if (!document || !completedCompatibleRun(summary) || summary?.upstream.chunkRunId !== selectedChunkRunId) return;
     const selection = { selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId: runId };
-    if (!await persistActivePipelineSelection(selection)) return;
     const requestId = ++selectionRequestRef.current;
+    const pipeline = activePipelineRef.current;
+    if (pipeline) replacePipelineState({ ...pipeline, embeddingRunId: runId });
+    else rememberSelection(document.id, selection);
     setSelectedEmbeddingRunId(runId);
     setEmbeddingRun(null);
     setEmbeddingStatus("ready");
     setExperimentRun(null);
     setExperimentStatus("ready");
     setEvaluationRun(null);
-    await hydrateEmbeddingDetail(document.id, runId, requestId);
-  }, [hydrateEmbeddingDetail, persistActivePipelineSelection, selectedChunkRunId, selectedParseRunId]);
+    void hydrateEmbeddingDetail(document.id, runId, requestId);
+    void persistActivePipelineSelection(selection);
+  }, [hydrateEmbeddingDetail, persistActivePipelineSelection, rememberSelection, replacePipelineState, selectedChunkRunId, selectedParseRunId]);
 
   const runChunking = useCallback(async (strategy: ChunkStrategy, config: ChunkConfig): Promise<ChunkRun | null> => {
     const documentId = activeDocumentRef.current?.id;
