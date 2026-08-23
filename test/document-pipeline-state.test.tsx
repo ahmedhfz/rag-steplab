@@ -111,6 +111,42 @@ function summaryDocument(documentId: string, fileName: string) {
   };
 }
 
+function selectableLineageSummary() {
+  const base = summaryDocument("document-old", "lesson.pdf");
+  return {
+    ...base,
+    activeChunkRunId: "chunk-new",
+    activeEmbeddingRunId: "embedding-new",
+    parseRuns: [
+      ...base.parseRuns,
+      { ...base.parseRuns[0], id: "parse-old", historicalLineage: true },
+    ],
+    chunkRuns: [
+      { id: "chunk-new", status: "completed", isCompatible: true, upstream: { parseRunId: "document-old-parse" } },
+      { id: "chunk-alt", status: "completed", isCompatible: true, historicalLineage: true, upstream: { parseRunId: "document-old-parse" } },
+    ],
+    embeddingRuns: [
+      { id: "embedding-new", status: "completed", isCompatible: true, upstream: { chunkRunId: "chunk-new" } },
+      { id: "embedding-alt", status: "completed", isCompatible: true, historicalLineage: true, upstream: { chunkRunId: "chunk-alt" } },
+    ],
+  };
+}
+
+function namedPipeline(id: string, overrides: Partial<Record<"parseRunId" | "chunkRunId" | "embeddingRunId" | "revision", string | number | null>> = {}) {
+  return {
+    id,
+    documentId: "document-old",
+    name: id,
+    parseRunId: "document-old-parse",
+    chunkRunId: "chunk-new",
+    embeddingRunId: "embedding-new",
+    revision: 1,
+    createdAt: null,
+    updatedAt: null,
+    ...overrides,
+  };
+}
+
 function Probe() {
   const {
     activeDocument,
@@ -119,9 +155,12 @@ function Probe() {
     persistenceError,
     selectedParseRunId,
     selectedChunkRunId,
+    selectedEmbeddingRunId,
     activePipelineId,
     selectFile,
     selectParseRun,
+    selectChunkRun,
+    selectEmbeddingRun,
     selectPipeline,
     selectPersistedDocument,
   } = useDocumentPipeline();
@@ -133,6 +172,7 @@ function Probe() {
       <output data-testid="pending-upload">{pendingUpload?.name ?? "none"}</output>
       <output data-testid="selected-parse">{selectedParseRunId ?? "none"}</output>
       <output data-testid="selected-chunk">{selectedChunkRunId ?? "none"}</output>
+      <output data-testid="selected-embedding">{selectedEmbeddingRunId ?? "none"}</output>
       <output data-testid="active-pipeline">{activePipelineId ?? "none"}</output>
       <output data-testid="artifact-count">{activeDocument?.chunkRuns.length ?? 0}</output>
       <output data-testid="persistence-error">{persistenceError?.code ?? "none"}</output>
@@ -140,6 +180,9 @@ function Probe() {
       <button onClick={() => void selectPersistedDocument("document-new")} type="button">Switch to new</button>
       <button onClick={() => void selectPersistedDocument("document-old")} type="button">Switch to old</button>
       <button onClick={() => void selectParseRun("parse-old")} type="button">Select historical parse</button>
+      <button onClick={() => void selectChunkRun("chunk-alt")} type="button">Select alternate chunk</button>
+      <button onClick={() => void selectEmbeddingRun("embedding-alt")} type="button">Select alternate embedding</button>
+      <button onClick={() => void selectPipeline("pipeline-1")} type="button">Select pipeline one</button>
       <button onClick={() => void selectPipeline("pipeline-2")} type="button">Select pipeline two</button>
     </div>
   );
@@ -236,6 +279,162 @@ describe("Document pipeline committed state", () => {
     expect(patchBodies.map((body) => body.expectedRevision)).toEqual([1, 2]);
   });
 
+  it("does not commit a stale conflict reload after another pipeline becomes active", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
+    const detail = selectableLineageSummary();
+    const pipelineOne = namedPipeline("pipeline-1");
+    const pipelineTwo = namedPipeline("pipeline-2");
+    let pipelineListCalls = 0;
+    let resolveConflictList!: (response: Response) => void;
+    const conflictList = new Promise<Response>((resolve) => { resolveConflictList = resolve; });
+    let patchCalls = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.endsWith("/documents/document-old/pipelines")) {
+        pipelineListCalls += 1;
+        return pipelineListCalls === 1 ? respond([pipelineOne, pipelineTwo]) : conflictList;
+      }
+      if (url.endsWith("/document-pipelines/pipeline-1") && init?.method === "PATCH") {
+        patchCalls += 1;
+        return respond({ error: { code: "pipeline_conflict", message: "changed" } }, 409);
+      }
+      if (url.endsWith("/parse-runs/parse-old")) return respond(parseResult("document-old", "parse-old", "lesson.pdf", "Historical parse"));
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
+    fireEvent.click(screen.getByRole("button", { name: "Select historical parse" }));
+    expect(screen.getByTestId("selected-parse")).toHaveTextContent("parse-old");
+    await waitFor(() => expect(pipelineListCalls).toBe(2));
+    fireEvent.click(screen.getByRole("button", { name: "Select pipeline two" }));
+    expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2");
+    resolveConflictList(new Response(JSON.stringify([{ ...pipelineOne, revision: 2 }, pipelineTwo]), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2");
+    expect(screen.getByTestId("selected-parse")).toHaveTextContent("document-old-parse");
+    expect(patchCalls).toBe(1);
+  });
+
+  it("updates artifact selection before PATCH and serializes revisions for one pipeline", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
+    const detail = selectableLineageSummary();
+    const pipeline = namedPipeline("pipeline-1");
+    let resolveFirstPatch!: (response: Response) => void;
+    const firstPatch = new Promise<Response>((resolve) => { resolveFirstPatch = resolve; });
+    const patchBodies: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.endsWith("/documents/document-old/pipelines")) return respond([pipeline]);
+      if ((url.endsWith("/chunk-runs/chunk-alt") || url.endsWith("/embedding-runs/embedding-alt"))) return new Promise<Response>(() => undefined);
+      if (url.endsWith("/document-pipelines/pipeline-1") && init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        patchBodies.push(body);
+        return patchBodies.length === 1
+          ? firstPatch
+          : respond({ ...pipeline, revision: 3, chunkRunId: "chunk-alt", embeddingRunId: "embedding-alt" });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-new"));
+    fireEvent.click(screen.getByRole("button", { name: "Select alternate chunk" }));
+    expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-alt");
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("none");
+    fireEvent.click(screen.getByRole("button", { name: "Select alternate embedding" }));
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("embedding-alt");
+    await waitFor(() => expect(patchBodies).toHaveLength(1));
+
+    resolveFirstPatch(new Response(JSON.stringify({ ...pipeline, revision: 2, chunkRunId: "chunk-alt", embeddingRunId: null }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await waitFor(() => expect(patchBodies).toHaveLength(2));
+    expect(patchBodies.map((body) => body.expectedRevision)).toEqual([1, 2]);
+    expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-alt");
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("embedding-alt");
+  });
+
+  it("rolls an optimistic selection back only while its request is still active", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
+    const detail = selectableLineageSummary();
+    const pipeline = namedPipeline("pipeline-1");
+    let listCalls = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.endsWith("/documents/document-old/pipelines")) {
+        listCalls += 1;
+        return respond([pipeline]);
+      }
+      if (url.endsWith("/document-pipelines/pipeline-1") && init?.method === "PATCH") return respond({ error: { code: "save_failed", message: "failed" } }, 500);
+      if (url.endsWith("/parse-runs/parse-old")) return respond(parseResult("document-old", "parse-old", "lesson.pdf", "Historical parse"));
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("selected-parse")).toHaveTextContent("document-old-parse"));
+    fireEvent.click(screen.getByRole("button", { name: "Select historical parse" }));
+    expect(screen.getByTestId("selected-parse")).toHaveTextContent("parse-old");
+    expect(screen.getByTestId("selected-chunk")).toHaveTextContent("none");
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("none");
+    await waitFor(() => expect(screen.getByTestId("selected-parse")).toHaveTextContent("document-old-parse"));
+    expect(screen.getByTestId("persistence-error")).toHaveTextContent("save_failed");
+    expect(listCalls).toBe(2);
+  });
+
+  it("does not roll a newer pipeline selection back after an older PATCH failure", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
+    const detail = selectableLineageSummary();
+    const pipelineOne = namedPipeline("pipeline-1");
+    const pipelineTwo = namedPipeline("pipeline-2");
+    let listCalls = 0;
+    let resolvePatch!: (response: Response) => void;
+    const delayedPatch = new Promise<Response>((resolve) => { resolvePatch = resolve; });
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const respond = (payload: unknown) => Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.endsWith("/documents/document-old/pipelines")) {
+        listCalls += 1;
+        return respond([pipelineOne, pipelineTwo]);
+      }
+      if (url.endsWith("/document-pipelines/pipeline-1") && init?.method === "PATCH") return delayedPatch;
+      if (url.endsWith("/parse-runs/parse-old")) return respond(parseResult("document-old", "parse-old", "lesson.pdf", "Historical parse"));
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
+    fireEvent.click(screen.getByRole("button", { name: "Select historical parse" }));
+    expect(screen.getByTestId("selected-parse")).toHaveTextContent("parse-old");
+    fireEvent.click(screen.getByRole("button", { name: "Select pipeline two" }));
+    expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2");
+    resolvePatch(new Response(JSON.stringify({ error: { code: "save_failed", message: "failed" } }), { status: 500, headers: { "Content-Type": "application/json" } }));
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2");
+    expect(screen.getByTestId("selected-parse")).toHaveTextContent("document-old-parse");
+    expect(screen.getByTestId("persistence-error")).toHaveTextContent("none");
+    expect(listCalls).toBe(1);
+  });
+
   it("keeps the committed document while a different file is only pending", async () => {
     setupFetch();
     renderProbe();
@@ -326,8 +525,8 @@ describe("Document pipeline committed state", () => {
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents/document-old/summary"))).toHaveLength(1);
   });
 
-  it("refetches an expired summary before a pipeline switch", async () => {
-    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+  it("does not extend summary freshness on cached switches and refetches after 60 seconds", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(0);
     localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
     localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
     const detail = summaryDocument("document-old", "lesson.pdf");
@@ -348,10 +547,49 @@ describe("Document pipeline committed state", () => {
     renderProbe();
 
     await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
-    now.mockReturnValue(62_000);
+    now.mockReturnValue(50_000);
     fireEvent.click(screen.getByRole("button", { name: "Select pipeline two" }));
     await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2"));
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents/document-old/summary"))).toHaveLength(1);
+    now.mockReturnValue(61_000);
+    fireEvent.click(screen.getByRole("button", { name: "Select pipeline one" }));
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents/document-old/summary"))).toHaveLength(2);
+  });
+
+  it("keeps the last pipeline in a rapid A to B to A selection race", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
+    const detail = summaryDocument("document-old", "lesson.pdf");
+    const pipelines = [namedPipeline("pipeline-1", { chunkRunId: null, embeddingRunId: null }), namedPipeline("pipeline-2", { chunkRunId: null, embeddingRunId: null })];
+    const delayedSummaries: Array<(response: Response) => void> = [];
+    let summaryCalls = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const respond = (payload: unknown) => Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/pipelines")) return respond(pipelines);
+      if (url.endsWith("/documents/document-old/summary")) {
+        summaryCalls += 1;
+        if (summaryCalls === 1) return respond(detail);
+        return new Promise<Response>((resolve) => { delayedSummaries.push(resolve); });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
+    now.mockReturnValue(70_000);
+    fireEvent.click(screen.getByRole("button", { name: "Select pipeline two" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select pipeline one" }));
+    await waitFor(() => expect(delayedSummaries).toHaveLength(2));
+    delayedSummaries[1](new Response(JSON.stringify(detail), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
+    delayedSummaries[0](new Response(JSON.stringify(detail), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1");
   });
 
   it("does not bootstrap again when only the route changes", async () => {
