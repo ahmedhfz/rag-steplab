@@ -26,3 +26,10 @@ def test_api_requirements_do_not_initialize_docling_runtime():
     assert "docling" not in api_requirements
     assert "torch" not in api_requirements
     assert "docling==2.117.0" in worker_requirements
+
+
+def test_production_health_check_uses_the_routing_region_endpoint():
+    repository_root = Path(__file__).resolve().parents[2]
+    workflow = (repository_root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert "https://ahmedhfz-dev--rag-steplab-api-api-eu.eu-west.modal.run" in workflow
