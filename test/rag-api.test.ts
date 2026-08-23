@@ -183,12 +183,20 @@ describe("RAG API contract normalization", () => {
       embedding_format_version: "gemini-embedding-2-qa-prefix-v1",
       embedding_count: 1,
       effective_model: "gemini-embedding-2-001",
+      startedAt: "2026-08-23T20:09:38.883931Z",
+      completedAt: "2026-08-23T20:09:50.744289Z",
+      durationMs: 11861,
       reused_artifact: true,
     }), { status: 200, headers: { "Content-Type": "application/json" } })));
 
     await expect(getEmbeddingRun("embedding-run-1")).resolves.toMatchObject({
       effectiveModel: "gemini-embedding-2-001",
       reusedArtifact: true,
+      timing: {
+        startedAt: "2026-08-23T20:09:38.883931Z",
+        completedAt: "2026-08-23T20:09:50.744289Z",
+        durationMs: 11861,
+      },
     });
   });
 

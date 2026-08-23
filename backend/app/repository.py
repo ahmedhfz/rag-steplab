@@ -1008,7 +1008,7 @@ class InMemoryRepository(Repository):
                     "status": "completed",
                     "chunk_count": len(items),
                     "completed_at": completed_at,
-                    "duration_ms": 0,
+                    "duration_ms": duration_ms_between(row.get("started_at"), completed_at),
                     "error_code": None,
                     "error_message": None,
                 }
@@ -1038,7 +1038,7 @@ class InMemoryRepository(Repository):
                     "error_code": code,
                     "error_message": message,
                     "completed_at": completed_at,
-                    "duration_ms": 0,
+                    "duration_ms": duration_ms_between(row.get("started_at"), completed_at),
                 }
             )
             return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, [])})
@@ -1138,7 +1138,7 @@ class InMemoryRepository(Repository):
                     "embedding_count": len(values),
                     "effective_model": effective_model,
                     "completed_at": completed_at,
-                    "duration_ms": 0,
+                    "duration_ms": duration_ms_between(row.get("started_at"), completed_at),
                     "error_code": None,
                     "error_message": None,
                 }
@@ -1167,7 +1167,7 @@ class InMemoryRepository(Repository):
                     "error_code": code,
                     "error_message": message,
                     "completed_at": completed_at,
-                    "duration_ms": 0,
+                    "duration_ms": duration_ms_between(row.get("started_at"), completed_at),
                 }
             )
             return copy.deepcopy(row)
