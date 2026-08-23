@@ -8,10 +8,11 @@ import type { AppLocale } from "@/lib/copy";
 import type { PipelineOperationStatus } from "@/components/document-pipeline-provider";
 import type { RunSummary } from "@/lib/rag-api-types";
 import { cn } from "@/lib/utils";
+import { usePreferences } from "@/components/preferences-provider";
 
 const statusCopy = {
-  en: { locked: "Locked", ready: "Ready", processing: "Processing", completed: "Completed", error: "Error", stale: "Stale" },
-  tr: { locked: "Kilitli", ready: "Hazır", processing: "İşleniyor", completed: "Tamamlandı", error: "Hata", stale: "Eski" },
+  en: { locked: "Locked", ready: "Ready", processing: "Processing", completed: "Completed", skipped: "Skipped", error: "Error", stale: "Stale" },
+  tr: { locked: "Kilitli", ready: "Hazır", processing: "İşleniyor", completed: "Tamamlandı", skipped: "Atlandı", error: "Hata", stale: "Eski" },
 } as const;
 
 const statusStyles: Record<PipelineOperationStatus, string> = {
@@ -19,6 +20,7 @@ const statusStyles: Record<PipelineOperationStatus, string> = {
   ready: "border-blue-200 bg-blue-50 text-blue-700",
   processing: "border-amber-200 bg-amber-50 text-amber-700",
   completed: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  skipped: "border-slate-200 bg-slate-50 text-slate-500",
   error: "border-red-200 bg-red-50 text-red-700",
   stale: "border-orange-200 bg-orange-50 text-orange-700",
 };
@@ -26,6 +28,7 @@ const statusStyles: Record<PipelineOperationStatus, string> = {
 function StatusIcon({ status }: { status: PipelineOperationStatus }) {
   if (status === "processing") return <LoaderCircle aria-hidden="true" className="size-3 animate-spin" />;
   if (status === "completed") return <CheckCircle2 aria-hidden="true" className="size-3" />;
+  if (status === "skipped") return <span aria-hidden="true" className="size-3 text-center">–</span>;
   if (status === "error") return <AlertCircle aria-hidden="true" className="size-3" />;
   if (status === "stale") return <History aria-hidden="true" className="size-3" />;
   if (status === "ready") return <Play aria-hidden="true" className="size-3" />;
@@ -74,22 +77,29 @@ export function StageSection({
 }
 
 export function RunMetadata({ run, locale }: { run: RunSummary; locale: AppLocale }) {
+  const { preferences } = usePreferences();
   const labels = locale === "tr"
-    ? { run: "Çalıştırma", duration: "Süre", lineage: "Kaynaklar", config: "Ayarlar", incompatible: "Bu lineage mevcut uyumluluk kurallarıyla kullanılamıyor." }
-    : { run: "Run", duration: "Duration", lineage: "Upstream", config: "Config", incompatible: "This lineage is not compatible with the current contract." };
+    ? { run: "Çalıştırma", duration: "Süre", lineage: "Lineage", config: "Teknik ayrıntılar", compatible: "Uyumlu", incompatible: "Bu lineage mevcut uyumluluk kurallarıyla kullanılamıyor." }
+    : { run: "Run", duration: "Duration", lineage: "Lineage", config: "Technical details", compatible: "Compatible", incompatible: "This lineage is not compatible with the current contract." };
   const upstream = Object.entries(run.upstream).filter((entry): entry is [string, string] => Boolean(entry[1]));
   return (
     <div className="grid gap-3 border bg-slate-50/60 p-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
-      <div><div className="text-slate-500">{labels.run}</div><div className="mt-1 break-all font-mono">{run.id}</div></div>
+      <div><div className="text-slate-500">{labels.run}</div><div className="mt-1 font-medium">{preferences.detailLevel === "technical" ? run.id : (run.status === "completed" ? labels.compatible : run.status)}</div></div>
       <div><div className="text-slate-500">{labels.duration}</div><div className="mt-1 font-medium">{run.timing.durationMs === null ? "—" : `${run.timing.durationMs} ms`}</div></div>
-      <div><div className="text-slate-500">{labels.lineage}</div><div className="mt-1 space-y-1 font-mono">{upstream.length ? upstream.map(([key, value]) => <div className="break-all" key={key}>{key}: {value}</div>) : "—"}</div></div>
-      <details>
+      <div><div className="text-slate-500">{labels.lineage}</div><div className="mt-1">{preferences.detailLevel === "technical" ? <div className="space-y-1 font-mono">{upstream.length ? upstream.map(([key, value]) => <div className="break-all" key={key}>{key}: {value}</div>) : "—"}</div> : <span>{upstream.length ? `${upstream.length} upstream artifact${upstream.length === 1 ? "" : "s"}` : "—"}</span>}</div></div>
+      {preferences.detailLevel === "technical" ? <details>
         <summary className="cursor-pointer font-medium text-slate-600">{labels.config}</summary>
         <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-5">{JSON.stringify(run.config, null, 2)}</pre>
-      </details>
+      </details> : <div><div className="text-slate-500">{locale === "tr" ? "Ne gösteriliyor?" : "What this means"}</div><div className="mt-1 text-slate-600">{locale === "tr" ? "Bu kart yalnızca seçili gerçek run'ın durumunu gösterir." : "This card describes the selected real run, not a new draft."}</div></div>}
       {!run.isCompatible && <p className="text-orange-700 sm:col-span-2 lg:col-span-4" role="status"><History aria-hidden="true" className="mr-1 inline size-3.5" />{labels.incompatible}</p>}
     </div>
   );
+}
+
+export function LearningHint({ locale, children }: { locale: AppLocale; children: React.ReactNode }) {
+  const { preferences } = usePreferences();
+  if (!preferences.showLearningHints) return null;
+  return <aside className="border-l-2 border-sky-300 bg-sky-50/60 px-3 py-2 text-xs leading-5 text-sky-900" role="note"><span className="font-semibold">{locale === "tr" ? "Öğrenme ipucu: " : "Learning hint: "}</span>{children}</aside>;
 }
 
 export function PipelineErrorMessage({ message }: { message: string | null | undefined }) {

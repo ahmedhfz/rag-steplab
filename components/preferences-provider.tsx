@@ -28,6 +28,19 @@ const DEFAULT_PREFERENCES: AppPreferences = {
 
 const PreferencesContext = createContext<PreferencesContextValue | null>(null);
 
+// Bazı bağımsız giriş noktaları (ör. auth callback testleri) provider olmadan
+// render edilebilir. Uygulama shell'i gerçek provider'ı sağlar; bu fallback ise
+// bu izole yüzeylerde dil tercihinin ve erişilebilir metinlerin deterministik
+// kalmasını sağlar.
+const FALLBACK_PREFERENCES: PreferencesContextValue = {
+  preferences: { locale: "tr", detailLevel: "guided", showLearningHints: true },
+  isHydrated: true,
+  setLocale: () => undefined,
+  setDetailLevel: () => undefined,
+  setShowLearningHints: () => undefined,
+  resetPreferences: () => undefined,
+};
+
 function isLocale(value: unknown): value is AppLocale {
   return value === "en" || value === "tr";
 }
@@ -120,6 +133,5 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
 
 export function usePreferences() {
   const context = useContext(PreferencesContext);
-  if (!context) throw new Error("usePreferences must be used within PreferencesProvider");
-  return context;
+  return context ?? FALLBACK_PREFERENCES;
 }

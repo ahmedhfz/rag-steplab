@@ -359,14 +359,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   if (pathname === "/login" || pathname === "/auth/reset-password") {
     return (
-      <MotionConfig reducedMotion="never">
+      <MotionConfig reducedMotion="user">
         <PageTransition>{children}</PageTransition>
       </MotionConfig>
     );
   }
 
   return (
-    <MotionConfig reducedMotion="never">
+    <MotionConfig reducedMotion="user">
       <div className="min-h-screen bg-[#fdfdfd] text-slate-950">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-[232px] border-r lg:block">
         <Sidebar copy={copy} onSignOut={signOut} pathname={pathname} user={authUser} />

@@ -65,6 +65,18 @@ def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def duration_ms_between(started_at: datetime | None, completed_at: datetime | None) -> int | None:
+    """Return server-observed elapsed time for an executed lifecycle.
+
+    A terminal run that never started has no honest duration.  A run that did
+    execute is reported as at least one millisecond so a fast operation is not
+    serialized as a misleading zero-duration result.
+    """
+    if started_at is None or completed_at is None:
+        return None
+    return max(1, math.ceil((completed_at - started_at).total_seconds() * 1000))
+
+
 def _dump(value: Any) -> Any:
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json", by_alias=False)
@@ -93,6 +105,7 @@ def _run_summary(row: dict[str, Any], *, stale: bool = False) -> RunSummary:
         error_message = error_message or "The run was interrupted before completion."
     return RunSummary(
         id=row["id"],
+        created_at=row.get("created_at"),
         status=status,
         progress=(100 if status == "completed" else (row.get("execution_metadata") or {}).get("progress")),
         is_stale=stale,
@@ -217,6 +230,7 @@ def _summary_dataset_row(row: dict[str, Any]) -> dict[str, Any]:
         "parse_run_id": row.get("parse_run_id"),
         "name": row.get("name", ""),
         "version": row.get("version", 1),
+        "series_id": row.get("series_id"),
         "case_count": len(cases) if isinstance(cases, list) else row.get("case_count", 0),
         "created_at": row.get("created_at"),
     }
@@ -532,6 +546,9 @@ class Repository:
     def save_evaluation(self, row: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
 
+    def update_evaluation(self, run_id: str, changes: dict[str, Any]) -> dict[str, Any] | None:
+        raise NotImplementedError
+
     def get_evaluation_row(self, run_id: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
@@ -583,13 +600,29 @@ class InMemoryRepository(Repository):
             "updated_at": now_utc(),
         }
         self.documents[document_id] = row
+        # Every document starts with one explicit lineage container.  This
+        # keeps downstream actions deterministic even before the first parse.
+        default_pipeline_id = new_id()
+        self.document_pipelines[default_pipeline_id] = {
+            "id": default_pipeline_id,
+            "owner_user_id": row.get("owner_user_id"),
+            "document_id": document_id,
+            "name": "Default Pipeline",
+            "parse_run_id": None,
+            "chunk_run_id": None,
+            "embedding_run_id": None,
+            "revision": 1,
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
         return copy.deepcopy(row)
 
     def save_parse(self, document_id, parsed, *, run_id=None):
         queued = self.create_parse_run(document_id, parser_version="unknown", run_id=run_id)
         if queued is None:
             return None
-        return self.complete_parse(queued["id"], parsed, parser_version="unknown", duration_ms=0)
+        self.mark_parse_running(queued["id"])
+        return self.complete_parse(queued["id"], parsed, parser_version="unknown")
 
     def create_parse_run(self, document_id, *, parser_version="unknown", config=None, run_id=None):
         document = self.documents.get(document_id)
@@ -696,7 +729,9 @@ class InMemoryRepository(Repository):
                     "execution_metadata": copy.deepcopy(execution_metadata or parsed.run_metadata or {}),
                     "started_at": row.get("started_at") or completed_at,
                     "completed_at": completed_at,
-                    "duration_ms": duration_ms if duration_ms is not None else 0,
+                    "duration_ms": duration_ms if duration_ms is not None else duration_ms_between(
+                        row.get("started_at"), completed_at
+                    ),
                     "updated_at": completed_at,
                 }
             )
@@ -846,6 +881,9 @@ class InMemoryRepository(Repository):
                 and row.get("owner_user_id") != uuid.UUID(str(owner_user_id))
             ):
                 return False
+            siblings = [item for item in self.document_pipelines.values() if item["document_id"] == row["document_id"]]
+            if len(siblings) <= 1:
+                raise ApiProblem(409, "default_pipeline_required", "A document must keep at least one pipeline.")
             return self.document_pipelines.pop(pipeline_id, None) is not None
 
     def get_parse_row(self, run_id):
@@ -1241,7 +1279,7 @@ class InMemoryRepository(Repository):
             row["completed_at"] = row.get("completed_at") or now_utc()
             started = row.get("started_at")
             if row.get("duration_ms") is None and started is not None:
-                row["duration_ms"] = max(0, round((row["completed_at"] - started).total_seconds() * 1000))
+                row["duration_ms"] = duration_ms_between(started, row["completed_at"])
             return copy.deepcopy(row)
 
     def fail_experiment(self, experiment_id, code, message):
@@ -1256,7 +1294,7 @@ class InMemoryRepository(Repository):
             row["completed_at"] = row.get("completed_at") or now_utc()
             started = row.get("started_at")
             if row.get("duration_ms") is None and started is not None:
-                row["duration_ms"] = max(0, round((row["completed_at"] - started).total_seconds() * 1000))
+                row["duration_ms"] = duration_ms_between(started, row["completed_at"])
             return copy.deepcopy(row)
 
     def find_stage_result(self, document_id, stage, fingerprint):
@@ -1296,12 +1334,18 @@ class InMemoryRepository(Repository):
 
     def save_dataset(self, request, parse_run_id):
         identifier = new_id()
+        base = self.datasets.get(request.base_dataset_id) if getattr(request, "base_dataset_id", None) else None
+        if request.base_dataset_id and (base is None or base.get("document_id") != request.document_id):
+            raise ApiProblem(404, "dataset_not_found", "The base evaluation dataset was not found.")
+        series_id = base.get("series_id") if base else identifier
+        version = max((row.get("version", 0) for row in self.datasets.values() if row.get("series_id") == series_id), default=0) + 1
         row = {
             "id": identifier,
             "document_id": request.document_id,
             "parse_run_id": parse_run_id,
             "name": request.name,
-            "version": 1,
+            "series_id": series_id,
+            "version": version,
             "cases": _dump(request.cases),
             "created_at": now_utc(),
         }
@@ -1334,6 +1378,14 @@ class InMemoryRepository(Repository):
         payload.setdefault("created_at", now_utc())
         self.evaluations[payload["id"]] = payload
         return copy.deepcopy(payload)
+
+    def update_evaluation(self, run_id, changes):
+        with self._lock:
+            row = self.evaluations.get(run_id)
+            if row is None:
+                return None
+            row.update(copy.deepcopy(changes))
+            return copy.deepcopy(row)
 
     def get_evaluation_row(self, run_id):
         return copy.deepcopy(self.evaluations.get(run_id))
@@ -1380,6 +1432,16 @@ class SqlAlchemyRepository(Repository):
         with session_scope() as session:
             session.add(row)
             session.flush()
+            if row.owner_user_id is not None:
+                session.add(
+                    DocumentPipeline(
+                        id=new_id(),
+                        owner_user_id=row.owner_user_id,
+                        document_id=row.id,
+                        name="Default Pipeline",
+                        revision=1,
+                    )
+                )
             return self._document_dict(row)
 
     @staticmethod
@@ -1425,7 +1487,8 @@ class SqlAlchemyRepository(Repository):
         queued = self.create_parse_run(document_id, parser_version="unknown", run_id=run_id)
         if queued is None:
             return None
-        return self.complete_parse(queued["id"], parsed, parser_version="unknown", duration_ms=0)
+        self.mark_parse_running(queued["id"])
+        return self.complete_parse(queued["id"], parsed, parser_version="unknown")
 
     def create_parse_run(self, document_id, *, parser_version="unknown", config=None, run_id=None):
         identifier = run_id or new_id()
@@ -1537,7 +1600,7 @@ class SqlAlchemyRepository(Repository):
             row.execution_metadata = _dump(execution_metadata or parsed.run_metadata or {})
             row.started_at = row.started_at or completed_at
             row.completed_at = completed_at
-            row.duration_ms = duration_ms if duration_ms is not None else 0
+            row.duration_ms = duration_ms if duration_ms is not None else duration_ms_between(row.started_at, completed_at)
             document.page_count = payload["document"]["page_count"]
             document.active_parse_run_id = run_id
             document.active_chunk_run_id = None
@@ -1631,6 +1694,7 @@ class SqlAlchemyRepository(Repository):
             "chunk_run_id": row.chunk_run_id,
             "embedding_run_id": row.embedding_run_id,
             "revision": row.revision,
+            "is_default": row.name == "Default Pipeline",
             "created_at": row.created_at,
             "updated_at": row.updated_at,
         }
@@ -1715,6 +1779,14 @@ class SqlAlchemyRepository(Repository):
             filters = [DocumentPipeline.id == pipeline_id]
             if owner_user_id is not None:
                 filters.append(DocumentPipeline.owner_user_id == self._owner_uuid(owner_user_id))
+            target = session.scalars(select(DocumentPipeline).where(*filters).with_for_update()).first()
+            if target is None:
+                return False
+            sibling_count = session.scalar(
+                select(func.count(DocumentPipeline.id)).where(DocumentPipeline.document_id == target.document_id)
+            ) or 0
+            if sibling_count <= 1:
+                raise ApiProblem(409, "default_pipeline_required", "A document must keep at least one pipeline.")
             statement = delete(DocumentPipeline).where(*filters).returning(DocumentPipeline.id)
             return session.execute(statement).scalar_one_or_none() is not None
 
@@ -1835,6 +1907,7 @@ class SqlAlchemyRepository(Repository):
             EvaluationDataset.document_id,
             EvaluationDataset.parse_run_id,
             EvaluationDataset.name,
+            EvaluationDataset.series_id,
             EvaluationDataset.version,
             func.jsonb_array_length(EvaluationDataset.cases).label("case_count"),
             EvaluationDataset.created_at,
@@ -2165,7 +2238,7 @@ class SqlAlchemyRepository(Repository):
             run.status = "completed"
             run.chunk_count = len(drafts)
             run.completed_at = completed_at
-            run.duration_ms = 0
+            run.duration_ms = duration_ms_between(run.started_at, completed_at)
             run.error_code = None
             run.error_message = None
             document = session.get(Document, run.document_id)
@@ -2190,7 +2263,7 @@ class SqlAlchemyRepository(Repository):
             run.error_code = code
             run.error_message = message
             run.completed_at = now_utc()
-            run.duration_ms = 0
+            run.duration_ms = duration_ms_between(run.started_at, run.completed_at)
             session.flush()
             return self._chunk_dict(run, session)
 
@@ -2354,7 +2427,7 @@ class SqlAlchemyRepository(Repository):
             run.embedding_count = len(values)
             run.effective_model = effective_model
             run.completed_at = completed_at
-            run.duration_ms = 0
+            run.duration_ms = duration_ms_between(run.started_at, completed_at)
             run.error_code = None
             run.error_message = None
             document = session.get(Document, run.document_id)
@@ -2381,7 +2454,7 @@ class SqlAlchemyRepository(Repository):
             run.error_code = code
             run.error_message = message
             run.completed_at = now_utc()
-            run.duration_ms = 0
+            run.duration_ms = duration_ms_between(run.started_at, run.completed_at)
             session.flush()
             return self._embedding_dict(run)
 
@@ -2602,7 +2675,7 @@ class SqlAlchemyRepository(Repository):
             row.identity_claimed = None
             row.completed_at = row.completed_at or now_utc()
             if row.duration_ms is None and row.started_at is not None:
-                row.duration_ms = max(0, round((row.completed_at - row.started_at).total_seconds() * 1000))
+                row.duration_ms = duration_ms_between(row.started_at, row.completed_at)
             session.flush()
             return self._exp_dict(row)
 
@@ -2619,7 +2692,7 @@ class SqlAlchemyRepository(Repository):
             row.error_message = message
             row.completed_at = row.completed_at or now_utc()
             if row.duration_ms is None and row.started_at is not None:
-                row.duration_ms = max(0, round((row.completed_at - row.started_at).total_seconds() * 1000))
+                row.duration_ms = duration_ms_between(row.started_at, row.completed_at)
             session.flush()
             return self._exp_dict(row)
 
@@ -2662,14 +2735,22 @@ class SqlAlchemyRepository(Repository):
             "document_id": row.document_id,
             "parse_run_id": row.parse_run_id,
             "name": row.name,
+            "series_id": row.series_id,
             "version": row.version,
             "cases": row.cases,
             "created_at": row.created_at,
         }
 
     def save_dataset(self, request, parse_run_id):
-        entity = EvaluationDataset(id=new_id(), document_id=request.document_id, parse_run_id=parse_run_id, name=request.name, version=1, cases=_dump(request.cases))
         with session_scope() as session:
+            base = session.get(EvaluationDataset, request.base_dataset_id) if getattr(request, "base_dataset_id", None) else None
+            if request.base_dataset_id and (base is None or base.document_id != request.document_id):
+                raise ApiProblem(404, "dataset_not_found", "The base evaluation dataset was not found.")
+            series_id = base.series_id if base is not None else new_id()
+            version = (session.scalar(
+                select(func.max(EvaluationDataset.version)).where(EvaluationDataset.series_id == series_id)
+            ) or 0) + 1
+            entity = EvaluationDataset(id=new_id(), document_id=request.document_id, parse_run_id=parse_run_id, series_id=series_id, name=request.name, version=version, cases=_dump(request.cases))
             session.add(entity)
             session.flush()
             return self._dataset_dict(entity)
@@ -2699,6 +2780,8 @@ class SqlAlchemyRepository(Repository):
             "child_experiment_ids": row.child_experiment_ids,
             "results": row.results,
             "status": row.status,
+            "error_code": row.error_code,
+            "error_message": row.error_message,
             "started_at": row.started_at,
             "completed_at": row.completed_at,
             "duration_ms": row.duration_ms,
@@ -2713,12 +2796,23 @@ class SqlAlchemyRepository(Repository):
             child_experiment_ids=row.get("child_experiment_ids", []),
             results=row.get("results", {}),
             status=row.get("status", "completed"),
-            started_at=row.get("started_at", now_utc()),
-            completed_at=row.get("completed_at", now_utc()),
-            duration_ms=row.get("duration_ms", 0),
+            started_at=row.get("started_at"),
+            completed_at=row.get("completed_at"),
+            duration_ms=row.get("duration_ms"),
         )
         with session_scope() as session:
             session.add(entity)
+            session.flush()
+            return self._eval_dict(entity)
+
+    def update_evaluation(self, run_id, changes):
+        with session_scope() as session:
+            entity = session.get(EvaluationRun, run_id)
+            if entity is None:
+                return None
+            for key, value in changes.items():
+                if hasattr(entity, key):
+                    setattr(entity, key, _dump(value))
             session.flush()
             return self._eval_dict(entity)
 
@@ -3027,6 +3121,11 @@ class ScopedRepository(Repository):
         if dataset is None:
             raise ApiProblem(404, "evaluation_run_not_found", "The evaluation lineage was not found.")
         return self._repository.save_evaluation(row)
+
+    def update_evaluation(self, run_id, changes):
+        if self.get_evaluation_row(run_id) is None:
+            return None
+        return self._repository.update_evaluation(run_id, changes)
 
     def get_evaluation_row(self, run_id):
         row = self._repository.get_evaluation_row(run_id)

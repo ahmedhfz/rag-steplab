@@ -7,21 +7,25 @@ import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-function runNumber(runs: Array<{ id: string }>, id: string | null) {
-  const index = id ? runs.findIndex((run) => run.id === id) : -1;
+function runNumber(runs: Array<{ id: string; createdAt?: string | null }>, id: string | null) {
+  const ordered = [...runs].sort((left, right) => {
+    const byDate = String(left.createdAt ?? "").localeCompare(String(right.createdAt ?? ""));
+    return byDate || left.id.localeCompare(right.id);
+  });
+  const index = id ? ordered.findIndex((run) => run.id === id) : -1;
   return index >= 0 ? index + 1 : null;
 }
 
 export function PipelineContextBar() {
   const { preferences } = usePreferences();
-  const { documents, activeDocumentId, activeDocumentMetadata, activeDocument, selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId, persistenceStatus, selectPersistedDocument } = useDocumentPipeline();
+  const { documents, activeDocumentId, activeDocumentMetadata, activeDocument, selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId, activePipeline, pipelines, persistenceStatus, selectPersistedDocument } = useDocumentPipeline();
   const documentName = activeDocument?.fileName ?? activeDocumentMetadata?.fileName;
   const parseNumber = runNumber(activeDocument?.parseRuns ?? [], selectedParseRunId);
   const chunkNumber = runNumber(activeDocument?.chunkRuns ?? [], selectedChunkRunId);
   const embeddingNumber = runNumber(activeDocument?.embeddingRuns ?? [], selectedEmbeddingRunId);
   const labels = preferences.locale === "tr"
-    ? { document: "Doküman bağlamı", placeholder: "Doküman seçin", noDocument: "Aktif doküman yok", historical: "geçmiş lineage" }
-    : { document: "Document context", placeholder: "Select a document", noDocument: "No active document", historical: "historical lineage" };
+    ? { document: "Doküman bağlamı", placeholder: "Doküman seçin", noDocument: "Aktif doküman yok", historical: "geçmiş lineage", pipeline: "Indexing pipeline" }
+    : { document: "Document context", placeholder: "Select a document", noDocument: "No active document", historical: "historical lineage", pipeline: "Indexing pipeline" };
   const selectedParse = activeDocument?.parseRuns.find((run) => run.id === selectedParseRunId);
   const selectedChunk = activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId);
   const selectedEmbedding = activeDocument?.embeddingRuns.find((run) => run.id === selectedEmbeddingRunId);
@@ -35,6 +39,7 @@ export function PipelineContextBar() {
           <SelectTrigger aria-label={labels.document} className="h-8 min-w-0 max-w-[17rem] border-0 px-1 text-xs font-medium shadow-none"><SelectValue placeholder={documentName ?? (documents.length ? labels.placeholder : labels.noDocument)} /></SelectTrigger>
           <SelectContent>{documents.map((document) => <SelectItem key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
         </Select>
+        <span className="min-w-0 truncate text-xs font-semibold text-slate-700" title={activePipeline?.name}>{labels.pipeline}: {activePipeline?.name ?? (pipelines.length ? "—" : labels.noDocument)}</span>
         <span aria-label={preferences.locale === "tr" ? "Seçili lineage" : "Selected lineage"} className="shrink-0 text-xs font-semibold tracking-wide text-slate-700">
           <Link className="hover:underline" href="/parse" title={selectedParse?.id}>{parseNumber ? `P${parseNumber}` : "P—"}</Link><span className="px-1 text-slate-400">→</span><Link className="hover:underline" href="/chunking" title={selectedChunk?.id}>{chunkNumber ? `C${chunkNumber}` : "C—"}</Link><span className="px-1 text-slate-400">→</span><Link className="hover:underline" href="/embeddings" title={selectedEmbedding?.id}>{embeddingNumber ? `E${embeddingNumber}` : "E—"}</Link>
         </span>

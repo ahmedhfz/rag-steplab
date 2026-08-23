@@ -29,6 +29,7 @@ export type RunTiming = {
 
 export type RunSummary = {
   id: string;
+  createdAt?: string | null;
   status: RunStatus;
   progress: number | null;
   isStale: boolean;
@@ -59,6 +60,8 @@ export type PersistedDocument = {
   activeParseRunId: string | null;
   activeChunkRunId: string | null;
   activeEmbeddingRunId: string | null;
+  latestParseStatus?: ParseRunStatus | null;
+  latestParseError?: ApiProblem | null;
   createdAt: string | null;
   updatedAt: string | null;
 };
@@ -95,12 +98,14 @@ export type DocumentPipeline = {
   chunkRunId: string | null;
   embeddingRunId: string | null;
   revision: number;
+  isDefault?: boolean;
   createdAt: string | null;
   updatedAt: string | null;
 };
 
 export type EvaluationRunSummary = {
   id: string;
+  createdAt?: string | null;
   datasetId: string;
   parseRunId: string;
   chunkRunId: string | null;
@@ -116,6 +121,7 @@ export type EvaluationDatasetSummary = {
   parseRunId: string;
   name: string;
   version: number;
+  seriesId?: string | null;
   caseCount: number;
   createdAt: string | null;
 };
@@ -196,6 +202,7 @@ export type GenerationConfig = {
 
 export type ExperimentRequest = {
   documentId: string;
+  pipelineId?: string | null;
   chunkRunId: string | null;
   embeddingRunId: string | null;
   query: string;
@@ -314,6 +321,7 @@ export type EvaluationDataset = {
   parseRunId: string;
   name: string;
   version: number;
+  seriesId?: string | null;
   cases: EvaluationCase[];
   createdAt: string | null;
 };
@@ -329,9 +337,22 @@ export type EvaluationMetrics = {
   caseCount: number | null;
 };
 
+export type EvaluationCaseResult = {
+  question: string;
+  hitAtK: number;
+  precisionAtK: number;
+  recallAtK: number;
+  mrr: number;
+  citationValidity: number;
+  groundedness: number;
+  groundednessDetail?: Record<string, unknown>;
+  experimentId: string;
+};
+
 export type EvaluationRun = RunSummary & {
   datasetId: string;
   results: EvaluationMetrics;
+  caseResults?: EvaluationCaseResult[];
 };
 
 export type Capabilities = {

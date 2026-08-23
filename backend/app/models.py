@@ -335,6 +335,7 @@ class EvaluationDataset(Base):
     parse_run_id: Mapped[str] = mapped_column(
         ForeignKey(f"{SCHEMA}.parse_runs.id", ondelete="RESTRICT"), nullable=False, index=True
     )
+    series_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     cases: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)

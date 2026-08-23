@@ -109,7 +109,7 @@ describe("RAG API contract normalization", () => {
   });
 
   it("normalizes named pipeline CRUD and sends expectedRevision on PATCH", async () => {
-    const pipeline = { id: "pipeline-1", documentId: "document-1", name: "Baseline", parseRunId: "parse-1", chunkRunId: null, embeddingRunId: null, revision: 1, createdAt: null, updatedAt: null };
+    const pipeline = { id: "pipeline-1", documentId: "document-1", name: "Baseline", parseRunId: "parse-1", chunkRunId: null, embeddingRunId: null, revision: 1, isDefault: false, createdAt: null, updatedAt: null };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify([pipeline]), { status: 200, headers: { "Content-Type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify(pipeline), { status: 201, headers: { "Content-Type": "application/json" } }))

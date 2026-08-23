@@ -24,6 +24,7 @@ from .errors import ApiProblem
 from .gemini import EMBEDDING_FORMAT_VERSION, GeminiService, document_embedding_text
 from .repository import (
     Repository,
+    duration_ms_between,
     get_repository,
     new_id,
     now_utc,
@@ -590,7 +591,7 @@ def run_parse_worker(
     report_progress(8, "worker_started")
     queue_duration_ms = None
     if running.get("created_at") is not None and running.get("started_at") is not None:
-        queue_duration_ms = max(0, int((running["started_at"] - running["created_at"]).total_seconds() * 1000))
+        queue_duration_ms = duration_ms_between(running["created_at"], running["started_at"])
     logger.info(
         "parse_worker_started parse_run_id=%s parser_version=%s queue_duration_ms=%s",
         parse_run_id,
@@ -601,7 +602,7 @@ def run_parse_worker(
         document = _document_or_404(repository, running["document_id"])
         storage_started = time.perf_counter()
         content = get_storage().download(document["storage_path"])
-        storage_download_ms = max(0, int((time.perf_counter() - storage_started) * 1000))
+        storage_download_ms = max(1, math.ceil((time.perf_counter() - storage_started) * 1000))
         report_progress(15, "source_loaded")
         temporary_path: Path | None = None
         try:
@@ -620,7 +621,7 @@ def run_parse_worker(
         finally:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
-        duration_ms = int(measurement.get("elapsedMs") or (time.perf_counter() - started) * 1000)
+        duration_ms = max(1, math.ceil(float(measurement.get("elapsedMs") or (time.perf_counter() - started) * 1000)))
         execution_metadata = {
             **(parsed.run_metadata or {}),
             "worker": worker_name,
@@ -647,7 +648,7 @@ def run_parse_worker(
         )
         return completed
     except ApiProblem as exc:
-        duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+        duration_ms = max(1, math.ceil((time.perf_counter() - started) * 1000))
         failed = repository.fail_parse(
             parse_run_id,
             exc.code,
@@ -666,7 +667,7 @@ def run_parse_worker(
         )
         return failed
     except Exception as exc:
-        duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+        duration_ms = max(1, math.ceil((time.perf_counter() - started) * 1000))
         failed = repository.fail_parse(
             parse_run_id,
             "parse_worker_error",
@@ -1053,13 +1054,28 @@ def _prepare_experiment_lineage(
     request: ExperimentCreateRequest,
     repository: Repository,
     settings: Settings,
-) -> tuple[dict[str, Any], str, str | None, dict[str, Any] | None]:
+) -> tuple[dict[str, Any], str, str | None, dict[str, Any] | None, dict[str, Any]]:
     document = _document_or_404(repository, request.document_id)
-    chunk_run_id = request.chunk_run_id or document.get("active_chunk_run_id")
+    pipelines = repository.list_document_pipeline_rows(request.document_id) or []
+    pipeline = next((item for item in pipelines if item.get("id") == request.pipeline_id), None) if request.pipeline_id else None
+    if request.pipeline_id and pipeline is None:
+        raise ApiProblem(404, "document_pipeline_not_found", "The selected pipeline was not found.")
+    if pipeline is None and pipelines:
+        pipeline = next((item for item in pipelines if item.get("name") == "Default Pipeline"), pipelines[0])
+    if pipeline is None:
+        pipeline = repository.create_document_pipeline({
+            "owner_user_id": document.get("owner_user_id"),
+            "document_id": request.document_id,
+            "name": "Default Pipeline",
+            "parse_run_id": None,
+            "chunk_run_id": None,
+            "embedding_run_id": None,
+        })
+    chunk_run_id = request.chunk_run_id or pipeline.get("chunk_run_id") or document.get("active_chunk_run_id")
     if not chunk_run_id:
         raise ApiProblem(409, "chunks_required", "Create chunks before running an experiment.")
     _require_compatible_chunk(repository, request.document_id, chunk_run_id)
-    embedding_run_id = request.embedding_run_id or document.get("active_embedding_run_id")
+    embedding_run_id = request.embedding_run_id or pipeline.get("embedding_run_id") or document.get("active_embedding_run_id")
     if request.retrieval.mode in {"dense", "hybrid"} and not embedding_run_id:
         raise ApiProblem(409, "embedding_required", "Dense or hybrid retrieval requires embeddings.")
     embedding = None
@@ -1079,7 +1095,15 @@ def _prepare_experiment_lineage(
             # Keyword retrieval does not consume an embedding. An active
             # embedding from another historical chunk is simply not selected.
             embedding_run_id = None
-    return document, chunk_run_id, embedding_run_id, embedding
+    pipeline_context = {
+        "id": pipeline.get("id"),
+        "name": pipeline.get("name"),
+        "revision": pipeline.get("revision"),
+        "parseRunId": pipeline.get("parse_run_id"),
+        "chunkRunId": pipeline.get("chunk_run_id"),
+        "embeddingRunId": pipeline.get("embedding_run_id"),
+    }
+    return document, chunk_run_id, embedding_run_id, embedding, pipeline_context
 
 
 def _embedding_provenance(embedding: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -1206,6 +1230,7 @@ def _experiment_fingerprint(
     return _fingerprint({
         "schema": EXPERIMENT_FINGERPRINT_SCHEMA_VERSION,
         "documentId": request.document_id,
+        "pipelineId": request.pipeline_id,
         "chunkRunId": chunk_run_id,
         "embeddingRunId": embedding_run_id,
         "query": request.query,
@@ -1362,7 +1387,7 @@ def _run_experiment_stages(
             "embeddingConfiguredModel": query_embedding_metadata.configured_model if query_embedding_metadata else None,
             "embeddingEffectiveModel": query_embedding_metadata.effective_model if query_embedding_metadata else None,
         }
-        retrieval["durationMs"] = max(0, round((time.perf_counter() - started) * 1000))
+        retrieval["durationMs"] = max(1, math.ceil((time.perf_counter() - started) * 1000))
         query_model = _model_provenance(
             query_embedding_metadata.configured_model if query_embedding_metadata else None,
             query_embedding_metadata.effective_model if query_embedding_metadata else None,
@@ -1407,7 +1432,7 @@ def _run_experiment_stages(
             else:
                 reranking = {"status": "skipped", "reason": "disabled", "results": retrieval["results"]}
                 model = {"role": "reranker", "cacheable": True, "notUsed": True}
-            reranking["durationMs"] = max(0, round((time.perf_counter() - started) * 1000))
+            reranking["durationMs"] = max(1, math.ceil((time.perf_counter() - started) * 1000))
             reranking["config"] = {"enabled": request.reranking.enabled, "candidateCount": request.reranking.candidate_count}
             reranking["provenance"] = {
                 "algorithmVersion": RERANK_ALGORITHM_VERSION,
@@ -1436,7 +1461,7 @@ def _run_experiment_stages(
             started = time.perf_counter()
             candidates = reranking.get("results", retrieval["results"])
             context = _context_stage(candidates, request.context.token_budget)
-            context["durationMs"] = max(0, round((time.perf_counter() - started) * 1000))
+            context["durationMs"] = max(1, math.ceil((time.perf_counter() - started) * 1000))
             context["config"] = {"tokenBudget": request.context.token_budget}
             context["provenance"] = {
                 "algorithmVersion": CONTEXT_ALGORITHM_VERSION,
@@ -1463,7 +1488,7 @@ def _run_experiment_stages(
         else:
             started = time.perf_counter()
             generation = _generation_stage(request.query, context, request.generation, get_service())
-            generation["durationMs"] = max(0, round((time.perf_counter() - started) * 1000))
+            generation["durationMs"] = max(1, math.ceil((time.perf_counter() - started) * 1000))
             generation["config"] = _safe_model_dump(request.generation)
             if context.get("selected"):
                 model = _model_provenance(
@@ -1498,7 +1523,7 @@ def _create_experiment(
 ) -> dict[str, Any]:
     settings = get_settings()
     _require_write(repository, settings)
-    _document, chunk_run_id, embedding_run_id, embedding = _prepare_experiment_lineage(request, repository, settings)
+    _document, chunk_run_id, embedding_run_id, embedding, pipeline_context = _prepare_experiment_lineage(request, repository, settings)
     experiment_fingerprint = _experiment_fingerprint(request, chunk_run_id, embedding_run_id, embedding, settings)
     if allow_exact_reuse:
         existing = repository.get_completed_experiment_by_fingerprint(request.document_id, experiment_fingerprint)
@@ -1513,7 +1538,7 @@ def _create_experiment(
         "query": request.query,
         "target_stage": request.target_stage,
         "experiment_fingerprint": experiment_fingerprint,
-        "config": _safe_model_dump(request),
+        "config": {**_safe_model_dump(request), "pipelineContext": pipeline_context},
         "stage_results": {},
         "status": "running",
         "started_at": now_utc(),
@@ -1558,6 +1583,86 @@ def _create_experiment(
 
 def create_experiment(request: ExperimentCreateRequest, *, repository: Repository | None = None) -> dict[str, Any]:
     return _create_experiment(request, repository=repository or get_repository())
+
+
+def queue_experiment(request: ExperimentCreateRequest, *, repository: Repository | None = None) -> dict[str, Any]:
+    """Persist a real running experiment before returning to the browser.
+
+    Stage execution is started by the API background task and each completed
+    stage is persisted through the normal repository boundary. The browser can
+    therefore poll durable state without inventing progress or ETA values.
+    """
+    repository = repository or get_repository()
+    settings = get_settings()
+    _require_write(repository, settings)
+    _document, chunk_run_id, embedding_run_id, embedding, pipeline_context = _prepare_experiment_lineage(request, repository, settings)
+    experiment_fingerprint = _experiment_fingerprint(request, chunk_run_id, embedding_run_id, embedding, settings)
+    existing = repository.get_completed_experiment_by_fingerprint(request.document_id, experiment_fingerprint)
+    if existing is not None and _exact_experiment_reusable(existing, request, chunk_run_id, embedding_run_id, embedding, settings):
+        return _experiment_response(existing, reused_experiment=True)
+    claimed, owner = repository.claim_experiment({
+        "id": new_id(),
+        "document_id": request.document_id,
+        "chunk_run_id": chunk_run_id,
+        "embedding_run_id": embedding_run_id,
+        "query": request.query,
+        "target_stage": request.target_stage,
+        "experiment_fingerprint": experiment_fingerprint,
+        "config": {**_safe_model_dump(request), "pipelineContext": pipeline_context},
+        "stage_results": {},
+        "status": "running",
+        "started_at": now_utc(),
+        "completed_at": None,
+        "duration_ms": None,
+    })
+    if not owner:
+        raise ApiProblem(409, "experiment_in_progress", "The exact experiment is currently being created.")
+    return _experiment_response(claimed)
+
+
+def run_queued_experiment(request: ExperimentCreateRequest, experiment_id: str, *, repository: Repository | None = None) -> dict[str, Any] | None:
+    repository = repository or get_repository()
+    settings = get_settings()
+    try:
+        # The queue claim is the lineage snapshot. Do not resolve the active
+        # pipeline again after the request returns: a user may legitimately
+        # switch or revise a pipeline while this run is executing.
+        persisted = repository.get_experiment_row(experiment_id)
+        if persisted is None:
+            raise ApiProblem(404, "experiment_not_found", "The experiment was not found.")
+        _document = _document_or_404(repository, persisted["document_id"])
+        chunk_run_id = persisted["chunk_run_id"]
+        _require_compatible_chunk(repository, persisted["document_id"], chunk_run_id)
+        embedding_run_id = persisted.get("embedding_run_id")
+        embedding = None
+        if request.retrieval.mode in {"dense", "hybrid"}:
+            if not embedding_run_id:
+                raise ApiProblem(409, "embedding_required", "Dense or hybrid retrieval requires embeddings.")
+            embedding = _require_compatible_embedding(
+                repository,
+                persisted["document_id"],
+                embedding_run_id,
+                chunk_run_id=chunk_run_id,
+                settings=settings,
+                require_current_contract=True,
+            )
+        _run_experiment_stages(
+            request,
+            repository,
+            settings,
+            experiment_id=experiment_id,
+            chunk_run_id=chunk_run_id,
+            embedding_run_id=embedding_run_id,
+            embedding=embedding,
+        )
+        completed = repository.complete_experiment(experiment_id)
+        return _experiment_response(completed) if completed else None
+    except ApiProblem as exc:
+        repository.fail_experiment(experiment_id, exc.code, exc.message)
+        return None
+    except Exception:
+        repository.fail_experiment(experiment_id, "experiment_failed", "The experiment failed before completion.")
+        return None
 
 
 def continue_experiment(experiment_id: str, *, repository: Repository | None = None) -> dict[str, Any]:
@@ -1670,13 +1775,19 @@ def create_evaluation(request: EvaluationRunRequest, *, repository: Repository |
         raise ApiProblem(404, "dataset_not_found", "The evaluation dataset was not found.")
     document = _document_or_404(repository, dataset["document_id"])
     _require_compatible_parse(repository, dataset["document_id"], dataset["parse_run_id"])
-    selected_chunk_id = request.chunk_run_id or document.get("active_chunk_run_id")
+    pipelines = repository.list_document_pipeline_rows(dataset["document_id"]) or []
+    pipeline = next((item for item in pipelines if item.get("id") == request.pipeline_id), None) if request.pipeline_id else None
+    if request.pipeline_id and pipeline is None:
+        raise ApiProblem(404, "document_pipeline_not_found", "The selected pipeline was not found.")
+    if pipeline is None and pipelines:
+        pipeline = next((item for item in pipelines if item.get("name") == "Default Pipeline"), pipelines[0])
+    selected_chunk_id = request.chunk_run_id or (pipeline or {}).get("chunk_run_id") or document.get("active_chunk_run_id")
     if not selected_chunk_id:
         raise ApiProblem(409, "chunks_required", "Create chunks for the dataset parse before evaluating it.")
     selected_chunk = _require_compatible_chunk(repository, dataset["document_id"], selected_chunk_id)
     if selected_chunk["parse_run_id"] != dataset["parse_run_id"]:
         raise _lineage_problem("The evaluation dataset parse and selected chunks are incompatible.")
-    selected_embedding_id = request.embedding_run_id or document.get("active_embedding_run_id")
+    selected_embedding_id = request.embedding_run_id or (pipeline or {}).get("embedding_run_id") or document.get("active_embedding_run_id")
     if request.retrieval.mode in {"dense", "hybrid"} and not selected_embedding_id:
         raise ApiProblem(409, "embedding_required", "Dense or hybrid evaluation requires embeddings for the selected chunks.")
     if selected_embedding_id:
@@ -1696,9 +1807,23 @@ def create_evaluation(request: EvaluationRunRequest, *, repository: Repository |
     judge_service = GeminiService(get_settings()) if request.judge else None
     case_results: list[dict[str, Any]] = []
     child_ids: list[str] = []
+    evaluation_id = new_id()
+    started_at = now_utc()
+    repository.save_evaluation({
+        "id": evaluation_id,
+        "dataset_id": request.dataset_id,
+        "config": _safe_model_dump(request),
+        "child_experiment_ids": [],
+        "results": {"aggregate": {"caseCount": 0}, "caseResults": []},
+        "status": "running",
+        "started_at": started_at,
+        "completed_at": None,
+        "duration_ms": None,
+    })
     for case in dataset["cases"][:10]:
         exp_request = ExperimentCreateRequest(
             document_id=dataset["document_id"],
+            pipeline_id=request.pipeline_id,
             chunk_run_id=selected_chunk_id,
             embedding_run_id=selected_embedding_id,
             query=case["question"],
@@ -1708,7 +1833,28 @@ def create_evaluation(request: EvaluationRunRequest, *, repository: Repository |
             context=request.context,
             generation=request.generation,
         )
-        experiment = create_experiment(exp_request, repository=repository)
+        try:
+            experiment = create_experiment(exp_request, repository=repository)
+        except ApiProblem as exc:
+            failed_at = now_utc()
+            repository.update_evaluation(evaluation_id, {
+                "status": "failed",
+                "completed_at": failed_at,
+                "duration_ms": duration_ms_between(started_at, failed_at),
+                "error_code": exc.code,
+                "error_message": exc.message,
+            })
+            raise
+        except Exception as exc:
+            failed_at = now_utc()
+            repository.update_evaluation(evaluation_id, {
+                "status": "failed",
+                "completed_at": failed_at,
+                "duration_ms": duration_ms_between(started_at, failed_at),
+                "error_code": "evaluation_failed",
+                "error_message": "The evaluation failed before completing all cases.",
+            })
+            raise exc
         child_ids.append(experiment["id"])
         retrieval_results = experiment["stage_results"].get("retrieval", {}).get("results", [])
         expected = set(case.get("relevant_element_ids", []))
@@ -1750,17 +1896,22 @@ def create_evaluation(request: EvaluationRunRequest, *, repository: Repository |
             "groundednessDetail": groundedness,
             "experimentId": experiment["id"],
         })
+        partial_aggregate = _evaluation_metrics(case_results)
+        partial_aggregate["judgeModel"] = get_settings().gemini_judge_model if request.judge else None
+        repository.update_evaluation(evaluation_id, {
+            "child_experiment_ids": child_ids,
+            "results": {"aggregate": partial_aggregate, "caseResults": case_results},
+        })
     aggregate = _evaluation_metrics(case_results)
     aggregate["judgeModel"] = get_settings().gemini_judge_model if request.judge else None
-    row = {
-        "id": new_id(),
-        "dataset_id": request.dataset_id,
-        "config": _safe_model_dump(request),
+    completed_at = now_utc()
+    completed = repository.update_evaluation(evaluation_id, {
         "child_experiment_ids": child_ids,
         "results": {"aggregate": aggregate, "caseResults": case_results},
         "status": "completed",
-        "started_at": now_utc(),
-        "completed_at": now_utc(),
-        "duration_ms": 0,
-    }
-    return repository.save_evaluation(row)
+        "completed_at": completed_at,
+        "duration_ms": duration_ms_between(started_at, completed_at),
+    })
+    if completed is None:
+        raise ApiProblem(500, "persistence_failed", "The evaluation could not be completed.")
+    return completed

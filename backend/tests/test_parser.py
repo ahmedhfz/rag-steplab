@@ -100,7 +100,7 @@ def test_parse_pdf_file_reports_real_lifecycle_checkpoints(monkeypatch):
     ]
 
 
-def test_parse_pdf_file_rejects_a_document_without_semantic_tables(monkeypatch):
+def test_parse_pdf_file_accepts_a_document_without_semantic_tables(monkeypatch):
     document = SimpleNamespace(
         pages={1: object()},
         iterate_items=lambda: iter([(SimpleNamespace(
@@ -114,8 +114,7 @@ def test_parse_pdf_file_rejects_a_document_without_semantic_tables(monkeypatch):
         lambda *_args, **_kwargs: SimpleNamespace(convert=lambda _path: SimpleNamespace(document=document)),
     )
 
-    with pytest.raises(ApiProblem) as error:
-        parse_pdf_file(Path("lesson.pdf"), "lesson.pdf", 123)
+    result = parse_pdf_file(Path("lesson.pdf"), "lesson.pdf", 123)
 
-    assert error.value.status_code == 422
-    assert error.value.code == "docling_tables_missing"
+    assert result.summary is not None
+    assert result.summary.table_count == 0

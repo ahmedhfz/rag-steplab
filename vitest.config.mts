@@ -11,5 +11,9 @@ export default defineConfig({
     setupFiles: ["./test/setup.ts"],
     clearMocks: true,
     restoreMocks: true,
+    // JSDOM + Motion + Radix yüzeyleri tek süreçte daha deterministik çalışır;
+    // worker yarışları 5 sn'lik user-event testlerini yapay olarak aşabiliyor.
+    maxWorkers: 1,
+    minWorkers: 1,
   },
 });
