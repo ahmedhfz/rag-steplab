@@ -1057,6 +1057,10 @@ export async function listEvaluationRuns(datasetId: string, signal?: AbortSignal
   return listPayload(payload, "runs").map(normalizeEvaluationRun);
 }
 
+export async function getEvaluationRun(runId: string, signal?: AbortSignal): Promise<EvaluationRun> {
+  return normalizeEvaluationRun(await request(`/evaluation/runs/${encodeURIComponent(runId)}`, { signal }));
+}
+
 export async function getChunkRun(runId: string, signal?: AbortSignal): Promise<ChunkRun> {
   return normalizeChunkRun(await request(`/chunk-runs/${encodeURIComponent(runId)}`, { signal }));
 }

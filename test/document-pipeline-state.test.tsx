@@ -158,12 +158,14 @@ function Probe() {
     selectedEmbeddingRunId,
     activePipelineId,
     evaluationDatasets,
+    evaluationRun,
     selectFile,
     selectParseRun,
     selectChunkRun,
     selectEmbeddingRun,
     selectPipeline,
     selectPersistedDocument,
+    refreshEvaluationRuns,
   } = useDocumentPipeline();
 
   return (
@@ -176,6 +178,8 @@ function Probe() {
       <output data-testid="selected-embedding">{selectedEmbeddingRunId ?? "none"}</output>
       <output data-testid="active-pipeline">{activePipelineId ?? "none"}</output>
       <output data-testid="evaluation-dataset-count">{evaluationDatasets.length}</output>
+      <output data-testid="evaluation-run-id">{evaluationRun?.id ?? "none"}</output>
+      <output data-testid="evaluation-case-count">{evaluationRun?.caseResults?.length ?? 0}</output>
       <output data-testid="artifact-count">{activeDocument?.chunkRuns.length ?? 0}</output>
       <output data-testid="persistence-error">{persistenceError?.code ?? "none"}</output>
       <button onClick={() => selectFile(new File(["%PDF-1.4"], "pending.pdf", { type: "application/pdf" }))} type="button">Select pending upload</button>
@@ -186,6 +190,7 @@ function Probe() {
       <button onClick={() => void selectEmbeddingRun("embedding-alt")} type="button">Select alternate embedding</button>
       <button onClick={() => void selectPipeline("pipeline-1")} type="button">Select pipeline one</button>
       <button onClick={() => void selectPipeline("pipeline-2")} type="button">Select pipeline two</button>
+      <button onClick={() => void refreshEvaluationRuns("dataset-1")} type="button">Refresh evaluation runs</button>
     </div>
   );
 }
@@ -264,6 +269,46 @@ describe("Document pipeline committed state", () => {
 
     await waitFor(() => expect(screen.getByTestId("evaluation-dataset-count")).toHaveTextContent("1"));
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/evaluation/datasets?documentId=document-old"))).toBe(true);
+  });
+
+  it("hydrates the latest persisted evaluation result after the history summary loads", async () => {
+    navigationState.pathname = "/evaluation";
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    const detail = {
+      ...summaryDocument("document-old", "lesson.pdf"),
+      activeChunkRunId: "chunk-new",
+      activeEmbeddingRunId: "embedding-new",
+      chunkRuns: [{ id: "chunk-new", status: "completed", isCompatible: true, upstream: { parseRunId: "document-old-parse" } }],
+      embeddingRuns: [{ id: "embedding-new", status: "completed", isCompatible: true, upstream: { chunkRunId: "chunk-new" } }],
+      evaluationDatasets: [{ id: "dataset-1", documentId: "document-old", parseRunId: "document-old-parse", name: "Smoke", version: 1, caseCount: 1, createdAt: null }],
+      evaluationRuns: [{ id: "evaluation-1", datasetId: "dataset-1", parseRunId: "document-old-parse", chunkRunId: "chunk-new", embeddingRunId: "embedding-new", status: "completed", timing: {}, error: null }],
+    };
+    const runDetail = {
+      id: "evaluation-1",
+      datasetId: "dataset-1",
+      status: "completed",
+      timing: { durationMs: 42 },
+      results: { aggregate: { hitAtK: 1, recallAtK: 1, precisionAtK: 1, mrr: 1, citationValidity: 1, groundedness: 1, caseCount: 1 }, caseResults: [{ question: "What is RAG?", hitAtK: 1, recallAtK: 1, precisionAtK: 1, mrr: 1, citationValidity: 1, groundedness: 1, experimentId: "experiment-1" }] },
+    };
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.endsWith("/documents/document-old/pipelines")) return respond([]);
+      if (url.endsWith("/evaluation/datasets/dataset-1")) return respond({ id: "dataset-1", documentId: "document-old", parseRunId: "document-old-parse", name: "Smoke", version: 1, cases: [{ question: "What is RAG?", relevantElementIds: ["element-1"], referenceAnswer: null }], createdAt: null });
+      if (url.endsWith("/evaluation/runs?datasetId=dataset-1")) return respond({ items: [{ ...detail.evaluationRuns[0], results: { hitAtK: 1, recallAtK: 1, precisionAtK: 1, mrr: 1, citationValidity: 1, groundedness: 1, caseCount: 1 } }] });
+      if (url.endsWith("/evaluation/runs/evaluation-1")) return respond(runDetail);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+    await waitFor(() => expect(screen.getByTestId("active-document")).toHaveTextContent("document-old"));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh evaluation runs" }));
+
+    await waitFor(() => expect(screen.getByTestId("evaluation-run-id")).toHaveTextContent("evaluation-1"));
+    expect(screen.getByTestId("evaluation-case-count")).toHaveTextContent("1");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/evaluation/runs/evaluation-1"))).toBe(true);
   });
 
   it("reloads and reconciles server pipeline state before one revision-conflict retry", async () => {
