@@ -263,7 +263,7 @@ jobs:
       MODAL_ENVIRONMENT: main
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-      MODAL_API_URL: https://ahmedhfz-dev--rag-steplab-api-api.modal.run
+      MODAL_API_URL: https://ahmedhfz-dev--rag-steplab-api-api-eu.modal.run
     steps:
       - name: Checkout tested commit
         uses: actions/checkout@v4

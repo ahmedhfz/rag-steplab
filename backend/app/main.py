@@ -736,9 +736,10 @@ def list_document_pipelines(
     document_id: str, user: CurrentUser = Depends(get_current_user)
 ) -> list[DocumentPipelineResponse]:
     repository = _user_repository(user)
-    if repository.get_document_row(document_id) is None:
+    rows = repository.list_document_pipeline_rows(document_id)
+    if rows is None:
         raise ApiProblem(404, "document_not_found", "The document was not found.")
-    return [_document_pipeline_response(row) for row in repository.list_document_pipeline_rows(document_id)]
+    return [_document_pipeline_response(row) for row in rows]
 
 
 @app.post("/documents/{document_id}/pipelines", response_model=DocumentPipelineResponse, status_code=201)

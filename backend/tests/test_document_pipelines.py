@@ -1,6 +1,5 @@
 import uuid
 from contextlib import contextmanager
-from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 import pytest
@@ -126,18 +125,18 @@ def test_pipeline_owner_boundary_hides_other_users_rows():
 
 def test_sql_repository_revision_update_is_atomic(monkeypatch):
     class EmptyResult:
+        def __init__(self, value=None):
+            self.value = value
+
         def first(self):
-            return None
+            return self.value
 
     class Session:
-        statement = None
+        statements = []
 
         def scalars(self, statement):
-            self.statement = statement
-            return EmptyResult()
-
-        def get(self, _model, _identifier):
-            return SimpleNamespace(id="pipeline-1")
+            self.statements.append(statement)
+            return EmptyResult(None if len(self.statements) == 1 else "pipeline-1")
 
     session = Session()
 
@@ -150,6 +149,70 @@ def test_sql_repository_revision_update_is_atomic(monkeypatch):
         SqlAlchemyRepository().update_document_pipeline("pipeline-1", 4, {"name": "Updated"})
 
     assert raised.value.code == "pipeline_conflict"
-    sql = str(session.statement.compile(dialect=postgresql.dialect()))
+    sql = str(session.statements[0].compile(dialect=postgresql.dialect()))
     assert "document_pipelines.id =" in sql
     assert "document_pipelines.revision =" in sql
+
+
+def test_scoped_detail_reads_each_artifact_once():
+    class CountingRepository(InMemoryRepository):
+        chunk_reads = 0
+        embedding_reads = 0
+
+        def get_chunk_row(self, run_id, *, owner_user_id=None):
+            self.chunk_reads += 1
+            return super().get_chunk_row(run_id, owner_user_id=owner_user_id)
+
+        def get_embedding_row(self, run_id, *, owner_user_id=None):
+            self.embedding_reads += 1
+            return super().get_embedding_row(run_id, owner_user_id=owner_user_id)
+
+    repository = CountingRepository()
+    document, historical_parse, _ = _lineage(repository)
+    repository.chunk_runs["chunk-detail"] = {
+        "id": "chunk-detail", "document_id": document["id"],
+        "parse_run_id": historical_parse["id"], "status": "completed",
+    }
+    repository.embedding_runs["embedding-detail"] = {
+        "id": "embedding-detail", "document_id": document["id"],
+        "chunk_run_id": "chunk-detail", "status": "completed",
+    }
+    scoped = repository.scoped(OWNER_ID)
+
+    assert scoped.get_chunk_row("chunk-detail") is not None
+    assert scoped.get_embedding_row("embedding-detail") is not None
+    assert repository.chunk_reads == 1
+    assert repository.embedding_reads == 1
+
+
+def test_sql_pipeline_list_keeps_owner_check_in_one_statement(monkeypatch):
+    class Result:
+        def all(self):
+            return []
+
+    class Session:
+        statements = []
+
+        def execute(self, statement):
+            self.statements.append(statement)
+            return Result()
+
+    session = Session()
+    scope_count = 0
+
+    @contextmanager
+    def fake_scope():
+        nonlocal scope_count
+        scope_count += 1
+        yield session
+
+    monkeypatch.setattr("app.repository.session_scope", fake_scope)
+
+    assert SqlAlchemyRepository().list_document_pipeline_rows(
+        "document-1", owner_user_id=OWNER_ID
+    ) is None
+    assert scope_count == 1
+    assert len(session.statements) == 1
+    sql = str(session.statements[0].compile(dialect=postgresql.dialect()))
+    assert "LEFT OUTER JOIN rag_lab.document_pipelines" in sql
+    assert "rag_lab.documents.owner_user_id" in sql

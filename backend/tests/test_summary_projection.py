@@ -124,7 +124,7 @@ def test_sql_summary_bundle_uses_constant_projection_queries(monkeypatch):
         def __init__(self):
             self.statements = []
 
-        def execute(self, statement):
+        def execute(self, statement, _parameters=None):
             self.statements.append(statement)
             return Result(document if len(self.statements) == 1 else None)
 
@@ -138,12 +138,12 @@ def test_sql_summary_bundle_uses_constant_projection_queries(monkeypatch):
     bundle = SqlAlchemyRepository().get_document_summary_bundle("document-1", owner_user_id=OWNER_ID)
 
     assert bundle is not None
-    assert len(session.statements) == 7  # document lookup + six O(1) projections
+    assert len(session.statements) == 2  # owner-scoped document + one lightweight union projection
     sql = "\n".join(str(statement.compile(dialect=postgresql.dialect())) for statement in session.statements)
     assert "parse_runs.structured," not in sql
     assert "parse_runs.markdown" not in sql
     assert "chunks.text" not in sql
-    assert "stage_results," not in sql
+    assert "'stage_results'" not in sql
     assert "evaluation_datasets.cases," not in sql
     assert "evaluation_runs.results" not in sql
 
