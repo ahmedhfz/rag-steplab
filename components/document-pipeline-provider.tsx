@@ -9,6 +9,7 @@ import type { DocumentParseResponse } from "@/lib/document-parse-types";
 import {
   createChunkRun,
   createEmbeddingRun,
+  createDocumentPipeline,
   createEvaluationDataset,
   createEvaluationRun,
   createExperiment,
@@ -20,13 +21,16 @@ import {
   getExperiment,
   getParseRun,
   getEmbeddingRun,
+  listDocumentPipelines,
   listDocuments,
   uploadDocument,
   listEvaluationRuns,
   parseAndPersistDocument,
   reparsePersistedDocument,
+  deleteDocumentPipeline,
   rerunGeneration,
   waitForParseRun,
+  updateDocumentPipeline,
 } from "@/lib/rag-api";
 import type {
   Capabilities,
@@ -34,6 +38,7 @@ import type {
   ChunkRun,
   ChunkStrategy,
   DocumentSummary,
+  DocumentPipeline,
   EmbeddingRun,
   EvaluationCase,
   EvaluationDataset,
@@ -128,12 +133,19 @@ type DocumentPipelineContextValue = {
   evaluationRun: EvaluationRun | null;
   evaluationError: DocumentApiError | null;
   evaluationHistory: EvaluationRun[];
+  pipelines: DocumentPipeline[];
+  activePipelineId: string | null;
+  activePipeline: DocumentPipeline | null;
   selectFile: (file: File | undefined) => void;
   addDocument: (file: File) => Promise<PersistedDocument | null>;
   selectPersistedDocument: (documentId: string) => Promise<void>;
   selectParseRun: (runId: string) => Promise<void>;
   selectChunkRun: (runId: string) => Promise<void>;
   selectEmbeddingRun: (runId: string) => Promise<void>;
+  selectPipeline: (pipelineId: string | null) => Promise<void>;
+  createPipeline: (name: string) => Promise<DocumentPipeline | null>;
+  renamePipeline: (pipelineId: string, name: string) => Promise<DocumentPipeline | null>;
+  deletePipeline: (pipelineId: string) => Promise<void>;
   removeFile: () => void;
   parseSelectedFile: () => Promise<void>;
   reparseActiveDocument: () => Promise<void>;
@@ -156,6 +168,8 @@ const ACTIVE_DOCUMENT_STORAGE_KEY = "rag-steplab-active-document-id";
 const ACTIVE_DOCUMENT_STORAGE_PREFIX = `${ACTIVE_DOCUMENT_STORAGE_KEY}:`;
 const LINEAGE_SELECTION_STORAGE_KEY = "rag-steplab-lineage-selections-v1";
 const LINEAGE_SELECTION_STORAGE_PREFIX = `${LINEAGE_SELECTION_STORAGE_KEY}:`;
+const ACTIVE_PIPELINE_STORAGE_KEY = "rag-steplab-active-pipeline-id";
+const ACTIVE_PIPELINE_STORAGE_PREFIX = `${ACTIVE_PIPELINE_STORAGE_KEY}:`;
 
 function activeDocumentStorageKey(userId?: string | null) {
   return userId ? `${ACTIVE_DOCUMENT_STORAGE_PREFIX}${userId}` : ACTIVE_DOCUMENT_STORAGE_KEY;
@@ -171,12 +185,34 @@ function rememberActiveDocument(documentId: string | null, userId?: string | nul
   }
 }
 
+function activePipelineStorageKey(userId?: string | null) {
+  return userId ? `${ACTIVE_PIPELINE_STORAGE_PREFIX}${userId}` : ACTIVE_PIPELINE_STORAGE_KEY;
+}
+
+function rememberActivePipeline(pipelineId: string | null, userId?: string | null) {
+  try {
+    const key = activePipelineStorageKey(userId);
+    if (pipelineId) window.localStorage.setItem(key, pipelineId);
+    else window.localStorage.removeItem(key);
+  } catch {
+    // Pipeline kimliği yalnız oturum kolaylığıdır; asıl seçim server state'idir.
+  }
+}
+
 function lineageSelectionStorageKey(userId?: string | null) {
   return userId ? `${LINEAGE_SELECTION_STORAGE_PREFIX}${userId}` : LINEAGE_SELECTION_STORAGE_KEY;
 }
 
 function emptyLineageSelection(): DocumentLineageSelection {
   return { selectedParseRunId: null, selectedChunkRunId: null, selectedEmbeddingRunId: null };
+}
+
+function pipelineSelection(pipeline: DocumentPipeline): DocumentLineageSelection {
+  return {
+    selectedParseRunId: pipeline.parseRunId,
+    selectedChunkRunId: pipeline.chunkRunId,
+    selectedEmbeddingRunId: pipeline.embeddingRunId,
+  };
 }
 
 function normalizeLineageSelection(value: unknown): DocumentLineageSelection {
@@ -214,19 +250,23 @@ function completedCompatibleRun(run: RunSummary | undefined) {
   return Boolean(run && run.status === "completed" && run.isCompatible);
 }
 
-function resolveLineageSelection(detail: DocumentSummary, stored?: DocumentLineageSelection): DocumentLineageSelection {
+function resolveLineageSelection(
+  detail: DocumentSummary,
+  stored?: DocumentLineageSelection,
+  strict = false,
+): DocumentLineageSelection {
   const candidate = stored ?? emptyLineageSelection();
   const parse = detail.parseRuns.find((run) => run.id === candidate.selectedParseRunId && completedCompatibleRun(run))
-    ?? detail.parseRuns.find((run) => run.id === detail.activeParseRunId && completedCompatibleRun(run));
+    ?? (strict ? undefined : detail.parseRuns.find((run) => run.id === detail.activeParseRunId && completedCompatibleRun(run)));
   const parseRunId = parse?.id ?? null;
   const chunk = parseRunId
     ? detail.chunkRuns.find((run) => run.id === candidate.selectedChunkRunId && run.upstream.parseRunId === parseRunId && completedCompatibleRun(run))
-      ?? detail.chunkRuns.find((run) => run.id === detail.activeChunkRunId && run.upstream.parseRunId === parseRunId && completedCompatibleRun(run))
+      ?? (strict ? undefined : detail.chunkRuns.find((run) => run.id === detail.activeChunkRunId && run.upstream.parseRunId === parseRunId && completedCompatibleRun(run)))
     : undefined;
   const chunkRunId = chunk?.id ?? null;
   const embedding = chunkRunId
     ? detail.embeddingRuns.find((run) => run.id === candidate.selectedEmbeddingRunId && run.upstream.chunkRunId === chunkRunId && completedCompatibleRun(run))
-      ?? detail.embeddingRuns.find((run) => run.id === detail.activeEmbeddingRunId && run.upstream.chunkRunId === chunkRunId && completedCompatibleRun(run))
+      ?? (strict ? undefined : detail.embeddingRuns.find((run) => run.id === detail.activeEmbeddingRunId && run.upstream.chunkRunId === chunkRunId && completedCompatibleRun(run)))
     : undefined;
   return {
     selectedParseRunId: parseRunId,
@@ -283,16 +323,20 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const [evaluationRun, setEvaluationRun] = useState<EvaluationRun | null>(null);
   const [evaluationError, setEvaluationError] = useState<DocumentApiError | null>(null);
   const [evaluationHistory, setEvaluationHistory] = useState<EvaluationRun[]>([]);
+  const [pipelines, setPipelines] = useState<DocumentPipeline[]>([]);
+  const [activePipelineId, setActivePipelineId] = useState<string | null>(null);
   const runIdRef = useRef(0);
   const documentEpochRef = useRef(0);
   const documentLoadRequestRef = useRef(0);
   const selectionRequestRef = useRef(0);
   const activeDocumentRef = useRef<DocumentSummary | null>(null);
+  const activePipelineRef = useRef<DocumentPipeline | null>(null);
   const authUserIdRef = useRef<string | null>(authUserId);
   const lineageSelectionsRef = useRef<LineageSelectionStore>({});
   const activityIdRef = useRef(0);
   const controllersRef = useRef(new Map<string, AbortController>());
   const artifactCacheRef = useRef(new Map<string, ParseRun | ChunkRun | EmbeddingRun | ExperimentRun | EvaluationDataset>());
+  const persistActivePipelineSelectionRef = useRef<(selection: DocumentLineageSelection) => Promise<boolean>>(async () => false);
 
   const replaceController = useCallback((key: string) => {
     controllersRef.current.get(key)?.abort();
@@ -317,6 +361,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     parseInFlightRef.current = false;
     activeParseRunIdRef.current = null;
     activeDocumentRef.current = null;
+    activePipelineRef.current = null;
     lineageSelectionsRef.current = {};
     artifactCacheRef.current.clear();
     setActiveDocument(null);
@@ -352,6 +397,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setEvaluationRun(null);
     setEvaluationError(null);
     setEvaluationHistory([]);
+    setPipelines([]);
+    setActivePipelineId(null);
     authUserIdRef.current = nextUserId;
     setAuthUserId(nextUserId);
   }, []);
@@ -429,7 +476,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setSelectedChunkRunId(snapshot.selection.selectedChunkRunId);
     setSelectedEmbeddingRunId(snapshot.selection.selectedEmbeddingRunId);
     setPersistenceError(null);
-    if (persistSelection) rememberSelection(snapshot.detail.id, snapshot.selection);
+    if (persistSelection && !activePipelineRef.current) rememberSelection(snapshot.detail.id, snapshot.selection);
     activeParseRunIdRef.current = snapshot.inFlightParseRunId ?? snapshot.selection.selectedParseRunId;
     setParseResult(snapshot.parseResult);
     setParseStatus(snapshot.parseStatus);
@@ -461,9 +508,14 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     documentId: string,
     signal: AbortSignal,
     selectionOverride?: DocumentLineageSelection,
+    strictSelection = false,
   ): Promise<DocumentSnapshot> => {
     const detail = await getDocumentSummary(documentId, signal);
-    const selection = resolveLineageSelection(detail, selectionOverride ?? lineageSelectionsRef.current[documentId]);
+    const selection = resolveLineageSelection(
+      detail,
+      selectionOverride ?? lineageSelectionsRef.current[documentId],
+      strictSelection,
+    );
     const parseSummary = selection.selectedParseRunId
       ? detail.parseRuns.find((run) => run.id === selection.selectedParseRunId) ?? null
       : null;
@@ -653,11 +705,18 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         (run) => applyParseRunStatus(run, expectedRunId),
       );
       if (runIdRef.current !== expectedRunId || activeDocumentRef.current?.id !== documentId || activeParseRunIdRef.current !== parseRunId) return;
-      const snapshot = await loadDocumentSnapshot(documentId, controller.signal, {
+      const selection = {
         selectedParseRunId: parseRunId,
         selectedChunkRunId: null,
         selectedEmbeddingRunId: null,
-      });
+      };
+      if (!await persistActivePipelineSelectionRef.current(selection)) return;
+      const snapshot = await loadDocumentSnapshot(
+        documentId,
+        controller.signal,
+        selection,
+        Boolean(activePipelineRef.current),
+      );
       if (runIdRef.current !== expectedRunId || activeDocumentRef.current?.id !== documentId) return;
       documentEpochRef.current += 1;
       selectionRequestRef.current += 1;
@@ -678,15 +737,41 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     }
   }, [addActivity, applyParseRunStatus, commitDocumentSnapshot, loadDocumentSnapshot, replaceController]);
 
-  const loadThenCommitDocument = useCallback(async (documentId: string, signal: AbortSignal) => {
+  const loadThenCommitDocument = useCallback(async (
+    documentId: string,
+    signal: AbortSignal,
+    pipelineId: string | null = activePipelineRef.current?.documentId === documentId
+      ? activePipelineRef.current.id
+      : null,
+  ) => {
     const requestId = ++documentLoadRequestRef.current;
-    const snapshot = await loadDocumentSnapshot(documentId, signal);
+    let nextPipelines: DocumentPipeline[] = [];
+    try {
+      nextPipelines = await listDocumentPipelines(documentId, signal);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      // Yalnız additive endpoint'in henüz bulunmadığı preview'larda legacy
+      // workspace'e dön; gerçek network/auth hatalarını görünür bırak.
+      if (!(error instanceof DocumentApiError)
+        || (error.status !== 404 && error.code !== "invalid_response")) throw error;
+    }
+    const pipeline = nextPipelines.find((item) => item.id === pipelineId) ?? null;
+    const snapshot = await loadDocumentSnapshot(
+      documentId,
+      signal,
+      pipeline ? pipelineSelection(pipeline) : undefined,
+      Boolean(pipeline),
+    );
     if (documentLoadRequestRef.current !== requestId) return null;
     documentEpochRef.current += 1;
     selectionRequestRef.current += 1;
     runIdRef.current += 1;
     parseInFlightRef.current = false;
-    commitDocumentSnapshot(snapshot);
+    setPipelines(nextPipelines);
+    activePipelineRef.current = pipeline;
+    setActivePipelineId(pipeline?.id ?? null);
+    rememberActivePipeline(pipeline?.id ?? null, authUserId);
+    commitDocumentSnapshot(snapshot, !pipeline);
     rememberActiveDocument(documentId, authUserId);
     setPersistenceError(null);
     setPersistenceStatus("available");
@@ -707,7 +792,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
 
       const documentId = activeDocumentRef.current?.id;
       if (documentId && nextDocuments.some((document) => document.id === documentId)) {
-        const loaded = await loadThenCommitDocument(documentId, controller.signal);
+        const loaded = await loadThenCommitDocument(documentId, controller.signal, activePipelineRef.current?.id ?? null);
         if (loaded && !parseInFlightRef.current && (loaded.parseStatus === "queued" || loaded.parseStatus === "running") && loaded.inFlightParseRunId) {
           void resumeParseRun(documentId, loaded.inFlightParseRunId, runIdRef.current);
         }
@@ -760,7 +845,11 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     rememberActiveDocument(documentId, authUserId);
     const selectionToken = selectionRequestRef.current;
     try {
-      const loaded = await loadThenCommitDocument(documentId, controller.signal);
+      activePipelineRef.current = null;
+      setActivePipelineId(null);
+      setPipelines([]);
+      rememberActivePipeline(null, authUserId);
+      const loaded = await loadThenCommitDocument(documentId, controller.signal, null);
       if (!loaded) return;
       setPendingUpload(null);
       setFileError(null);
@@ -815,17 +904,19 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         const storedSelections = readLineageSelections(authUserId);
         lineageSelectionsRef.current = storedSelections;
         let documentId: string | null = null;
+        let pipelineId: string | null = null;
         let legacyDocumentId: string | null = null;
         try {
           documentId = window.localStorage.getItem(activeDocumentStorageKey(authUserId));
           if (!documentId && authUserId) legacyDocumentId = window.localStorage.getItem(ACTIVE_DOCUMENT_STORAGE_KEY);
           documentId = documentId ?? legacyDocumentId;
+          pipelineId = window.localStorage.getItem(activePipelineStorageKey(authUserId));
         } catch {
           // Browser storage kapalıysa kalıcı backend verisi yine kullanılabilir.
         }
         if (documentId && nextDocuments.some((document) => document.id === documentId)) {
           if (legacyDocumentId) rememberActiveDocument(documentId, authUserId);
-          const loaded = await loadThenCommitDocument(documentId, controller.signal);
+          const loaded = await loadThenCommitDocument(documentId, controller.signal, pipelineId);
           if (loaded && (loaded.parseStatus === "queued" || loaded.parseStatus === "running") && loaded.inFlightParseRunId) {
             void resumeParseRun(documentId, loaded.inFlightParseRunId, runIdRef.current);
           }
@@ -967,11 +1058,18 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       );
       if (runIdRef.current !== currentRunId) return;
       activeParseRunIdRef.current = result.parseRunId;
-      const snapshot = await loadDocumentSnapshot(documentId, controller.signal, {
+      const selection = {
         selectedParseRunId: result.parseRunId,
         selectedChunkRunId: null,
         selectedEmbeddingRunId: null,
-      });
+      };
+      if (!await persistActivePipelineSelectionRef.current(selection)) return;
+      const snapshot = await loadDocumentSnapshot(
+        documentId,
+        controller.signal,
+        selection,
+        Boolean(activePipelineRef.current),
+      );
       if (runIdRef.current !== currentRunId) return;
       parseInFlightRef.current = false;
       runIdRef.current += 1;
@@ -1010,10 +1108,196 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
 
   const parseActiveDocument = reparseActiveDocument;
 
+  const replacePipelineState = useCallback((pipeline: DocumentPipeline) => {
+    activePipelineRef.current = pipeline;
+    setActivePipelineId(pipeline.id);
+    setPipelines((current) => current.map((item) => item.id === pipeline.id ? pipeline : item));
+    setPersistenceError(null);
+  }, []);
+
+  const persistActivePipelineSelection = useCallback(async (
+    selection: DocumentLineageSelection,
+  ): Promise<boolean> => {
+    const current = activePipelineRef.current;
+    if (!current) {
+      if (activeDocumentRef.current) rememberSelection(activeDocumentRef.current.id, selection);
+      return true;
+    }
+    const input = {
+      expectedRevision: current.revision,
+      parseRunId: selection.selectedParseRunId,
+      chunkRunId: selection.selectedChunkRunId,
+      embeddingRunId: selection.selectedEmbeddingRunId,
+    };
+    try {
+      replacePipelineState(await updateDocumentPipeline(current.id, input));
+      return true;
+    } catch (error) {
+      if (!(error instanceof DocumentApiError) || error.code !== "pipeline_conflict") {
+        setPersistenceError(asApiError(error, "Pipeline selection could not be saved."));
+        return false;
+      }
+      const controller = replaceController(`pipeline-conflict:${current.id}`);
+      try {
+        // Conflict sonrası önce server state yüklenir ve UI onunla reconcile edilir.
+        const nextPipelines = await listDocumentPipelines(current.documentId, controller.signal);
+        setPipelines(nextPipelines);
+        const refreshed = nextPipelines.find((item) => item.id === current.id) ?? null;
+        if (!refreshed || activePipelineRef.current?.id !== current.id) return false;
+        activePipelineRef.current = refreshed;
+        setActivePipelineId(refreshed.id);
+        const snapshot = await loadDocumentSnapshot(
+          refreshed.documentId,
+          controller.signal,
+          pipelineSelection(refreshed),
+          true,
+        );
+        commitDocumentSnapshot(snapshot, false);
+        const desiredAlreadyPersisted = refreshed.parseRunId === selection.selectedParseRunId
+          && refreshed.chunkRunId === selection.selectedChunkRunId
+          && refreshed.embeddingRunId === selection.selectedEmbeddingRunId;
+        if (desiredAlreadyPersisted) return true;
+        if (activePipelineRef.current?.id !== refreshed.id) return false;
+        const retried = await updateDocumentPipeline(refreshed.id, {
+          ...input,
+          expectedRevision: refreshed.revision,
+        }, controller.signal);
+        replacePipelineState(retried);
+        return true;
+      } catch (reconcileError) {
+        if (!(reconcileError instanceof DOMException && reconcileError.name === "AbortError")) {
+          setPersistenceError(asApiError(reconcileError, "Pipeline conflict could not be reconciled."));
+        }
+        return false;
+      } finally {
+        removeControllerIfCurrent(controllersRef.current, `pipeline-conflict:${current.id}`, controller);
+      }
+    }
+  }, [commitDocumentSnapshot, loadDocumentSnapshot, rememberSelection, replaceController, replacePipelineState]);
+  useEffect(() => {
+    persistActivePipelineSelectionRef.current = persistActivePipelineSelection;
+  }, [persistActivePipelineSelection]);
+
+  const selectPipeline = useCallback(async (pipelineId: string | null) => {
+    const document = activeDocumentRef.current;
+    if (!document) return;
+    const pipeline = pipelineId ? pipelines.find((item) => item.id === pipelineId) ?? null : null;
+    if (pipelineId && !pipeline) return;
+    const controller = replaceController("pipeline-select");
+    const requestId = ++selectionRequestRef.current;
+    try {
+      const snapshot = await loadDocumentSnapshot(
+        document.id,
+        controller.signal,
+        pipeline ? pipelineSelection(pipeline) : lineageSelectionsRef.current[document.id],
+        Boolean(pipeline),
+      );
+      if (selectionRequestRef.current !== requestId || activeDocumentRef.current?.id !== document.id) return;
+      activePipelineRef.current = pipeline;
+      setActivePipelineId(pipeline?.id ?? null);
+      rememberActivePipeline(pipeline?.id ?? null, authUserId);
+      commitDocumentSnapshot(snapshot, !pipeline);
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError")) {
+        setPersistenceError(asApiError(error, "Pipeline could not be selected."));
+      }
+    } finally {
+      removeControllerIfCurrent(controllersRef.current, "pipeline-select", controller);
+    }
+  }, [authUserId, commitDocumentSnapshot, loadDocumentSnapshot, pipelines, replaceController]);
+
+  const createPipeline = useCallback(async (name: string) => {
+    const document = activeDocumentRef.current;
+    if (!document) return null;
+    const controller = replaceController("pipeline-create");
+    try {
+      const pipeline = await createDocumentPipeline(document.id, {
+        name,
+        parseRunId: selectedParseRunId,
+        chunkRunId: selectedChunkRunId,
+        embeddingRunId: selectedEmbeddingRunId,
+      }, controller.signal);
+      setPipelines((current) => [...current, pipeline]);
+      activePipelineRef.current = pipeline;
+      setActivePipelineId(pipeline.id);
+      rememberActivePipeline(pipeline.id, authUserId);
+      setPersistenceError(null);
+      return pipeline;
+    } catch (error) {
+      setPersistenceError(asApiError(error, "Pipeline could not be created."));
+      return null;
+    } finally {
+      removeControllerIfCurrent(controllersRef.current, "pipeline-create", controller);
+    }
+  }, [authUserId, replaceController, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId]);
+
+  const renamePipeline = useCallback(async (pipelineId: string, name: string) => {
+    const current = pipelines.find((item) => item.id === pipelineId);
+    if (!current) return null;
+    try {
+      const updated = await updateDocumentPipeline(pipelineId, { expectedRevision: current.revision, name });
+      setPipelines((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setPersistenceError(null);
+      if (activePipelineRef.current?.id === updated.id) replacePipelineState(updated);
+      return updated;
+    } catch (error) {
+      if (error instanceof DocumentApiError && error.code === "pipeline_conflict") {
+        try {
+          const refreshed = await listDocumentPipelines(current.documentId);
+          setPipelines(refreshed);
+          const latest = refreshed.find((item) => item.id === pipelineId);
+          if (latest && activePipelineRef.current?.id === pipelineId) {
+            replacePipelineState(latest);
+            const controller = replaceController(`pipeline-rename-conflict:${pipelineId}`);
+            try {
+              const snapshot = await loadDocumentSnapshot(latest.documentId, controller.signal, pipelineSelection(latest), true);
+              commitDocumentSnapshot(snapshot, false);
+            } finally {
+              removeControllerIfCurrent(controllersRef.current, `pipeline-rename-conflict:${pipelineId}`, controller);
+            }
+          }
+          if (latest?.name === name) return latest;
+          if (latest) {
+            const updated = await updateDocumentPipeline(pipelineId, { expectedRevision: latest.revision, name });
+            setPipelines((items) => items.map((item) => item.id === updated.id ? updated : item));
+            if (activePipelineRef.current?.id === updated.id) replacePipelineState(updated);
+            return updated;
+          }
+        } catch (reconcileError) {
+          setPersistenceError(asApiError(reconcileError, "Pipeline rename conflict could not be reconciled."));
+          return null;
+        }
+      }
+      setPersistenceError(asApiError(error, "Pipeline could not be renamed."));
+      return null;
+    }
+  }, [commitDocumentSnapshot, loadDocumentSnapshot, pipelines, replaceController, replacePipelineState]);
+
+  const deletePipeline = useCallback(async (pipelineId: string) => {
+    const current = pipelines.find((item) => item.id === pipelineId);
+    if (!current) return;
+    try {
+      await deleteDocumentPipeline(pipelineId);
+      setPersistenceError(null);
+      setPipelines((items) => items.filter((item) => item.id !== pipelineId));
+      if (activePipelineRef.current?.id === pipelineId) {
+        const document = activeDocumentRef.current;
+        if (document) rememberSelection(document.id, { selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId });
+        activePipelineRef.current = null;
+        setActivePipelineId(null);
+        rememberActivePipeline(null, authUserId);
+      }
+    } catch (error) {
+      setPersistenceError(asApiError(error, "Pipeline could not be deleted."));
+    }
+  }, [authUserId, pipelines, rememberSelection, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId]);
+
   const selectParseRun = useCallback(async (runId: string) => {
     const document = activeDocumentRef.current;
     const summary = document?.parseRuns.find((run) => run.id === runId);
     if (!document || !completedCompatibleRun(summary)) return;
+    const selection = { selectedParseRunId: runId, selectedChunkRunId: null, selectedEmbeddingRunId: null };
+    if (!await persistActivePipelineSelection(selection)) return;
     const requestId = ++selectionRequestRef.current;
     setSelectedParseRunId(runId);
     setSelectedChunkRunId(null);
@@ -1026,14 +1310,15 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setExperimentRun(null);
     setExperimentStatus("ready");
     setEvaluationRun(null);
-    rememberSelection(document.id, { selectedParseRunId: runId, selectedChunkRunId: null, selectedEmbeddingRunId: null });
     await hydrateParseDetail(document.id, runId, requestId);
-  }, [hydrateParseDetail, rememberSelection]);
+  }, [hydrateParseDetail, persistActivePipelineSelection]);
 
   const selectChunkRun = useCallback(async (runId: string) => {
     const document = activeDocumentRef.current;
     const summary = document?.chunkRuns.find((run) => run.id === runId);
     if (!document || !completedCompatibleRun(summary) || summary?.upstream.parseRunId !== selectedParseRunId) return;
+    const selection = { selectedParseRunId, selectedChunkRunId: runId, selectedEmbeddingRunId: null };
+    if (!await persistActivePipelineSelection(selection)) return;
     const requestId = ++selectionRequestRef.current;
     setSelectedChunkRunId(runId);
     setSelectedEmbeddingRunId(null);
@@ -1044,14 +1329,15 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setExperimentRun(null);
     setExperimentStatus("ready");
     setEvaluationRun(null);
-    rememberSelection(document.id, { selectedParseRunId, selectedChunkRunId: runId, selectedEmbeddingRunId: null });
     await hydrateChunkDetail(document.id, runId, requestId);
-  }, [hydrateChunkDetail, rememberSelection, selectedParseRunId]);
+  }, [hydrateChunkDetail, persistActivePipelineSelection, selectedParseRunId]);
 
   const selectEmbeddingRun = useCallback(async (runId: string) => {
     const document = activeDocumentRef.current;
     const summary = document?.embeddingRuns.find((run) => run.id === runId);
     if (!document || !completedCompatibleRun(summary) || summary?.upstream.chunkRunId !== selectedChunkRunId) return;
+    const selection = { selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId: runId };
+    if (!await persistActivePipelineSelection(selection)) return;
     const requestId = ++selectionRequestRef.current;
     setSelectedEmbeddingRunId(runId);
     setEmbeddingRun(null);
@@ -1059,9 +1345,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setExperimentRun(null);
     setExperimentStatus("ready");
     setEvaluationRun(null);
-    rememberSelection(document.id, { selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId: runId });
     await hydrateEmbeddingDetail(document.id, runId, requestId);
-  }, [hydrateEmbeddingDetail, rememberSelection, selectedChunkRunId, selectedParseRunId]);
+  }, [hydrateEmbeddingDetail, persistActivePipelineSelection, selectedChunkRunId, selectedParseRunId]);
 
   const runChunking = useCallback(async (strategy: ChunkStrategy, config: ChunkConfig): Promise<ChunkRun | null> => {
     const documentId = activeDocumentRef.current?.id;
@@ -1078,11 +1363,13 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     try {
       const result = await createChunkRun(documentId, strategy, config, parseRunId, controller.signal);
       if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedParseRunId !== parseRunId) return null;
-      const snapshot = await loadDocumentSnapshot(documentId, controller.signal, {
+      const selection = {
         selectedParseRunId: parseRunId,
         selectedChunkRunId: result.id,
         selectedEmbeddingRunId: null,
-      });
+      };
+      if (!await persistActivePipelineSelection(selection)) return null;
+      const snapshot = await loadDocumentSnapshot(documentId, controller.signal, selection, Boolean(activePipelineRef.current));
       if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedParseRunId !== parseRunId) return null;
       commitDocumentSnapshot(snapshot);
       cacheArtifact("chunk", result.id, result);
@@ -1098,7 +1385,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     } finally {
       removeControllerIfCurrent(controllersRef.current, "chunk", controller);
     }
-  }, [cacheArtifact, chunkStatus, commitDocumentSnapshot, loadDocumentSnapshot, replaceController, selectedParseRunId]);
+  }, [cacheArtifact, chunkStatus, commitDocumentSnapshot, loadDocumentSnapshot, persistActivePipelineSelection, replaceController, selectedParseRunId]);
 
   const runEmbedding = useCallback(async (): Promise<EmbeddingRun | null> => {
     const documentId = activeDocumentRef.current?.id;
@@ -1114,11 +1401,13 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     try {
       const result = await createEmbeddingRun(documentId, chunkRunId, controller.signal);
       if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId) return null;
-      const snapshot = await loadDocumentSnapshot(documentId, controller.signal, {
+      const selection = {
         selectedParseRunId,
         selectedChunkRunId: chunkRunId,
         selectedEmbeddingRunId: result.id,
-      });
+      };
+      if (!await persistActivePipelineSelection(selection)) return null;
+      const snapshot = await loadDocumentSnapshot(documentId, controller.signal, selection, Boolean(activePipelineRef.current));
       if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId) return null;
       commitDocumentSnapshot(snapshot);
       cacheArtifact("embedding", result.id, result);
@@ -1134,7 +1423,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     } finally {
       removeControllerIfCurrent(controllersRef.current, "embedding", controller);
     }
-  }, [cacheArtifact, commitDocumentSnapshot, embeddingStatus, loadDocumentSnapshot, replaceController, selectedChunkRunId, selectedParseRunId]);
+  }, [cacheArtifact, commitDocumentSnapshot, embeddingStatus, loadDocumentSnapshot, persistActivePipelineSelection, replaceController, selectedChunkRunId, selectedParseRunId]);
 
   const commitExperimentResult = useCallback((result: ExperimentRun) => {
     setExperimentRun(result);
@@ -1378,6 +1667,11 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     }
   }, [replaceController]);
 
+  const activePipeline = useMemo(
+    () => pipelines.find((pipeline) => pipeline.id === activePipelineId) ?? null,
+    [activePipelineId, pipelines],
+  );
+
   const value = useMemo<DocumentPipelineContextValue>(() => ({
     pendingUpload, fileError, parseStatus, parseProgress,
     parseProgressEstimated: parseProgress > lastReportedParseProgress,
@@ -1387,19 +1681,21 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     chunkStatus, chunkRun, chunkError, embeddingStatus, embeddingRun, embeddingError,
     experimentStatus, experimentRun, experimentError, experimentHistory,
     evaluationDatasets, evaluationStatus, evaluationRun, evaluationError, evaluationHistory,
+    pipelines, activePipelineId, activePipeline,
     selectFile, addDocument, selectPersistedDocument, selectParseRun, selectChunkRun, selectEmbeddingRun, removeFile, parseSelectedFile, reparseActiveDocument, parseActiveDocument, runChunking, runEmbedding,
     runExperiment, loadExperiment, loadEvaluationDataset, continueExperiment: continueCurrentExperiment, rerunGeneration: rerunCurrentGeneration,
     createDataset, runEvaluation, refreshPersistence, refreshEvaluationRuns,
+    selectPipeline, createPipeline, renamePipeline, deletePipeline,
   }), [
-    activeDocument, activeDocumentId, activeDocumentMetadata, activity, capabilities, chunkError, chunkRun, chunkStatus, createDataset, documents,
+    activeDocument, activeDocumentId, activeDocumentMetadata, activePipeline, activePipelineId, activity, capabilities, chunkError, chunkRun, chunkStatus, createDataset, documents,
     embeddingError, embeddingRun, embeddingStatus, evaluationDatasets, evaluationError, evaluationHistory,
     evaluationRun, evaluationStatus, experimentError, experimentHistory, experimentRun, experimentStatus,
     fileError, lastReportedParseProgress, parseError, parseProgress, parseResult, parseSelectedFile, parseStatus, persistenceError, persistenceStatus,
-    pendingUpload, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId,
+    pendingUpload, pipelines, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId,
     addDocument, reparseActiveDocument, parseActiveDocument,
     continueCurrentExperiment, loadEvaluationDataset, loadExperiment, refreshEvaluationRuns, refreshPersistence, removeFile, rerunCurrentGeneration,
     runChunking, runEmbedding, runEvaluation, runExperiment,
-    selectChunkRun, selectEmbeddingRun, selectFile, selectParseRun, selectPersistedDocument,
+    createPipeline, deletePipeline, renamePipeline, selectChunkRun, selectEmbeddingRun, selectFile, selectParseRun, selectPersistedDocument, selectPipeline,
   ]);
 
   return <DocumentPipelineContext.Provider value={value}>{children}</DocumentPipelineContext.Provider>;

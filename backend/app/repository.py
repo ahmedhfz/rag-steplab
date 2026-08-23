@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
@@ -31,6 +31,7 @@ from .models import (
     ChunkEmbedding,
     ChunkRun,
     Document,
+    DocumentPipeline,
     EmbeddingRun,
     EvaluationDataset,
     EvaluationRun,
@@ -177,6 +178,14 @@ def _summary_experiment_row(row: dict[str, Any]) -> dict[str, Any]:
     stage_results = row.get("stage_results") if "stage_results" in row else None
     retrieval = stage_results.get("retrieval") if isinstance(stage_results, dict) else None
     candidates = retrieval.get("results", retrieval.get("candidates", [])) if isinstance(retrieval, dict) else None
+    stage_statuses = {
+        stage: (
+            (stage_results.get(stage) or {}).get("status")
+            if isinstance(stage_results, dict)
+            else row.get(f"{stage}_status")
+        )
+        for stage in ("retrieval", "reranking", "context", "generation")
+    }
     return {
         "kind": "experiment",
         "id": row["id"],
@@ -188,6 +197,7 @@ def _summary_experiment_row(row: dict[str, Any]) -> dict[str, Any]:
         "experiment_fingerprint": row.get("experiment_fingerprint"),
         "config": copy.deepcopy(row.get("config") or {}),
         "candidate_count": len(candidates) if isinstance(candidates, list) else row.get("candidate_count"),
+        "stage_statuses": {stage: status for stage, status in stage_statuses.items() if status},
         "status": row.get("status", "completed"),
         "error_code": row.get("error_code"),
         "error_message": row.get("error_message"),
@@ -224,6 +234,24 @@ def _summary_evaluation_row(row: dict[str, Any]) -> dict[str, Any]:
         "error_code": row.get("error_code"),
         "error_message": row.get("error_message"),
         "aggregate": copy.deepcopy(aggregate if isinstance(aggregate, dict) else {}),
+        "started_at": row.get("started_at"),
+        "completed_at": row.get("completed_at"),
+        "duration_ms": row.get("duration_ms"),
+        "created_at": row.get("created_at"),
+    }
+
+
+def _summary_document_evaluation_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "kind": "evaluation",
+        "id": row["id"],
+        "dataset_id": row.get("dataset_id"),
+        "parse_run_id": row.get("parse_run_id"),
+        "chunk_run_id": row.get("chunk_run_id"),
+        "embedding_run_id": row.get("embedding_run_id"),
+        "status": row.get("status", "completed"),
+        "error_code": row.get("error_code"),
+        "error_message": row.get("error_message"),
         "started_at": row.get("started_at"),
         "completed_at": row.get("completed_at"),
         "duration_ms": row.get("duration_ms"),
@@ -312,6 +340,23 @@ class Repository:
         raise NotImplementedError
 
     def delete_document(self, document_id: str) -> None:
+        raise NotImplementedError
+
+    def create_document_pipeline(self, row: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def get_document_pipeline_row(self, pipeline_id: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def list_document_pipeline_rows(self, document_id: str) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def update_document_pipeline(
+        self, pipeline_id: str, expected_revision: int, changes: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def delete_document_pipeline(self, pipeline_id: str) -> bool:
         raise NotImplementedError
 
     def get_parse_row(self, run_id: str) -> dict[str, Any] | None:
@@ -493,6 +538,7 @@ class InMemoryRepository(Repository):
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self.documents: dict[str, dict[str, Any]] = {}
+        self.document_pipelines: dict[str, dict[str, Any]] = {}
         self.parses: dict[str, dict[str, Any]] = {}
         self.chunk_runs: dict[str, dict[str, Any]] = {}
         self.chunks: dict[str, list[dict[str, Any]]] = {}
@@ -701,6 +747,9 @@ class InMemoryRepository(Repository):
 
     def delete_document(self, document_id):
         self.documents.pop(document_id, None)
+        self.document_pipelines = {
+            key: row for key, row in self.document_pipelines.items() if row["document_id"] != document_id
+        }
         self.parses = {key: row for key, row in self.parses.items() if row["document_id"] != document_id}
         self.chunk_runs = {key: row for key, row in self.chunk_runs.items() if row["document_id"] != document_id}
         self.chunks = {key: value for key, value in self.chunks.items() if key in self.chunk_runs}
@@ -710,6 +759,56 @@ class InMemoryRepository(Repository):
         dataset_ids = {key for key, row in self.datasets.items() if row["document_id"] == document_id}
         self.datasets = {key: row for key, row in self.datasets.items() if key not in dataset_ids}
         self.evaluations = {key: row for key, row in self.evaluations.items() if row["dataset_id"] not in dataset_ids}
+
+    def _ensure_unique_pipeline_name(self, document_id, name, *, exclude_id=None):
+        normalized = name.casefold()
+        if any(
+            row["document_id"] == document_id
+            and row["id"] != exclude_id
+            and row["name"].casefold() == normalized
+            for row in self.document_pipelines.values()
+        ):
+            raise ApiProblem(409, "pipeline_name_conflict", "A pipeline with this name already exists.")
+
+    def create_document_pipeline(self, row):
+        with self._lock:
+            self._ensure_unique_pipeline_name(row["document_id"], row["name"])
+            now = now_utc()
+            stored = {
+                **copy.deepcopy(row),
+                "id": row.get("id") or new_id(),
+                "revision": 1,
+                "created_at": now,
+                "updated_at": now,
+            }
+            self.document_pipelines[stored["id"]] = stored
+            return copy.deepcopy(stored)
+
+    def get_document_pipeline_row(self, pipeline_id):
+        return copy.deepcopy(self.document_pipelines.get(pipeline_id))
+
+    def list_document_pipeline_rows(self, document_id):
+        rows = [row for row in self.document_pipelines.values() if row["document_id"] == document_id]
+        rows.sort(key=lambda row: (row.get("created_at") or now_utc(), row["id"]))
+        return copy.deepcopy(rows)
+
+    def update_document_pipeline(self, pipeline_id, expected_revision, changes):
+        with self._lock:
+            row = self.document_pipelines.get(pipeline_id)
+            if row is None:
+                return None
+            if row["revision"] != expected_revision:
+                raise ApiProblem(409, "pipeline_conflict", "The pipeline changed. Reload it before saving again.")
+            if "name" in changes:
+                self._ensure_unique_pipeline_name(row["document_id"], changes["name"], exclude_id=pipeline_id)
+            row.update(copy.deepcopy(changes))
+            row["revision"] += 1
+            row["updated_at"] = now_utc()
+            return copy.deepcopy(row)
+
+    def delete_document_pipeline(self, pipeline_id):
+        with self._lock:
+            return self.document_pipelines.pop(pipeline_id, None) is not None
 
     def get_parse_row(self, run_id):
         return copy.deepcopy(self.parses.get(run_id))
@@ -732,6 +831,19 @@ class InMemoryRepository(Repository):
             "embeddings": [_summary_embedding_row(row) for row in self.list_embedding_rows(document_id)],
             "experiments": [_summary_experiment_row(row) for row in self.list_experiment_rows(document_id)],
             "datasets": [_summary_dataset_row(row) for row in self.list_dataset_rows(document_id)],
+            "evaluations": [
+                _summary_document_evaluation_row(
+                    {
+                        **row,
+                        "parse_run_id": self.datasets[row["dataset_id"]]["parse_run_id"],
+                        "chunk_run_id": (row.get("config") or {}).get("chunk_run_id"),
+                        "embedding_run_id": (row.get("config") or {}).get("embedding_run_id"),
+                    }
+                )
+                for row in self.evaluations.values()
+                if row.get("dataset_id") in self.datasets
+                and self.datasets[row["dataset_id"]].get("document_id") == document_id
+            ],
         }
 
     def claim_chunk_run(
@@ -1462,6 +1574,75 @@ class SqlAlchemyRepository(Repository):
             if row is not None:
                 session.delete(row)
 
+    @staticmethod
+    def _document_pipeline_dict(row: DocumentPipeline) -> dict[str, Any]:
+        return {
+            "id": row.id,
+            "owner_user_id": row.owner_user_id,
+            "document_id": row.document_id,
+            "name": row.name,
+            "parse_run_id": row.parse_run_id,
+            "chunk_run_id": row.chunk_run_id,
+            "embedding_run_id": row.embedding_run_id,
+            "revision": row.revision,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+
+    def create_document_pipeline(self, values):
+        row = DocumentPipeline(id=values.get("id") or new_id(), **{key: value for key, value in values.items() if key != "id"})
+        try:
+            with session_scope() as session:
+                session.add(row)
+                session.flush()
+                return self._document_pipeline_dict(row)
+        except IntegrityError as exc:
+            if "uq_document_pipelines_document_name" in str(exc.orig):
+                raise ApiProblem(409, "pipeline_name_conflict", "A pipeline with this name already exists.") from exc
+            raise
+
+    def get_document_pipeline_row(self, pipeline_id):
+        with session_scope() as session:
+            row = session.get(DocumentPipeline, pipeline_id)
+            return self._document_pipeline_dict(row) if row else None
+
+    def list_document_pipeline_rows(self, document_id):
+        with session_scope() as session:
+            query = select(DocumentPipeline).where(
+                DocumentPipeline.document_id == document_id
+            ).order_by(DocumentPipeline.created_at, DocumentPipeline.id)
+            return [self._document_pipeline_dict(row) for row in session.scalars(query)]
+
+    def update_document_pipeline(self, pipeline_id, expected_revision, changes):
+        values = {**changes, "revision": expected_revision + 1, "updated_at": now_utc()}
+        statement = (
+            update(DocumentPipeline)
+            .where(DocumentPipeline.id == pipeline_id, DocumentPipeline.revision == expected_revision)
+            .values(**values)
+            .returning(DocumentPipeline)
+        )
+        try:
+            with session_scope() as session:
+                row = session.scalars(statement).first()
+                if row is not None:
+                    return self._document_pipeline_dict(row)
+                exists = session.get(DocumentPipeline, pipeline_id)
+                if exists is not None:
+                    raise ApiProblem(409, "pipeline_conflict", "The pipeline changed. Reload it before saving again.")
+                return None
+        except IntegrityError as exc:
+            if "uq_document_pipelines_document_name" in str(exc.orig):
+                raise ApiProblem(409, "pipeline_name_conflict", "A pipeline with this name already exists.") from exc
+            raise
+
+    def delete_document_pipeline(self, pipeline_id):
+        with session_scope() as session:
+            row = session.get(DocumentPipeline, pipeline_id)
+            if row is None:
+                return False
+            session.delete(row)
+            return True
+
     def get_parse_row(self, run_id):
         with session_scope() as session:
             row = session.get(ParseRun, run_id)
@@ -1555,6 +1736,10 @@ class SqlAlchemyRepository(Repository):
             ExperimentRun.experiment_fingerprint,
             ExperimentRun.config,
             candidate_count,
+            ExperimentRun.stage_results["retrieval"]["status"].astext.label("retrieval_status"),
+            ExperimentRun.stage_results["reranking"]["status"].astext.label("reranking_status"),
+            ExperimentRun.stage_results["context"]["status"].astext.label("context_status"),
+            ExperimentRun.stage_results["generation"]["status"].astext.label("generation_status"),
             ExperimentRun.status,
             ExperimentRun.error_code,
             ExperimentRun.error_message,
@@ -1584,6 +1769,35 @@ class SqlAlchemyRepository(Repository):
         if owner_user_id is not None:
             query = query.join(Document, Document.id == EvaluationDataset.document_id).where(Document.owner_user_id == self._owner_uuid(owner_user_id))
         return [_summary_dataset_row(dict(row)) for row in session.execute(query).mappings().all()]
+
+    def _summary_document_evaluation_rows(self, session, document_id, owner_user_id=None):
+        query = (
+            select(
+                EvaluationRun.id,
+                EvaluationRun.dataset_id,
+                EvaluationDataset.parse_run_id,
+                EvaluationRun.config["chunk_run_id"].astext.label("chunk_run_id"),
+                EvaluationRun.config["embedding_run_id"].astext.label("embedding_run_id"),
+                EvaluationRun.status,
+                EvaluationRun.error_code,
+                EvaluationRun.error_message,
+                EvaluationRun.started_at,
+                EvaluationRun.completed_at,
+                EvaluationRun.duration_ms,
+                EvaluationRun.created_at,
+            )
+            .join(EvaluationDataset, EvaluationDataset.id == EvaluationRun.dataset_id)
+            .where(EvaluationDataset.document_id == document_id)
+            .order_by(EvaluationRun.created_at.desc())
+        )
+        if owner_user_id is not None:
+            query = query.join(Document, Document.id == EvaluationDataset.document_id).where(
+                Document.owner_user_id == self._owner_uuid(owner_user_id)
+            )
+        return [
+            _summary_document_evaluation_row(dict(row))
+            for row in session.execute(query).mappings().all()
+        ]
 
     def _summary_evaluation_rows(self, session, dataset_id=None, owner_user_id=None):
         query = select(
@@ -1643,6 +1857,7 @@ class SqlAlchemyRepository(Repository):
                 "embeddings": self._summary_embedding_rows(session, document_id, owner_user_id),
                 "experiments": self._summary_experiment_rows(session, document_id, owner_user_id),
                 "datasets": self._summary_dataset_rows(session, document_id, owner_user_id),
+                "evaluations": self._summary_document_evaluation_rows(session, document_id, owner_user_id),
             }
 
     def claim_chunk_run(
@@ -2385,6 +2600,37 @@ class ScopedRepository(Repository):
     def delete_document(self, document_id):
         if self._owned_document(document_id) is not None:
             self._repository.delete_document(document_id)
+
+    def create_document_pipeline(self, row):
+        if self._owned_document(row["document_id"]) is None:
+            return None
+        payload = dict(row)
+        payload["owner_user_id"] = self.owner_user_id
+        return self._repository.create_document_pipeline(payload)
+
+    def get_document_pipeline_row(self, pipeline_id):
+        row = self._repository.get_document_pipeline_row(pipeline_id)
+        if row is None or row.get("owner_user_id") != self.owner_user_id:
+            return None
+        return row
+
+    def list_document_pipeline_rows(self, document_id):
+        if self._owned_document(document_id) is None:
+            return []
+        return [
+            row for row in self._repository.list_document_pipeline_rows(document_id)
+            if row.get("owner_user_id") == self.owner_user_id
+        ]
+
+    def update_document_pipeline(self, pipeline_id, expected_revision, changes):
+        if self.get_document_pipeline_row(pipeline_id) is None:
+            return None
+        return self._repository.update_document_pipeline(pipeline_id, expected_revision, changes)
+
+    def delete_document_pipeline(self, pipeline_id):
+        if self.get_document_pipeline_row(pipeline_id) is None:
+            return False
+        return self._repository.delete_document_pipeline(pipeline_id)
 
     def get_parse_row(self, run_id):
         return self._owned_document_for_row(self._repository.get_parse_row(run_id)) and self._repository.get_parse_row(run_id)

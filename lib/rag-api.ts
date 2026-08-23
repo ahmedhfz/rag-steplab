@@ -14,6 +14,7 @@ import type {
   ChunkStrategy,
   ContextCandidate,
   DocumentDetail,
+  DocumentPipeline,
   DocumentUploadResponse,
   DocumentSummary,
   EmbeddingRun,
@@ -22,6 +23,7 @@ import type {
   EvaluationDatasetSummary,
   EvaluationMetrics,
   EvaluationRun,
+  EvaluationRunSummary,
   ExperimentRequest,
   ExperimentRun,
   ExperimentSummary,
@@ -584,6 +586,12 @@ function normalizeExperiment(value: unknown): ExperimentRun {
 function normalizeExperimentSummary(value: unknown): ExperimentSummary {
   const payload = requiredObject(value, "experiment summary");
   const run = normalizeRun(payload);
+  const rawStageStatuses = object(field(payload, "stageStatuses", "stage_statuses"));
+  const stageStatuses: ExperimentSummary["stageStatuses"] = {};
+  for (const stage of ["retrieval", "reranking", "context", "generation"] as const) {
+    const status = rawStageStatuses[stage];
+    if (status === "completed" || status === "skipped") stageStatuses[stage] = status;
+  }
   return {
     ...run,
     documentId: requiredString(field(payload, "documentId", "document_id"), "experiment document id"),
@@ -593,6 +601,41 @@ function normalizeExperimentSummary(value: unknown): ExperimentSummary {
     targetStage: normalizeTargetStage(field(payload, "targetStage", "target_stage")),
     candidateCount: optionalNumber(field(payload, "candidateCount", "candidate_count")),
     experimentFingerprint: optionalString(field(payload, "experimentFingerprint", "experiment_fingerprint")),
+    stageStatuses,
+  };
+}
+
+function normalizeEvaluationRunSummary(value: unknown): EvaluationRunSummary {
+  const payload = requiredObject(value, "evaluation run summary");
+  const timing = object(payload.timing);
+  return {
+    id: requiredString(payload.id, "evaluation run id"),
+    datasetId: requiredString(field(payload, "datasetId", "dataset_id"), "evaluation dataset id"),
+    parseRunId: requiredString(field(payload, "parseRunId", "parse_run_id"), "evaluation parse run id"),
+    chunkRunId: optionalString(field(payload, "chunkRunId", "chunk_run_id")),
+    embeddingRunId: optionalString(field(payload, "embeddingRunId", "embedding_run_id")),
+    status: normalizeStatus(payload.status),
+    timing: {
+      startedAt: optionalString(field(timing, "startedAt", "started_at")),
+      completedAt: optionalString(field(timing, "completedAt", "completed_at")),
+      durationMs: optionalNumber(field(timing, "durationMs", "duration_ms")),
+    },
+    error: normalizeProblem(payload.error),
+  };
+}
+
+function normalizeDocumentPipeline(value: unknown): DocumentPipeline {
+  const payload = requiredObject(value, "document pipeline");
+  return {
+    id: requiredString(payload.id, "document pipeline id"),
+    documentId: requiredString(field(payload, "documentId", "document_id"), "pipeline document id"),
+    name: requiredString(payload.name, "pipeline name"),
+    parseRunId: optionalString(field(payload, "parseRunId", "parse_run_id")),
+    chunkRunId: optionalString(field(payload, "chunkRunId", "chunk_run_id")),
+    embeddingRunId: optionalString(field(payload, "embeddingRunId", "embedding_run_id")),
+    revision: requiredNumber(payload.revision, "pipeline revision"),
+    createdAt: optionalString(field(payload, "createdAt", "created_at")),
+    updatedAt: optionalString(field(payload, "updatedAt", "updated_at")),
   };
 }
 
@@ -643,6 +686,7 @@ async function request(path: string, init: RequestInit = {}): Promise<unknown> {
     throw new DocumentApiError("backend_unavailable", "The RAG backend could not be reached.");
   }
 
+  if (response.status === 204) return null;
   let payload: unknown = null;
   try {
     payload = await response.json();
@@ -727,6 +771,7 @@ export async function getDocumentSummary(documentId: string, signal?: AbortSigna
       embeddingRuns: requiredArray(payload.embeddingRuns, normalizeRun, "embedding run history"),
       experiments: requiredArray(payload.experiments, normalizeExperimentSummary, "experiment history"),
       evaluationDatasets: requiredArray(payload.evaluationDatasets ?? payload.datasets, normalizeDatasetSummary, "evaluation dataset history"),
+      evaluationRuns: requiredArray(payload.evaluationRuns ?? [], normalizeEvaluationRunSummary, "evaluation run history"),
     };
   } catch (error) {
     // Older previews may not expose the additive endpoint yet. Keep the
@@ -745,11 +790,46 @@ export async function getDocumentSummary(documentId: string, signal?: AbortSigna
         targetStage: "generation" as const,
         candidateCount: null,
         experimentFingerprint: null,
+        stageStatuses: {},
       })),
       evaluationDatasets: [],
+      evaluationRuns: [],
       activeParseRun: legacy.activeParseRun,
     };
   }
+}
+
+export async function listDocumentPipelines(documentId: string, signal?: AbortSignal): Promise<DocumentPipeline[]> {
+  const payload = await request(`/documents/${encodeURIComponent(documentId)}/pipelines`, { signal });
+  return listPayload(payload, "pipelines").map(normalizeDocumentPipeline);
+}
+
+export async function createDocumentPipeline(
+  documentId: string,
+  input: { name: string; parseRunId?: string | null; chunkRunId?: string | null; embeddingRunId?: string | null },
+  signal?: AbortSignal,
+): Promise<DocumentPipeline> {
+  return normalizeDocumentPipeline(await request(`/documents/${encodeURIComponent(documentId)}/pipelines`, {
+    method: "POST",
+    body: JSON.stringify(input),
+    signal,
+  }));
+}
+
+export async function updateDocumentPipeline(
+  pipelineId: string,
+  input: { expectedRevision: number; name?: string; parseRunId?: string | null; chunkRunId?: string | null; embeddingRunId?: string | null },
+  signal?: AbortSignal,
+): Promise<DocumentPipeline> {
+  return normalizeDocumentPipeline(await request(`/document-pipelines/${encodeURIComponent(pipelineId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+    signal,
+  }));
+}
+
+export async function deleteDocumentPipeline(pipelineId: string, signal?: AbortSignal): Promise<void> {
+  await request(`/document-pipelines/${encodeURIComponent(pipelineId)}`, { method: "DELETE", signal });
 }
 
 export async function getParseRun(runId: string, signal?: AbortSignal, documentId?: string | null): Promise<ParseRun> {

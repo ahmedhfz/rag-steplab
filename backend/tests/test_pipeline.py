@@ -687,10 +687,10 @@ def test_chunk_claim_race_has_one_owner_and_completed_retry_reuses_it(monkeypatc
     assert reused["status"] == "completed"
 
 
-def test_all_nine_database_tables_are_declared():
+def test_all_ten_database_tables_are_declared():
     from app.models import Base
 
-    assert len(Base.metadata.tables) == 9
+    assert len(Base.metadata.tables) == 10
     assert {table.name for table in Base.metadata.tables.values()} == {
         "documents",
         "parse_runs",
@@ -701,6 +701,7 @@ def test_all_nine_database_tables_are_declared():
         "experiment_runs",
         "evaluation_datasets",
         "evaluation_runs",
+        "document_pipelines",
     }
 
 

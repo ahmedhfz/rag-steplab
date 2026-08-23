@@ -10,7 +10,7 @@ export type PipelineStepKey =
   | "generate"
   | "evaluate";
 
-export type PipelineStepState = "Not started" | "Ready" | "Processing" | "Completed" | "Error" | "Locked" | "Stale";
+export type PipelineStepState = "Not started" | "Ready" | "Processing" | "Completed" | "Skipped" | "Error" | "Locked" | "Stale";
 
 export type DocumentActivityEventType =
   | "documentSelected"

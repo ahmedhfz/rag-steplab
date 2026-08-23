@@ -153,6 +153,7 @@ function setupSummaryFetch() {
     const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
     if (url.endsWith("/capabilities")) return respond(capabilities);
     if (url.endsWith("/documents")) return respond({ items: [persistedDocument(), { ...persistedDocument(), id: "document-new", fileName: "new.pdf" }] });
+    if (url.endsWith("/pipelines")) return respond([]);
     if (url.endsWith("/documents/document-old/summary")) return respond(old);
     if (url.endsWith("/documents/document-new/summary")) return respond(next);
     throw new Error(`unexpected request: ${url}`);
@@ -169,6 +170,7 @@ function setupFetch({ newDocumentMode = "error" as "error" | "delayed" } = {}) {
     const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
     if (url.endsWith("/capabilities")) return respond(capabilities);
     if (url.endsWith("/documents")) return respond({ items: [persistedDocument(), { ...persistedDocument(), id: "document-new", fileName: "new.pdf" }] });
+    if (url.endsWith("/pipelines")) return respond([]);
     if (url.endsWith("/documents/document-old")) return respond(detail);
     if (url.endsWith("/documents/document-new")) {
       if (newDocumentMode === "delayed") return new Promise((resolve) => setTimeout(() => resolve(respond({ error: { code: "late_document", message: "Late document response" } }, 500)), 50));
@@ -191,6 +193,45 @@ afterEach(() => {
 });
 
 describe("Document pipeline committed state", () => {
+  it("reloads and reconciles server pipeline state before one revision-conflict retry", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
+    const base = summaryDocument("document-old", "lesson.pdf");
+    const historical = {
+      ...base.parseRuns[0], id: "parse-old", historicalLineage: true,
+    };
+    const detail = { ...base, parseRuns: [...base.parseRuns, historical] };
+    const pipeline = { id: "pipeline-1", documentId: "document-old", name: "Baseline", parseRunId: "document-old-parse", chunkRunId: null, embeddingRunId: null, revision: 1, createdAt: null, updatedAt: null };
+    let pipelineListCalls = 0;
+    const patchBodies: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(status === 204 ? null : JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.endsWith("/documents/document-old/pipelines")) {
+        pipelineListCalls += 1;
+        return respond([{ ...pipeline, revision: pipelineListCalls === 1 ? 1 : 2 }]);
+      }
+      if (url.endsWith("/document-pipelines/pipeline-1") && init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        patchBodies.push(body);
+        if (patchBodies.length === 1) return respond({ error: { code: "pipeline_conflict", message: "changed" } }, 409);
+        return respond({ ...pipeline, revision: 3, parseRunId: "parse-old" });
+      }
+      if (url.endsWith("/parse-runs/parse-old")) return respond(parseResult("document-old", "parse-old", "lesson.pdf", "Historical parse"));
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("selected-parse")).toHaveTextContent("document-old-parse"));
+    fireEvent.click(screen.getByRole("button", { name: "Select historical parse" }));
+    await waitFor(() => expect(screen.getByTestId("selected-parse")).toHaveTextContent("parse-old"));
+    expect(pipelineListCalls).toBe(2);
+    expect(patchBodies.map((body) => body.expectedRevision)).toEqual([1, 2]);
+  });
+
   it("keeps the committed document while a different file is only pending", async () => {
     setupFetch();
     renderProbe();

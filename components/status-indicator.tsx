@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, CheckCircle2, Circle, CircleDot, History, LoaderCircle, LockKeyhole } from "lucide-react";
+import { AlertCircle, CheckCircle2, Circle, CircleDot, Forward, History, LoaderCircle, LockKeyhole } from "lucide-react";
 import { motion } from "motion/react";
 
 import { usePreferences } from "@/components/preferences-provider";
@@ -12,6 +12,7 @@ const stateStyles: Record<PipelineStepState, string> = {
   "Not started": "text-slate-500",
   Ready: "text-blue-700",
   Completed: "text-emerald-700",
+  Skipped: "text-slate-500",
   Processing: "text-amber-700",
   Error: "text-red-700",
   Locked: "text-slate-400",
@@ -43,6 +44,7 @@ function StateIcon({ state }: { state: PipelineStepState }) {
     );
   }
   if (state === "Error") return <AlertCircle aria-hidden="true" className="size-4" />;
+  if (state === "Skipped") return <Forward aria-hidden="true" className="size-4" />;
   if (state === "Stale") return <History aria-hidden="true" className="size-4" />;
   return <LockKeyhole aria-hidden="true" className="size-3.5" />;
 }

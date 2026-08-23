@@ -1,4 +1,4 @@
-"""SQLAlchemy 2 models for the nine persisted RAG StepLab tables."""
+"""SQLAlchemy 2 models for the ten persisted RAG StepLab tables."""
 
 from __future__ import annotations
 
@@ -220,6 +220,46 @@ class EmbeddingRun(Base):
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class DocumentPipeline(Base):
+    __tablename__ = "document_pipelines"
+    __table_args__ = (
+        CheckConstraint(
+            "name = btrim(name) AND char_length(name) BETWEEN 1 AND 100",
+            name="ck_document_pipelines_name",
+        ),
+        CheckConstraint("revision > 0", name="ck_document_pipelines_revision"),
+        CheckConstraint(
+            "(parse_run_id IS NOT NULL OR (chunk_run_id IS NULL AND embedding_run_id IS NULL)) "
+            "AND (chunk_run_id IS NOT NULL OR embedding_run_id IS NULL)",
+            name="ck_document_pipelines_lineage_shape",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    document_id: Mapped[str] = mapped_column(
+        ForeignKey(f"{SCHEMA}.documents.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    parse_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey(f"{SCHEMA}.parse_runs.id", ondelete="RESTRICT"), nullable=True
+    )
+    chunk_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey(f"{SCHEMA}.chunk_runs.id", ondelete="RESTRICT"), nullable=True
+    )
+    embedding_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey(f"{SCHEMA}.embedding_runs.id", ondelete="RESTRICT"), nullable=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
 

@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, File, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from .config import get_settings
 from .auth import CurrentUser, get_current_user
@@ -33,6 +33,10 @@ from .pipeline import (
     run_lineage_compatibility,
     SUPPORTED_NORMALIZED_SCHEMA_VERSION,
 )
+from .document_pipelines import (
+    create_document_pipeline as create_named_pipeline,
+    update_document_pipeline as update_named_pipeline,
+)
 from .gemini import EMBEDDING_FORMAT_VERSION
 from .repository import get_repository
 from .schemas import (
@@ -46,6 +50,9 @@ from .schemas import (
     EvaluationRunRequest,
     ExperimentCreateRequest,
     DocumentMetadata,
+    DocumentPipelineCreateRequest,
+    DocumentPipelineResponse,
+    DocumentPipelineUpdateRequest,
     DocumentUploadResponse,
     ParseSummary,
     ParseResponse,
@@ -70,7 +77,7 @@ app.add_middleware(
     allow_origins=list(settings.cors_origins),
     allow_origin_regex=settings.cors_origin_regex,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["Server-Timing"],
 )
@@ -584,6 +591,7 @@ def _summary_run_dict(row: dict[str, Any], document: dict[str, Any], bundle: dic
             "targetStage": row.get("target_stage"),
             "candidateCount": row.get("candidate_count"),
             "experimentFingerprint": row.get("experiment_fingerprint"),
+            "stageStatuses": row.get("stage_statuses", {}),
         })
     return payload
 
@@ -631,6 +639,39 @@ def _document_list_item(row: dict[str, Any]) -> dict[str, Any]:
         "createdAt": row.get("created_at"),
         "updatedAt": row.get("updated_at"),
     }
+
+
+def _summary_document_evaluation_dict(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "datasetId": row.get("dataset_id"),
+        "parseRunId": row.get("parse_run_id"),
+        "chunkRunId": row.get("chunk_run_id"),
+        "embeddingRunId": row.get("embedding_run_id"),
+        "status": _public_parse_status(row.get("status")),
+        "timing": {
+            "startedAt": row.get("started_at"),
+            "completedAt": row.get("completed_at"),
+            "durationMs": row.get("duration_ms"),
+        },
+        "error": {"code": row.get("error_code"), "message": row.get("error_message")}
+        if row.get("error_code") and row.get("error_message")
+        else None,
+    }
+
+
+def _document_pipeline_response(row: dict[str, Any]) -> DocumentPipelineResponse:
+    return DocumentPipelineResponse(
+        id=row["id"],
+        document_id=row["document_id"],
+        name=row["name"],
+        parse_run_id=row.get("parse_run_id"),
+        chunk_run_id=row.get("chunk_run_id"),
+        embedding_run_id=row.get("embedding_run_id"),
+        revision=row["revision"],
+        created_at=row.get("created_at"),
+        updated_at=row.get("updated_at"),
+    )
 
 
 def _persisted_parse_response(document: dict[str, Any], parse: dict[str, Any]) -> dict[str, Any]:
@@ -686,7 +727,47 @@ def get_document_summary(document_id: str, user: CurrentUser = Depends(get_curre
         "embeddingRuns": [_summary_run_dict(row, document, bundle) for row in bundle["embeddings"]],
         "experiments": [_summary_run_dict(row, document, bundle) for row in bundle["experiments"]],
         "evaluationDatasets": [_summary_dataset_dict(row) for row in bundle["datasets"]],
+        "evaluationRuns": [_summary_document_evaluation_dict(row) for row in bundle["evaluations"]],
     })
+
+
+@app.get("/documents/{document_id}/pipelines", response_model=list[DocumentPipelineResponse])
+def list_document_pipelines(
+    document_id: str, user: CurrentUser = Depends(get_current_user)
+) -> list[DocumentPipelineResponse]:
+    repository = _user_repository(user)
+    if repository.get_document_row(document_id) is None:
+        raise ApiProblem(404, "document_not_found", "The document was not found.")
+    return [_document_pipeline_response(row) for row in repository.list_document_pipeline_rows(document_id)]
+
+
+@app.post("/documents/{document_id}/pipelines", response_model=DocumentPipelineResponse, status_code=201)
+def create_document_pipeline_route(
+    document_id: str,
+    request: DocumentPipelineCreateRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> DocumentPipelineResponse:
+    row = create_named_pipeline(_user_repository(user), document_id, request)
+    return _document_pipeline_response(row)
+
+
+@app.patch("/document-pipelines/{pipeline_id}", response_model=DocumentPipelineResponse)
+def update_document_pipeline_route(
+    pipeline_id: str,
+    request: DocumentPipelineUpdateRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> DocumentPipelineResponse:
+    row = update_named_pipeline(_user_repository(user), pipeline_id, request)
+    return _document_pipeline_response(row)
+
+
+@app.delete("/document-pipelines/{pipeline_id}", status_code=204)
+def delete_document_pipeline_route(
+    pipeline_id: str, user: CurrentUser = Depends(get_current_user)
+) -> Response:
+    if not _user_repository(user).delete_document_pipeline(pipeline_id):
+        raise ApiProblem(404, "document_pipeline_not_found", "The pipeline was not found.")
+    return Response(status_code=204)
 
 
 @app.post("/documents/{document_id}/chunks", response_model=ChunkRunResponse)

@@ -78,6 +78,11 @@ function jsonResponse(payload: unknown, status = 200) {
 }
 
 function renderScreen(node: React.ReactNode) {
+  const testFetch = globalThis.fetch;
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+    String(input).endsWith("/pipelines")
+      ? jsonResponse([])
+      : testFetch(input, init)));
   return render(<PreferencesProvider><DocumentPipelineProvider>{node}</DocumentPipelineProvider></PreferencesProvider>);
 }
 

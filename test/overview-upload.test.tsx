@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 describe("Phase 6B document ownership", () => {
-  it("keeps Overview inventory-only without upload, parse, activity, or stage diagram", async () => {
+  it("shows the read-only stage diagram and empty Documents CTA without upload or parse actions", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       const payload = url.endsWith("/capabilities") ? capabilities : { items: [] };
       return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }));
@@ -28,12 +28,12 @@ describe("Phase 6B document ownership", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderWithPipeline(<OverviewScreen />);
 
-    expect(screen.getByRole("heading", { name: "Overview" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Document inventory" })).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText("No documents yet.")).toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "RAG Pipeline" })).toBeInTheDocument();
+    expect(screen.getByText("Retrieve")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/No documents yet/)).toBeInTheDocument());
+    expect(screen.getByRole("link", { name: "Go to Documents" })).toHaveAttribute("href", "/documents");
     expect(screen.queryByRole("button", { name: /Add PDF|Choose PDF|Parse Document|Reparse/i })).not.toBeInTheDocument();
     expect(screen.queryByTestId("activity-timeline")).not.toBeInTheDocument();
-    expect(screen.queryByText("RAG Pipeline")).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/documents/"))).toBe(false);
   });
 

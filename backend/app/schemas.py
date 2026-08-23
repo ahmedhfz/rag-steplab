@@ -86,6 +86,7 @@ class RunTiming(CamelCaseModel):
 
 
 RunStatus = Literal["queued", "running", "completed", "failed"]
+ExperimentStageStatus = Literal["completed", "skipped"]
 
 
 class RunSummary(CamelCaseModel):
@@ -128,6 +129,33 @@ class DocumentDetail(DocumentListItem):
     chunk_runs: list[RunSummary] = Field(default_factory=list)
     embedding_runs: list[RunSummary] = Field(default_factory=list)
     experiments: list[RunSummary] = Field(default_factory=list)
+
+
+class DocumentPipelineCreateRequest(CamelCaseModel):
+    name: str
+    parse_run_id: str | None = None
+    chunk_run_id: str | None = None
+    embedding_run_id: str | None = None
+
+
+class DocumentPipelineUpdateRequest(CamelCaseModel):
+    expected_revision: int = Field(ge=1)
+    name: str | None = None
+    parse_run_id: str | None = None
+    chunk_run_id: str | None = None
+    embedding_run_id: str | None = None
+
+
+class DocumentPipelineResponse(CamelCaseModel):
+    id: str
+    document_id: str
+    name: str
+    parse_run_id: str | None = None
+    chunk_run_id: str | None = None
+    embedding_run_id: str | None = None
+    revision: int = Field(ge=1)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 ChunkStrategy = Literal["fixed_token", "recursive_token", "structure_aware"]
