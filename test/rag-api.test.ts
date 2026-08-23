@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { continueExperiment, getChunkRun, getDocument, getDocumentSummary, getEmbeddingRun, getExperiment, getParseRun, listDocuments, parseAndPersistDocument, rerunGeneration, uploadDocument, waitForParseRun } from "@/lib/rag-api";
+import { continueExperiment, createDocumentPipeline, deleteDocumentPipeline, getChunkRun, getDocument, getDocumentSummary, getEmbeddingRun, getExperiment, getParseRun, listDocumentPipelines, listDocuments, parseAndPersistDocument, rerunGeneration, updateDocumentPipeline, uploadDocument, waitForParseRun } from "@/lib/rag-api";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -93,17 +93,35 @@ describe("RAG API contract normalization", () => {
       parseRuns: [{ id: "parse-1", status: "completed", isCompatible: true, upstream: {}, config: {}, timing: {} }],
       chunkRuns: [{ id: "chunk-1", status: "completed", isCompatible: true, strategy: "fixed_token", chunkCount: 2, upstream: { parseRunId: "parse-1" }, config: {}, timing: {} }],
       embeddingRuns: [],
-      experiments: [{ id: "experiment-1", status: "completed", isCompatible: true, documentId: "document-1", chunkRunId: "chunk-1", embeddingRunId: null, query: "hello", targetStage: "retrieval", candidateCount: 2, config: {}, timing: {} }],
+      experiments: [{ id: "experiment-1", status: "completed", isCompatible: true, documentId: "document-1", chunkRunId: "chunk-1", embeddingRunId: null, query: "hello", targetStage: "retrieval", candidateCount: 2, stageStatuses: { retrieval: "completed", reranking: "skipped" }, config: {}, timing: {} }],
       evaluationDatasets: [{ id: "dataset-1", documentId: "document-1", parseRunId: "parse-1", name: "Smoke", version: 1, caseCount: 3, createdAt: null }],
+      evaluationRuns: [{ id: "evaluation-1", datasetId: "dataset-1", parseRunId: "parse-1", chunkRunId: "chunk-1", embeddingRunId: null, status: "completed", timing: {}, error: null }],
     }), { status: 200, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(getDocumentSummary("document-1")).resolves.toMatchObject({
       id: "document-1",
-      experiments: [{ id: "experiment-1", candidateCount: 2 }],
+      experiments: [{ id: "experiment-1", candidateCount: 2, stageStatuses: { retrieval: "completed", reranking: "skipped" } }],
       evaluationDatasets: [{ id: "dataset-1", caseCount: 3 }],
+      evaluationRuns: [{ id: "evaluation-1", chunkRunId: "chunk-1" }],
     });
     expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8000/documents/document-1/summary", expect.anything());
+  });
+
+  it("normalizes named pipeline CRUD and sends expectedRevision on PATCH", async () => {
+    const pipeline = { id: "pipeline-1", documentId: "document-1", name: "Baseline", parseRunId: "parse-1", chunkRunId: null, embeddingRunId: null, revision: 1, createdAt: null, updatedAt: null };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([pipeline]), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(pipeline), { status: 201, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...pipeline, revision: 2, name: "Renamed" }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(listDocumentPipelines("document-1")).resolves.toEqual([pipeline]);
+    await expect(createDocumentPipeline("document-1", { name: "Baseline", parseRunId: "parse-1" })).resolves.toMatchObject({ id: "pipeline-1" });
+    await expect(updateDocumentPipeline("pipeline-1", { expectedRevision: 1, name: "Renamed" })).resolves.toMatchObject({ revision: 2 });
+    await expect(deleteDocumentPipeline("pipeline-1")).resolves.toBeUndefined();
+    expect(fetchMock.mock.calls[2][1]).toEqual(expect.objectContaining({ method: "PATCH", body: JSON.stringify({ expectedRevision: 1, name: "Renamed" }) }));
   });
 
   it("carries the existing reusedDocument flag through the persisted parse contract", async () => {

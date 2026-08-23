@@ -48,7 +48,7 @@ def test_summary_endpoint_excludes_artifact_bodies():
         "query": "summary",
         "target_stage": "retrieval",
         "config": {},
-        "stage_results": {"retrieval": {"results": [{"text": "x"}] * 4}},
+        "stage_results": {"retrieval": {"status": "completed", "results": [{"text": "x"}] * 4}},
         "status": "completed",
     })
     dataset = repository.save_dataset(
@@ -76,7 +76,10 @@ def test_summary_endpoint_excludes_artifact_bodies():
     for forbidden in ("structured", "markdown", "chunks", "stageResults", "caseResults"):
         assert forbidden not in serialized
     assert payload["experiments"][0]["candidateCount"] == 4
+    assert payload["experiments"][0]["stageStatuses"] == {"retrieval": "completed"}
     assert payload["evaluationDatasets"][0]["caseCount"] == 1
+    assert payload["evaluationRuns"][0]["id"] == "evaluation-summary"
+    assert "results" not in payload["evaluationRuns"][0]
 
     experiment_list = client.get(f"/experiments?documentId={document['id']}")
     dataset_list = client.get(f"/evaluation/datasets?documentId={document['id']}")
@@ -135,13 +138,14 @@ def test_sql_summary_bundle_uses_constant_projection_queries(monkeypatch):
     bundle = SqlAlchemyRepository().get_document_summary_bundle("document-1", owner_user_id=OWNER_ID)
 
     assert bundle is not None
-    assert len(session.statements) == 6  # document lookup + five O(1) projections
+    assert len(session.statements) == 7  # document lookup + six O(1) projections
     sql = "\n".join(str(statement.compile(dialect=postgresql.dialect())) for statement in session.statements)
     assert "parse_runs.structured," not in sql
     assert "parse_runs.markdown" not in sql
     assert "chunks.text" not in sql
     assert "stage_results," not in sql
     assert "evaluation_datasets.cases," not in sql
+    assert "evaluation_runs.results" not in sql
 
 
 def test_summary_contract_keeps_document_ownership_boundary():

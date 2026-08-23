@@ -207,7 +207,7 @@ export const UI_COPY = {
       playground: "Playground", evaluation: "Evaluation", settings: "Settings", chunks: "Chunks", retrieval: "Retrieval",
       pipeline: "Pipeline", experiment: "Experiment", system: "System",
     },
-    status: { "Not started": "Not started", Ready: "Ready", Processing: "Processing", Completed: "Completed", Error: "Error", Locked: "Locked", Stale: "Stale" },
+    status: { "Not started": "Not started", Ready: "Ready", Processing: "Processing", Completed: "Completed", Skipped: "Skipped", Error: "Error", Locked: "Locked", Stale: "Stale" },
     guides: "Guides",
     help: "Help",
     guidePanel: {
@@ -410,7 +410,7 @@ export const UI_COPY = {
       playground: "Deney Alanı", evaluation: "Değerlendirme", settings: "Ayarlar", chunks: "Parçalar", retrieval: "Getirme",
       pipeline: "Pipeline", experiment: "Deney", system: "Sistem",
     },
-    status: { "Not started": "Başlatılmadı", Ready: "Hazır", Processing: "İşleniyor", Completed: "Tamamlandı", Error: "Hata", Locked: "Kilitli", Stale: "Eski" },
+    status: { "Not started": "Başlatılmadı", Ready: "Hazır", Processing: "İşleniyor", Completed: "Tamamlandı", Skipped: "Atlandı", Error: "Hata", Locked: "Kilitli", Stale: "Eski" },
     guides: "Rehberler",
     help: "Yardım",
     guidePanel: {

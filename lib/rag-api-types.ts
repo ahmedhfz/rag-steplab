@@ -84,6 +84,30 @@ export type ExperimentSummary = RunSummary & {
   targetStage: ExperimentTargetStage;
   candidateCount: number | null;
   experimentFingerprint: string | null;
+  stageStatuses: Partial<Record<"retrieval" | "reranking" | "context" | "generation", "completed" | "skipped">>;
+};
+
+export type DocumentPipeline = {
+  id: string;
+  documentId: string;
+  name: string;
+  parseRunId: string | null;
+  chunkRunId: string | null;
+  embeddingRunId: string | null;
+  revision: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type EvaluationRunSummary = {
+  id: string;
+  datasetId: string;
+  parseRunId: string;
+  chunkRunId: string | null;
+  embeddingRunId: string | null;
+  status: RunStatus;
+  timing: RunTiming;
+  error: ApiProblem | null;
 };
 
 export type EvaluationDatasetSummary = {
@@ -102,6 +126,7 @@ export type DocumentSummary = PersistedDocument & {
   embeddingRuns: RunSummary[];
   experiments: ExperimentSummary[];
   evaluationDatasets: EvaluationDatasetSummary[];
+  evaluationRuns: EvaluationRunSummary[];
   /** Only populated by the legacy compatibility fallback; summary responses omit it. */
   activeParseRun?: PersistedParseResponse | null;
 };

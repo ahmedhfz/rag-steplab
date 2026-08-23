@@ -1,6 +1,6 @@
 begin;
 
-select plan(39);
+select plan(44);
 
 select ok(to_regnamespace('rag_lab') is not null, 'rag_lab schema exists');
 
@@ -275,6 +275,42 @@ select ok(
 select ok(
   to_regclass('rag_lab.alembic_version') is null,
   'legacy Alembic state table is absent'
+);
+
+select ok(to_regclass('rag_lab.document_pipelines') is not null, 'document pipelines table exists');
+
+select ok(
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'rag_lab' and table_name = 'document_pipelines'
+      and column_name = 'revision' and data_type = 'integer' and is_nullable = 'NO'
+  ),
+  'document pipelines have a required revision'
+);
+
+select is(
+  (select count(*)::integer from pg_constraint
+   where conrelid = 'rag_lab.document_pipelines'::regclass and contype = 'f'),
+  5,
+  'document pipelines use direct foreign keys to existing candidate keys'
+);
+
+select ok(
+  exists (
+    select 1 from pg_indexes
+    where schemaname = 'rag_lab' and indexname = 'uq_document_pipelines_document_name'
+      and indexdef like '%UNIQUE INDEX%lower((name)::text)%'
+  ),
+  'pipeline names are case-insensitively unique per document'
+);
+
+select ok(
+  has_table_privilege('rag_steplab_app', 'rag_lab.document_pipelines', 'SELECT')
+  and has_table_privilege('rag_steplab_app', 'rag_lab.document_pipelines', 'INSERT')
+  and has_table_privilege('rag_steplab_app', 'rag_lab.document_pipelines', 'UPDATE')
+  and has_table_privilege('rag_steplab_app', 'rag_lab.document_pipelines', 'DELETE')
+  and not has_table_privilege('authenticated', 'rag_lab.document_pipelines', 'SELECT'),
+  'only the private runtime role can access document pipelines'
 );
 
 select * from finish();
