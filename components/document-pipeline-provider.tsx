@@ -19,6 +19,7 @@ import {
   getChunkRun,
   getDocumentSummary,
   getEvaluationDataset,
+  getEvaluationRun,
   getExperiment,
   getParseRun,
   getEmbeddingRun,
@@ -1792,6 +1793,14 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       const runs = await listEvaluationRuns(datasetId, controller.signal);
       if (documentEpochRef.current !== epoch || activeDocumentRef.current?.id !== documentId) return;
       setEvaluationHistory(runs);
+      const latestRun = runs.find((run) => run.status === "completed");
+      if (!latestRun) {
+        setEvaluationRun(null);
+        return;
+      }
+      const detail = await getEvaluationRun(latestRun.id, controller.signal);
+      if (documentEpochRef.current !== epoch || activeDocumentRef.current?.id !== documentId) return;
+      setEvaluationRun(detail);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setEvaluationError(asApiError(error, "Evaluation history could not be loaded."));
