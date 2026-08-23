@@ -119,8 +119,10 @@ function Probe() {
     persistenceError,
     selectedParseRunId,
     selectedChunkRunId,
+    activePipelineId,
     selectFile,
     selectParseRun,
+    selectPipeline,
     selectPersistedDocument,
   } = useDocumentPipeline();
 
@@ -131,12 +133,14 @@ function Probe() {
       <output data-testid="pending-upload">{pendingUpload?.name ?? "none"}</output>
       <output data-testid="selected-parse">{selectedParseRunId ?? "none"}</output>
       <output data-testid="selected-chunk">{selectedChunkRunId ?? "none"}</output>
+      <output data-testid="active-pipeline">{activePipelineId ?? "none"}</output>
       <output data-testid="artifact-count">{activeDocument?.chunkRuns.length ?? 0}</output>
       <output data-testid="persistence-error">{persistenceError?.code ?? "none"}</output>
       <button onClick={() => selectFile(new File(["%PDF-1.4"], "pending.pdf", { type: "application/pdf" }))} type="button">Select pending upload</button>
       <button onClick={() => void selectPersistedDocument("document-new")} type="button">Switch to new</button>
       <button onClick={() => void selectPersistedDocument("document-old")} type="button">Switch to old</button>
       <button onClick={() => void selectParseRun("parse-old")} type="button">Select historical parse</button>
+      <button onClick={() => void selectPipeline("pipeline-2")} type="button">Select pipeline two</button>
     </div>
   );
 }
@@ -258,6 +262,96 @@ describe("Document pipeline committed state", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/documents/document-new"))).toBe(false);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/capabilities"))).toHaveLength(1);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents"))).toHaveLength(1);
+  });
+
+  it("starts document pipelines and summary requests in parallel", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    const started: string[] = [];
+    let resolvePipelines!: (response: Response) => void;
+    let resolveSummary!: (response: Response) => void;
+    const deferredPipelines = new Promise<Response>((resolve) => { resolvePipelines = resolve; });
+    const deferredSummary = new Promise<Response>((resolve) => { resolveSummary = resolve; });
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const respond = (payload: unknown) => Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/pipelines")) {
+        started.push("pipelines");
+        return deferredPipelines;
+      }
+      if (url.endsWith("/documents/document-old/summary")) {
+        started.push("summary");
+        return deferredSummary;
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(started).toEqual(["pipelines", "summary"]));
+    resolvePipelines(new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    resolveSummary(new Response(JSON.stringify(summaryDocument("document-old", "lesson.pdf")), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await waitFor(() => expect(screen.getByTestId("active-document")).toHaveTextContent("document-old"));
+  });
+
+  it("reuses a fresh summary for a valid pipeline switch", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
+    const detail = summaryDocument("document-old", "lesson.pdf");
+    const pipelines = [1, 2].map((revision) => ({
+      id: `pipeline-${revision}`,
+      documentId: "document-old",
+      name: `Pipeline ${revision}`,
+      parseRunId: "document-old-parse",
+      chunkRunId: null,
+      embeddingRunId: null,
+      revision: 1,
+      createdAt: null,
+      updatedAt: null,
+    }));
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const respond = (payload: unknown) => Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/pipelines")) return respond(pipelines);
+      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
+    fireEvent.click(screen.getByRole("button", { name: "Select pipeline two" }));
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2"));
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents/document-old/summary"))).toHaveLength(1);
+  });
+
+  it("refetches an expired summary before a pipeline switch", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
+    const detail = summaryDocument("document-old", "lesson.pdf");
+    const pipelines = [1, 2].map((revision) => ({
+      id: `pipeline-${revision}`, documentId: "document-old", name: `Pipeline ${revision}`,
+      parseRunId: "document-old-parse", chunkRunId: null, embeddingRunId: null,
+      revision: 1, createdAt: null, updatedAt: null,
+    }));
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const respond = (payload: unknown) => Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/pipelines")) return respond(pipelines);
+      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
+    now.mockReturnValue(62_000);
+    fireEvent.click(screen.getByRole("button", { name: "Select pipeline two" }));
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2"));
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents/document-old/summary"))).toHaveLength(2);
   });
 
   it("does not bootstrap again when only the route changes", async () => {

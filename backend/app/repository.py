@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import and_, delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
@@ -345,18 +345,29 @@ class Repository:
     def create_document_pipeline(self, row: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
 
-    def get_document_pipeline_row(self, pipeline_id: str) -> dict[str, Any] | None:
-        raise NotImplementedError
-
-    def list_document_pipeline_rows(self, document_id: str) -> list[dict[str, Any]]:
-        raise NotImplementedError
-
-    def update_document_pipeline(
-        self, pipeline_id: str, expected_revision: int, changes: dict[str, Any]
+    def get_document_pipeline_row(
+        self, pipeline_id: str, *, owner_user_id: uuid.UUID | str | None = None
     ) -> dict[str, Any] | None:
         raise NotImplementedError
 
-    def delete_document_pipeline(self, pipeline_id: str) -> bool:
+    def list_document_pipeline_rows(
+        self, document_id: str, *, owner_user_id: uuid.UUID | str | None = None
+    ) -> list[dict[str, Any]] | None:
+        raise NotImplementedError
+
+    def update_document_pipeline(
+        self,
+        pipeline_id: str,
+        expected_revision: int,
+        changes: dict[str, Any],
+        *,
+        owner_user_id: uuid.UUID | str | None = None,
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def delete_document_pipeline(
+        self, pipeline_id: str, *, owner_user_id: uuid.UUID | str | None = None
+    ) -> bool:
         raise NotImplementedError
 
     def get_parse_row(self, run_id: str) -> dict[str, Any] | None:
@@ -394,7 +405,9 @@ class Repository:
     def fail_chunk_run(self, run_id: str, code: str, message: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
-    def get_chunk_row(self, run_id: str) -> dict[str, Any] | None:
+    def get_chunk_row(
+        self, run_id: str, *, owner_user_id: uuid.UUID | str | None = None
+    ) -> dict[str, Any] | None:
         raise NotImplementedError
 
     def list_chunk_rows(self, document_id: str) -> list[dict[str, Any]]:
@@ -434,7 +447,9 @@ class Repository:
     def fail_embedding_run(self, run_id: str, code: str, message: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
-    def get_embedding_row(self, run_id: str) -> dict[str, Any] | None:
+    def get_embedding_row(
+        self, run_id: str, *, owner_user_id: uuid.UUID | str | None = None
+    ) -> dict[str, Any] | None:
         raise NotImplementedError
 
     def list_embedding_rows(self, document_id: str) -> list[dict[str, Any]]:
@@ -772,6 +787,9 @@ class InMemoryRepository(Repository):
 
     def create_document_pipeline(self, row):
         with self._lock:
+            document = self.documents.get(row["document_id"])
+            if document is None or document.get("owner_user_id") != row.get("owner_user_id"):
+                return None
             self._ensure_unique_pipeline_name(row["document_id"], row["name"])
             now = now_utc()
             stored = {
@@ -784,18 +802,32 @@ class InMemoryRepository(Repository):
             self.document_pipelines[stored["id"]] = stored
             return copy.deepcopy(stored)
 
-    def get_document_pipeline_row(self, pipeline_id):
-        return copy.deepcopy(self.document_pipelines.get(pipeline_id))
+    def get_document_pipeline_row(self, pipeline_id, *, owner_user_id=None):
+        row = self.document_pipelines.get(pipeline_id)
+        if row is None:
+            return None
+        if owner_user_id is not None and row.get("owner_user_id") != uuid.UUID(str(owner_user_id)):
+            return None
+        return copy.deepcopy(row)
 
-    def list_document_pipeline_rows(self, document_id):
+    def list_document_pipeline_rows(self, document_id, *, owner_user_id=None):
+        if owner_user_id is not None:
+            document = self.documents.get(document_id)
+            if document is None or document.get("owner_user_id") != uuid.UUID(str(owner_user_id)):
+                return None
         rows = [row for row in self.document_pipelines.values() if row["document_id"] == document_id]
+        if owner_user_id is not None:
+            rows = [row for row in rows if row.get("owner_user_id") == uuid.UUID(str(owner_user_id))]
         rows.sort(key=lambda row: (row.get("created_at") or now_utc(), row["id"]))
         return copy.deepcopy(rows)
 
-    def update_document_pipeline(self, pipeline_id, expected_revision, changes):
+    def update_document_pipeline(self, pipeline_id, expected_revision, changes, *, owner_user_id=None):
         with self._lock:
             row = self.document_pipelines.get(pipeline_id)
-            if row is None:
+            if row is None or (
+                owner_user_id is not None
+                and row.get("owner_user_id") != uuid.UUID(str(owner_user_id))
+            ):
                 return None
             if row["revision"] != expected_revision:
                 raise ApiProblem(409, "pipeline_conflict", "The pipeline changed. Reload it before saving again.")
@@ -806,8 +838,14 @@ class InMemoryRepository(Repository):
             row["updated_at"] = now_utc()
             return copy.deepcopy(row)
 
-    def delete_document_pipeline(self, pipeline_id):
+    def delete_document_pipeline(self, pipeline_id, *, owner_user_id=None):
         with self._lock:
+            row = self.document_pipelines.get(pipeline_id)
+            if row is None or (
+                owner_user_id is not None
+                and row.get("owner_user_id") != uuid.UUID(str(owner_user_id))
+            ):
+                return False
             return self.document_pipelines.pop(pipeline_id, None) is not None
 
     def get_parse_row(self, run_id):
@@ -980,10 +1018,14 @@ class InMemoryRepository(Repository):
         )
         return self.complete_chunk_run(claim["id"], drafts) if claimed else claim
 
-    def get_chunk_row(self, run_id):
+    def get_chunk_row(self, run_id, *, owner_user_id=None):
         row = self.chunk_runs.get(run_id)
         if row is None:
             return None
+        if owner_user_id is not None:
+            document = self.documents.get(row["document_id"])
+            if document is None or document.get("owner_user_id") != uuid.UUID(str(owner_user_id)):
+                return None
         return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, [])})
 
     def list_chunk_rows(self, document_id):
@@ -1096,8 +1138,12 @@ class InMemoryRepository(Repository):
         claim, claimed = self.claim_embedding_run(document_id, chunk_run_id, model, dimensions, format_version)
         return self.complete_embedding_run(claim["id"], values, input_hashes) if claimed else claim
 
-    def get_embedding_row(self, run_id):
+    def get_embedding_row(self, run_id, *, owner_user_id=None):
         row = self.embedding_runs.get(run_id)
+        if row is not None and owner_user_id is not None:
+            document = self.documents.get(row["document_id"])
+            if document is None or document.get("owner_user_id") != uuid.UUID(str(owner_user_id)):
+                return None
         return copy.deepcopy(row) if row else None
 
     def list_embedding_rows(self, document_id):
@@ -1601,32 +1647,61 @@ class SqlAlchemyRepository(Repository):
                 raise ApiProblem(409, "pipeline_name_conflict", "A pipeline with this name already exists.") from exc
             raise
 
-    def get_document_pipeline_row(self, pipeline_id):
+    def get_document_pipeline_row(self, pipeline_id, *, owner_user_id=None):
         with session_scope() as session:
-            row = session.get(DocumentPipeline, pipeline_id)
+            query = select(DocumentPipeline).where(DocumentPipeline.id == pipeline_id)
+            if owner_user_id is not None:
+                query = query.where(DocumentPipeline.owner_user_id == self._owner_uuid(owner_user_id))
+            row = session.scalars(query).first()
             return self._document_pipeline_dict(row) if row else None
 
-    def list_document_pipeline_rows(self, document_id):
+    def list_document_pipeline_rows(self, document_id, *, owner_user_id=None):
         with session_scope() as session:
-            query = select(DocumentPipeline).where(
-                DocumentPipeline.document_id == document_id
-            ).order_by(DocumentPipeline.created_at, DocumentPipeline.id)
-            return [self._document_pipeline_dict(row) for row in session.scalars(query)]
+            if owner_user_id is None:
+                query = select(DocumentPipeline).where(
+                    DocumentPipeline.document_id == document_id
+                ).order_by(DocumentPipeline.created_at, DocumentPipeline.id)
+                return [self._document_pipeline_dict(row) for row in session.scalars(query)]
 
-    def update_document_pipeline(self, pipeline_id, expected_revision, changes):
+            owner_id = self._owner_uuid(owner_user_id)
+            query = (
+                select(Document, DocumentPipeline)
+                .outerjoin(
+                    DocumentPipeline,
+                    and_(
+                        DocumentPipeline.document_id == Document.id,
+                        DocumentPipeline.owner_user_id == owner_id,
+                    ),
+                )
+                .where(Document.id == document_id, Document.owner_user_id == owner_id)
+                .order_by(DocumentPipeline.created_at, DocumentPipeline.id)
+            )
+            rows = session.execute(query).all()
+            if not rows:
+                return None
+            return [
+                self._document_pipeline_dict(pipeline)
+                for _document, pipeline in rows
+                if pipeline is not None
+            ]
+
+    def update_document_pipeline(self, pipeline_id, expected_revision, changes, *, owner_user_id=None):
         values = {**changes, "revision": expected_revision + 1, "updated_at": now_utc()}
-        statement = (
-            update(DocumentPipeline)
-            .where(DocumentPipeline.id == pipeline_id, DocumentPipeline.revision == expected_revision)
-            .values(**values)
-            .returning(DocumentPipeline)
-        )
+        filters = [DocumentPipeline.id == pipeline_id, DocumentPipeline.revision == expected_revision]
+        if owner_user_id is not None:
+            filters.append(DocumentPipeline.owner_user_id == self._owner_uuid(owner_user_id))
+        statement = update(DocumentPipeline).where(*filters).values(**values).returning(DocumentPipeline)
         try:
             with session_scope() as session:
                 row = session.scalars(statement).first()
                 if row is not None:
                     return self._document_pipeline_dict(row)
-                exists = session.get(DocumentPipeline, pipeline_id)
+                exists_query = select(DocumentPipeline.id).where(DocumentPipeline.id == pipeline_id)
+                if owner_user_id is not None:
+                    exists_query = exists_query.where(
+                        DocumentPipeline.owner_user_id == self._owner_uuid(owner_user_id)
+                    )
+                exists = session.scalars(exists_query).first()
                 if exists is not None:
                     raise ApiProblem(409, "pipeline_conflict", "The pipeline changed. Reload it before saving again.")
                 return None
@@ -1635,13 +1710,13 @@ class SqlAlchemyRepository(Repository):
                 raise ApiProblem(409, "pipeline_name_conflict", "A pipeline with this name already exists.") from exc
             raise
 
-    def delete_document_pipeline(self, pipeline_id):
+    def delete_document_pipeline(self, pipeline_id, *, owner_user_id=None):
         with session_scope() as session:
-            row = session.get(DocumentPipeline, pipeline_id)
-            if row is None:
-                return False
-            session.delete(row)
-            return True
+            filters = [DocumentPipeline.id == pipeline_id]
+            if owner_user_id is not None:
+                filters.append(DocumentPipeline.owner_user_id == self._owner_uuid(owner_user_id))
+            statement = delete(DocumentPipeline).where(*filters).returning(DocumentPipeline.id)
+            return session.execute(statement).scalar_one_or_none() is not None
 
     def get_parse_row(self, run_id):
         with session_scope() as session:
@@ -1850,14 +1925,153 @@ class SqlAlchemyRepository(Repository):
             if document_row is None:
                 return None
             document = self._document_summary_dict(dict(document_row))
+            # One projection statement keeps the hot summary contract light while
+            # avoiding one network round-trip per artifact family.
+            projection_rows = session.execute(
+                text(
+                    """
+                    SELECT kind, payload
+                    FROM (
+                        SELECT 1 AS kind_order, p.created_at AS sort_created, p.id AS sort_id,
+                               'parse' AS kind,
+                               jsonb_build_object(
+                                   'id', p.id, 'document_id', p.document_id,
+                                   'parser_name', p.parser_name, 'parser_version', p.parser_version,
+                                   'normalized_schema_version', p.normalized_schema_version,
+                                   'has_structured', p.structured IS NOT NULL,
+                                   'has_summary', p.summary IS NOT NULL,
+                                   'status', p.status, 'error_code', p.error_code,
+                                   'error_message', p.error_message,
+                                   'execution_metadata', p.execution_metadata,
+                                   'started_at', p.started_at, 'completed_at', p.completed_at,
+                                   'duration_ms', p.duration_ms, 'created_at', p.created_at,
+                                   'updated_at', p.updated_at
+                               ) AS payload
+                        FROM rag_lab.parse_runs AS p
+                        WHERE p.document_id = :document_id
+
+                        UNION ALL
+
+                        SELECT 2, c.created_at, c.id, 'chunk',
+                               jsonb_build_object(
+                                   'id', c.id, 'document_id', c.document_id,
+                                   'parse_run_id', c.parse_run_id, 'strategy', c.strategy,
+                                   'config', c.config, 'status', c.status,
+                                   'chunk_count', c.chunk_count, 'error_code', c.error_code,
+                                   'error_message', c.error_message, 'started_at', c.started_at,
+                                   'completed_at', c.completed_at, 'duration_ms', c.duration_ms,
+                                   'created_at', c.created_at
+                               )
+                        FROM rag_lab.chunk_runs AS c
+                        WHERE c.document_id = :document_id
+
+                        UNION ALL
+
+                        SELECT 3, e.created_at, e.id, 'embedding',
+                               jsonb_build_object(
+                                   'id', e.id, 'document_id', e.document_id,
+                                   'chunk_run_id', e.chunk_run_id, 'model', e.model,
+                                   'dimensions', e.dimensions,
+                                   'embedding_format_version', e.embedding_format_version,
+                                   'effective_model', e.effective_model, 'status', e.status,
+                                   'embedding_count', e.embedding_count,
+                                   'error_code', e.error_code, 'error_message', e.error_message,
+                                   'started_at', e.started_at, 'completed_at', e.completed_at,
+                                   'duration_ms', e.duration_ms, 'created_at', e.created_at
+                               )
+                        FROM rag_lab.embedding_runs AS e
+                        WHERE e.document_id = :document_id
+
+                        UNION ALL
+
+                        SELECT 4, x.created_at, x.id, 'experiment',
+                               jsonb_build_object(
+                                   'id', x.id, 'document_id', x.document_id,
+                                   'chunk_run_id', x.chunk_run_id,
+                                   'embedding_run_id', x.embedding_run_id,
+                                   'query', x.query, 'target_stage', x.target_stage,
+                                   'experiment_fingerprint', x.experiment_fingerprint,
+                                   'config', x.config,
+                                   'candidate_count', COALESCE(
+                                       CASE WHEN jsonb_typeof(x.stage_results #> '{retrieval,results}') = 'array'
+                                            THEN jsonb_array_length(x.stage_results #> '{retrieval,results}') END,
+                                       CASE WHEN jsonb_typeof(x.stage_results #> '{retrieval,candidates}') = 'array'
+                                            THEN jsonb_array_length(x.stage_results #> '{retrieval,candidates}') END
+                                   ),
+                                   'retrieval_status', x.stage_results #>> '{retrieval,status}',
+                                   'reranking_status', x.stage_results #>> '{reranking,status}',
+                                   'context_status', x.stage_results #>> '{context,status}',
+                                   'generation_status', x.stage_results #>> '{generation,status}',
+                                   'status', x.status, 'error_code', x.error_code,
+                                   'error_message', x.error_message, 'started_at', x.started_at,
+                                   'completed_at', x.completed_at, 'duration_ms', x.duration_ms,
+                                   'created_at', x.created_at
+                               )
+                        FROM rag_lab.experiment_runs AS x
+                        WHERE x.document_id = :document_id
+
+                        UNION ALL
+
+                        SELECT 5, d.created_at, d.id, 'dataset',
+                               jsonb_build_object(
+                                   'id', d.id, 'document_id', d.document_id,
+                                   'parse_run_id', d.parse_run_id, 'name', d.name,
+                                   'version', d.version,
+                                   'case_count', CASE WHEN jsonb_typeof(d.cases) = 'array'
+                                                      THEN jsonb_array_length(d.cases) ELSE 0 END,
+                                   'created_at', d.created_at
+                               )
+                        FROM rag_lab.evaluation_datasets AS d
+                        WHERE d.document_id = :document_id
+
+                        UNION ALL
+
+                        SELECT 6, r.created_at, r.id, 'evaluation',
+                               jsonb_build_object(
+                                   'id', r.id, 'dataset_id', r.dataset_id,
+                                   'parse_run_id', d.parse_run_id,
+                                   'chunk_run_id', r.config ->> 'chunk_run_id',
+                                   'embedding_run_id', r.config ->> 'embedding_run_id',
+                                   'status', r.status, 'error_code', r.error_code,
+                                   'error_message', r.error_message, 'started_at', r.started_at,
+                                   'completed_at', r.completed_at, 'duration_ms', r.duration_ms,
+                                   'created_at', r.created_at
+                               )
+                        FROM rag_lab.evaluation_runs AS r
+                        JOIN rag_lab.evaluation_datasets AS d ON d.id = r.dataset_id
+                        WHERE d.document_id = :document_id
+                    ) AS projection
+                    ORDER BY kind_order, sort_created DESC, sort_id
+                    """
+                ),
+                {"document_id": document_id},
+            ).mappings().all()
+            grouped: dict[str, list[dict[str, Any]]] = {
+                "parse": [], "chunk": [], "embedding": [],
+                "experiment": [], "dataset": [], "evaluation": [],
+            }
+            normalizers = {
+                "parse": _summary_parse_row,
+                "chunk": _summary_chunk_row,
+                "embedding": _summary_embedding_row,
+                "experiment": _summary_experiment_row,
+                "dataset": _summary_dataset_row,
+                "evaluation": _summary_document_evaluation_row,
+            }
+            for projection in projection_rows:
+                kind = projection["kind"]
+                payload = projection["payload"]
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+                grouped[kind].append(normalizers[kind](dict(payload)))
             return {
                 "document": document,
-                "parses": self._summary_parse_rows(session, document_id, owner_user_id),
-                "chunks": self._summary_chunk_rows(session, document_id, owner_user_id),
-                "embeddings": self._summary_embedding_rows(session, document_id, owner_user_id),
-                "experiments": self._summary_experiment_rows(session, document_id, owner_user_id),
-                "datasets": self._summary_dataset_rows(session, document_id, owner_user_id),
-                "evaluations": self._summary_document_evaluation_rows(session, document_id, owner_user_id),
+                "parses": grouped["parse"],
+                "chunks": grouped["chunk"],
+                "embeddings": grouped["embedding"],
+                "experiments": grouped["experiment"],
+                "datasets": grouped["dataset"],
+                "evaluations": grouped["evaluation"],
             }
 
     def claim_chunk_run(
@@ -2031,10 +2245,24 @@ class SqlAlchemyRepository(Repository):
         chunks = session.scalars(select(Chunk).where(Chunk.chunk_run_id == row.id).order_by(Chunk.ordinal)).all()
         return self._chunk_dict_with_chunks(row, chunks)
 
-    def get_chunk_row(self, run_id):
+    def get_chunk_row(self, run_id, *, owner_user_id=None):
         with session_scope() as session:
-            row = session.get(ChunkRun, run_id)
-            return self._chunk_dict(row, session) if row else None
+            query = (
+                select(ChunkRun, Chunk)
+                .outerjoin(Chunk, Chunk.chunk_run_id == ChunkRun.id)
+                .where(ChunkRun.id == run_id)
+                .order_by(Chunk.ordinal)
+            )
+            if owner_user_id is not None:
+                query = query.join(Document, Document.id == ChunkRun.document_id).where(
+                    Document.owner_user_id == self._owner_uuid(owner_user_id)
+                )
+            pairs = session.execute(query).all()
+            if not pairs:
+                return None
+            run = pairs[0][0]
+            chunks = [chunk for _run, chunk in pairs if chunk is not None]
+            return self._chunk_dict_with_chunks(run, chunks)
 
     def list_chunk_rows(self, document_id):
         with session_scope() as session:
@@ -2179,9 +2407,14 @@ class SqlAlchemyRepository(Repository):
             "duration_ms": row.duration_ms,
         }
 
-    def get_embedding_row(self, run_id):
+    def get_embedding_row(self, run_id, *, owner_user_id=None):
         with session_scope() as session:
-            row = session.get(EmbeddingRun, run_id)
+            query = select(EmbeddingRun).where(EmbeddingRun.id == run_id)
+            if owner_user_id is not None:
+                query = query.join(Document, Document.id == EmbeddingRun.document_id).where(
+                    Document.owner_user_id == self._owner_uuid(owner_user_id)
+                )
+            row = session.scalars(query).first()
             return self._embedding_dict(row) if row else None
 
     def list_embedding_rows(self, document_id):
@@ -2602,35 +2835,32 @@ class ScopedRepository(Repository):
             self._repository.delete_document(document_id)
 
     def create_document_pipeline(self, row):
-        if self._owned_document(row["document_id"]) is None:
-            return None
         payload = dict(row)
         payload["owner_user_id"] = self.owner_user_id
         return self._repository.create_document_pipeline(payload)
 
     def get_document_pipeline_row(self, pipeline_id):
-        row = self._repository.get_document_pipeline_row(pipeline_id)
-        if row is None or row.get("owner_user_id") != self.owner_user_id:
-            return None
-        return row
+        return self._repository.get_document_pipeline_row(
+            pipeline_id, owner_user_id=self.owner_user_id
+        )
 
     def list_document_pipeline_rows(self, document_id):
-        if self._owned_document(document_id) is None:
-            return []
-        return [
-            row for row in self._repository.list_document_pipeline_rows(document_id)
-            if row.get("owner_user_id") == self.owner_user_id
-        ]
+        return self._repository.list_document_pipeline_rows(
+            document_id, owner_user_id=self.owner_user_id
+        )
 
     def update_document_pipeline(self, pipeline_id, expected_revision, changes):
-        if self.get_document_pipeline_row(pipeline_id) is None:
-            return None
-        return self._repository.update_document_pipeline(pipeline_id, expected_revision, changes)
+        return self._repository.update_document_pipeline(
+            pipeline_id,
+            expected_revision,
+            changes,
+            owner_user_id=self.owner_user_id,
+        )
 
     def delete_document_pipeline(self, pipeline_id):
-        if self.get_document_pipeline_row(pipeline_id) is None:
-            return False
-        return self._repository.delete_document_pipeline(pipeline_id)
+        return self._repository.delete_document_pipeline(
+            pipeline_id, owner_user_id=self.owner_user_id
+        )
 
     def get_parse_row(self, run_id):
         return self._owned_document_for_row(self._repository.get_parse_row(run_id)) and self._repository.get_parse_row(run_id)
@@ -2673,7 +2903,7 @@ class ScopedRepository(Repository):
         return self._repository.fail_chunk_run(run_id, code, message)
 
     def get_chunk_row(self, run_id):
-        return self._owned_document_for_row(self._repository.get_chunk_row(run_id)) and self._repository.get_chunk_row(run_id)
+        return self._repository.get_chunk_row(run_id, owner_user_id=self.owner_user_id)
 
     def list_chunk_rows(self, document_id):
         if self._owned_document(document_id) is None:
@@ -2701,7 +2931,7 @@ class ScopedRepository(Repository):
         return self._repository.fail_embedding_run(run_id, code, message)
 
     def get_embedding_row(self, run_id):
-        return self._owned_document_for_row(self._repository.get_embedding_row(run_id)) and self._repository.get_embedding_row(run_id)
+        return self._repository.get_embedding_row(run_id, owner_user_id=self.owner_user_id)
 
     def list_embedding_rows(self, document_id):
         if self._owned_document(document_id) is None:

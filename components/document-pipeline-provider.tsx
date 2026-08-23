@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 
+import { useAuthBootstrap } from "@/components/auth-provider";
 import { DocumentApiError, type DocumentApiErrorCode } from "@/lib/document-api";
 import { validatePdfFile, type DocumentFileValidationError } from "@/lib/document-file";
 import type { DocumentParseResponse } from "@/lib/document-parse-types";
@@ -52,7 +53,6 @@ import type {
   RunSummary,
 } from "@/lib/rag-api-types";
 import type { DocumentActivityEventType } from "@/lib/rag-ui-types";
-import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 export type DocumentParseStatus = "not-started" | "ready" | "queued" | "running" | "completed" | "failed";
 export type PipelineOperationStatus = "locked" | "ready" | "processing" | "completed" | "error" | "stale";
@@ -170,6 +170,7 @@ const LINEAGE_SELECTION_STORAGE_KEY = "rag-steplab-lineage-selections-v1";
 const LINEAGE_SELECTION_STORAGE_PREFIX = `${LINEAGE_SELECTION_STORAGE_KEY}:`;
 const ACTIVE_PIPELINE_STORAGE_KEY = "rag-steplab-active-pipeline-id";
 const ACTIVE_PIPELINE_STORAGE_PREFIX = `${ACTIVE_PIPELINE_STORAGE_KEY}:`;
+const SUMMARY_CACHE_MAX_AGE_MS = 60_000;
 
 function activeDocumentStorageKey(userId?: string | null) {
   return userId ? `${ACTIVE_DOCUMENT_STORAGE_PREFIX}${userId}` : ACTIVE_DOCUMENT_STORAGE_KEY;
@@ -285,7 +286,8 @@ function removeControllerIfCurrent(controllers: Map<string, AbortController>, ke
 
 export function DocumentPipelineProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "/";
-  const [authUserId, setAuthUserId] = useState<string | null>(process.env.NODE_ENV === "test" ? "test-user" : null);
+  const { userId: authoritativeUserId } = useAuthBootstrap();
+  const [authUserId, setAuthUserId] = useState<string | null>(authoritativeUserId);
   const [pendingUpload, setPendingUpload] = useState<File | null>(null);
   const [fileError, setFileError] = useState<DocumentFileValidationError | null>(null);
   const [parseStatus, setParseStatus] = useState<DocumentParseStatus>("not-started");
@@ -330,6 +332,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const documentLoadRequestRef = useRef(0);
   const selectionRequestRef = useRef(0);
   const activeDocumentRef = useRef<DocumentSummary | null>(null);
+  const activeDocumentSummaryLoadedAtRef = useRef(0);
   const activePipelineRef = useRef<DocumentPipeline | null>(null);
   const authUserIdRef = useRef<string | null>(authUserId);
   const lineageSelectionsRef = useRef<LineageSelectionStore>({});
@@ -361,6 +364,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     parseInFlightRef.current = false;
     activeParseRunIdRef.current = null;
     activeDocumentRef.current = null;
+    activeDocumentSummaryLoadedAtRef.current = 0;
     activePipelineRef.current = null;
     lineageSelectionsRef.current = {};
     artifactCacheRef.current.clear();
@@ -404,15 +408,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   }, []);
 
   useEffect(() => {
-    try {
-      const supabase = getSupabaseBrowserClient();
-      void supabase.auth.getUser().then(({ data }) => handleAuthUserChange(data.user?.id ?? null));
-      const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => handleAuthUserChange(session?.user.id ?? null));
-      return () => listener.subscription.unsubscribe();
-    } catch {
-      return;
-    }
-  }, [handleAuthUserChange]);
+    handleAuthUserChange(authoritativeUserId);
+  }, [authoritativeUserId, handleAuthUserChange]);
 
   const cacheArtifact = useCallback((kind: string, id: string, value: ParseRun | ChunkRun | EmbeddingRun | ExperimentRun | EvaluationDataset) => {
     // Yalnız tamamlanan run immutable kabul edilir; devam eden/hatalı detay tekrar doğrulanır.
@@ -457,6 +454,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
 
   const commitDocumentSnapshot = useCallback((snapshot: DocumentSnapshot, persistSelection = true) => {
     activeDocumentRef.current = snapshot.detail;
+    activeDocumentSummaryLoadedAtRef.current = Date.now();
     setActiveDocumentId(snapshot.detail.id);
     setActiveDocumentMetadata({
       id: snapshot.detail.id,
@@ -504,16 +502,14 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setParseProgress(loadedParseProgress);
   }, [rememberSelection]);
 
-  const loadDocumentSnapshot = useCallback(async (
-    documentId: string,
-    signal: AbortSignal,
+  const buildDocumentSnapshot = useCallback((
+    detail: DocumentSummary,
     selectionOverride?: DocumentLineageSelection,
     strictSelection = false,
-  ): Promise<DocumentSnapshot> => {
-    const detail = await getDocumentSummary(documentId, signal);
+  ): DocumentSnapshot => {
     const selection = resolveLineageSelection(
       detail,
-      selectionOverride ?? lineageSelectionsRef.current[documentId],
+      selectionOverride ?? lineageSelectionsRef.current[detail.id],
       strictSelection,
     );
     const parseSummary = selection.selectedParseRunId
@@ -583,6 +579,16 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       evaluationStatus: effectiveSelection.selectedChunkRunId && effectiveSelection.selectedEmbeddingRunId && filteredDatasets.length > 0 ? "ready" : "locked",
     };
   }, [readArtifact]);
+
+  const loadDocumentSnapshot = useCallback(async (
+    documentId: string,
+    signal: AbortSignal,
+    selectionOverride?: DocumentLineageSelection,
+    strictSelection = false,
+  ): Promise<DocumentSnapshot> => {
+    const detail = await getDocumentSummary(documentId, signal);
+    return buildDocumentSnapshot(detail, selectionOverride, strictSelection);
+  }, [buildDocumentSnapshot]);
 
   const hydrateParseDetail = useCallback(async (documentId: string, runId: string, expectedSelection = selectionRequestRef.current) => {
     const epoch = documentEpochRef.current;
@@ -745,20 +751,21 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       : null,
   ) => {
     const requestId = ++documentLoadRequestRef.current;
-    let nextPipelines: DocumentPipeline[] = [];
-    try {
-      nextPipelines = await listDocumentPipelines(documentId, signal);
-    } catch (error) {
+    const pipelinesPromise = listDocumentPipelines(documentId, signal).catch((error: unknown) => {
       if (error instanceof DOMException && error.name === "AbortError") throw error;
       // Yalnız additive endpoint'in henüz bulunmadığı preview'larda legacy
       // workspace'e dön; gerçek network/auth hatalarını görünür bırak.
       if (!(error instanceof DocumentApiError)
         || (error.status !== 404 && error.code !== "invalid_response")) throw error;
-    }
+      return [] as DocumentPipeline[];
+    });
+    const [nextPipelines, detail] = await Promise.all([
+      pipelinesPromise,
+      getDocumentSummary(documentId, signal),
+    ]);
     const pipeline = nextPipelines.find((item) => item.id === pipelineId) ?? null;
-    const snapshot = await loadDocumentSnapshot(
-      documentId,
-      signal,
+    const snapshot = buildDocumentSnapshot(
+      detail,
       pipeline ? pipelineSelection(pipeline) : undefined,
       Boolean(pipeline),
     );
@@ -776,7 +783,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setPersistenceError(null);
     setPersistenceStatus("available");
     return snapshot;
-  }, [authUserId, commitDocumentSnapshot, loadDocumentSnapshot]);
+  }, [authUserId, buildDocumentSnapshot, commitDocumentSnapshot]);
 
   const refreshPersistence = useCallback(async () => {
     const controller = replaceController("bootstrap");
@@ -819,6 +826,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     runIdRef.current += 1;
     parseInFlightRef.current = false;
     activeDocumentRef.current = null;
+    activeDocumentSummaryLoadedAtRef.current = 0;
     setActiveDocument(null);
     setActiveDocumentId(documentId);
     setActiveDocumentMetadata(metadata);
@@ -1186,12 +1194,11 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const controller = replaceController("pipeline-select");
     const requestId = ++selectionRequestRef.current;
     try {
-      const snapshot = await loadDocumentSnapshot(
-        document.id,
-        controller.signal,
-        pipeline ? pipelineSelection(pipeline) : lineageSelectionsRef.current[document.id],
-        Boolean(pipeline),
-      );
+      const selection = pipeline ? pipelineSelection(pipeline) : lineageSelectionsRef.current[document.id];
+      const summaryIsFresh = Date.now() - activeDocumentSummaryLoadedAtRef.current <= SUMMARY_CACHE_MAX_AGE_MS;
+      const snapshot = summaryIsFresh
+        ? buildDocumentSnapshot(document, selection, Boolean(pipeline))
+        : await loadDocumentSnapshot(document.id, controller.signal, selection, Boolean(pipeline));
       if (selectionRequestRef.current !== requestId || activeDocumentRef.current?.id !== document.id) return;
       activePipelineRef.current = pipeline;
       setActivePipelineId(pipeline?.id ?? null);
@@ -1204,7 +1211,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     } finally {
       removeControllerIfCurrent(controllersRef.current, "pipeline-select", controller);
     }
-  }, [authUserId, commitDocumentSnapshot, loadDocumentSnapshot, pipelines, replaceController]);
+  }, [authUserId, buildDocumentSnapshot, commitDocumentSnapshot, loadDocumentSnapshot, pipelines, replaceController]);
 
   const createPipeline = useCallback(async (name: string) => {
     const document = activeDocumentRef.current;

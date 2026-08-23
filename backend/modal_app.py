@@ -83,7 +83,7 @@ worker_options: dict[str, Any] = {
     "startup_timeout": 300,
 }
 
-api_options: dict[str, Any] = {
+legacy_api_options: dict[str, Any] = {
     "image": api_image,
     "secrets": api_secrets,
     "cpu": 0.5,
@@ -93,10 +93,14 @@ api_options: dict[str, Any] = {
     "timeout": 300,
     "startup_timeout": 300,
 }
-# Modal routing locality is optional. Deliberately do not set ``region`` on
-# either function: compute placement must remain platform-managed.
-if routing_region := os.getenv("MODAL_API_ROUTING_REGION"):
-    api_options["routing_region"] = routing_region
+api_compute_region = os.getenv("MODAL_API_COMPUTE_REGION", "eu")
+api_routing_region = os.getenv("MODAL_API_ROUTING_REGION", "eu-west")
+api_options: dict[str, Any] = {
+    **legacy_api_options,
+    "min_containers": 1,
+    "region": api_compute_region,
+    "routing_region": api_routing_region,
+}
 
 
 @app.function(**worker_options)
@@ -179,10 +183,20 @@ def remote_import_smoke() -> dict[str, Any]:
     }
 
 
-@app.function(**api_options)
+@app.function(**legacy_api_options)
 @modal.asgi_app()
 def api():
-    """Serve FastAPI through Modal's ASGI web function."""
+    """Keep the previous endpoint as a scale-to-zero rollback during cutover."""
+
+    from app.main import app as fastapi_app
+
+    return fastapi_app
+
+
+@app.function(**api_options)
+@modal.asgi_app()
+def api_eu():
+    """Serve the interactive API from warm European compute and routing."""
 
     from app.main import app as fastapi_app
 
@@ -198,10 +212,16 @@ def local_manifest() -> dict[str, Any]:
         "volume": MODEL_VOLUME_NAME,
         "modelMountPath": MODEL_MOUNT_PATH,
         "modelArtifactsPath": MODEL_ARTIFACTS_PATH,
-        "functions": ["api", "parse_worker", "benchmark_parse", "prefetch_docling_models"],
+        "functions": ["api_eu", "api", "parse_worker", "benchmark_parse", "prefetch_docling_models"],
         "workerProfile": {"cpu": 2.0, "memoryMiB": 4096, "minContainers": 0, "maxContainers": 1, "timeoutSeconds": 900},
-        "apiProfile": {"cpu": 0.5, "memoryMiB": 1024, "minContainers": 0, "maxContainers": 2},
-        "routingRegion": os.getenv("MODAL_API_ROUTING_REGION") or None,
+        "apiProfile": {
+            "cpu": 0.5,
+            "memoryMiB": 1024,
+            "minContainers": 1,
+            "maxContainers": 2,
+            "computeRegion": api_compute_region,
+        },
+        "routingRegion": api_routing_region,
     }
 
 

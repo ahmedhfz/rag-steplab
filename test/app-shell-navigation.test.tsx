@@ -15,8 +15,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("next/link", () => ({
-  default: ({ children, href, ...props }: { children: React.ReactNode; href: string }) => (
-    <a href={href} {...props}>{children}</a>
+  default: ({ children, href, prefetch, ...props }: { children: React.ReactNode; href: string; prefetch?: boolean }) => (
+    <a data-prefetch={String(prefetch)} href={href} {...props}>{children}</a>
   ),
 }));
 
@@ -31,13 +31,14 @@ vi.mock("@/lib/supabase/browser", () => ({
 }));
 
 import { AppShell } from "@/components/app-shell";
+import { AuthProvider } from "@/components/auth-provider";
 import { PreferencesProvider } from "@/components/preferences-provider";
 
 function renderShell(pathname: string) {
   navigationState.pathname = pathname;
   return render(
     <PreferencesProvider>
-      <AppShell><p>Page content</p></AppShell>
+      <AuthProvider><AppShell><p>Page content</p></AppShell></AuthProvider>
     </PreferencesProvider>,
   );
 }
@@ -68,20 +69,21 @@ describe("AppShell navigation contract", () => {
     expect(navigation).toHaveTextContent(/Overview[\s\S]*Pipeline[\s\S]*Documents[\s\S]*Parse[\s\S]*Chunking[\s\S]*Embeddings[\s\S]*Experiment[\s\S]*Playground[\s\S]*Evaluation[\s\S]*System[\s\S]*Settings/);
     expect(within(navigation).getByRole("link", { name: "Documents" })).toHaveAttribute("href", "/documents");
     expect(within(navigation).getByRole("link", { name: "Playground" })).toHaveAttribute("href", "/playground");
+    expect(within(navigation).getAllByRole("link").every((link) => link.dataset.prefetch === "false")).toBe(true);
   });
 
   it("keeps the page content visible when the pathname changes in the same shell", () => {
     navigationState.pathname = "/documents";
     const { rerender } = render(
       <PreferencesProvider>
-        <AppShell><p>Document overview</p></AppShell>
+        <AuthProvider><AppShell><p>Document overview</p></AppShell></AuthProvider>
       </PreferencesProvider>,
     );
 
     navigationState.pathname = "/parse";
     rerender(
       <PreferencesProvider>
-        <AppShell><p>Parsed content</p></AppShell>
+        <AuthProvider><AppShell><p>Parsed content</p></AppShell></AuthProvider>
       </PreferencesProvider>,
     );
 
@@ -120,6 +122,7 @@ describe("AppShell navigation contract", () => {
     renderShell("/");
 
     await waitFor(() => expect(screen.getByText("Ahmed Hafızoğlu")).toBeVisible());
+    expect(authMocks.getUser).toHaveBeenCalledTimes(1);
     expect(screen.getByText("AH")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Ahmed Hafızoğlu — Account menu" }));

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { AppShell } from "@/components/app-shell";
+import { AuthProvider } from "@/components/auth-provider";
 import { DocumentPipelineProvider } from "@/components/document-pipeline-provider";
 import { PreferencesProvider } from "@/components/preferences-provider";
 
@@ -16,9 +17,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en" suppressHydrationWarning>
       <body>
         <PreferencesProvider>
-          <DocumentPipelineProvider>
-            <AppShell>{children}</AppShell>
-          </DocumentPipelineProvider>
+          <AuthProvider>
+            <DocumentPipelineProvider>
+              <AppShell>{children}</AppShell>
+            </DocumentPipelineProvider>
+          </AuthProvider>
         </PreferencesProvider>
       </body>
     </html>

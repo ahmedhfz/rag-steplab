@@ -51,12 +51,18 @@ Tek `rag-steplab-api` Modal App iki farklı compute profili kullanır:
 
 | Bileşen | CPU | Bellek | Timeout | Min/Max |
 | --- | ---: | ---: | ---: | ---: |
-| FastAPI ASGI | 0.5 | 1024 MiB | 300 s | 0 / 2 |
+| FastAPI ASGI (`api_eu`) | 0.5 | 1024 MiB | 300 s | 1 / 2 |
 | Full Docling worker | 2.0 | 4096 MiB | 900 s | 0 / 1 |
 
-Compute placement Modal default scheduler'a bırakılır. Yalnız API routing için
-ölçülmüş bir ihtiyaç oluşursa `MODAL_API_ROUTING_REGION=eu-west` kullanılabilir;
-worker/API compute region başlangıçta pinlenmez.
+Production Supabase `eu-central-1` yakınlığı için yalnız interactive API
+`region=eu` ve `routing_region=eu-west` kullanır. Routing region mevcut Function
+üzerinde değiştirilemediğinden `api_eu` yeni Function kimliğidir; önceki `api`
+endpoint'i cutover rollback'i olarak scale-to-zero kalır. Docling worker'ın
+compute placement ve scale-to-zero davranışı değişmez.
+
+API image yalnız `backend/requirements.txt` taşır; Docling ve ağır Torch katmanı
+yalnız worker image'ındadır. Böylece sıcak API container'ına parser/ML runtime'ı
+taşınmaz.
 
 `docling==2.117.0` pinned'dir. Model artifact'ları
 `rag-steplab-docling-models-v2` Volume içinde
@@ -80,7 +86,7 @@ semantic gate birden fazla gerçek PDF ile geçerse küçültülür.
 Frontend yalnız public API URL'sini alır:
 
 ```text
-NEXT_PUBLIC_API_BASE_URL=https://<modal-api-domain>
+NEXT_PUBLIC_API_BASE_URL=https://<modal-api-eu-domain>
 ```
 
 Modal API ve worker secret'ları server-side Modal Secret olarak tutulur.

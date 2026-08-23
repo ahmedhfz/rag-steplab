@@ -21,8 +21,9 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useAuthBootstrap } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { PageTransition } from "@/components/page-transition";
 import { Button } from "@/components/ui/button";
@@ -262,6 +263,7 @@ function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: st
                   href={item.href}
                   key={item.key}
                   onClick={onNavigate}
+                  prefetch={false}
                 >
                   <item.icon aria-hidden="true" className="size-[19px] stroke-[1.65]" />
                   {copy.nav[item.key]}
@@ -300,26 +302,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { preferences } = usePreferences();
   const copy = UI_COPY[preferences.locale];
   const router = useRouter();
-  const [authUser, setAuthUser] = useState<AuthUserSummary>({ email: null, name: null });
-
-  useEffect(() => {
-    let active = true;
-    try {
-      const supabase = getSupabaseBrowserClient();
-      void supabase.auth.getUser().then(({ data }) => {
-        if (active) setAuthUser(getAuthUserSummary(data.user));
-      });
-      const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-        if (active) setAuthUser(getAuthUserSummary(session?.user));
-      });
-      return () => {
-        active = false;
-        listener.subscription.unsubscribe();
-      };
-    } catch {
-      return () => { active = false; };
-    }
-  }, []);
+  const { user } = useAuthBootstrap();
+  const authUser = useMemo(() => getAuthUserSummary(user), [user]);
 
   async function signOut() {
     try {
