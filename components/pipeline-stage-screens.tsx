@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 
-import { ChunksPipeline } from "@/components/chunks-pipeline";
+import { ChunkingWorkspace, EmbeddingWorkspace } from "@/components/chunks-pipeline";
 import { PipelineContextBar } from "@/components/pipeline-context-bar";
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { DisabledReason, EmptyPipelineState, MetricCard } from "@/components/pipeline-learning-ui";
@@ -92,7 +92,7 @@ export function ChunkingScreen() {
     <div>
       <PipelineContextBar />
       <header className="px-4 py-6 sm:px-7"><h1 className="text-[22px] font-semibold tracking-[-0.025em]">{labels.title}</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{labels.description}</p></header>
-      <ChunksPipeline locale={locale} stage="chunking" />
+      <ChunkingWorkspace locale={locale} />
       {chunkRun ? <section className="border-t px-4 py-6 sm:px-7"><h2 className="text-sm font-semibold">{locale === "tr" ? "Chunk metrikleri" : "Chunk metrics"}</h2><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4"><MetricCard label={locale === "tr" ? "Chunk sayısı" : "Chunks"} value={String(chunkRun.chunkCount)} /><MetricCard label={locale === "tr" ? "Min token" : "Min tokens"} value={chunks.length ? String(Math.min(...chunks.map((chunk) => chunk.tokenCount))) : "—"} /><MetricCard label={locale === "tr" ? "Ortalama token" : "Average tokens"} value={String(averageTokens)} /><MetricCard label={locale === "tr" ? "Max token" : "Max tokens"} value={chunks.length ? String(Math.max(...chunks.map((chunk) => chunk.tokenCount))) : "—"} /></div></section> : null}
       <ArtifactHistory defaultId={activeDocument?.activeChunkRunId} kind="chunk" locale={locale} onSelect={selectChunkRun} runs={activeDocument?.chunkRuns.filter((run) => run.upstream.parseRunId === selectedParseRunId) ?? []} selectedId={selectedChunkRunId} title={labels.history} />
       <section className="border-t px-4 py-6 sm:px-7">{compatibleChunks.some((run) => run.id === selectedChunkRunId) ? <Button asChild size="sm" variant="outline"><Link href="/embeddings">{labels.next}<ArrowRight aria-hidden="true" className="ml-2 size-4" /></Link></Button> : <Button disabled size="sm" variant="outline">{labels.next}</Button>}{!compatibleChunks.some((run) => run.id === selectedChunkRunId) ? <DisabledReason id="chunking-next-disabled-reason">{labels.nextReason}</DisabledReason> : null}</section>
@@ -108,14 +108,16 @@ export function EmbeddingsScreen() {
     ? { title: "Embeddings", description: "Seçili chunk input'u, effective model provenance'ı ve embedding sürümlerini inceleyin.", history: "Embedding version history", input: "Seçili chunk input", noInput: "Embedding için tamamlanmış uyumlu bir chunk seçin.", next: "Playground'a git", nextReason: "Playground için önce tamamlanmış bir chunk run gerekir." }
     : { title: "Embeddings", description: "Inspect the selected chunk input, effective model provenance, and embedding versions.", history: "Embedding version history", input: "Selected chunk input", noInput: "Select a compatible completed chunk before creating embeddings.", next: "Go to Playground", nextReason: "A completed chunk run is required before using Playground." };
   const selectedChunk = activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId);
+  const selectedChunkNumber = selectedChunk && activeDocument ? activeDocument.chunkRuns.findIndex((run) => run.id === selectedChunk.id) + 1 : 0;
+  const selectedParseNumber = selectedChunk?.upstream.parseRunId && activeDocument ? activeDocument.parseRuns.findIndex((run) => run.id === selectedChunk.upstream.parseRunId) + 1 : 0;
   const canPlayground = Boolean(activeDocument?.id && selectedChunk?.status === "completed" && selectedChunk.isCompatible && selectedChunkRunId);
 
   return (
     <div>
       <PipelineContextBar />
       <header className="px-4 py-6 sm:px-7"><h1 className="text-[22px] font-semibold tracking-[-0.025em]">{labels.title}</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{labels.description}</p></header>
-      <section className="border-t px-4 py-5 sm:px-7"><h2 className="text-sm font-semibold">{labels.input}</h2>{selectedChunk ? <p className="mt-2 text-xs text-slate-600">{selectedChunk.id} · {selectedChunk.chunkCount ?? "—"} chunks · parse {selectedChunk.upstream.parseRunId ?? "—"}</p> : <p className="mt-2 text-sm text-slate-500">{labels.noInput}</p>}</section>
-      <ChunksPipeline locale={locale} stage="embeddings" />
+      <section className="border-t px-4 py-5 sm:px-7"><h2 className="text-sm font-semibold">{labels.input}</h2>{selectedChunk ? <p className="mt-2 text-xs text-slate-600" title={selectedChunk.id}>{selectedChunkNumber > 0 ? `C${selectedChunkNumber}` : "C—"} · {selectedChunk.chunkCount ?? "—"} chunks · {selectedParseNumber > 0 ? `P${selectedParseNumber}` : "P—"}</p> : <p className="mt-2 text-sm text-slate-500">{labels.noInput}</p>}</section>
+      <EmbeddingWorkspace locale={locale} />
       {embeddingRun ? <section className="border-t px-4 py-5 sm:px-7"><div className="grid grid-cols-2 gap-3 sm:grid-cols-5"><MetricCard label="Model" value={embeddingRun.model || "—"} /><MetricCard label={locale === "tr" ? "Effective model" : "Effective model"} value={embeddingRun.effectiveModel || embeddingRun.model || "—"} /><MetricCard label={locale === "tr" ? "Boyut" : "Dimensions"} value={String(embeddingRun.dimensions)} /><MetricCard label={locale === "tr" ? "Vektör" : "Vectors"} value={String(embeddingRun.embeddingCount)} /><MetricCard label="Format" value={embeddingRun.embeddingFormatVersion} /></div></section> : null}
       <ArtifactHistory defaultId={activeDocument?.activeEmbeddingRunId} kind="embedding" locale={locale} onSelect={selectEmbeddingRun} runs={activeDocument?.embeddingRuns.filter((run) => run.upstream.chunkRunId === selectedChunkRunId) ?? []} selectedId={selectedEmbeddingRunId} title={labels.history} />
       <section className="border-t px-4 py-6 sm:px-7">{canPlayground ? <Button asChild size="sm" variant="outline"><Link href="/playground">{labels.next}<ArrowRight aria-hidden="true" className="ml-2 size-4" /></Link></Button> : <Button disabled size="sm" variant="outline">{labels.next}</Button>}{!canPlayground ? <DisabledReason id="embeddings-next-disabled-reason">{labels.nextReason}</DisabledReason> : null}</section>

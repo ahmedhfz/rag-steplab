@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { continueExperiment, getChunkRun, getDocument, getDocumentSummary, getEmbeddingRun, getExperiment, getParseRun, listDocuments, parseAndPersistDocument, rerunGeneration, waitForParseRun } from "@/lib/rag-api";
+import { continueExperiment, getChunkRun, getDocument, getDocumentSummary, getEmbeddingRun, getExperiment, getParseRun, listDocuments, parseAndPersistDocument, rerunGeneration, uploadDocument, waitForParseRun } from "@/lib/rag-api";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -8,6 +8,27 @@ afterEach(() => {
 });
 
 describe("RAG API contract normalization", () => {
+  it("normalizes upload-only documents and keeps the parse endpoint out of the request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      document: {
+        id: "document-1",
+        fileName: "lesson.pdf",
+        mediaType: "application/pdf",
+        sizeBytes: 100,
+        pageCount: 0,
+        activeParseRunId: null,
+        activeChunkRunId: null,
+        activeEmbeddingRunId: null,
+      },
+      reusedDocument: true,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(uploadDocument(new File(["%PDF-1.4"], "lesson.pdf", { type: "application/pdf" }))).resolves.toMatchObject({ document: { id: "document-1" }, reusedDocument: true });
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8000/documents", expect.objectContaining({ method: "POST", body: expect.any(FormData) }));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/documents/parse"))).toBe(false);
+  });
+
   it("accepts the canonical items list envelope", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       items: [{

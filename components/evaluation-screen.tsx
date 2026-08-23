@@ -51,14 +51,14 @@ export function EvaluationScreen() {
     dataset: "Evaluation dataset", datasetDescription: "Golden soru ve ilgili parse element ID'lerini kalıcı bir dataset sürümü olarak kaydeder.",
     name: "Dataset adı", question: "Golden soru", relevant: "İlgili element ID'leri", relevantHint: "Virgülle ayırın; gerçek parse element ID'lerini kullanın.", reference: "Referans cevap (opsiyonel)", create: "Dataset oluştur",
     needDocument: "Önce kalıcı parse run içeren bir doküman seçin.", selectDataset: "Dataset seç", run: "Evaluation çalıştır", judge: "Gemini judge", judgeModel: "Judge model",
-    needPipeline: "Evaluation için aktif chunk ve embedding run gerekir.", metrics: "Ölçümler", history: "Evaluation geçmişi ve karşılaştırma", compare: "Karşılaştır",
+    needPipeline: "Evaluation için aktif chunk ve embedding run gerekir.", metrics: "Ölçümler", history: "Evaluation geçmişi ve karşılaştırma", compare: "Karşılaştır", advanced: "Gelişmiş ayarlar",
     hit: "Hit@K", recall: "Recall@K", precision: "Precision@K", mrr: "MRR", citation: "Citation validity", groundedness: "Groundedness", cases: "Case sayısı",
     retrievalNote: "Retrieval metrikleri golden relevant elementlerle hesaplanır; generation metrikleri ayrı gösterilir.",
   } : {
     dataset: "Evaluation dataset", datasetDescription: "Persists golden questions and relevant parse element IDs as a versioned dataset.",
     name: "Dataset name", question: "Golden question", relevant: "Relevant element IDs", relevantHint: "Comma-separated; use real parsed element IDs.", reference: "Reference answer (optional)", create: "Create dataset",
     needDocument: "Select a persisted document with a parse run first.", selectDataset: "Select dataset", run: "Run evaluation", judge: "Gemini judge", judgeModel: "Judge model",
-    needPipeline: "Evaluation requires active chunk and embedding runs.", metrics: "Metrics", history: "Evaluation history and comparison", compare: "Compare",
+    needPipeline: "Evaluation requires active chunk and embedding runs.", metrics: "Metrics", history: "Evaluation history and comparison", compare: "Compare", advanced: "Advanced settings",
     hit: "Hit@K", recall: "Recall@K", precision: "Precision@K", mrr: "MRR", citation: "Citation validity", groundedness: "Groundedness", cases: "Cases",
     retrievalNote: "Retrieval metrics use golden relevant elements; generation metrics remain separately visible.",
   };
@@ -117,7 +117,7 @@ export function EvaluationScreen() {
           <div>
             <Button aria-describedby={!canCreateDataset ? "dataset-disabled-reason" : undefined} aria-busy={evaluationStatus === "processing"} className="w-full gap-2" disabled={!canCreateDataset} onClick={handleCreateDataset}><Database aria-hidden="true" className="size-4" />{labels.create}</Button>
             {!canCreateDataset ? <DisabledReason id="dataset-disabled-reason">{labels.needDocument}</DisabledReason> : null}
-            {evaluationDatasets.length ? <div className="mt-4 space-y-2">{evaluationDatasets.map((dataset) => <article className="border p-3" key={dataset.id}><div className="text-sm font-medium">{dataset.name} · v{dataset.version}</div><div className="mt-1 font-mono text-[10px] text-slate-500">{dataset.id}</div><div className="mt-2 text-xs text-slate-500">{dataset.caseCount} {labels.cases}</div></article>)}</div> : <EmptyPipelineState>{copy.evaluation.emptyDescription}</EmptyPipelineState>}
+            {evaluationDatasets.length ? <div className="mt-4 space-y-2">{evaluationDatasets.map((dataset) => <article className="border p-3" key={dataset.id}><div className="text-sm font-medium" title={dataset.id}>{dataset.name} · v{dataset.version}</div><div className="mt-2 text-xs text-slate-500">{dataset.caseCount} {labels.cases}</div></article>)}</div> : <EmptyPipelineState>{copy.evaluation.emptyDescription}</EmptyPipelineState>}
           </div>
         </div>
       </StageSection>
@@ -126,10 +126,10 @@ export function EvaluationScreen() {
         <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
           <div className="space-y-3 border p-4">
             <label className="text-xs font-medium" htmlFor="evaluation-dataset">{labels.selectDataset}<Select onValueChange={setDatasetId} value={selectedDatasetId}><SelectTrigger className="mt-2" id="evaluation-dataset"><SelectValue placeholder={labels.selectDataset} /></SelectTrigger><SelectContent>{evaluationDatasets.map((dataset) => <SelectItem key={dataset.id} value={dataset.id}>{dataset.name} · v{dataset.version}</SelectItem>)}</SelectContent></Select></label>
-            <label className="text-xs font-medium" htmlFor="evaluation-mode">Mode<Select onValueChange={(value) => setMode(value as RetrievalMode)} value={mode}><SelectTrigger className="mt-2" id="evaluation-mode"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="dense">Dense</SelectItem><SelectItem value="keyword">Keyword</SelectItem><SelectItem value="hybrid">Hybrid</SelectItem></SelectContent></Select></label>
+            <details className="border px-3 py-2"><summary className="cursor-pointer text-xs font-semibold">{labels.advanced}</summary><div className="mt-3 space-y-3"><label className="text-xs font-medium" htmlFor="evaluation-mode">Mode<Select onValueChange={(value) => setMode(value as RetrievalMode)} value={mode}><SelectTrigger className="mt-2" id="evaluation-mode"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="dense">Dense</SelectItem><SelectItem value="keyword">Keyword</SelectItem><SelectItem value="hybrid">Hybrid</SelectItem></SelectContent></Select></label>
             <label className="text-xs font-medium" htmlFor="evaluation-top-k">Top-K<Select onValueChange={setTopK} value={topK}><SelectTrigger className="mt-2" id="evaluation-top-k"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="3">3</SelectItem><SelectItem value="5">5</SelectItem><SelectItem value="10">10</SelectItem></SelectContent></Select></label>
             <label className="flex items-center justify-between gap-3 text-xs font-medium" htmlFor="evaluation-reranker">Reranker<Switch checked={reranker} id="evaluation-reranker" onCheckedChange={setReranker} /></label>
-            <label className="flex items-center justify-between gap-3 text-xs font-medium" htmlFor="evaluation-judge"><span>{labels.judge}<span className="mt-1 block font-normal text-slate-500">{labels.judgeModel}: {capabilities?.judgeModel || "—"}</span></span><Switch checked={judge} id="evaluation-judge" onCheckedChange={setJudge} /></label>
+            <label className="flex items-center justify-between gap-3 text-xs font-medium" htmlFor="evaluation-judge"><span>{labels.judge}<span className="mt-1 block font-normal text-slate-500">{labels.judgeModel}: {capabilities?.judgeModel || "—"}</span></span><Switch checked={judge} id="evaluation-judge" onCheckedChange={setJudge} /></label></div></details>
             <Button aria-describedby={!canRun ? "evaluation-disabled-reason" : undefined} aria-busy={evaluationStatus === "processing"} className="w-full gap-2" disabled={!canRun} onClick={handleRun}><Play aria-hidden="true" className="size-4" />{labels.run}</Button>
             {!canRun ? <DisabledReason id="evaluation-disabled-reason">{labels.needPipeline}</DisabledReason> : null}
             <PipelineErrorMessage message={evaluationError?.message} />

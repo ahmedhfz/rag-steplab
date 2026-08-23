@@ -63,6 +63,11 @@ export type PersistedDocument = {
   updatedAt: string | null;
 };
 
+export type DocumentUploadResponse = {
+  document: PersistedDocument;
+  reusedDocument: boolean;
+};
+
 export type DocumentDetail = PersistedDocument & {
   parseRuns: RunSummary[];
   chunkRuns: RunSummary[];

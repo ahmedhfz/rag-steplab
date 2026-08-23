@@ -14,6 +14,7 @@ import type {
   ChunkStrategy,
   ContextCandidate,
   DocumentDetail,
+  DocumentUploadResponse,
   DocumentSummary,
   EmbeddingRun,
   EvaluationCase,
@@ -689,6 +690,16 @@ export async function listDocuments(signal?: AbortSignal): Promise<PersistedDocu
   return listPayload(payload, "documents").map(normalizeDocument);
 }
 
+export async function uploadDocument(file: File, signal?: AbortSignal): Promise<DocumentUploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file, file.name);
+  const payload = requiredObject(await request("/documents", { method: "POST", body: formData, signal }), "document upload response");
+  return {
+    document: normalizeDocument(payload.document),
+    reusedDocument: payload.reusedDocument === true || payload.reused_document === true,
+  };
+}
+
 export async function getDocument(documentId: string, signal?: AbortSignal): Promise<DocumentDetail> {
   const payload = object(await request(`/documents/${encodeURIComponent(documentId)}`, { signal }));
   const activeParsePayload = payload.activeParseRun;
@@ -866,7 +877,7 @@ export async function getEmbeddingRun(runId: string, signal?: AbortSignal): Prom
   return normalizeEmbeddingRun(await request(`/embedding-runs/${encodeURIComponent(runId)}`, { signal }));
 }
 
-export async function reparsePersistedDocument(
+export async function parsePersistedDocument(
   documentId: string,
   signal?: AbortSignal,
   onStatus?: ParseStatusListener,
@@ -882,3 +893,5 @@ export async function reparsePersistedDocument(
   }
   return pollParseRun(initial, signal, onStatus);
 }
+
+export const reparsePersistedDocument = parsePersistedDocument;

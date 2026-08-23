@@ -31,6 +31,47 @@ def test_rejects_empty_pdf_upload():
     assert response.json()["error"]["code"] == "empty_file"
 
 
+def test_upload_only_persists_document_without_parse_and_reuses_same_owner_sha():
+    first = client.post("/documents", files={"file": ("lesson.pdf", b"%PDF-1.7", "application/pdf")})
+
+    assert first.status_code == 201
+    first_payload = first.json()
+    assert first_payload["reusedDocument"] is False
+    assert first_payload["document"]["fileName"] == "lesson.pdf"
+    assert first_payload["document"]["activeParseRunId"] is None
+
+    listed = client.get("/documents")
+    assert listed.status_code == 200
+    assert len(listed.json()["items"]) == 1
+
+    duplicate = client.post("/documents", files={"file": ("renamed.pdf", b"%PDF-1.7", "application/pdf")})
+    assert duplicate.status_code == 200
+    assert duplicate.json()["reusedDocument"] is True
+    assert duplicate.json()["document"]["id"] == first_payload["document"]["id"]
+
+    summary = client.get(f"/documents/{first_payload['document']['id']}/summary")
+    assert summary.status_code == 200
+    assert summary.json()["parseRuns"] == []
+
+
+def test_explicit_parse_after_upload_creates_one_parse_run(monkeypatch):
+    monkeypatch.setattr("app.main._dispatch_queued_parse", lambda parse: parse)
+
+    uploaded = client.post("/documents", files={"file": ("lesson.pdf", b"%PDF-1.7", "application/pdf")})
+    assert uploaded.status_code == 201
+    document_id = uploaded.json()["document"]["id"]
+
+    parsed = client.post(f"/documents/{document_id}/parse")
+
+    assert parsed.status_code == 202
+    payload = parsed.json()
+    assert payload["documentId"] == document_id
+    assert payload["parseRunId"]
+    summary = client.get(f"/documents/{document_id}/summary")
+    assert summary.status_code == 200
+    assert [run["id"] for run in summary.json()["parseRuns"]] == [payload["parseRunId"]]
+
+
 def test_returns_normalized_parse_contract(monkeypatch):
     parsed = ParseResponse(
         document=DocumentMetadata(file_name="lesson.pdf", media_type="application/pdf", size_bytes=8, page_count=1),

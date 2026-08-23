@@ -308,7 +308,7 @@ class Repository:
     ) -> dict[str, Any] | None:
         raise NotImplementedError
 
-    def list_document_rows(self) -> list[dict[str, Any]]:
+    def list_document_rows(self, *, owner_user_id: uuid.UUID | str | None = None) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     def delete_document(self, document_id: str) -> None:
@@ -693,8 +693,11 @@ class InMemoryRepository(Repository):
             )
             return copy.deepcopy(rows[0]) if rows else None
 
-    def list_document_rows(self):
-        return copy.deepcopy(list(self.documents.values()))
+    def list_document_rows(self, *, owner_user_id=None):
+        owner = owner_user_id
+        if owner is not None and not isinstance(owner, uuid.UUID):
+            owner = uuid.UUID(str(owner))
+        return copy.deepcopy([row for row in self.documents.values() if owner is None or row.get("owner_user_id") == owner])
 
     def delete_document(self, document_id):
         self.documents.pop(document_id, None)
@@ -1240,6 +1243,26 @@ class SqlAlchemyRepository(Repository):
             "updated_at": row.updated_at,
         }
 
+    @staticmethod
+    def _document_summary_dict(row: dict[str, Any]) -> dict[str, Any]:
+        """Map the document-only summary projection without materializing an ORM row."""
+        return {
+            "id": row["id"],
+            "file_name": row["file_name"],
+            "media_type": row["media_type"],
+            "size_bytes": row["size_bytes"],
+            "page_count": row.get("page_count", 0),
+            "sha256": row.get("sha256"),
+            "owner_user_id": row.get("owner_user_id"),
+            "storage_bucket": row.get("storage_bucket"),
+            "storage_path": row.get("storage_path"),
+            "active_parse_run_id": row.get("active_parse_run_id"),
+            "active_chunk_run_id": row.get("active_chunk_run_id"),
+            "active_embedding_run_id": row.get("active_embedding_run_id"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+        }
+
     def save_parse(self, document_id, parsed, *, run_id=None):
         queued = self.create_parse_run(document_id, parser_version="unknown", run_id=run_id)
         if queued is None:
@@ -1426,9 +1449,12 @@ class SqlAlchemyRepository(Repository):
             row = session.scalars(query).first()
             return self._document_dict(row) if row else None
 
-    def list_document_rows(self):
+    def list_document_rows(self, *, owner_user_id=None):
         with session_scope() as session:
-            return [self._document_dict(row) for row in session.scalars(select(Document).order_by(Document.created_at.desc()))]
+            query = select(Document).order_by(Document.created_at.desc())
+            if owner_user_id is not None:
+                query = query.where(Document.owner_user_id == self._owner_uuid(owner_user_id))
+            return [self._document_dict(row) for row in session.scalars(query)]
 
     def delete_document(self, document_id):
         with session_scope() as session:
@@ -1588,14 +1614,30 @@ class SqlAlchemyRepository(Repository):
 
     def get_document_summary_bundle(self, document_id, *, owner_user_id=None):
         with session_scope() as session:
-            document_query = select(Document).where(Document.id == document_id)
+            document_query = select(
+                Document.id,
+                Document.file_name,
+                Document.media_type,
+                Document.size_bytes,
+                Document.page_count,
+                Document.sha256,
+                Document.owner_user_id,
+                Document.storage_bucket,
+                Document.storage_path,
+                Document.active_parse_run_id,
+                Document.active_chunk_run_id,
+                Document.active_embedding_run_id,
+                Document.created_at,
+                Document.updated_at,
+            ).where(Document.id == document_id)
             if owner_user_id is not None:
                 document_query = document_query.where(Document.owner_user_id == self._owner_uuid(owner_user_id))
-            document = session.scalars(document_query).first()
-            if document is None:
+            document_row = session.execute(document_query).mappings().first()
+            if document_row is None:
                 return None
+            document = self._document_summary_dict(dict(document_row))
             return {
-                "document": self._document_dict(document),
+                "document": document,
                 "parses": self._summary_parse_rows(session, document_id, owner_user_id),
                 "chunks": self._summary_chunk_rows(session, document_id, owner_user_id),
                 "embeddings": self._summary_embedding_rows(session, document_id, owner_user_id),
@@ -2334,8 +2376,11 @@ class ScopedRepository(Repository):
             return None
         return self._repository.get_document_by_sha256(sha256, owner_user_id=self.owner_user_id)
 
-    def list_document_rows(self):
-        return [row for row in self._repository.list_document_rows() if row.get("owner_user_id") == self.owner_user_id]
+    def list_document_rows(self, *, owner_user_id=None):
+        requested_owner = self.owner_user_id if owner_user_id is None else uuid.UUID(str(owner_user_id))
+        if requested_owner != self.owner_user_id:
+            return []
+        return self._repository.list_document_rows(owner_user_id=self.owner_user_id)
 
     def delete_document(self, document_id):
         if self._owned_document(document_id) is not None:

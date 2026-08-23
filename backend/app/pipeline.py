@@ -450,6 +450,55 @@ def parse_upload(
     return document, parse
 
 
+def persist_document_upload(
+    content: bytes,
+    file_name: str,
+    *,
+    repository: Repository | None = None,
+    settings: Settings | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """Persist one private source PDF without creating a parse run.
+
+    The owner-scoped repository and the unique owner+SHA constraint remain the
+    identity boundary. A losing concurrent upload removes only its own object
+    before reusing the winner.
+    """
+
+    repository = repository or get_repository()
+    settings = settings or get_settings()
+    _require_write(repository, settings)
+    digest = hashlib.sha256(content).hexdigest()
+    existing = repository.get_document_by_sha256(digest)
+    if existing is not None:
+        return existing, True
+
+    storage_path = f"{new_id()}/{digest}.pdf"
+    storage = get_storage()
+    metadata = {
+        "file_name": file_name,
+        "media_type": "application/pdf",
+        "size_bytes": len(content),
+        "page_count": 0,
+    }
+    document: dict[str, Any] | None = None
+    try:
+        storage.upload_pdf(storage_path, content)
+        try:
+            document = repository.create_document(metadata, settings.supabase_storage_bucket, storage_path, digest)
+        except Exception:
+            storage.remove(storage_path)
+            raced = repository.get_document_by_sha256(digest)
+            if raced is None:
+                raise
+            return raced, True
+    except Exception:
+        if document is not None:
+            repository.delete_document(document["id"])
+        storage.remove(storage_path)
+        raise
+    return document, False
+
+
 def queue_parse_upload(
     content: bytes,
     file_name: str,
@@ -461,48 +510,29 @@ def queue_parse_upload(
 
     repository = repository or get_repository()
     settings = settings or get_settings()
-    _require_write(repository, settings)
-    digest = hashlib.sha256(content).hexdigest()
-    existing = repository.get_document_by_sha256(digest)
-    if existing is not None:
-        parse, dispatch_required = _queue_parse_for_document(repository, existing, settings)
-        return existing, parse, True, dispatch_required
-    storage_path = f"{new_id()}/{digest}.pdf"
-    storage = get_storage()
-    metadata = {
-        "file_name": file_name,
-        "media_type": "application/pdf",
-        "size_bytes": len(content),
-        "page_count": 0,
-    }
-    document: dict[str, Any] | None = None
-    storage = get_storage()
+    document, reused_document = persist_document_upload(
+        content,
+        file_name,
+        repository=repository,
+        settings=settings,
+    )
     try:
-        # A committed Document always has a ready source object. This keeps a
-        # concurrent duplicate request from dispatching a worker before the
-        # winner finishes uploading the PDF.
-        storage.upload_pdf(storage_path, content)
-        try:
-            document = repository.create_document(metadata, settings.supabase_storage_bucket, storage_path, digest)
-        except Exception:
-            # The unique owner+SHA identity is the arbitration point. A loser
-            # removes only its own UUID object before reusing the winner.
-            storage.remove(storage_path)
-            raced = repository.get_document_by_sha256(digest)
-            if raced is None:
-                raise
-            parse, dispatch_required = _queue_parse_for_document(repository, raced, settings)
-            return raced, parse, True, dispatch_required
-        parse, _ = _queue_parse_for_document(repository, document, settings)
+        parse, dispatch_required = _queue_parse_for_document(repository, document, settings)
     except Exception:
-        if document is not None:
+        if not reused_document:
             repository.delete_document(document["id"])
-        storage.remove(storage_path)
+            storage_path = document.get("storage_path")
+            if storage_path:
+                get_storage().remove(storage_path)
         raise
     if parse is None:
-        storage.remove(storage_path)
+        if not reused_document:
+            repository.delete_document(document["id"])
+            storage_path = document.get("storage_path")
+            if storage_path:
+                get_storage().remove(storage_path)
         raise ApiProblem(500, "persistence_failed", "The parse run could not be queued.")
-    return document, parse, False, True
+    return document, parse, reused_document, dispatch_required
 
 
 def queue_reparse_document(

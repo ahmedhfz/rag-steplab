@@ -29,12 +29,19 @@ const strategyNotes: Record<ChunkStrategy, { en: string; tr: string }> = {
 
 export type PipelineStage = "both" | "chunking" | "embeddings";
 
+export function ChunkingWorkspace({ locale }: { locale: AppLocale }) {
+  return <ChunksPipeline locale={locale} stage="chunking" />;
+}
+
+export function EmbeddingWorkspace({ locale }: { locale: AppLocale }) {
+  return <ChunksPipeline locale={locale} stage="embeddings" />;
+}
+
 export function ChunksPipeline({ locale, stage = "both" }: { locale: AppLocale; stage?: PipelineStage }) {
   const {
     activeDocument,
     selectedParseRunId,
     selectedChunkRunId,
-    selectedEmbeddingRunId,
     parseResult,
     capabilities,
     persistenceStatus,
@@ -46,8 +53,6 @@ export function ChunksPipeline({ locale, stage = "both" }: { locale: AppLocale; 
     embeddingError,
     runChunking,
     runEmbedding,
-    selectChunkRun,
-    selectEmbeddingRun,
   } = useDocumentPipeline();
   const [strategy, setStrategy] = useState<ChunkStrategy>("structure_aware");
   const [chunkSize, setChunkSize] = useState(512);
@@ -75,9 +80,6 @@ export function ChunksPipeline({ locale, stage = "both" }: { locale: AppLocale; 
     model: "Model", dimensions: "Dimensions", count: "Vectors", format: "Format", persistenceUnavailable: "The persistence backend is unavailable.", reuseNotice: "The existing artifact was reused.",
   };
   const compatibleChunkRuns = activeDocument?.chunkRuns.filter((run) => run.status === "completed" && run.isCompatible && run.upstream.parseRunId === selectedParseRunId) ?? [];
-  const compatibleEmbeddingRuns = activeDocument?.embeddingRuns.filter((run) => run.status === "completed" && run.isCompatible && run.upstream.chunkRunId === selectedChunkRunId) ?? [];
-  const showChunkSelector = compatibleChunkRuns.length > 1 || (compatibleChunkRuns.length > 0 && !selectedChunkRunId);
-  const showEmbeddingSelector = compatibleEmbeddingRuns.length > 1 || (compatibleEmbeddingRuns.length > 0 && !selectedEmbeddingRunId);
   const canChunk = Boolean(activeDocument?.id && selectedParseRunId && persistenceStatus === "available" && chunkStatus !== "processing");
   const canEmbed = Boolean(activeDocument?.id && compatibleChunkRuns.some((run) => run.id === selectedChunkRunId) && embeddingStatus !== "processing");
 
@@ -94,7 +96,6 @@ export function ChunksPipeline({ locale, stage = "both" }: { locale: AppLocale; 
   return (
     <div>
       {stage !== "embeddings" ? <StageSection description={labels.chunkDescription} locale={locale} status={chunkStatus} title={labels.chunkTitle}>
-        {showChunkSelector ? <div className="mb-4 max-w-sm"><label className="text-xs font-medium" htmlFor="selected-chunk-run">{locale === "tr" ? "Seçili chunk run" : "Selected chunk run"}</label><Select onValueChange={(value) => void selectChunkRun(value)} value={selectedChunkRunId ?? undefined}><SelectTrigger className="mt-2" id="selected-chunk-run"><SelectValue placeholder={locale === "tr" ? "Chunk run seç" : "Select a chunk run"} /></SelectTrigger><SelectContent>{compatibleChunkRuns.map((run) => <SelectItem key={run.id} value={run.id}>{run.id}{run.historicalLineage ? " · historical" : " · active"}</SelectItem>)}</SelectContent></Select></div> : null}
         <div className="grid gap-4 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
           <div className="space-y-4 border p-4">
             <div>
@@ -151,7 +152,6 @@ export function ChunksPipeline({ locale, stage = "both" }: { locale: AppLocale; 
       </StageSection> : null}
 
       {stage !== "chunking" ? <StageSection description={labels.embeddingDescription} locale={locale} status={embeddingStatus} title={labels.embeddingTitle}>
-        {showEmbeddingSelector ? <div className="mb-4 max-w-sm"><label className="text-xs font-medium" htmlFor="selected-embedding-run">{locale === "tr" ? "Seçili embedding run" : "Selected embedding run"}</label><Select onValueChange={(value) => void selectEmbeddingRun(value)} value={selectedEmbeddingRunId ?? undefined}><SelectTrigger className="mt-2" id="selected-embedding-run"><SelectValue placeholder={locale === "tr" ? "Embedding run seç" : "Select an embedding run"} /></SelectTrigger><SelectContent>{compatibleEmbeddingRuns.map((run) => <SelectItem key={run.id} value={run.id}>{run.id}{run.historicalLineage ? " · historical" : " · active"}</SelectItem>)}</SelectContent></Select></div> : null}
         <div className="grid gap-4 md:grid-cols-[220px_minmax(0,1fr)]">
           <div>
             <Button aria-describedby={!canEmbed ? "embedding-disabled-reason" : undefined} aria-busy={embeddingStatus === "processing"} className="w-full gap-2" disabled={!canEmbed} onClick={() => void handleEmbedding()}>

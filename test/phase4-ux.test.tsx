@@ -18,24 +18,22 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("Phase 4 pipeline IA", () => {
-  it("renders Documents as the upload/library/status entry point", () => {
+describe("Phase 6B pipeline IA", () => {
+  it("renders Documents as the document library with one Add PDF owner", () => {
     renderWithPipeline(<DocumentsScreen />);
 
-    expect(screen.getByRole("heading", { name: "Documents" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Documents", level: 1 })).toBeInTheDocument();
     expect(screen.getByTestId("document-upload-panel")).toBeInTheDocument();
-    expect(screen.getByTestId("pipeline-context-bar")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Pipeline status summary" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Parse Document" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Go to Parse" })).toBeDisabled();
-    expect(screen.getByText("Parse becomes available after a PDF is persisted from Documents.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add PDF" })).toBeInTheDocument();
+    expect(screen.queryByTestId("pipeline-context-bar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Parse|Reparse/i })).not.toBeInTheDocument();
   });
 
   it("keeps Parse, Chunking, and Embeddings actions disabled with explicit upstream reasons", () => {
     renderWithPipeline(<ParseScreen />);
-    expect(screen.getByRole("heading", { name: "Parse" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reparse" })).toBeDisabled();
-    expect(screen.getByText("A persisted document is required before reparsing.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Parse", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Parse" })).toBeDisabled();
+    expect(screen.getByText("Select a persisted document before parsing.")).toBeInTheDocument();
 
     cleanup();
     renderWithPipeline(<ChunkingScreen />);

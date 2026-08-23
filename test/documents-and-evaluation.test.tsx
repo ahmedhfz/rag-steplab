@@ -1,10 +1,10 @@
-import { cleanup, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DocumentsScreen } from "@/components/documents-screen";
 import { DocumentPipelineProvider } from "@/components/document-pipeline-provider";
 import { EvaluationScreen } from "@/components/evaluation-screen";
+import { ParseScreen } from "@/components/parse-screen";
 import { PreferencesProvider } from "@/components/preferences-provider";
 
 function renderScreen(screenToRender: React.ReactNode) {
@@ -17,39 +17,30 @@ afterEach(() => {
 });
 
 describe("DocumentsScreen", () => {
-  it("keeps document routes discoverable and marks the active tab", () => {
-    renderScreen(<DocumentsScreen view="parsed" />);
+  it("keeps document management separate from parsing", async () => {
+    renderScreen(<DocumentsScreen />);
 
-    expect(screen.getByRole("heading", { name: "Parsed Content" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("href", "/documents");
-    expect(screen.getByRole("link", { name: "Parsed Content" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "Chunks" })).toHaveAttribute("href", "/chunking");
-    expect(screen.getByText("No pages are available until parsing completes.")).toBeInTheDocument();
-    expect(screen.getByText("Select a parsed page to inspect its elements.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Documents", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add PDF" })).toBeInTheDocument();
+    expect(screen.queryByTestId("pipeline-context-bar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Parse|Reparse/i })).not.toBeInTheDocument();
   });
 
-  it("exposes the unavailable parsed-view controls as a labelled disabled group", () => {
-    renderScreen(<DocumentsScreen view="parsed" />);
+  it("keeps parse output and parse mutation on Parse", () => {
+    renderScreen(<ParseScreen />);
 
-    const viewGroup = screen.getByRole("group", { name: "Parsed content view mode" });
-    expect(viewGroup).toHaveAccessibleDescription("Views become available after a real parse completes.");
+    expect(screen.getByRole("heading", { name: "Parse" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Parse" })).toBeDisabled();
+    expect(screen.getByRole("group", { name: "Parsed content view mode" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Structured" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Structured" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Markdown" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "JSON" })).toBeDisabled();
   });
 
-  it("shows the document empty state and preserves route navigation", async () => {
-    const user = userEvent.setup();
-    renderScreen(<DocumentsScreen view="overview" />);
-
-    expect(screen.getByRole("heading", { name: "Document Overview" })).toBeInTheDocument();
-    const chooseFromOverview = screen.getByRole("link", { name: /Choose a PDF from Overview/ });
-    expect(chooseFromOverview).toHaveAttribute("href", "/");
-    expect(screen.getByText("No document is available yet.")).toBeInTheDocument();
-
-    await user.tab();
-    expect(screen.getByRole("link", { name: "Overview" })).toHaveFocus();
+  it("does not issue document detail fetches while Documents is empty", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("offline"));
+    vi.stubGlobal("fetch", fetchMock);
+    renderScreen(<DocumentsScreen />);
+    await waitFor(() => expect(screen.getByText("The document service is unavailable.")).toBeInTheDocument());
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/documents/"))).toBe(false);
   });
 });
 

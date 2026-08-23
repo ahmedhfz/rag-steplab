@@ -89,7 +89,7 @@ export function RetrievalScreen() {
   const needsEmbedding = mode !== "keyword";
   const canAsk = Boolean(question.trim() && activeDocument?.id && activeChunkRunId && (!needsEmbedding || activeEmbeddingRunId) && experimentStatus !== "processing");
   const labels = preferences.locale === "tr" ? {
-    target: "Hedef aşama", retrieval: "Retrieval", reranking: "Reranking", context: "Context construction", generation: "Generation",
+    target: "Hedef aşama", retrieval: "Retrieval", reranking: "Reranking", context: "Context construction", generation: "Generation", runExperiment: "Deneyi çalıştır", advanced: "Gelişmiş ayarlar",
     candidateCount: "Rerank aday sayısı", tokenBudget: "Context token bütçesi", temperature: "Temperature",
     reasonNoDocument: "Önce kalıcı bir doküman seçin ve chunking çalıştırın.",
     reasonNoEmbedding: "Dense ve hybrid arama için güncel embedding run gerekir. Keyword modu embedding olmadan çalışabilir.",
@@ -101,7 +101,7 @@ export function RetrievalScreen() {
     retrievalDescription: "Dense, keyword veya RRF hybrid adayları sonraki sıralama kararlarından ayrı tutulur.", rerankingDescription: "Opsiyonel reranking retrieval adaylarını alır ve sıra değişimlerini ayrı bir aşama olarak kaydeder.", contextDescription: "Adaylar final context Gemini'ye ulaşmadan önce açıkça seçilir veya elenir.", generationDescription: "Cevap yalnız final context'i kullanır; her citation kalıcı provenance ile doğrulanır.",
     reused: "Yeniden kullanıldı", executed: "Çalıştırıldı", source: "Kaynak", load: "Yükle", continue: "Devam et", runAgain: "Generation'ı tekrar çalıştır", exactReuse: "Aynı experiment yüklendi",
   } : {
-    target: "Target stage", retrieval: "Retrieval", reranking: "Reranking", context: "Context construction", generation: "Generation",
+    target: "Target stage", retrieval: "Retrieval", reranking: "Reranking", context: "Context construction", generation: "Generation", runExperiment: "Run experiment", advanced: "Advanced settings",
     candidateCount: "Rerank candidate count", tokenBudget: "Context token budget", temperature: "Temperature",
     reasonNoDocument: "Select a persisted document and complete chunking first.",
     reasonNoEmbedding: "Dense and hybrid search require a current embedding run. Keyword mode can run without embeddings.",
@@ -158,13 +158,15 @@ export function RetrievalScreen() {
             </AnimatePresence>
           </div>
           <Button aria-busy={experimentStatus === "processing"} aria-describedby={!canAsk ? "ask-disabled-reason" : undefined} className="h-12 gap-2 px-8" disabled={!canAsk} onClick={submit}>
-            <Play aria-hidden="true" className="size-4 fill-current" />{copy.retrieval.ask}
+            <Play aria-hidden="true" className="size-4 fill-current" />{labels.runExperiment}
           </Button>
         </div>
         {!canAsk ? <DisabledReason id="ask-disabled-reason">{!activeDocument || !activeChunkRunId ? labels.reasonNoDocument : needsEmbedding && !activeEmbeddingRunId ? labels.reasonNoEmbedding : copy.retrieval.askUnavailable}</DisabledReason> : null}
         <PipelineErrorMessage message={experimentError?.message} />
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+        <details className="mt-4 border px-4 py-3">
+          <summary className="cursor-pointer text-xs font-semibold">{labels.advanced}</summary>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
           <label className="text-xs font-medium" htmlFor="retrieval-top-k">{copy.retrieval.topK}<Select onValueChange={setTopK} value={topK}><SelectTrigger className="mt-2" id="retrieval-top-k"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="3">3</SelectItem><SelectItem value="5">5</SelectItem><SelectItem value="10">10</SelectItem></SelectContent></Select></label>
           <label className="text-xs font-medium" htmlFor="retrieval-mode">{copy.retrieval.mode}<Select onValueChange={(value) => setMode(value as RetrievalMode)} value={mode}><SelectTrigger className="mt-2" id="retrieval-mode"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="dense">{copy.retrieval.modes.dense}</SelectItem><SelectItem value="hybrid">{copy.retrieval.modes.hybrid}</SelectItem><SelectItem value="keyword">{copy.retrieval.modes.keyword}</SelectItem></SelectContent></Select></label>
           <label className="text-xs font-medium" htmlFor="target-stage">{labels.target}<Select onValueChange={(value) => setTargetStage(value as ExperimentTargetStage)} value={targetStage}><SelectTrigger className="mt-2" id="target-stage"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="retrieval">{labels.retrieval}</SelectItem><SelectItem value="reranking">{labels.reranking}</SelectItem><SelectItem value="context">{labels.context}</SelectItem><SelectItem value="generation">{labels.generation}</SelectItem></SelectContent></Select></label>
@@ -172,9 +174,10 @@ export function RetrievalScreen() {
           <label className="text-xs font-medium" htmlFor="candidate-count">{labels.candidateCount}<Input className="mt-2" disabled={!rerankerEnabled} id="candidate-count" max={20} min={1} onChange={(event) => setCandidateCount(Number(event.target.value))} type="number" value={candidateCount} /></label>
           <label className="text-xs font-medium" htmlFor="context-budget">{labels.tokenBudget}<Input className="mt-2" id="context-budget" max={12000} min={256} onChange={(event) => setTokenBudget(Number(event.target.value))} type="number" value={tokenBudget} /></label>
           <label className="text-xs font-medium" htmlFor="generation-temperature">{labels.temperature}<Input className="mt-2" id="generation-temperature" max={2} min={0} onChange={(event) => setTemperature(Number(event.target.value))} step="0.1" type="number" value={temperature} /></label>
-        </div>
-        <div className="mt-3 flex justify-end"><Button aria-describedby={!hasChanges ? "retrieval-reset-disabled-reason" : undefined} className="gap-2" disabled={!hasChanges} onClick={reset} size="sm" variant="ghost"><RotateCcw aria-hidden="true" className="size-4" />{copy.retrieval.reset}</Button></div>
-        {!hasChanges ? <DisabledReason id="retrieval-reset-disabled-reason">{copy.retrieval.nothingToReset}</DisabledReason> : null}
+          </div>
+          <div className="mt-3 flex justify-end"><Button aria-describedby={!hasChanges ? "retrieval-reset-disabled-reason" : undefined} className="gap-2" disabled={!hasChanges} onClick={reset} size="sm" variant="ghost"><RotateCcw aria-hidden="true" className="size-4" />{copy.retrieval.reset}</Button></div>
+          {!hasChanges ? <DisabledReason id="retrieval-reset-disabled-reason">{copy.retrieval.nothingToReset}</DisabledReason> : null}
+        </details>
       </section>
 
       <StageSection description={labels.retrievalDescription} locale={preferences.locale} status={results?.retrieval ? "completed" : experimentStatus} title={labels.retrieval}>

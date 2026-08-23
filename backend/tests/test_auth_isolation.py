@@ -109,3 +109,15 @@ def test_user_scope_hides_other_users_document_by_list_and_id():
     direct = client.get(f"/documents/{document_b['id']}")
     assert direct.status_code == 404
     assert direct.json()["error"]["code"] == "document_not_found"
+
+
+def test_upload_sha_reuse_is_scoped_to_authenticated_owner():
+    app.dependency_overrides[get_current_user] = lambda: type("User", (), {"id": USER_A})()
+    first = client.post("/documents", files={"file": ("shared.pdf", b"%PDF-1.7", "application/pdf")})
+    assert first.status_code == 201
+
+    app.dependency_overrides[get_current_user] = lambda: type("User", (), {"id": USER_B})()
+    second = client.post("/documents", files={"file": ("shared.pdf", b"%PDF-1.7", "application/pdf")})
+    assert second.status_code == 201
+    assert second.json()["reusedDocument"] is False
+    assert second.json()["document"]["id"] != first.json()["document"]["id"]
