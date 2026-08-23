@@ -111,6 +111,23 @@ def test_user_scope_hides_other_users_document_by_list_and_id():
     assert direct.json()["error"]["code"] == "document_not_found"
 
 
+def test_private_source_preview_respects_document_owner_scope():
+    document_a = _document(USER_A, "a.pdf")
+    document_b = _document(USER_B, "b.pdf")
+
+    app.dependency_overrides[get_current_user] = lambda: type("User", (), {"id": USER_A})()
+    own_descriptor = client.get(f"/documents/{document_a['id']}/source-url")
+    assert own_descriptor.status_code == 200
+    assert own_descriptor.json()["sourceUrl"] == f"/documents/{document_a['id']}/source"
+
+    app.dependency_overrides[get_current_user] = lambda: type("User", (), {"id": USER_B})()
+    foreign_descriptor = client.get(f"/documents/{document_a['id']}/source-url")
+    foreign_source = client.get(f"/documents/{document_a['id']}/source")
+    assert foreign_descriptor.status_code == 404
+    assert foreign_source.status_code == 404
+    assert client.get(f"/documents/{document_b['id']}/source-url").status_code == 200
+
+
 def test_upload_sha_reuse_is_scoped_to_authenticated_owner():
     app.dependency_overrides[get_current_user] = lambda: type("User", (), {"id": USER_A})()
     first = client.post("/documents", files={"file": ("shared.pdf", b"%PDF-1.7", "application/pdf")})

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePreferences } from "@/components/preferences-provider";
 import { getSupabaseBrowserClient, supabaseAuthErrorMessage } from "@/lib/supabase/browser";
+import type { AppLocale } from "@/lib/copy";
 import { cn } from "@/lib/utils";
 
 function StepLabMark({ className }: { className?: string }) {
@@ -33,38 +34,45 @@ function GoogleMark() {
 
 type Mode = "signin" | "signup" | "forgot";
 
-const AUTH_ERROR_MESSAGES: Record<string, string> = {
-  confirmation_invalid_or_expired: "Doğrulama bağlantısı geçersiz veya süresi dolmuş.",
-  recovery_invalid_or_expired: "Şifre yenileme bağlantısı geçersiz veya süresi dolmuş.",
-  oauth_failed: "Google ile giriş tamamlanamadı. Lütfen tekrar deneyin.",
+const AUTH_ERROR_MESSAGES: Record<AppLocale, Record<string, string>> = {
+  tr: {
+    confirmation_invalid_or_expired: "Doğrulama bağlantısı geçersiz veya süresi dolmuş.",
+    recovery_invalid_or_expired: "Şifre yenileme bağlantısı geçersiz veya süresi dolmuş.",
+    oauth_failed: "Google ile giriş tamamlanamadı. Lütfen tekrar deneyin.",
+  },
+  en: {
+    confirmation_invalid_or_expired: "The confirmation link is invalid or expired.",
+    recovery_invalid_or_expired: "The password reset link is invalid or expired.",
+    oauth_failed: "Google sign-in could not be completed. Please try again.",
+  },
 };
 
 const subscribeToAuthError = () => () => undefined;
 
 function getAuthErrorMessage() {
   if (typeof window === "undefined") return "";
-  const code = new URLSearchParams(window.location.search).get("auth_error");
-  return AUTH_ERROR_MESSAGES[code ?? ""] ?? "";
+  return new URLSearchParams(window.location.search).get("auth_error") ?? "";
 }
 
 function getServerAuthErrorMessage() {
   return "";
 }
 
-function friendlyAuthError(error: unknown) {
+function friendlyAuthError(error: unknown, locale: AppLocale) {
   const message = error instanceof Error ? error.message.toLowerCase() : "";
-  if (message.includes("invalid login credentials")) return "E-posta veya şifre hatalı.";
-  if (message.includes("user already registered") || message.includes("already been registered")) return "Bu e-posta ile kayıtlı bir hesap zaten var.";
-  if (message.includes("email not confirmed")) return "Devam etmek için e-posta adresinizi doğrulayın.";
-  if (message.includes("password")) return "Şifre gereksinimleri karşılanmıyor.";
-  if (message.includes("rate limit") || message.includes("too many")) return "Çok fazla deneme yapıldı. Biraz sonra tekrar deneyin.";
+  const tr = locale === "tr";
+  if (message.includes("invalid login credentials")) return tr ? "E-posta veya şifre hatalı." : "The email or password is incorrect.";
+  if (message.includes("user already registered") || message.includes("already been registered")) return tr ? "Bu e-posta ile kayıtlı bir hesap zaten var." : "An account with this email already exists.";
+  if (message.includes("email not confirmed")) return tr ? "Devam etmek için e-posta adresinizi doğrulayın." : "Confirm your email address before continuing.";
+  if (message.includes("password")) return tr ? "Şifre gereksinimleri karşılanmıyor." : "The password does not meet the requirements.";
+  if (message.includes("rate limit") || message.includes("too many")) return tr ? "Çok fazla deneme yapıldı. Biraz sonra tekrar deneyin." : "Too many attempts. Please try again shortly.";
   return supabaseAuthErrorMessage(error);
 }
 
 export function LoginScreen() {
   const { preferences, setLocale } = usePreferences();
   const router = useRouter();
-  const urlStatusMessage = useSyncExternalStore(subscribeToAuthError, getAuthErrorMessage, getServerAuthErrorMessage);
+  const urlAuthErrorCode = useSyncExternalStore(subscribeToAuthError, getAuthErrorMessage, getServerAuthErrorMessage);
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -91,16 +99,16 @@ export function LoginScreen() {
             redirectTo: `${window.location.origin}/auth/confirm?next=/auth/reset-password`,
           });
         if (error) throw error;
-        setStatusMessage("Şifre yenileme bağlantısı e-posta adresinize gönderildi.");
+        setStatusMessage(preferences.locale === "tr" ? "Şifre yenileme bağlantısı e-posta adresinize gönderildi." : "A password reset link was sent to your email.");
         return;
       }
       if (mode === "signup") {
         if (password.length < 10) {
-          setStatusMessage("Şifreniz en az 10 karakter olmalı.");
+          setStatusMessage(preferences.locale === "tr" ? "Şifreniz en az 10 karakter olmalı." : "Your password must be at least 10 characters.");
           return;
         }
         if (password !== confirmation) {
-          setStatusMessage("Şifreler eşleşmiyor.");
+          setStatusMessage(preferences.locale === "tr" ? "Şifreler eşleşmiyor." : "The passwords do not match.");
           return;
         }
         const { data, error } = await supabase.auth.signUp({
@@ -110,26 +118,27 @@ export function LoginScreen() {
         });
         if (error) throw error;
         if (data.session) router.replace("/");
-        else setStatusMessage("Kayıt tamamlandı. Devam etmek için e-posta adresinizi doğrulayın.");
+        else setStatusMessage(preferences.locale === "tr" ? "Kayıt tamamlandı. Devam etmek için e-posta adresinizi doğrulayın." : "Account created. Confirm your email address before continuing.");
         return;
       }
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
       router.replace("/");
     } catch (error) {
-      setStatusMessage(friendlyAuthError(error));
+      setStatusMessage(friendlyAuthError(error, preferences.locale));
     } finally {
       setBusy(false);
     }
   }
 
   const labels = preferences.locale === "tr" ? {
-    titleSignIn: "Hesabınıza giriş yapın", titleSignUp: "Hesap oluşturun", titleForgot: "Şifrenizi yenileyin", submitSignIn: "Giriş yap", submitSignUp: "Kayıt ol", submitForgot: "Bağlantı gönder", wait: "Bekleyin…", email: "E-posta", emailPlaceholder: "ornek@firma.com", password: "Şifre", showPassword: "Şifreyi göster", hidePassword: "Şifreyi gizle", confirm: "Şifre tekrarı", google: "Google ile devam et", forgot: "Şifremi unuttum", back: "Giriş ekranına dön", noAccount: "Hesabın yok mu?", home: "RAG StepLab ana sayfa", form: "Giriş formu", footer: "RAG öğrenme laboratuvarı", backend: "Backend: yapılandırılmış RAG API", or: "veya", language: "Dil",
+    titleSignIn: "Hesabınıza giriş yapın", titleSignUp: "Hesap oluşturun", titleForgot: "Şifrenizi yenileyin", submitSignIn: "Giriş yap", submitSignUp: "Kayıt ol", submitForgot: "Bağlantı gönder", wait: "Bekleyin…", email: "E-posta", emailPlaceholder: "ornek@firma.com", password: "Şifre", showPassword: "Şifreyi göster", hidePassword: "Şifreyi gizle", confirm: "Şifre tekrarı", google: "Google ile devam et", forgot: "Şifremi unuttum", back: "Giriş ekranına dön", noAccount: "Hesabın yok mu?", home: "RAG StepLab ana sayfa", form: "Giriş formu", footer: "RAG öğrenme laboratuvarı", backend: "RAG öğrenme pipeline'ı", or: "veya", language: "Dil",
   } : {
-    titleSignIn: "Sign in to your account", titleSignUp: "Create an account", titleForgot: "Reset your password", submitSignIn: "Sign in", submitSignUp: "Sign up", submitForgot: "Send reset link", wait: "Please wait…", email: "Email", emailPlaceholder: "name@example.com", password: "Password", showPassword: "Show password", hidePassword: "Hide password", confirm: "Confirm password", google: "Continue with Google", forgot: "Forgot password?", back: "Back to sign in", noAccount: "Don't have an account?", home: "RAG StepLab home", form: "Sign-in form", footer: "RAG learning laboratory", backend: "Backend: configured RAG API", or: "or", language: "Language",
+    titleSignIn: "Sign in to your account", titleSignUp: "Create an account", titleForgot: "Reset your password", submitSignIn: "Sign in", submitSignUp: "Sign up", submitForgot: "Send reset link", wait: "Please wait…", email: "Email", emailPlaceholder: "name@example.com", password: "Password", showPassword: "Show password", hidePassword: "Hide password", confirm: "Confirm password", google: "Continue with Google", forgot: "Forgot password?", back: "Back to sign in", noAccount: "Don't have an account?", home: "RAG StepLab home", form: "Sign-in form", footer: "RAG learning laboratory", backend: "RAG learning pipeline", or: "or", language: "Language",
   };
   const title = mode === "signup" ? labels.titleSignUp : mode === "forgot" ? labels.titleForgot : labels.titleSignIn;
   const submitLabel = mode === "signup" ? labels.submitSignUp : mode === "forgot" ? labels.submitForgot : labels.submitSignIn;
+  const urlStatusMessage = AUTH_ERROR_MESSAGES[preferences.locale][urlAuthErrorCode] ?? "";
 
   return (
     <div className="flex min-h-screen flex-col bg-[#fbfcfe] text-[#172033]">

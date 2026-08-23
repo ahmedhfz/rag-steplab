@@ -1767,7 +1767,49 @@ def _deterministic_groundedness(experiment: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def create_evaluation(request: EvaluationRunRequest, *, repository: Repository | None = None) -> dict[str, Any]:
+def queue_evaluation(request: EvaluationRunRequest, *, repository: Repository | None = None) -> dict[str, Any]:
+    """Persist a real queued evaluation before case execution begins."""
+    repository = repository or get_repository()
+    _require_write(repository, get_settings())
+    dataset = repository.get_dataset_row(request.dataset_id)
+    if dataset is None:
+        raise ApiProblem(404, "dataset_not_found", "The evaluation dataset was not found.")
+    _document_or_404(repository, dataset["document_id"])
+    evaluation_id = new_id()
+    return repository.save_evaluation({
+        "id": evaluation_id,
+        "dataset_id": request.dataset_id,
+        "config": _safe_model_dump(request),
+        "child_experiment_ids": [],
+        "results": {"aggregate": {"caseCount": 0}, "caseResults": []},
+        "status": "queued",
+        "started_at": None,
+        "completed_at": None,
+        "duration_ms": None,
+    })
+
+
+def run_queued_evaluation(request: EvaluationRunRequest, evaluation_id: str, *, repository: Repository | None = None) -> dict[str, Any] | None:
+    repository = repository or get_repository()
+    try:
+        return create_evaluation(request, repository=repository, evaluation_id=evaluation_id)
+    except ApiProblem as exc:
+        completed_at = now_utc()
+        repository.update_evaluation(evaluation_id, {
+            "status": "failed", "completed_at": completed_at,
+            "error_code": exc.code, "error_message": exc.message,
+        })
+        return None
+    except Exception:
+        completed_at = now_utc()
+        repository.update_evaluation(evaluation_id, {
+            "status": "failed", "completed_at": completed_at,
+            "error_code": "evaluation_failed", "error_message": "The evaluation failed before completing all cases.",
+        })
+        return None
+
+
+def create_evaluation(request: EvaluationRunRequest, *, repository: Repository | None = None, evaluation_id: str | None = None) -> dict[str, Any]:
     repository = repository or get_repository()
     _require_write(repository, get_settings())
     dataset = repository.get_dataset_row(request.dataset_id)
@@ -1807,19 +1849,18 @@ def create_evaluation(request: EvaluationRunRequest, *, repository: Repository |
     judge_service = GeminiService(get_settings()) if request.judge else None
     case_results: list[dict[str, Any]] = []
     child_ids: list[str] = []
-    evaluation_id = new_id()
     started_at = now_utc()
-    repository.save_evaluation({
-        "id": evaluation_id,
-        "dataset_id": request.dataset_id,
-        "config": _safe_model_dump(request),
-        "child_experiment_ids": [],
-        "results": {"aggregate": {"caseCount": 0}, "caseResults": []},
-        "status": "running",
-        "started_at": started_at,
-        "completed_at": None,
-        "duration_ms": None,
-    })
+    evaluation_id = evaluation_id or new_id()
+    existing_evaluation = repository.get_evaluation_row(evaluation_id)
+    if existing_evaluation is None:
+        repository.save_evaluation({
+            "id": evaluation_id, "dataset_id": request.dataset_id,
+            "config": _safe_model_dump(request), "child_experiment_ids": [],
+            "results": {"aggregate": {"caseCount": 0}, "caseResults": []},
+            "status": "running", "started_at": started_at, "completed_at": None, "duration_ms": None,
+        })
+    else:
+        repository.update_evaluation(evaluation_id, {"status": "running", "started_at": started_at})
     for case in dataset["cases"][:10]:
         exp_request = ExperimentCreateRequest(
             document_id=dataset["document_id"],
@@ -1887,6 +1928,15 @@ def create_evaluation(request: EvaluationRunRequest, *, repository: Repository |
             }
         case_results.append({
             "question": case["question"],
+            "expectedElementIds": sorted(expected),
+            "retrievedElementIds": sorted({
+                source
+                for result in retrieval_results
+                for source in result.get("sourceElementIds", [])
+            }),
+            "referenceAnswer": case.get("reference_answer"),
+            "answer": experiment["stage_results"].get("generation", {}).get("answer"),
+            "citations": experiment["stage_results"].get("generation", {}).get("citations", []),
             "hitAtK": 1.0 if relevant_ranks else 0.0,
             "precisionAtK": len(relevant_ranks) / max(1, len(retrieval_results)),
             "recallAtK": len({source for result in retrieval_results for source in set(result.get("sourceElementIds", [])) & expected}) / denominator,

@@ -93,7 +93,7 @@ export function SummaryGrid({ copy, result }: { copy: AppCopy["documents"]; resu
 export function DocumentOverviewTab({ copy, selectedFile, persistedDocument, result, locale }: { copy: AppCopy["documents"]; selectedFile: File | null; persistedDocument: PersistedDocument | null; result: DocumentParseResponse | null; locale: "en" | "tr" }) {
   const fileName = selectedFile?.name ?? persistedDocument?.fileName;
   const sizeBytes = selectedFile?.size ?? persistedDocument?.sizeBytes;
-  const pageCount = result?.document.pageCount ?? persistedDocument?.pageCount;
+  const pageCount = result?.document.pageCount ?? (persistedDocument?.activeParseRunId ? persistedDocument.pageCount : undefined);
   return (
     <div className="grid border-t lg:grid-cols-2">
       <section className="p-4 sm:p-7 lg:border-r">
@@ -273,6 +273,7 @@ export function ParsedContentTab({ copy, result }: { copy: AppCopy["documents"];
 
 export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
   const { preferences } = usePreferences();
+  const { uploadNotice } = useDocumentPipeline();
   const copy = UI_COPY[preferences.locale];
   const effectiveView = view ?? "overview";
   const current = copy.documents.views[effectiveView];
@@ -301,6 +302,7 @@ export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
       </nav> : null}
 
       {!isLegacyView ? <section className="border-b px-4 py-5 sm:px-7"><DocumentUploadPanel /></section> : null}
+      {!isLegacyView && uploadNotice ? <p aria-live="polite" className={cn("border-b px-4 py-3 text-sm sm:px-7", uploadNotice === "reused" ? "bg-sky-50 text-sky-900" : "bg-emerald-50 text-emerald-900")} role="status">{uploadNotice === "reused" ? (preferences.locale === "tr" ? "Mevcut doküman yeniden kullanıldı; duplicate oluşturulmadı. Parse ekranından devam edebilirsiniz." : "Existing document reused; no duplicate was created. Continue from Parse.") : (preferences.locale === "tr" ? "Doküman eklendi; parse etmeye hazır." : "Document added; ready to parse.")} <Link className="ml-1 font-medium underline" href="/parse">{preferences.locale === "tr" ? "Parse'a devam et" : "Continue to Parse"}</Link></p> : null}
       {effectiveView === "overview" ? <DocumentLibrary locale={preferences.locale} /> : null}
     </div>
   );

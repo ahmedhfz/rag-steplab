@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -98,5 +98,26 @@ describe("Phase 6B document ownership", () => {
     await user.click(screen.getByRole("button", { name: "Save document" }));
     await waitFor(() => expect(uploadAttempts).toBe(2));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add PDF" })).not.toBeInTheDocument());
+  });
+
+  it("accepts a valid PDF through the real drop zone", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/documents") && init?.method === "POST") {
+        return Promise.resolve(new Response(JSON.stringify({ document: { id: "document-drop", fileName: "drop.pdf", mediaType: "application/pdf", sizeBytes: 8, pageCount: 0, sha256: "drop", activeParseRunId: null, activeChunkRunId: null, activeEmbeddingRunId: null, createdAt: null, updatedAt: null }, reusedDocument: false }), { status: 201, headers: { "Content-Type": "application/json" } }));
+      }
+      const payload = url.endsWith("/capabilities") ? capabilities : url.endsWith("/documents/document-drop/summary") ? { id: "document-drop", fileName: "drop.pdf", mediaType: "application/pdf", sizeBytes: 8, pageCount: 0, activeParseRunId: null, activeChunkRunId: null, activeEmbeddingRunId: null, parseRuns: [], chunkRuns: [], embeddingRuns: [], experiments: [], evaluationDatasets: [] } : { items: [] };
+      return Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithPipeline(<DocumentsScreen />);
+    await user.click(screen.getByRole("button", { name: "Add PDF" }));
+    const file = new File(["%PDF-1.4"], "drop.pdf", { type: "application/pdf" });
+    const dropEvent = new Event("drop", { bubbles: true });
+    Object.defineProperty(dropEvent, "dataTransfer", { value: { files: [file] } });
+    fireEvent(screen.getByTestId("pdf-drop-zone"), dropEvent);
+    expect(await screen.findByText("drop.pdf")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save document" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Document added");
   });
 });

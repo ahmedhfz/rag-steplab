@@ -1,6 +1,6 @@
 begin;
 
-select plan(44);
+select plan(47);
 
 select ok(to_regnamespace('rag_lab') is not null, 'rag_lab schema exists');
 
@@ -311,6 +311,23 @@ select ok(
   and has_table_privilege('rag_steplab_app', 'rag_lab.document_pipelines', 'DELETE')
   and not has_table_privilege('authenticated', 'rag_lab.document_pipelines', 'SELECT'),
   'only the private runtime role can access document pipelines'
+);
+
+select ok(
+  (select count(*) from information_schema.columns where table_schema = 'rag_lab' and column_name = 'run_number' and table_name in ('parse_runs', 'chunk_runs', 'embedding_runs')) = 3,
+  'pipeline artifacts expose stable run numbers'
+);
+
+select ok(
+  to_regclass('rag_lab.uq_parse_runs_document_run_number') is not null
+  and to_regclass('rag_lab.uq_chunk_runs_document_run_number') is not null
+  and to_regclass('rag_lab.uq_embedding_runs_document_run_number') is not null,
+  'run numbers are unique per document and stage'
+);
+
+select ok(
+  (select count(*) from information_schema.columns where table_schema = 'rag_lab' and table_name = 'documents' and column_name in ('parse_run_counter', 'chunk_run_counter', 'embedding_run_counter')) = 3,
+  'document-owned counters prevent run number reuse after deletion'
 );
 
 select * from finish();

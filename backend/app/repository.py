@@ -105,6 +105,7 @@ def _run_summary(row: dict[str, Any], *, stale: bool = False) -> RunSummary:
         error_message = error_message or "The run was interrupted before completion."
     return RunSummary(
         id=row["id"],
+        run_number=row.get("run_number"),
         created_at=row.get("created_at"),
         status=status,
         progress=(100 if status == "completed" else (row.get("execution_metadata") or {}).get("progress")),
@@ -127,6 +128,7 @@ def _summary_parse_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "kind": "parse",
         "id": row["id"],
+        "run_number": row.get("run_number"),
         "document_id": row.get("document_id"),
         "parser_name": row.get("parser_name"),
         "parser_version": row.get("parser_version"),
@@ -151,6 +153,7 @@ def _summary_chunk_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "kind": "chunk",
         "id": row["id"],
+        "run_number": row.get("run_number"),
         "document_id": row.get("document_id"),
         "parse_run_id": row.get("parse_run_id"),
         "strategy": row.get("strategy"),
@@ -170,6 +173,7 @@ def _summary_embedding_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "kind": "embedding",
         "id": row["id"],
+        "run_number": row.get("run_number"),
         "document_id": row.get("document_id"),
         "chunk_run_id": row.get("chunk_run_id"),
         "model": row.get("model"),
@@ -579,6 +583,13 @@ class InMemoryRepository(Repository):
         self.experiments: dict[str, dict[str, Any]] = {}
         self.datasets: dict[str, dict[str, Any]] = {}
         self.evaluations: dict[str, dict[str, Any]] = {}
+        self._run_number_counters: dict[tuple[str, str], int] = {}
+
+    def _next_run_number(self, document_id: str, kind: str) -> int:
+        key = (document_id, kind)
+        value = self._run_number_counters.get(key, 0) + 1
+        self._run_number_counters[key] = value
+        return value
 
     def create_document(self, metadata, storage_bucket, storage_path, sha256):
         document_id = new_id()
@@ -636,6 +647,7 @@ class InMemoryRepository(Repository):
             now = now_utc()
             row = {
                 "id": identifier,
+                "run_number": self._next_run_number(document_id, "parse"),
                 "document_id": document_id,
                 "parser_name": "docling",
                 "parser_version": parser_version,
@@ -955,6 +967,7 @@ class InMemoryRepository(Repository):
             started_at = now_utc()
             row = {
                 "id": identifier,
+                "run_number": self._next_run_number(document_id, "chunk"),
                 "document_id": document_id,
                 "parse_run_id": parse_run_id,
                 "strategy": strategy,
@@ -1094,6 +1107,7 @@ class InMemoryRepository(Repository):
             started_at = now_utc()
             row = {
                 "id": identifier,
+                "run_number": self._next_run_number(document_id, "embedding"),
                 "document_id": document_id,
                 "chunk_run_id": chunk_run_id,
                 "model": model,
@@ -1632,6 +1646,7 @@ class SqlAlchemyRepository(Repository):
     def _parse_dict(row: ParseRun) -> dict[str, Any]:
         return {
             "id": row.id,
+            "run_number": row.run_number,
             "document_id": row.document_id,
             "parser_name": row.parser_name,
             "parser_version": row.parser_version,
@@ -1806,6 +1821,7 @@ class SqlAlchemyRepository(Repository):
     def _summary_parse_rows(self, session, document_id, owner_user_id=None):
         query = select(
             ParseRun.id,
+            ParseRun.run_number,
             ParseRun.document_id,
             ParseRun.parser_name,
             ParseRun.parser_version,
@@ -1829,6 +1845,7 @@ class SqlAlchemyRepository(Repository):
     def _summary_chunk_rows(self, session, document_id, owner_user_id=None):
         query = select(
             ChunkRun.id,
+            ChunkRun.run_number,
             ChunkRun.document_id,
             ChunkRun.parse_run_id,
             ChunkRun.strategy,
@@ -1849,6 +1866,7 @@ class SqlAlchemyRepository(Repository):
     def _summary_embedding_rows(self, session, document_id, owner_user_id=None):
         query = select(
             EmbeddingRun.id,
+            EmbeddingRun.run_number,
             EmbeddingRun.document_id,
             EmbeddingRun.chunk_run_id,
             EmbeddingRun.model,
@@ -2298,6 +2316,7 @@ class SqlAlchemyRepository(Repository):
     def _chunk_dict_with_chunks(self, row: ChunkRun, chunks: list[Chunk]) -> dict[str, Any]:
         return {
             "id": row.id,
+            "run_number": row.run_number,
             "document_id": row.document_id,
             "parse_run_id": row.parse_run_id,
             "strategy": row.strategy,
@@ -2466,6 +2485,7 @@ class SqlAlchemyRepository(Repository):
     def _embedding_dict(row: EmbeddingRun) -> dict[str, Any]:
         return {
             "id": row.id,
+            "run_number": row.run_number,
             "document_id": row.document_id,
             "chunk_run_id": row.chunk_run_id,
             "model": row.model,

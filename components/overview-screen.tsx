@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { UI_COPY } from "@/lib/copy";
+import { blocker, type BlockerCode } from "@/lib/blockers";
 import type { ExperimentSummary } from "@/lib/rag-api-types";
 import type { PipelineStepDefinition, PipelineStepKey, PipelineStepState } from "@/lib/rag-ui-types";
 
@@ -24,12 +25,25 @@ const pipelineSteps: PipelineStepDefinition[] = [
   { key: "generate", icon: "generate" }, { key: "evaluate", icon: "evaluate" },
 ];
 
+const pipelineGroups: Array<{ key: "knowledge" | "query" | "quality"; steps: PipelineStepKey[] }> = [
+  { key: "knowledge", steps: ["document", "parse", "chunk", "embed"] },
+  { key: "query", steps: ["retrieve", "rerank", "context", "generate"] },
+  { key: "quality", steps: ["evaluate"] },
+];
+
+const stageHref: Record<PipelineStepKey, string> = {
+  document: "/documents", parse: "/parse", chunk: "/chunking", embed: "/embeddings", index: "/embeddings",
+  retrieve: "/playground", rerank: "/playground", context: "/playground", generate: "/playground", evaluate: "/evaluation",
+};
+
 const pipelineIcons: Record<PipelineStepKey, LucideIcon> = {
   document: FileText, parse: ListFilter, chunk: Grid2X2, embed: Braces, index: Database,
   retrieve: Search, rerank: ArrowUpDown, context: Blocks, generate: CircleEllipsis, evaluate: BarChart3,
 };
 
-function runNumber(runs: Array<{ id: string; createdAt?: string | null }>, id: string | null) {
+function runNumber(runs: Array<{ id: string; runNumber?: number | null; createdAt?: string | null }>, id: string | null) {
+  const persisted = id ? runs.find((run) => run.id === id)?.runNumber : null;
+  if (persisted) return persisted;
   const ordered = [...runs].sort((left, right) => {
     const byDate = String(left.createdAt ?? "").localeCompare(String(right.createdAt ?? ""));
     return byDate || left.id.localeCompare(right.id);
@@ -109,6 +123,19 @@ export function OverviewScreen() {
   const chunkNumber = runNumber(activeDocument?.chunkRuns ?? [], selectedChunkRunId);
   const embeddingNumber = runNumber(activeDocument?.embeddingRuns ?? [], selectedEmbeddingRunId);
   const continueHref = !selectedParseRunId ? "/parse" : !selectedChunkRunId ? "/chunking" : !selectedEmbeddingRunId ? "/embeddings" : "/playground";
+  const groupLabels = preferences.locale === "tr"
+    ? { knowledge: "Bilgi hazırlama / indexing", query: "Sorgu pipeline'ı", quality: "Kalite" }
+    : { knowledge: "Knowledge preparation / indexing", query: "Query pipeline", quality: "Quality" };
+
+  function lockedReason(step: PipelineStepKey): string | null {
+    if (pipelineState[step] !== "Locked") return null;
+    let code: BlockerCode = "missing_experiment";
+    if (!hasDocument) code = "missing_document";
+    else if (step === "chunk" && !selectedParseRunId) code = "missing_parse";
+    else if ((step === "embed" || step === "index" || step === "retrieve") && !selectedChunkRunId) code = "missing_chunk";
+    else if (step === "evaluate" && matchingDatasetIds.size === 0) code = "missing_dataset";
+    return blocker(preferences.locale, code).message;
+  }
 
   async function savePipelineName() {
     const name = pipelineName.trim();
@@ -124,24 +151,21 @@ export function OverviewScreen() {
       <section className="px-4 py-7 sm:px-8 sm:py-9">
         <h1 className="text-[22px] font-semibold tracking-[-0.025em]">{copy.overview.title}</h1>
         <p className="mt-2 text-sm text-slate-600">{labels.description}</p>
-        <div className="mt-7 grid gap-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400 sm:grid-cols-3"><span className="border-l-2 border-slate-300 pl-2">{preferences.locale === "tr" ? "Bilgi hazırlama / indexing" : "Knowledge preparation / indexing"}</span><span className="border-l-2 border-sky-300 pl-2">{preferences.locale === "tr" ? "Sorgu pipeline'ı" : "Query pipeline"}</span><span className="border-l-2 border-emerald-300 pl-2">{preferences.locale === "tr" ? "Kalite" : "Quality"}</span></div>
-        <div className="technical-scrollbar mt-3 overflow-x-auto pb-3">
-          <div className="flex min-w-[980px] items-start">
-            {pipelineSteps.map((step, index) => {
-              const Icon = pipelineIcons[step.icon];
-              return (
-                <motion.div animate={{ opacity: 1, transform: "translateY(0px)" }} className="flex flex-1 items-center" initial={{ opacity: 0, transform: "translateY(5px)" }} key={step.key} transition={{ duration: 0.18, delay: index * 0.025, ease: "easeOut" }}>
-                  <div className="flex min-w-[96px] flex-col items-center text-center">
-                    <span className="grid size-8 place-items-center rounded-full border bg-white text-xs font-semibold">{index + 1}</span>
-                    <Icon aria-hidden="true" className="mt-5 size-8 stroke-[1.5] text-slate-700" />
-                    <span className="mt-3 text-sm font-medium">{copy.overview.steps[step.key]}</span>
-                    <span className="mt-4"><StatusIndicator state={pipelineState[step.key]} /></span>
-                  </div>
-                  {index < pipelineSteps.length - 1 && <ArrowRight aria-hidden="true" className="mx-1 mt-[68px] size-4 shrink-0 text-slate-400" />}
-                </motion.div>
-              );
-            })}
-          </div>
+        <div className="mt-7 grid gap-4 lg:grid-cols-[1fr_1fr_0.42fr]">
+          {pipelineGroups.map((group, groupIndex) => (
+            <section className="border p-3" key={group.key}>
+              <h2 className="border-l-2 border-sky-300 pl-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">{groupLabels[group.key]}</h2>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+                {group.steps.map((stepKey, stepIndex) => {
+                  const step = pipelineSteps.find((item) => item.key === stepKey)!;
+                  const Icon = pipelineIcons[step.icon];
+                  const reason = lockedReason(step.key);
+                  const content = <><span className="grid size-8 shrink-0 place-items-center rounded-full border bg-white text-xs font-semibold">{pipelineSteps.findIndex((item) => item.key === step.key) + 1}</span><span className="min-w-0 flex-1"><span className="flex items-center gap-2 text-sm font-medium"><Icon aria-hidden="true" className="size-4 stroke-[1.5]" />{copy.overview.steps[step.key]}</span><span className="mt-1 block"><StatusIndicator state={pipelineState[step.key]} /></span>{reason ? <span className="mt-2 block text-[10px] leading-4 text-amber-800">{reason}</span> : null}</span></>;
+                  return <motion.div animate={{ opacity: 1, transform: "translateY(0px)" }} initial={{ opacity: 0, transform: "translateY(4px)" }} key={step.key} transition={{ duration: 0.18, delay: (groupIndex * 4 + stepIndex) * 0.02, ease: "easeOut" }}>{reason ? <div aria-disabled="true" className="flex min-h-20 items-start gap-3 border bg-slate-50 p-3">{content}</div> : <Link className="flex min-h-20 items-start gap-3 border p-3 transition-colors hover:border-sky-300 hover:bg-sky-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500" href={stageHref[step.key]}>{content}</Link>}</motion.div>;
+                })}
+              </div>
+            </section>
+          ))}
         </div>
       </section>
 

@@ -181,6 +181,8 @@ function normalizeRun(value: unknown): RunSummary {
   const normalizedError = normalizeProblem(payload.error) ?? (errorCode && errorMessage ? { code: errorCode, message: errorMessage } : null);
   return {
     id: requiredString(payload.id, "run id"),
+    runNumber: optionalNumber(field(payload, "runNumber", "run_number")),
+    phase: optionalString(field(payload, "phase", "phase")) ?? optionalString(runMetadata.phase),
     createdAt: optionalString(field(payload, "createdAt", "created_at")),
     status,
     progress: progress ?? (status === "running" ? 8 : status === "queued" ? 0 : null),
@@ -1028,6 +1030,34 @@ export async function createEvaluationRun(input: {
   return normalizeEvaluationRun(await request("/evaluation/runs", { method: "POST", body: JSON.stringify(input), signal }));
 }
 
+export async function createEvaluationRunAsync(
+  input: Parameters<typeof createEvaluationRun>[0],
+  signal?: AbortSignal,
+  onProgress?: (run: EvaluationRun) => void,
+): Promise<EvaluationRun> {
+  const run = normalizeEvaluationRun(await request("/evaluation/runs?async=true", { method: "POST", body: JSON.stringify(input), signal }));
+  onProgress?.(run);
+  return waitForEvaluationRun(run.id, signal, onProgress, run);
+}
+
+export async function waitForEvaluationRun(
+  runId: string,
+  signal?: AbortSignal,
+  onProgress?: (run: EvaluationRun) => void,
+  initialRun?: EvaluationRun,
+): Promise<EvaluationRun> {
+  let run = initialRun ?? await getEvaluationRun(runId, signal);
+  while (run.status === "queued" || run.status === "running") {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(resolve, 650);
+      signal?.addEventListener("abort", () => { window.clearTimeout(timeout); reject(new DOMException("Aborted", "AbortError")); }, { once: true });
+    });
+    run = await getEvaluationRun(runId, signal);
+    onProgress?.(run);
+  }
+  return run;
+}
+
 function normalizeEvaluationRun(value: unknown): EvaluationRun {
   const payload = requiredObject(value, "evaluation run");
   const resultsPayload = requiredObject(payload.results, "evaluation results");
@@ -1039,6 +1069,11 @@ function normalizeEvaluationRun(value: unknown): EvaluationRun {
     caseResults: Array.isArray(rawCaseResults)
       ? rawCaseResults.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))).map((item) => ({
         question: string(item.question),
+        expectedElementIds: strings(field(item, "expectedElementIds", "expected_element_ids")),
+        retrievedElementIds: strings(field(item, "retrievedElementIds", "retrieved_element_ids")),
+        referenceAnswer: optionalString(field(item, "referenceAnswer", "reference_answer")),
+        answer: optionalString(item.answer),
+        citations: array(item.citations, (citation) => normalizeCitation(citation)),
         hitAtK: optionalNumber(item.hitAtK) ?? 0,
         precisionAtK: optionalNumber(item.precisionAtK) ?? 0,
         recallAtK: optionalNumber(item.recallAtK) ?? 0,

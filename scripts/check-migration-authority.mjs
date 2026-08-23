@@ -22,10 +22,25 @@ for (const requiredPath of requiredPaths) {
   }
 }
 
-for (const forbiddenPath of ["backend/alembic", "backend/alembic.ini"]) {
-  if (existsSync(join(root, forbiddenPath))) {
-    failures.push("Legacy migration path must not exist: " + forbiddenPath);
+function containsLegacySource(directory) {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (entry.name === "__pycache__") continue;
+    const filePath = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (containsLegacySource(filePath)) return true;
+      continue;
+    }
+    if (!entry.name.endsWith(".pyc")) return true;
   }
+  return false;
+}
+
+const legacyAlembicPath = join(root, "backend", "alembic");
+if (existsSync(legacyAlembicPath) && containsLegacySource(legacyAlembicPath)) {
+  failures.push("Legacy migration path must not contain source files: backend/alembic");
+}
+if (existsSync(join(root, "backend", "alembic.ini"))) {
+  failures.push("Legacy migration path must not exist: backend/alembic.ini");
 }
 
 const migrationsDir = join(root, "supabase", "migrations");
@@ -61,6 +76,7 @@ const ignoredDirectories = new Set([
   ".codex",
   ".playwright-cli",
   ".playwright-mcp",
+  ".venv",
   ".pytest_cache",
   ".temp",
   "__pycache__",

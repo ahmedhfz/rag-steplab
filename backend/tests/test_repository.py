@@ -63,3 +63,19 @@ def test_inmemory_artifact_terminal_timing_is_server_observed():
     repository.embedding_runs[failed_embedding_claim["id"]]["started_at"] = now_utc() - timedelta(seconds=1)
     failed_embedding = repository.fail_embedding_run(failed_embedding_claim["id"], "embedding_failed", "test")
     assert failed_embedding["duration_ms"] >= 1000
+
+
+def test_pipeline_run_numbers_are_monotonic_after_history_deletion():
+    repository = InMemoryRepository()
+    document = repository.create_document(
+        {"file_name": "numbers.pdf", "media_type": "application/pdf", "size_bytes": 1},
+        "rag-documents", "numbers.pdf", "numbers-sha",
+    )
+    first = repository.create_parse_run(document["id"], parser_version="test")
+    repository.fail_parse(first["id"], "test", "test")
+    second = repository.create_parse_run(document["id"], parser_version="test")
+    repository.fail_parse(second["id"], "test", "test")
+    del repository.parses[second["id"]]
+    third = repository.create_parse_run(document["id"], parser_version="test")
+
+    assert [first["run_number"], second["run_number"], third["run_number"]] == [1, 2, 3]

@@ -70,7 +70,7 @@ export function ChunksPipeline({ locale, stage = "both" }: { locale: AppLocale; 
     embeddingTitle: "Embed + Index",
     embeddingDescription: "Chunk'ları semantic search için vektörleştirir ve pgvector üzerinde aranabilir hâle getirir.",
     runEmbedding: "Embedding oluştur", embeddingLocked: "Önce başarılı, güncel bir chunk run gerekir.", embeddingEmpty: "Henüz gerçek bir embedding run yok.",
-    model: "Model", dimensions: "Boyut", count: "Vektör", format: "Format", persistenceUnavailable: "Kalıcı backend kullanılamıyor.", reuseNotice: "Mevcut artifact yeniden kullanıldı.",
+    model: "Model", dimensions: "Boyut", count: "Vektör", format: "Format", persistenceUnavailable: "Kalıcı backend kullanılamıyor.", reuseNotice: "Mevcut artifact yeniden kullanıldı.", embeddingProgress: "chunk embedding oluşturuluyor; backend batch ilerlemesi yayınlamadığı için durum belirsizdir.",
   } : {
     chunkTitle: "Chunking experiment",
     chunkDescription: "Creates real chunks from canonical ordered parse elements while preserving source elements and pages.",
@@ -80,7 +80,7 @@ export function ChunksPipeline({ locale, stage = "both" }: { locale: AppLocale; 
     embeddingTitle: "Embed + Index",
     embeddingDescription: "Turns chunks into vectors for semantic search and stores them in pgvector.",
     runEmbedding: "Create embeddings", embeddingLocked: "A successful, current chunk run is required first.", embeddingEmpty: "No real embedding run exists yet.",
-    model: "Model", dimensions: "Dimensions", count: "Vectors", format: "Format", persistenceUnavailable: "The persistence backend is unavailable.", reuseNotice: "The existing artifact was reused.",
+    model: "Model", dimensions: "Dimensions", count: "Vectors", format: "Format", persistenceUnavailable: "The persistence backend is unavailable.", reuseNotice: "The existing artifact was reused.", embeddingProgress: "chunks are being embedded; progress is indeterminate because the backend does not publish batch counts.",
   };
   const compatibleChunkRuns = activeDocument?.chunkRuns.filter((run) => run.status === "completed" && run.isCompatible && run.upstream.parseRunId === selectedParseRunId) ?? [];
   const canChunk = Boolean(activeDocument?.id && selectedParseRunId && persistenceStatus === "available" && chunkStatus !== "processing");
@@ -168,6 +168,7 @@ export function ChunksPipeline({ locale, stage = "both" }: { locale: AppLocale; 
             </Button>
             {!canEmbed ? <DisabledReason id="embedding-disabled-reason">{embeddingBlocker?.code === "missing_document" || embeddingBlocker?.code === "missing_chunk" ? labels.embeddingLocked : embeddingBlocker?.message ?? labels.embeddingLocked}</DisabledReason> : null}
             <PipelineErrorMessage message={embeddingError?.message} />
+            {embeddingStatus === "processing" ? <div className="mt-3 border p-3 text-xs text-slate-600" role="status"><div className="h-1.5 overflow-hidden rounded bg-slate-200"><motion.div animate={{ x: ["-100%", "250%"] }} className="h-full w-1/3 rounded bg-sky-600" transition={{ duration: 1.2, ease: "easeInOut", repeat: Infinity }} /></div><p className="mt-2">{chunkRun?.chunkCount ?? activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId)?.chunkCount ?? "—"} {labels.embeddingProgress}</p></div> : null}
             {reuseNotice === "embedding" ? <p className="border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800" data-testid="embedding-reuse-notice" role="status">{labels.reuseNotice}</p> : null}
           </div>
           {embeddingRun ? (
