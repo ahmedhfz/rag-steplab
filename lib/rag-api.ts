@@ -789,6 +789,14 @@ export async function getDocumentSummary(documentId: string, signal?: AbortSigna
     // use the summary endpoint above and never request this fallback.
     if (!(error instanceof DocumentApiError) || (error.status !== 404 && error.code !== "invalid_response")) throw error;
     const legacy = await getDocument(documentId, signal);
+    let evaluationDatasets: EvaluationDatasetSummary[] = [];
+    try {
+      // Summary response'u evaluation run normalizasyonu gibi additive alanlar
+      // yüzünden legacy fallback'e düşse bile dataset listesi kalıcı kalmalıdır.
+      evaluationDatasets = await listEvaluationDatasets(documentId, signal);
+    } catch (datasetError) {
+      if (!(datasetError instanceof DocumentApiError) || (datasetError.status !== 404 && datasetError.code !== "invalid_response")) throw datasetError;
+    }
     return {
       ...legacy,
       experiments: legacy.experiments.map((run) => ({
@@ -802,7 +810,7 @@ export async function getDocumentSummary(documentId: string, signal?: AbortSigna
         experimentFingerprint: null,
         stageStatuses: {},
       })),
-      evaluationDatasets: [],
+      evaluationDatasets,
       evaluationRuns: [],
       activeParseRun: legacy.activeParseRun,
     };
