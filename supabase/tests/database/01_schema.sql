@@ -1,6 +1,6 @@
 begin;
 
-select plan(47);
+select plan(48);
 
 select ok(to_regnamespace('rag_lab') is not null, 'rag_lab schema exists');
 
@@ -328,6 +328,17 @@ select ok(
 select ok(
   (select count(*) from information_schema.columns where table_schema = 'rag_lab' and table_name = 'documents' and column_name in ('parse_run_counter', 'chunk_run_counter', 'embedding_run_counter')) = 3,
   'document-owned counters prevent run number reuse after deletion'
+);
+
+select ok(
+  exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'rag_lab.evaluation_runs'::regclass
+      and conname = 'evaluation_runs_status_check'
+      and pg_get_constraintdef(oid) like '%queued%'
+  ),
+  'evaluation runs allow durable queued lifecycle state'
 );
 
 select * from finish();
