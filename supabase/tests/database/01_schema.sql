@@ -330,5 +330,16 @@ select ok(
   'document-owned counters prevent run number reuse after deletion'
 );
 
+select ok(
+  exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'rag_lab.evaluation_runs'::regclass
+      and conname = 'evaluation_runs_status_check'
+      and pg_get_constraintdef(oid) like '%queued%'
+  ),
+  'evaluation runs allow durable queued lifecycle state'
+);
+
 select * from finish();
 rollback;
