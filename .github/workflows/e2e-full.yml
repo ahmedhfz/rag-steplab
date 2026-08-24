@@ -21,6 +21,7 @@ jobs:
     env:
       E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
       E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
       E2E_SUPABASE_SECRET_KEY: ${{ secrets.E2E_SUPABASE_SECRET_KEY }}
       SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_REF }}.supabase.co
       E2E_API_BASE_URL: https://ahmedhfz-dev--rag-steplab-api-api-eu.eu-west.modal.run
