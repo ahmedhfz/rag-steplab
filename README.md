@@ -121,7 +121,7 @@ npm run e2e:bootstrap
 npm run e2e:smoke
 ```
 
-`e2e:bootstrap`, authenticated Supabase CLI üzerinden dedicated test kullanıcısını idempotent hazırlar ve değerleri yalnız ignored `.env.e2e.local` dosyasına yazar. CI için aynı değerler `E2E_USER_EMAIL`, `E2E_USER_PASSWORD` ve `E2E_SUPABASE_SECRET_KEY` secret'larıdır. Storage state `output/playwright/.auth/user.json` altında üretilir ve version control'e girmez.
+`e2e:bootstrap`, authenticated Supabase CLI üzerinden dedicated test kullanıcısını idempotent hazırlar ve değerleri yalnız ignored `.env.e2e.local` dosyasına yazar. CI için aynı değerler `E2E_USER_EMAIL`, `E2E_USER_PASSWORD` ve `E2E_SUPABASE_SECRET_KEY` secret'larıdır. Protected Vercel Preview erişimi `VERCEL_AUTOMATION_BYPASS_SECRET` ile kurulur; secret browser URL'sine veya trace'e yazılmaz. Storage state `output/playwright/.auth/` altında üretilir ve version control'e girmez.
 
 Faydalı komutlar:
 

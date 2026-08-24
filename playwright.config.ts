@@ -7,6 +7,7 @@ try {
 const baseURL = process.env.E2E_BASE_URL ?? "http://localhost:3000";
 const isLocal = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(baseURL);
 const authState = "output/playwright/.auth/user.json";
+const vercelBypassState = "output/playwright/.auth/vercel-bypass.json";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -34,6 +35,7 @@ export default defineConfig({
     {
       name: "auth-setup",
       testMatch: /auth\.setup\.ts/,
+      use: { storageState: vercelBypassState },
     },
     {
       name: "chromium-seeded",
@@ -44,13 +46,13 @@ export default defineConfig({
     {
       name: "auth",
       testMatch: /auth\/.*\.spec\.ts/,
-      use: { ...devices["Desktop Chrome"], storageState: { cookies: [], origins: [] } },
+      use: { ...devices["Desktop Chrome"], storageState: vercelBypassState },
     },
     {
       name: "full-rag",
       testMatch: /full\/.*\.spec\.ts/,
       fullyParallel: false,
-      use: { ...devices["Desktop Chrome"], storageState: { cookies: [], origins: [] } },
+      use: { ...devices["Desktop Chrome"], storageState: vercelBypassState },
     },
   ],
   webServer: isLocal

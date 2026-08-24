@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   signUp: vi.fn(),
   resetPasswordForEmail: vi.fn(),
   replace: vi.fn(),
+  refresh: vi.fn(),
 }));
 
 vi.mock("next/link", () => ({
@@ -17,7 +18,7 @@ vi.mock("next/link", () => ({
 }));
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: mocks.replace }),
+  useRouter: () => ({ replace: mocks.replace, refresh: mocks.refresh }),
 }));
 
 vi.mock("@/lib/supabase/browser", () => ({
@@ -56,6 +57,7 @@ describe("LoginScreen Supabase auth flows", () => {
 
     expect(mocks.signInWithPassword).toHaveBeenCalledWith({ email: "user@example.com", password: "password1234" });
     expect(mocks.replace).toHaveBeenCalledWith("/");
+    expect(mocks.refresh).toHaveBeenCalledOnce();
   });
 
   it("starts signup with an email confirmation redirect", async () => {

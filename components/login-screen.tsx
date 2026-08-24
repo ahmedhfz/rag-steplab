@@ -117,13 +117,18 @@ export function LoginScreen() {
           options: { emailRedirectTo: `${window.location.origin}/auth/confirm` },
         });
         if (error) throw error;
-        if (data.session) router.replace("/");
+        if (data.session) {
+          router.replace("/");
+          router.refresh();
+        }
         else setStatusMessage(preferences.locale === "tr" ? "Kayıt tamamlandı. Devam etmek için e-posta adresinizi doğrulayın." : "Account created. Confirm your email address before continuing.");
         return;
       }
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
       router.replace("/");
+      // Auth cookie değişikliğinin stale App Router cache'inde kalmasını engeller.
+      router.refresh();
     } catch (error) {
       setStatusMessage(friendlyAuthError(error, preferences.locale));
     } finally {
