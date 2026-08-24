@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-const categories = ["frontend", "backend", "database", "modal", "docs_only", "full_ci"];
+const categories = ["frontend", "backend", "database", "modal", "e2e", "auth_e2e", "docs_only", "full_ci"];
 
 function classify(paths, forceFullCi = false) {
   const result = {
@@ -8,6 +8,8 @@ function classify(paths, forceFullCi = false) {
     backend: false,
     database: false,
     modal: false,
+    e2e: false,
+    auth_e2e: false,
     docs_only: false,
     full_ci: forceFullCi,
   };
@@ -19,17 +21,25 @@ function classify(paths, forceFullCi = false) {
 
     if (file.startsWith(".github/")) {
       result.full_ci = true;
+      result.e2e = true;
       continue;
     }
 
     if (file === "supabase/config.toml" || file.startsWith("supabase/")) {
       result.database = true;
+      result.e2e = true;
       docs = false;
       continue;
     }
 
     if (file === "scripts/check-migration-authority.mjs") {
       result.database = true;
+      docs = false;
+      continue;
+    }
+
+    if (file === "scripts/e2e.mjs") {
+      result.e2e = true;
       docs = false;
       continue;
     }
@@ -43,6 +53,7 @@ function classify(paths, forceFullCi = false) {
     if (file === "backend/modal_app.py" || file.startsWith("backend/app/") || /^backend\/requirements[^/]*\.txt$/.test(file)) {
       result.backend = true;
       result.modal = true;
+      result.e2e = true;
       if (file === "backend/app/main.py" || file === "backend/app/schemas.py") result.frontend = true;
       docs = false;
       continue;
@@ -59,6 +70,7 @@ function classify(paths, forceFullCi = false) {
       file.startsWith("components/") ||
       file.startsWith("lib/") ||
       file.startsWith("test/") ||
+      file.startsWith("e2e/") ||
       file.startsWith("public/") ||
       [
         "package.json",
@@ -71,9 +83,21 @@ function classify(paths, forceFullCi = false) {
         "vitest.config.mts",
         "components.json",
         "next-env.d.ts",
+        "playwright.config.ts",
       ].includes(file)
     ) {
       result.frontend = true;
+      result.e2e = true;
+      if (
+        file === "proxy.ts" ||
+        file.startsWith("app/auth/") ||
+        file === "app/login/page.tsx" ||
+        file === "components/auth-provider.tsx" ||
+        file === "components/login-screen.tsx" ||
+        file.startsWith("lib/supabase/") ||
+        file.startsWith("e2e/auth/") ||
+        file.startsWith("e2e/setup/")
+      ) result.auth_e2e = true;
       docs = false;
       continue;
     }
@@ -96,13 +120,13 @@ function assertClassification(paths, expected) {
 }
 
 if (process.argv.includes("--self-test")) {
-  assertClassification(["components/login-screen.tsx"], { frontend: true, backend: false, database: false, modal: false, docs_only: false, full_ci: false });
-  assertClassification(["backend/app/auth.py"], { frontend: false, backend: true, database: false, modal: true, docs_only: false, full_ci: false });
-  assertClassification(["backend/app/schemas.py"], { frontend: true, backend: true, database: false, modal: true, docs_only: false, full_ci: false });
-  assertClassification(["supabase/migrations/20260821083157_auth_owner_strict.sql"], { frontend: false, backend: false, database: true, modal: false, docs_only: false, full_ci: false });
-  assertClassification(["README.md"], { frontend: false, backend: false, database: false, modal: false, docs_only: true, full_ci: false });
-  assertClassification([".github/workflows/ci.yml"], { frontend: false, backend: false, database: false, modal: false, docs_only: false, full_ci: true });
-  assertClassification(["components/login-screen.tsx", "README.md"], { frontend: true, backend: false, database: false, modal: false, docs_only: false, full_ci: false });
+  assertClassification(["components/login-screen.tsx"], { frontend: true, backend: false, database: false, modal: false, e2e: true, auth_e2e: true, docs_only: false, full_ci: false });
+  assertClassification(["backend/app/auth.py"], { frontend: false, backend: true, database: false, modal: true, e2e: true, auth_e2e: false, docs_only: false, full_ci: false });
+  assertClassification(["backend/app/schemas.py"], { frontend: true, backend: true, database: false, modal: true, e2e: true, auth_e2e: false, docs_only: false, full_ci: false });
+  assertClassification(["supabase/migrations/20260821083157_auth_owner_strict.sql"], { frontend: false, backend: false, database: true, modal: false, e2e: true, auth_e2e: false, docs_only: false, full_ci: false });
+  assertClassification(["README.md"], { frontend: false, backend: false, database: false, modal: false, e2e: false, auth_e2e: false, docs_only: true, full_ci: false });
+  assertClassification([".github/workflows/ci.yml"], { frontend: false, backend: false, database: false, modal: false, e2e: true, auth_e2e: false, docs_only: false, full_ci: true });
+  assertClassification(["components/login-screen.tsx", "README.md"], { frontend: true, backend: false, database: false, modal: false, e2e: true, auth_e2e: true, docs_only: false, full_ci: false });
   process.stdout.write("classification self-test passed\n");
 } else {
   const forceFullCi = process.argv.includes("--full-ci");

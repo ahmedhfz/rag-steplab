@@ -1659,18 +1659,27 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const documentId = activeDocumentRef.current?.id;
     if (!documentId) return;
     const expectedSelection = selectionRequestRef.current;
-    if ((pathname === "/parse" || pathname === "/documents/parsed") && selectedParseRunId) {
+    const needsParseDetail = pathname === "/parse"
+      || pathname === "/documents/parsed"
+      || pathname === "/playground"
+      || pathname === "/retrieval"
+      || pathname === "/evaluation";
+    if (needsParseDetail && selectedParseRunId) {
       void hydrateParseDetail(documentId, selectedParseRunId, expectedSelection);
-    } else if ((pathname === "/chunking" || pathname === "/documents/chunks") && selectedChunkRunId) {
+    }
+    if ((pathname === "/chunking" || pathname === "/documents/chunks") && selectedChunkRunId) {
       void hydrateChunkDetail(documentId, selectedChunkRunId, expectedSelection);
-    } else if (pathname === "/embeddings" && selectedEmbeddingRunId) {
+    }
+    if (pathname === "/embeddings" && selectedEmbeddingRunId) {
       void hydrateEmbeddingDetail(documentId, selectedEmbeddingRunId, expectedSelection);
-    } else if ((pathname === "/playground" || pathname === "/retrieval") && !experimentRun) {
+    }
+    if ((pathname === "/playground" || pathname === "/retrieval") && !experimentRun) {
       const summary = activeDocumentRef.current?.experiments.find((run) => run.isCompatible
         && run.upstream.chunkRunId === selectedChunkRunId
         && (run.embeddingRunId === null || run.embeddingRunId === selectedEmbeddingRunId));
       if (summary) void loadExperiment(summary.id);
-    } else if (pathname === "/evaluation") {
+    }
+    if (pathname === "/evaluation") {
       const dataset = activeDocumentRef.current?.evaluationDatasets[0];
       if (dataset) void loadEvaluationDataset(dataset.id);
     }

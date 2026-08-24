@@ -105,6 +105,49 @@ $env:SMOKE_PDF_PATH = "C:\path\to\karaman-operasyon-raporu.pdf"
 node scripts/smoke.mjs
 ```
 
+## Playwright E2E
+
+E2E katmanı iki bilinçli profile ayrılır:
+
+- `npm run e2e:smoke`: gerçek dedicated Supabase auth + deterministic seeded RAG API. PR gate'idir; production RAG verisi yazmaz.
+- `npm run e2e:full`: gerçek hosted RAG zinciri. Tek worker ile scheduled/manual çalışır ve yalnız `e2e-` namespace'indeki test verisini temizler.
+
+İlk yerel kurulum:
+
+```powershell
+npm ci
+npx playwright install chromium
+npm run e2e:bootstrap
+npm run e2e:smoke
+```
+
+`e2e:bootstrap`, authenticated Supabase CLI üzerinden dedicated test kullanıcısını idempotent hazırlar ve değerleri yalnız ignored `.env.e2e.local` dosyasına yazar. CI için aynı değerler `E2E_USER_EMAIL`, `E2E_USER_PASSWORD` ve `E2E_SUPABASE_SECRET_KEY` secret'larıdır. Protected Vercel Preview erişimi `VERCEL_AUTOMATION_BYPASS_SECRET` ile kurulur; secret browser URL'sine veya trace'e yazılmaz. Storage state `output/playwright/.auth/` altında üretilir ve version control'e girmez.
+
+Faydalı komutlar:
+
+```powershell
+npm run e2e:auth
+npm run e2e:headed
+npm run e2e:report
+npm run e2e:fixture
+```
+
+Fast fixture iki sayfalı küçük bir sentetik PDF'tir ve `ORBIT-731` marker'ı, heading, liste, tablo, page provenance ve citation akışını sabit tutar. Failure halinde HTML report, trace, screenshot ve video `output/playwright/` altında bulunur.
+
+Gerçek full koşuyu yerelde yalnız açık production cleanup kilidiyle başlatın:
+
+```powershell
+$env:E2E_TARGET = "production"
+$env:E2E_ALLOW_PRODUCTION_CLEANUP = "true"
+$env:E2E_BASE_URL = "https://<production-host>"
+$env:E2E_API_BASE_URL = "https://<production-api-host>"
+npm run e2e:cleanup
+npm run e2e:full
+npm run e2e:cleanup
+```
+
+Cleanup; dedicated test-account marker'ı, owner user ID ve `e2e-` filename prefix'i dışındaki hiçbir kayda dokunmaz. CI karar tablosu ve yeni flow kuralları `AGENTS.md` içindedir.
+
 ## Learning roadmap
 
 1. RAG fundamentals

@@ -149,6 +149,28 @@ UI yalnızca sonuç ekranı olmamalıdır; mümkün olduğunca ara adımları, k
 - Cross-cutting, security veya deployment değişikliklerinde gerektiğinde full validation çalıştırılır.
 - PR kapandıktan ve ilgili worktree artık gerekmiyorsa güvenli biçimde kaldırılır; ardından `origin/main` fetch edilir ve local `main` yalnız fast-forward ile `origin/main` ile hizalanır. Birleşmemiş değişiklikler silinmez.
 
+## Testing / E2E / Playwright
+
+- UI veya kullanıcı akışı değiştiren task'larda Playwright kapsamını açıkça değerlendir; kritik akış değiştiyse ilgili E2E assertion'ını aynı PR'da güncelle.
+- Fast E2E, gerçek dedicated Supabase auth kullanır; RAG API cevapları deterministic seeded contract ile tarayıcıda izole edilir. Seeded suite production RAG verisi yazmamalıdır.
+- Full RAG E2E, gerçek hosted frontend → FastAPI/Modal → Supabase → Gemini zincirini tek worker ile çalıştırır. Yalnız schedule, manuel workflow veya release öncesi doğrulamada kullanılır.
+- Login her testte tekrarlanmaz. `auth-setup`, dedicated E2E kullanıcıyla oturum açar ve ignored `output/playwright/.auth/user.json` storage state üretir.
+- Secret, access token, storage state ve gerçek kullanıcı verisi loglanmaz veya artifact'e eklenmez. E2E kullanıcısı yalnız server-side admin key ile idempotent oluşturulur.
+- Fixture küçük, deterministik ve sentetik olmalıdır. Marker, sayfa, heading/list/table ve citation beklentileri sabit tutulur; OCR veya büyük gerçek doküman fast suite'e eklenmez.
+- Her browser testi kritik backend response'unu, görünür sonucu ve gereken akışlarda reload persistence'ı doğrular. Sadece sayfanın render olması başarı sayılmaz.
+- Console error, page error ve beklenmeyen failed request test hatasıdır. Trace ilk retry'da; screenshot/video yalnız failure'da tutulur.
+- Production cleanup yalnız dedicated test-account marker'ı, `e2e-` filename namespace'i, owner user ID filtresi ve açık `E2E_ALLOW_PRODUCTION_CLEANUP=true` kilidi birlikte sağlanırsa çalışır.
+
+| Değişiklik | Zorunlu doğrulama |
+| --- | --- |
+| Docs-only | E2E yok; ilgili lint/build gereksinimi classifier belirler |
+| UI, auth veya frontend API contract | Seeded fast E2E; auth değiştiyse auth suite |
+| Backend/RAG contract | Backend testleri + seeded fast E2E |
+| Migration | Migration validation + backend testleri + seeded fast E2E |
+| Modal/deploy/release kritik akış | Önce fast E2E, sonra gerçek full RAG E2E |
+
+Yeni kritik UI flow'u, önce en küçük deterministic fast assertion ile korunur. Gerçek provider davranışı ancak seeded contractın kanıtlayamayacağı entegrasyon sınırı için full suite'e eklenir.
+
 ## Learning Principle
 
 Yeni bir RAG kavramı veya teknik özellik eklendiğinde mümkün olduğunca şu sorular cevaplanabilmelidir:

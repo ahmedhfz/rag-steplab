@@ -178,7 +178,7 @@ export function OverviewScreen() {
           <div className="grid gap-5 lg:grid-cols-2">
             <div>
               <label className="text-xs font-medium text-slate-600" htmlFor="overview-document">{labels.document}</label>
-              <Select onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? undefined}><SelectTrigger className="mt-2 w-full" id="overview-document"><SelectValue placeholder={labels.chooseDocument} /></SelectTrigger><SelectContent>{documents.map((document) => <SelectItem key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent></Select>
+              <Select onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}><SelectTrigger className="mt-2 w-full" id="overview-document"><SelectValue placeholder={labels.chooseDocument} /></SelectTrigger><SelectContent>{documents.map((document) => <SelectItem key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent></Select>
             </div>
             <div>
               <label className="text-xs font-medium text-slate-600" htmlFor="overview-pipeline">{labels.pipeline}</label>

@@ -110,6 +110,14 @@ def test_user_scope_hides_other_users_document_by_list_and_id():
     assert direct.status_code == 404
     assert direct.json()["error"]["code"] == "document_not_found"
 
+    foreign_delete = client.delete(f"/documents/{document_b['id']}")
+    assert foreign_delete.status_code == 404
+    assert get_repository().get_document_row(document_b["id"]) is not None
+
+    own_delete = client.delete(f"/documents/{document_a['id']}")
+    assert own_delete.status_code == 204
+    assert get_repository().get_document_row(document_a["id"]) is None
+
 
 def test_private_source_preview_respects_document_owner_scope():
     document_a = _document(USER_A, "a.pdf")
