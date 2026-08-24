@@ -72,7 +72,9 @@ jobs:
 
       - name: Run FULL RAG E2E with one worker
         env:
-          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
+          # Deployment SHA'sı yukarıdaki adımda doğrulanır; browser canonical alias
+          # üzerinden çalışır çünkü Modal CORS yalnızca production origin'i kabul eder.
+          E2E_BASE_URL: https://rag-steplab.vercel.app
         run: |
           echo "E2E mode: FULL RAG E2E"
           npm run e2e:full
