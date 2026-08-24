@@ -101,23 +101,37 @@ class GeminiService:
     def embed_documents(self, texts: Sequence[str]) -> tuple[list[list[float]], GeminiCallMetadata]:
         model = self.settings.gemini_embedding_model
         dimensions = self.settings.gemini_embedding_dimensions
-        values: list[list[float]] = []
-        effective_model: str | None = None
-        # Gemini Embedding 2 aggregates multiple text parts in one request into
-        # a single vector. Call once per chunk so every persisted chunk keeps a
-        # one-to-one vector and input-hash relationship.
-        for text in texts:
-            def call(value: str = text):
-                config: dict[str, Any] = {"output_dimensionality": dimensions}
-                return self.client.models.embed_content(model=model, contents=value, config=config)
+        if not texts:
+            return [], GeminiCallMetadata(configured_model=model, effective_model=None)
+        try:
+            from google.genai import types
+        except ImportError as exc:  # pragma: no cover - dependency is part of the API image
+            raise ApiProblem(503, "gemini_dependency_missing", "Gemini SDK is not installed.") from exc
 
-            response = self._with_retry(call, action="embedding")
-            response_values = self._embedding_values(response)
-            if len(response_values) != 1 or len(response_values[0]) != dimensions:
-                raise ApiProblem(503, "gemini_embedding_invalid", "Gemini returned an invalid embedding dimension.")
-            values.append(response_values[0])
-            effective_model = effective_model or self._effective_model(response, model)
-        return values, GeminiCallMetadata(configured_model=model, effective_model=effective_model)
+        # Gemini Embedding 2 returns one vector per Content object. A list of
+        # independent Content values is therefore the real one-request batch;
+        # passing a string or a list of text parts would aggregate the inputs.
+        contents = [
+            types.Content(parts=[types.Part.from_text(text=str(text))])
+            for text in texts
+        ]
+
+        def call():
+            config: dict[str, Any] = {"output_dimensionality": dimensions}
+            return self.client.models.embed_content(model=model, contents=contents, config=config)
+
+        response = self._with_retry(call, action="embedding")
+        response_values = self._embedding_values(response)
+        if len(response_values) != len(contents) or any(len(values) != dimensions for values in response_values):
+            raise ApiProblem(
+                503,
+                "gemini_embedding_invalid",
+                "Gemini did not return one embedding per input with the configured dimension.",
+            )
+        return response_values, GeminiCallMetadata(
+            configured_model=model,
+            effective_model=self._effective_model(response, model),
+        )
 
     def embed_query(self, query: str) -> tuple[list[float], GeminiCallMetadata]:
         values, metadata = self.embed_documents([query_embedding_text(query)])

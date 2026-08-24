@@ -50,3 +50,13 @@ main GitHub Actions → supabase db push --linked
 ```
 
 Production DB password veya service-role key repository'ye yazılmaz.
+
+## Durable pipeline worker lease migration
+
+`20260824121538_durable_pipeline_worker_leases.sql`, experiment/evaluation
+run'ları için `queued → running → completed/failed` state'ini, Modal dispatch
+kimliğini ve nullable fencing lease alanlarını ekler. Chunk/embedding artifact
+run'larında da token/expiry çifti bulunur. Eski satırlar backfill edilmez;
+`NULL` lease çiftleri tarihsel kayıtları korur. `lease_token` ile
+`lease_expires_at` birlikte dolu ya da birlikte boş olmak zorundadır; worker
+stage yazıları mevcut token ile fence edilir.

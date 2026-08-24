@@ -6,14 +6,17 @@ from app.config import Settings
 from app.gemini import GeminiService, document_embedding_text, query_embedding_text
 
 
-def test_embedding_two_documents_uses_two_one_to_one_requests():
-    calls: list[str] = []
+def test_embedding_two_documents_uses_one_batched_request():
+    calls: list[object] = []
 
     class Models:
         def embed_content(self, *, model, contents, config):
             calls.append(contents)
             return SimpleNamespace(
-                embeddings=[SimpleNamespace(values=[1.0, 2.0, 3.0])],
+                embeddings=[
+                    SimpleNamespace(values=[1.0, 2.0, 3.0]),
+                    SimpleNamespace(values=[4.0, 5.0, 6.0]),
+                ],
                 model_version="gemini-embedding-2",
             )
 
@@ -23,8 +26,9 @@ def test_embedding_two_documents_uses_two_one_to_one_requests():
     )
     values, metadata = service.embed_documents(["first", "second"])
 
-    assert calls == ["first", "second"]
-    assert values == [[1.0, 2.0, 3.0], [1.0, 2.0, 3.0]]
+    assert len(calls) == 1
+    assert len(calls[0]) == 2
+    assert values == [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
     assert metadata.effective_model == "gemini-embedding-2"
 
 

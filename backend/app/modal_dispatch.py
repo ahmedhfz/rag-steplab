@@ -12,6 +12,7 @@ class ModalDispatchError(RuntimeError):
 
 
 _local_parse_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rag-local-parse")
+_local_pipeline_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rag-local-pipeline")
 
 
 def dispatch_local_parse_run(parse_run_id: str) -> str:
@@ -77,5 +78,41 @@ def dispatch_parse_run(parse_run_id: str, *, settings: Settings | None = None) -
     except Exception as exc:  # Modal SDK errors must become a visible failed run.
         raise ModalDispatchError("Modal could not accept the parse job.") from exc
 
+    dispatch_id = getattr(call, "object_id", None) or getattr(call, "id", None)
+    return str(dispatch_id or "modal-submitted")
+
+
+def dispatch_pipeline_run(
+    kind: str,
+    run_id: str,
+    lease_token: str,
+    *,
+    settings: Settings | None = None,
+) -> str:
+    """Dispatch an experiment/evaluation worker with its fencing token."""
+
+    settings = settings or get_settings()
+    if settings.app_env == "development" and not settings.database_url:
+        def run_worker() -> None:
+            from .pipeline import run_pipeline_worker
+
+            run_pipeline_worker(kind, run_id, lease_token)
+
+        try:
+            _local_pipeline_executor.submit(run_worker)
+        except RuntimeError as exc:
+            raise ModalDispatchError("The local pipeline worker could not be started.") from exc
+        return f"local-pipeline-{kind}-{run_id}"
+    if not settings.modal_dispatch_enabled:
+        raise ModalDispatchError("Modal pipeline dispatch is disabled.")
+    try:
+        import modal
+    except ImportError as exc:  # pragma: no cover - API image includes Modal
+        raise ModalDispatchError("The Modal client is not installed.") from exc
+    try:
+        function = modal.Function.from_name(settings.modal_app_name, "pipeline_worker")
+        call = function.spawn(kind, run_id, lease_token)
+    except Exception as exc:
+        raise ModalDispatchError("Modal could not accept the pipeline job.") from exc
     dispatch_id = getattr(call, "object_id", None) or getattr(call, "id", None)
     return str(dispatch_id or "modal-submitted")

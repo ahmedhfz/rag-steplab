@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { continueExperiment, createDocumentPipeline, deleteDocumentPipeline, getChunkRun, getDocument, getDocumentSummary, getEmbeddingRun, getExperiment, getParseRun, listDocumentPipelines, listDocuments, parseAndPersistDocument, rerunGeneration, updateDocumentPipeline, uploadDocument, waitForParseRun } from "@/lib/rag-api";
+import { continueExperiment, createDocumentPipeline, createExperimentAsync, deleteDocumentPipeline, getChunkRun, getDocument, getDocumentSummary, getEmbeddingRun, getExperiment, getParseRun, listDocumentPipelines, listDocuments, parseAndPersistDocument, rerunGeneration, updateDocumentPipeline, uploadDocument, waitForParseRun } from "@/lib/rag-api";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -245,6 +245,55 @@ describe("RAG API contract normalization", () => {
       ["http://127.0.0.1:8000/experiments/experiment-1", undefined],
       ["http://127.0.0.1:8000/experiments/experiment-1/continue", "POST"],
       ["http://127.0.0.1:8000/experiments/experiment-1/rerun-generation", "POST"],
+    ]);
+  });
+
+  it("uses one experiment state machine for a production 202 response", async () => {
+    const queued = {
+      id: "experiment-async",
+      status: "queued",
+      documentId: "document-1",
+      chunkRunId: "chunk-1",
+      embeddingRunId: null,
+      query: "retrieval",
+      targetStage: "retrieval",
+      stageResults: {},
+    };
+    const completed = {
+      ...queued,
+      status: "completed",
+      stageResults: {
+        retrieval: {
+          status: "completed",
+          candidates: [],
+          results: [],
+          durationMs: 1,
+        },
+      },
+    };
+    const responses = [
+      new Response(JSON.stringify(queued), { status: 202, headers: { "Content-Type": "application/json" } }),
+      new Response(JSON.stringify(queued), { status: 200, headers: { "Content-Type": "application/json" } }),
+      new Response(JSON.stringify(completed), { status: 200, headers: { "Content-Type": "application/json" } }),
+    ];
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(responses.shift()));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createExperimentAsync({
+      documentId: "document-1",
+      chunkRunId: "chunk-1",
+      embeddingRunId: null,
+      query: "retrieval",
+      targetStage: "retrieval",
+      retrieval: { mode: "keyword", topK: 1 },
+      reranking: { enabled: false, candidateCount: 10 },
+      context: { tokenBudget: 3000 },
+      generation: { temperature: 0.1, maxOutputTokens: 256 },
+    })).resolves.toMatchObject({ id: "experiment-async", status: "completed" });
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
+      ["http://127.0.0.1:8000/experiments?async=true", "POST"],
+      ["http://127.0.0.1:8000/experiments/experiment-async", undefined],
+      ["http://127.0.0.1:8000/experiments/experiment-async", undefined],
     ]);
   });
 

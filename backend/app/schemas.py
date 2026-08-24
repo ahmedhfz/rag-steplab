@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def to_camel(value: str) -> str:
@@ -221,7 +221,7 @@ class RetrievalConfig(CamelCaseModel):
 
 class RerankingConfig(CamelCaseModel):
     enabled: bool = False
-    candidate_count: int = Field(default=10, ge=1, le=20)
+    candidate_count: int = Field(default=10, ge=1, le=200)
 
 
 class ContextConfig(CamelCaseModel):
@@ -244,6 +244,16 @@ class ExperimentCreateRequest(CamelCaseModel):
     reranking: RerankingConfig = Field(default_factory=RerankingConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
+
+    @model_validator(mode="after")
+    def validate_reranking_invariant(self) -> "ExperimentCreateRequest":
+        if self.reranking.enabled:
+            candidate_k = min(200, max(self.retrieval.top_k * 4, 20))
+            if self.reranking.candidate_count < self.retrieval.top_k:
+                raise ValueError("When reranking is enabled, candidate_count must be at least top_k.")
+            if self.reranking.candidate_count > candidate_k:
+                raise ValueError("When reranking is enabled, candidate_count must not exceed candidateK.")
+        return self
 
 
 class ExperimentResponse(RunSummary):
@@ -294,6 +304,16 @@ class EvaluationRunRequest(CamelCaseModel):
     context: ContextConfig = Field(default_factory=ContextConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     judge: bool = False
+
+    @model_validator(mode="after")
+    def validate_reranking_invariant(self) -> "EvaluationRunRequest":
+        if self.reranking.enabled:
+            candidate_k = min(200, max(self.retrieval.top_k * 4, 20))
+            if self.reranking.candidate_count < self.retrieval.top_k:
+                raise ValueError("When reranking is enabled, candidate_count must be at least top_k.")
+            if self.reranking.candidate_count > candidate_k:
+                raise ValueError("When reranking is enabled, candidate_count must not exceed candidateK.")
+        return self
 
 
 class EvaluationRunResponse(RunSummary):

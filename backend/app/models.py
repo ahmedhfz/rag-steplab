@@ -118,6 +118,10 @@ class ChunkRun(Base):
             "identity_claimed IS NULL OR (identity_claimed AND status IN ('running', 'completed'))",
             name="ck_chunk_runs_identity_claim",
         ),
+        CheckConstraint(
+            "(lease_token IS NULL) = (lease_expires_at IS NULL)",
+            name="ck_chunk_runs_lease_pair",
+        ),
         {"schema": SCHEMA},
     )
 
@@ -135,6 +139,8 @@ class ChunkRun(Base):
     tokenizer_version: Mapped[str] = mapped_column(String(64), nullable=False)
     chunker_version: Mapped[str] = mapped_column(String(64), nullable=False)
     identity_claimed: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=True)
+    lease_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -198,6 +204,10 @@ class EmbeddingRun(Base):
             "identity_claimed IS NULL OR (identity_claimed AND status IN ('running', 'completed'))",
             name="ck_embedding_runs_identity_claim",
         ),
+        CheckConstraint(
+            "(lease_token IS NULL) = (lease_expires_at IS NULL)",
+            name="ck_embedding_runs_lease_pair",
+        ),
         {"schema": SCHEMA},
     )
 
@@ -213,6 +223,8 @@ class EmbeddingRun(Base):
     dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
     embedding_format_version: Mapped[str] = mapped_column(String(128), nullable=False)
     identity_claimed: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=True)
+    lease_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     effective_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")
     embedding_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -294,6 +306,15 @@ class ExperimentRun(Base):
     __tablename__ = "experiment_runs"
     __table_args__ = (
         CheckConstraint("target_stage IN ('retrieval', 'reranking', 'context', 'generation')", name="ck_experiment_runs_target_stage"),
+        CheckConstraint(
+            "identity_claimed IS NULL OR (identity_claimed AND status IN ('queued', 'running'))",
+            name="ck_experiment_runs_identity_claim",
+        ),
+        CheckConstraint("attempt_count >= 0", name="ck_experiment_runs_attempt_nonnegative"),
+        CheckConstraint(
+            "(lease_token IS NULL) = (lease_expires_at IS NULL)",
+            name="ck_experiment_runs_lease_pair",
+        ),
         {"schema": SCHEMA},
     )
 
@@ -314,6 +335,11 @@ class ExperimentRun(Base):
     # provenance metadata.
     experiment_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     identity_claimed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    dispatch_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    worker_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     stage_results: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")
@@ -349,7 +375,22 @@ class EvaluationDataset(Base):
 
 class EvaluationRun(Base):
     __tablename__ = "evaluation_runs"
-    __table_args__ = {"schema": SCHEMA}
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'running', 'completed', 'failed', 'interrupted')",
+            name="evaluation_runs_status_check",
+        ),
+        CheckConstraint(
+            "identity_claimed IS NULL OR (identity_claimed AND status IN ('queued', 'running'))",
+            name="ck_evaluation_runs_identity_claim",
+        ),
+        CheckConstraint("attempt_count >= 0", name="ck_evaluation_runs_attempt_nonnegative"),
+        CheckConstraint(
+            "(lease_token IS NULL) = (lease_expires_at IS NULL)",
+            name="ck_evaluation_runs_lease_pair",
+        ),
+        {"schema": SCHEMA},
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     dataset_id: Mapped[str] = mapped_column(
@@ -359,6 +400,13 @@ class EvaluationRun(Base):
     child_experiment_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     results: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")
+    evaluation_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    identity_claimed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    dispatch_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    worker_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
