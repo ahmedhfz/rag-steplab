@@ -21,7 +21,12 @@ test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğ
   await expect(page.getByRole("status")).toContainText(/ready to parse|reused/i);
   await page.getByRole("link", { name: "Continue to Parse" }).click();
 
-  await page.getByRole("button", { name: /^Parse$/ }).click();
+  // Retry aynı e2e kullanıcısı ve dosya adıyla devam edebilir; bu durumda backend
+  // parse'ı zaten tamamlamış olur ve UI yalnızca Reparse aksiyonu gösterir.
+  const parseButton = page.getByRole("button", { name: /^Parse$/ });
+  if ((await parseButton.count()) > 0 && (await parseButton.isEnabled())) {
+    await parseButton.click();
+  }
   await expect(page.getByRole("progressbar")).toBeVisible();
   await expect(page.getByText(/Queued|Worker started|Docling starting|Source loaded/).first()).toBeVisible();
   await expect(page.getByRole("progressbar", { name: /Progress 100%/ })).toBeVisible({ timeout: 15 * 60 * 1_000 });
@@ -36,7 +41,7 @@ test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğ
 
   await page.goto("/playground");
   await page.getByLabel("Question").fill("What is the laboratory beacon code? Answer briefly.");
-  await page.getByRole("button", { name: "Ask" }).click();
+  await page.getByRole("button", { name: "Run experiment" }).click();
   await expect(page.getByText("ORBIT-731", { exact: false }).first()).toBeVisible({ timeout: 3 * 60_000 });
   await expect(page.getByText("S1", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "S1" }).click();
