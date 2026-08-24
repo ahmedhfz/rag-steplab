@@ -2,9 +2,11 @@ import { expect, test } from "@playwright/test";
 
 import { requireE2ECredentials, signIn, signOut } from "../support/auth";
 import { installBrowserQualityGuards } from "../support/browser-quality";
+import { installSeededApi } from "../support/seeded-api";
 
 test("login, logout ve protected route gerçek Supabase auth ile çalışır", async ({ page }) => {
   const quality = installBrowserQualityGuards(page);
+  await installSeededApi(page);
 
   await page.goto("/documents");
   await expect(page).toHaveURL(/\/login(?:\?|$)/);
