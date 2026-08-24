@@ -5,6 +5,7 @@ backend/**/__pycache__/
 backend/.pytest_cache/
 .playwright-cli/
 output/playwright/
+e2e/fixtures/generated/
 .env
 .env.*
 !.env.example

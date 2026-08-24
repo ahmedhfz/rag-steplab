@@ -8,7 +8,7 @@ from app.main import app
 from app.pipeline import run_parse_worker
 from app.repository import reset_repository
 from app.schemas import DocumentMetadata, ParseResponse, ParseSummary, ParsedPage, StructuredContent
-from app.storage import reset_storage
+from app.storage import get_storage, reset_storage
 
 
 client = TestClient(app)
@@ -72,6 +72,19 @@ def test_private_source_preview_uses_authenticated_proxy_without_storage_metadat
     assert source.status_code == 200
     assert source.headers["cache-control"] == "private, no-store"
     assert source.content == b"%PDF-1.7"
+
+
+def test_delete_document_removes_owned_lineage_and_private_source():
+    uploaded = client.post("/documents", files={"file": ("e2e-cleanup.pdf", b"%PDF-1.7", "application/pdf")})
+    document_id = uploaded.json()["document"]["id"]
+    storage_path = next(iter(get_storage().objects))
+
+    deleted = client.delete(f"/documents/{document_id}")
+
+    assert deleted.status_code == 204
+    assert client.get(f"/documents/{document_id}").status_code == 404
+    assert client.get("/documents").json()["items"] == []
+    assert storage_path not in get_storage().objects
 
 
 def test_explicit_parse_after_upload_creates_one_parse_run(monkeypatch):

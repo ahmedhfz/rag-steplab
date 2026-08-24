@@ -30,6 +30,8 @@ jobs:
       backend: ${{ steps.classify.outputs.backend }}
       database: ${{ steps.classify.outputs.database }}
       modal: ${{ steps.classify.outputs.modal }}
+      e2e: ${{ steps.classify.outputs.e2e }}
+      auth_e2e: ${{ steps.classify.outputs.auth_e2e }}
       docs_only: ${{ steps.classify.outputs.docs_only }}
       full_ci: ${{ steps.classify.outputs.full_ci }}
     steps:
@@ -54,7 +56,7 @@ jobs:
           set -euo pipefail
 
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$FULL_CI_INPUT" == "true" ]]; then
-            printf 'frontend=true\nbackend=true\ndatabase=true\nmodal=true\ndocs_only=false\nfull_ci=true\n' >> "$GITHUB_OUTPUT"
+            printf 'frontend=true\nbackend=true\ndatabase=true\nmodal=true\ne2e=true\nauth_e2e=true\ndocs_only=false\nfull_ci=true\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -345,10 +347,90 @@ jobs:
           echo "No successful Vercel production deployment found for $GITHUB_SHA."
           exit 1
 
+  e2e-seeded:
+    name: Playwright seeded E2E
+    if: >-
+      ${{
+        always() &&
+        (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) &&
+        (needs.detect-changes.outputs.e2e == 'true' || needs.detect-changes.outputs.full_ci == 'true') &&
+        (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') &&
+        (needs.backend.result == 'success' || needs.backend.result == 'skipped') &&
+        needs.secret-hygiene.result == 'success' &&
+        (needs.supabase-migrations.result == 'success' || needs.supabase-migrations.result == 'skipped') &&
+        (needs.supabase-migrate-production.result == 'success' || needs.supabase-migrate-production.result == 'skipped') &&
+        (needs.deploy-modal.result == 'success' || needs.deploy-modal.result == 'skipped')
+      }}
+    needs: [detect-changes, frontend, backend, secret-hygiene, supabase-migrations, supabase-migrate-production, deploy-modal]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+      E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+    steps:
+      - name: Checkout tested commit
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright Chromium
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Install Chromium and system dependencies
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Wait for tested Vercel deployment
+        id: deployment
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEPLOYMENT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          DEPLOYMENT_ENVIRONMENT: ${{ github.event_name == 'pull_request' && 'Preview' || 'Production' }}
+        run: node scripts/e2e.mjs wait-deployment
+
+      - name: Run FAST SEEDED E2E
+        env:
+          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
+        run: |
+          echo "E2E mode: FAST SEEDED E2E"
+          npm run e2e:smoke
+
+      - name: Run real auth E2E when auth paths changed
+        if: ${{ needs.detect-changes.outputs.auth_e2e == 'true' || github.ref == 'refs/heads/main' }}
+        env:
+          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
+        run: npm run e2e:auth
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-seeded-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            output/playwright
+            !output/playwright/.auth/**
+          if-no-files-found: ignore
+          retention-days: 7
+
   ci-result:
     name: CI result
     if: always()
-    needs: [detect-changes, frontend, backend, secret-hygiene, supabase-migrations, supabase-migrate-production, deploy-modal]
+    needs: [detect-changes, frontend, backend, secret-hygiene, supabase-migrations, supabase-migrate-production, deploy-modal, e2e-seeded]
     runs-on: ubuntu-latest
     steps:
       - name: Require every executed gate to pass

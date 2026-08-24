@@ -1,0 +1,92 @@
+name: Full RAG E2E
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: read
+
+concurrency:
+  group: full-rag-e2e-main
+  cancel-in-progress: false
+
+jobs:
+  full-rag:
+    name: Real Docling + Gemini golden path
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+      E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+      E2E_SUPABASE_SECRET_KEY: ${{ secrets.E2E_SUPABASE_SECRET_KEY }}
+      SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_REF }}.supabase.co
+      E2E_API_BASE_URL: https://ahmedhfz-dev--rag-steplab-api-api-eu.eu-west.modal.run
+      E2E_TARGET: production
+      E2E_ALLOW_PRODUCTION_CLEANUP: "true"
+      E2E_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright Chromium
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Install Chromium and system dependencies
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Ensure dedicated E2E user
+        run: npm run e2e:user
+
+      - name: Clean stale namespaced E2E data
+        run: npm run e2e:cleanup
+
+      - name: Find current production deployment
+        id: deployment
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEPLOYMENT_SHA: ${{ github.sha }}
+          DEPLOYMENT_ENVIRONMENT: Production
+        run: node scripts/e2e.mjs wait-deployment
+
+      - name: Run FULL RAG E2E with one worker
+        env:
+          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
+        run: |
+          echo "E2E mode: FULL RAG E2E"
+          npm run e2e:full
+
+      - name: Cleanup namespaced E2E data
+        if: always()
+        run: npm run e2e:cleanup
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-full-rag-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            output/playwright
+            !output/playwright/.auth/**
+          if-no-files-found: ignore
+          retention-days: 14

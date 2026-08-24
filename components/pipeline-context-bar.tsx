@@ -37,11 +37,11 @@ export function PipelineContextBar() {
     <section className="border-b bg-white px-4 py-2 sm:px-7" data-testid="pipeline-context-bar">
       <div className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-3">
         <FileText aria-hidden="true" className="size-4 shrink-0 text-slate-500" />
-        <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? undefined}>
+        <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
           <SelectTrigger aria-label={labels.document} className="h-8 min-w-0 max-w-[17rem] border-0 px-1 text-xs font-medium shadow-none"><SelectValue placeholder={documentName ?? (documents.length ? labels.placeholder : labels.noDocument)} /></SelectTrigger>
           <SelectContent>{documents.map((document) => <SelectItem key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
         </Select>
-        <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value)} value={activePipelineId ?? undefined}>
+        <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value)} value={activePipelineId ?? ""}>
           <SelectTrigger aria-label={labels.pipeline} className="h-8 min-w-[10rem] max-w-[16rem] border-0 px-1 text-xs font-semibold shadow-none"><SelectValue placeholder={pipelines.length ? labels.pipeline : labels.noPipeline} /></SelectTrigger>
           <SelectContent>{pipelines.map((pipeline) => <SelectItem key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
         </Select>

@@ -766,6 +766,19 @@ def get_document(document_id: str, user: CurrentUser = Depends(get_current_user)
     })
 
 
+@app.delete("/documents/{document_id}", status_code=204)
+def delete_document(document_id: str, user: CurrentUser = Depends(get_current_user)) -> Response:
+    repository = _user_repository(user)
+    document = repository.get_document_row(document_id)
+    if document is None:
+        raise ApiProblem(404, "document_not_found", "The document was not found.")
+    repository.delete_document(document_id)
+    # DB lineage silindikten sonra private object best-effort temizlenir;
+    # storage adapter cleanup hatalarında credential veya path sızdırmaz.
+    get_storage().remove(document["storage_path"])
+    return Response(status_code=204)
+
+
 @app.get("/documents/{document_id}/summary")
 def get_document_summary(document_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     """Return the hot-path document projection without artifact bodies."""
