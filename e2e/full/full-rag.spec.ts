@@ -21,10 +21,16 @@ test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğ
   await expect(page.getByRole("status")).toContainText(/ready to parse|reused/i);
   await page.getByRole("link", { name: "Continue to Parse" }).click();
 
-  // Retry aynı e2e kullanıcısı ve dosya adıyla devam edebilir; bu durumda backend
-  // parse'ı zaten tamamlamış olur ve UI yalnızca Reparse aksiyonu gösterir.
+  // Upload sonrası document detail hydration kısa süre sonra parse aksiyonunu
+  // enable eder; retry'da backend checkpoint'i zaten tamamlanmış olabilir.
   const parseButton = page.getByRole("button", { name: /^Parse$/ });
-  if ((await parseButton.count()) > 0 && (await parseButton.isEnabled())) {
+  const completedProgress = page.getByRole("progressbar", { name: /Progress 100%/ });
+  await expect.poll(async () => {
+    if ((await completedProgress.count()) > 0) return "completed";
+    if ((await parseButton.count()) === 0) return "hydrating";
+    return (await parseButton.isEnabled()) ? "parse-ready" : "parse-disabled";
+  }, { timeout: 60_000, message: "Parse action did not become ready after document hydration." }).toMatch(/^(completed|parse-ready)$/);
+  if ((await completedProgress.count()) === 0) {
     await parseButton.click();
   }
   await expect(page.getByRole("progressbar")).toBeVisible();
