@@ -15,11 +15,21 @@ import math
 import re
 import tempfile
 import time
+import uuid
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from .chunking import CHUNKER_VERSION, TOKENIZER, TOKENIZER_VERSION, chunk_structured, config_hash, effective_config
-from .config import Settings, get_settings
+from .chunking import (
+    CHUNKER_VERSION,
+    TOKENIZER,
+    TOKENIZER_VERSION,
+    chunk_structured,
+    chunker_version_for_strategy,
+    config_hash,
+    effective_config,
+)
+from .config import Settings, get_settings, pipeline_lease_duration_seconds
 from .errors import ApiProblem
 from .gemini import EMBEDDING_FORMAT_VERSION, GeminiService, document_embedding_text
 from .repository import (
@@ -46,12 +56,14 @@ SUPPORTED_NORMALIZED_SCHEMA_VERSION = "normalized-v1"
 STAGE_ORDER = ["retrieval", "reranking", "context", "generation"]
 STAGE_FINGERPRINT_SCHEMA_VERSION = "stage-fingerprint-v1"
 EXPERIMENT_FINGERPRINT_SCHEMA_VERSION = "experiment-fingerprint-v1"
-RETRIEVAL_ALGORITHM_VERSION = "retrieval-sql-rrf-v1"
-RERANK_ALGORITHM_VERSION = "gemini-listwise-v1"
-RERANK_PROMPT_VERSION = "rerank-candidate-order-v1"
+RETRIEVAL_ALGORITHM_VERSION = "retrieval-sql-rrf-v2"
+RERANK_ALGORITHM_VERSION = "gemini-listwise-v2"
+RERANK_PROMPT_VERSION = "rerank-query-candidate-order-v2"
 CONTEXT_ALGORITHM_VERSION = "greedy-budget-dedup-v1"
-GENERATION_PROMPT_VERSION = "grounded-json-citations-v1"
-GENERATION_VALIDATION_VERSION = "citation-validation-v1"
+GENERATION_PROMPT_VERSION = "grounded-json-segments-v2"
+GENERATION_VALIDATION_VERSION = "citation-validation-v2"
+JUDGE_PROMPT_VERSION = "generation-metrics-judge-v2"
+JUDGE_METRIC_VERSION = "generation-metrics-v1"
 
 
 def _safe_model_dump(value: Any) -> dict[str, Any]:
@@ -184,11 +196,23 @@ def _experiment_response(
     generation_rerun: bool = False,
 ) -> dict[str, Any]:
     result = copy.deepcopy(row)
+    # Fencing tokens are internal worker credentials, never a browser DTO.
+    result.pop("lease_token", None)
+    if isinstance(result.get("config"), dict):
+        result["config"].pop("_execution", None)
     result["reused_experiment"] = reused_experiment
     if continued_from_experiment_id is not None:
         result["continued_from_experiment_id"] = continued_from_experiment_id
     if generation_rerun:
         result["generation_rerun"] = True
+    return result
+
+
+def _evaluation_response(row: dict[str, Any]) -> dict[str, Any]:
+    """Return the persisted evaluation state without worker credentials."""
+
+    result = copy.deepcopy(row)
+    result.pop("lease_token", None)
     return result
 
 
@@ -727,7 +751,7 @@ def create_chunk_run(document_id: str, request: ChunkRunRequest, *, repository: 
         canonical_config,
         config_hash(canonical_config),
         TOKENIZER_VERSION,
-        CHUNKER_VERSION,
+        CHUNKER_VERSION if request.strategy == "fixed_token" else chunker_version_for_strategy(request.strategy),
     )
     if not claimed:
         if claim.get("status") == "completed":
@@ -743,19 +767,20 @@ def create_chunk_run(document_id: str, request: ChunkRunRequest, *, repository: 
         raise ApiProblem(409, "artifact_in_progress", "The chunk artifact with this identity is currently being created.")
     try:
         drafts = chunk_structured(parse["structured"], request.strategy, canonical_config)
-        completed = repository.complete_chunk_run(claim["id"], drafts)
+        completed = repository.complete_chunk_run(claim["id"], drafts, claim.get("lease_token"))
         if completed is None:
             raise ApiProblem(500, "persistence_failed", "The chunk run could not be completed.")
         completed["reused_artifact"] = False
         return completed
     except ApiProblem as exc:
-        repository.fail_chunk_run(claim["id"], exc.code, exc.message)
+        repository.fail_chunk_run(claim["id"], exc.code, exc.message, claim.get("lease_token"))
         raise
     except Exception:
         repository.fail_chunk_run(
             claim["id"],
             "chunk_run_failed",
             "The chunk run failed before producing a completed artifact.",
+            claim.get("lease_token"),
         )
         raise
 
@@ -810,19 +835,21 @@ def create_embedding_run(document_id: str, chunk_run_id: str | None, *, reposito
             [(chunk["id"], vector) for chunk, vector in zip(chunks, vectors)],
             input_hashes,
             effective_model,
+            claim.get("lease_token"),
         )
         if completed is None:
             raise ApiProblem(500, "persistence_failed", "The embedding run could not be completed.")
         completed["reused_artifact"] = False
         return completed
     except ApiProblem as exc:
-        repository.fail_embedding_run(claim["id"], exc.code, exc.message)
+        repository.fail_embedding_run(claim["id"], exc.code, exc.message, claim.get("lease_token"))
         raise
     except Exception:
         repository.fail_embedding_run(
             claim["id"],
             "embedding_run_failed",
             "The embedding run failed before producing a completed artifact.",
+            claim.get("lease_token"),
         )
         raise
 
@@ -879,27 +906,34 @@ def _assemble_retrieval(
             return (1 / (60 + dense_positions[chunk_id]) if chunk_id in dense_positions else 0) + (1 / (60 + keyword_positions[chunk_id]) if chunk_id in keyword_positions else 0)
 
         ordered_ids = sorted(ids, key=lambda chunk_id: (-rrf(chunk_id), min(dense_positions.get(chunk_id, 100000), keyword_positions.get(chunk_id, 100000)), chunk_id))[:candidate_k]
-    values: list[dict[str, Any]] = []
-    for rank, chunk_id in enumerate(ordered_ids[:top_k], start=1):
+    pool_values: list[dict[str, Any]] = []
+    for pool_rank, chunk_id in enumerate(ordered_ids, start=1):
         base = dense_by_id.get(chunk_id) or keyword_by_id.get(chunk_id)
         assert base is not None
         dense_rank = dense_positions.get(chunk_id)
         keyword_rank = keyword_positions.get(chunk_id)
         fused = (1 / (60 + dense_rank) if dense_rank else 0) + (1 / (60 + keyword_rank) if keyword_rank else 0)
-        values.append({
+        pool_values.append({
             **base,
             "denseRank": dense_rank,
             "keywordRank": keyword_rank,
             "rrfScore": fused if mode == "hybrid" else None,
-            "rank": rank,
+            "poolRank": pool_rank,
+            "rank": pool_rank,
         })
+    results = [
+        {**item, "retrievalRank": item["poolRank"], "rank": rank}
+        for rank, item in enumerate(pool_values[:top_k], start=1)
+    ]
     return {
         "status": "completed",
         "mode": mode,
         "topK": top_k,
         "candidateK": candidate_k,
+        "availableCandidateCount": len(pool_values),
         "rrfK": 60 if mode == "hybrid" else None,
-        "results": values,
+        "candidates": pool_values,
+        "results": results,
     }
 
 
@@ -927,11 +961,27 @@ def _retrieval_stage(
     return _assemble_retrieval(mode, top_k, dense_ranked[: min(200, max(top_k * 4, 20))], keyword_ranked[: min(200, max(top_k * 4, 20))])
 
 
-def _rerank_stage(retrieval: dict[str, Any], service: GeminiService, candidate_count: int) -> dict[str, Any]:
-    candidates = retrieval.get("results", [])[:candidate_count]
+def _rerank_stage(
+    query: str,
+    retrieval: dict[str, Any],
+    service: GeminiService,
+    candidate_count: int,
+    top_k: int,
+) -> dict[str, Any]:
+    candidate_k = min(200, max(top_k * 4, 20))
+    if candidate_count < top_k or candidate_count > candidate_k:
+        raise ApiProblem(
+            422,
+            "rerank_config_invalid",
+            "When reranking is enabled, candidate_count must satisfy top_k <= candidate_count <= candidateK.",
+        )
+    pool = retrieval.get("candidates") or retrieval.get("results", [])
+    effective_candidate_count = min(candidate_count, len(pool))
+    candidates = pool[:effective_candidate_count]
     prompt = (
-        "Return JSON with orderedCandidateIds. Order only the supplied candidate IDs by relevance. "
-        "Do not invent IDs.\n" + "\n".join(f"{item['chunkId']}: {item['text'][:1200]}" for item in candidates)
+        "Return JSON with orderedCandidateIds. Order only the supplied candidate IDs by relevance; do not invent IDs.\n"
+        + "\n".join(f"{item['chunkId']}: {item['text'][:1200]}" for item in candidates)
+        + f"\nQuery {query}"
     )
     ordered, metadata = service.rerank(prompt)
     allowed = [item["chunkId"] for item in candidates]
@@ -939,12 +989,23 @@ def _rerank_stage(retrieval: dict[str, Any], service: GeminiService, candidate_c
         raise ApiProblem(503, "invalid_rerank", "The reranker returned an invalid candidate list.")
     ordered = ordered + [identifier for identifier in allowed if identifier not in ordered]
     by_id = {item["chunkId"]: item for item in candidates}
-    results = [{**by_id[identifier], "retrievalRank": by_id[identifier].get("rank"), "rank": index + 1, "rerankScore": len(ordered) - index} for index, identifier in enumerate(ordered)]
+    results = [
+        {
+            **by_id[identifier],
+            "retrievalRank": by_id[identifier].get("poolRank", by_id[identifier].get("rank")),
+            "rank": index + 1,
+            "rerankScore": len(ordered) - index,
+        }
+        for index, identifier in enumerate(ordered[:top_k])
+    ]
     return {
         "status": "completed",
-        "method": "gemini_listwise_v1",
+        "method": "gemini_listwise_v2",
+        "query": query,
+        "candidateCount": effective_candidate_count,
         "configuredModel": metadata.configured_model,
         "effectiveModel": metadata.effective_model,
+        "candidates": candidates,
         "results": results,
     }
 
@@ -985,14 +1046,17 @@ def _generation_stage(query: str, context: dict[str, Any], config: Any, service:
             "status": "completed",
             "insufficientContext": True,
             "answer": "Yeterli bağlam bulunamadı.",
+            "segments": [],
             "claims": [],
             "citations": [],
+            "citationCoverage": {"segmentCount": 0, "citedSegmentCount": 0, "ratio": 1.0},
             "configuredModel": service.settings.gemini_generation_model,
             "effectiveModel": None,
         }
     prompt = (
-        "Answer only from the supplied context. If it is insufficient, set insufficientContext=true. "
-        "Return JSON: {insufficientContext:boolean,answer:string,claims:[{text:string,citationIds:string[]}]}.\n"
+        "Answer only from the supplied context. If it is insufficient, set insufficientContext=true and return no segments. "
+        "Return JSON: {insufficientContext:boolean,segments:[{text:string,citationIds:string[]}]}. "
+        "Every non-empty segment must cite one or more supplied citation IDs; do not repeat an ID inside a segment.\n"
         f"Question: {query}\nContext:\n{context['formattedContext']}"
     )
     allowed = {item["citationId"]: item for item in selected}
@@ -1007,29 +1071,42 @@ def _generation_stage(query: str, context: dict[str, Any], config: Any, service:
         )
         try:
             insufficient = bool(payload.get("insufficientContext", False))
-            answer = payload.get("answer")
-            claims = payload.get("claims", [])
-            if not isinstance(answer, str) or (not insufficient and not answer.strip()):
-                raise ApiProblem(503, "generation_invalid", "The generated answer format is invalid.")
-            if not isinstance(claims, list) or (not insufficient and not claims):
-                raise ApiProblem(503, "citation_invalid", "The generated claims format is invalid.")
+            raw_segments = payload.get("segments")
+            # Pre-freeze responses used `claims`; normalize them into the
+            # segment contract so old stored test/provider fixtures remain readable.
+            if raw_segments is None:
+                raw_segments = payload.get("claims", [])
+            if not isinstance(raw_segments, list) or (insufficient and raw_segments) or (not insufficient and not raw_segments):
+                raise ApiProblem(503, "citation_invalid", "The generated segments format is invalid.")
+            segments: list[dict[str, Any]] = []
             citations: list[dict[str, Any]] = []
-            for claim in claims:
-                if not isinstance(claim, dict):
-                    raise ApiProblem(503, "citation_invalid", "The generated citation format is invalid.")
-                ids = claim.get("citationIds", [])
-                if not isinstance(ids, list) or (not insufficient and not ids) or any(identifier not in allowed for identifier in ids):
+            seen_citations: set[str] = set()
+            for segment in raw_segments:
+                if not isinstance(segment, dict):
+                    raise ApiProblem(503, "citation_invalid", "The generated segment format is invalid.")
+                text = segment.get("text")
+                ids = segment.get("citationIds", [])
+                if not isinstance(text, str) or not text.strip() or not isinstance(ids, list) or not ids:
+                    raise ApiProblem(503, "citation_invalid", "Every answer segment must contain text and citations.")
+                if any(not isinstance(identifier, str) for identifier in ids):
+                    raise ApiProblem(503, "citation_invalid", "The generated answer referenced an invalid citation ID.")
+                if len(set(ids)) != len(ids) or any(identifier not in allowed for identifier in ids):
                     raise ApiProblem(503, "citation_invalid", "The generated answer referenced an unknown citation.")
+                segments.append({"text": text.strip(), "citationIds": list(ids)})
                 for identifier in ids:
                     source = allowed[identifier]
-                    citations.append({
-                        "citationId": identifier,
-                        "chunkId": source["chunkId"],
-                        "documentId": source.get("documentId"),
-                        "pageNumbers": source.get("pageNumbers", []),
-                        "sourceElementIds": source.get("sourceElementIds", []),
-                        "valid": True,
-                    })
+                    if identifier not in seen_citations:
+                        citations.append({
+                            "citationId": identifier,
+                            "chunkId": source["chunkId"],
+                            "documentId": source.get("documentId"),
+                            "pageNumbers": source.get("pageNumbers", []),
+                            "sourceElementIds": source.get("sourceElementIds", []),
+                            "valid": True,
+                        })
+                        seen_citations.add(identifier)
+            answer = "\n\n".join(segment["text"] for segment in segments) if not insufficient else "Yeterli bağlam bulunamadı."
+            claims = copy.deepcopy(segments)
             break
         except ApiProblem:
             if attempt + 1 >= attempts:
@@ -1038,9 +1115,15 @@ def _generation_stage(query: str, context: dict[str, Any], config: Any, service:
         "status": "completed",
         "insufficientContext": insufficient,
         "answer": answer,
+        "segments": segments,
         "claims": claims,
         "citations": citations,
         "citationValidity": {"valid": True, "count": len(citations)},
+        "citationCoverage": {
+            "segmentCount": len(segments),
+            "citedSegmentCount": sum(1 for segment in segments if segment.get("citationIds")),
+            "ratio": 1.0 if not segments else sum(1 for segment in segments if segment.get("citationIds")) / len(segments),
+        },
         "configuredModel": metadata.configured_model,
         "effectiveModel": metadata.effective_model,
     }
@@ -1313,9 +1396,20 @@ def _find_reusable_stage(
     return _stage_with_identity(value, fingerprint, reused=True, source_experiment_id=source_experiment_id), source_experiment_id
 
 
-def _persist_stage(repository: Repository, experiment_id: str, stage: str, value: dict[str, Any]) -> None:
-    if repository.update_experiment_stage(experiment_id, stage, value) is None:
+def _persist_stage(
+    repository: Repository,
+    experiment_id: str,
+    stage: str,
+    value: dict[str, Any],
+    *,
+    lease_token: str | None = None,
+    lease_duration_seconds: int | None = None,
+) -> None:
+    if repository.update_experiment_stage(experiment_id, stage, value, lease_token) is None:
         raise ApiProblem(500, "persistence_failed", "The experiment stage could not be persisted.")
+    if lease_token is not None and lease_duration_seconds is not None:
+        if repository.renew_pipeline_lease("experiment", experiment_id, lease_token, lease_duration_seconds) is None:
+            raise ApiProblem(409, "worker_lease_lost", "The experiment worker lease was lost.")
 
 
 def _run_experiment_stages(
@@ -1330,12 +1424,19 @@ def _run_experiment_stages(
     seed_stage_results: dict[str, Any] | None = None,
     seed_experiment_id: str | None = None,
     force_generation: bool = False,
+    lease_token: str | None = None,
 ) -> dict[str, Any]:
     target_stages = _stage_target(request.target_stage)
     stage_results: dict[str, Any] = {}
     service: GeminiService | None = None
     chunks: list[dict[str, Any]] | None = None
     candidate_k = min(200, max(request.retrieval.top_k * 4, 20))
+    lease_duration_seconds = pipeline_lease_duration_seconds(settings) if lease_token else None
+
+    def renew_lease() -> None:
+        if lease_token is not None and lease_duration_seconds is not None:
+            if repository.renew_pipeline_lease("experiment", experiment_id, lease_token, lease_duration_seconds) is None:
+                raise ApiProblem(409, "worker_lease_lost", "The experiment worker lease was lost.")
 
     def get_service() -> GeminiService:
         nonlocal service
@@ -1354,6 +1455,7 @@ def _run_experiment_stages(
     if reusable is not None:
         retrieval, _ = reusable
     else:
+        renew_lease()
         started = time.perf_counter()
         query_vector = None
         query_embedding_metadata = None
@@ -1408,7 +1510,14 @@ def _run_experiment_stages(
         }
         retrieval = _stage_with_identity(retrieval, retrieval_fp, reused=False)
     stage_results["retrieval"] = retrieval
-    _persist_stage(repository, experiment_id, "retrieval", retrieval)
+    _persist_stage(
+        repository,
+        experiment_id,
+        "retrieval",
+        retrieval,
+        lease_token=lease_token,
+        lease_duration_seconds=lease_duration_seconds,
+    )
 
     if len(target_stages) >= 2:
         rerank_fp = _reranking_fingerprint(request, retrieval, settings)
@@ -1423,17 +1532,35 @@ def _run_experiment_stages(
         if reusable is not None:
             reranking, _ = reusable
         else:
+            renew_lease()
             started = time.perf_counter()
             if request.reranking.enabled:
-                reranking = _rerank_stage(retrieval, get_service(), request.reranking.candidate_count)
+                reranking = _rerank_stage(
+                    request.query,
+                    retrieval,
+                    get_service(),
+                    request.reranking.candidate_count,
+                    request.retrieval.top_k,
+                )
                 metadata_model = reranking.get("effectiveModel")
                 configured_model = reranking.get("configuredModel")
                 model = _model_provenance(configured_model, metadata_model, required=True, role="reranker")
             else:
-                reranking = {"status": "skipped", "reason": "disabled", "results": retrieval["results"]}
+                reranking = {
+                    "status": "skipped",
+                    "reason": "disabled",
+                    "candidates": retrieval.get("candidates", retrieval["results"]),
+                    "results": retrieval["results"],
+                }
                 model = {"role": "reranker", "cacheable": True, "notUsed": True}
             reranking["durationMs"] = max(1, math.ceil((time.perf_counter() - started) * 1000))
-            reranking["config"] = {"enabled": request.reranking.enabled, "candidateCount": request.reranking.candidate_count}
+            reranking["config"] = {
+                "enabled": request.reranking.enabled,
+                "candidateCount": request.reranking.candidate_count,
+                "candidateK": candidate_k,
+                "topK": request.retrieval.top_k,
+                "effectiveCandidateCount": len(reranking.get("candidates", [])),
+            }
             reranking["provenance"] = {
                 "algorithmVersion": RERANK_ALGORITHM_VERSION,
                 "promptVersion": RERANK_PROMPT_VERSION,
@@ -1442,7 +1569,14 @@ def _run_experiment_stages(
             }
             reranking = _stage_with_identity(reranking, rerank_fp, reused=False)
         stage_results["reranking"] = reranking
-        _persist_stage(repository, experiment_id, "reranking", reranking)
+        _persist_stage(
+            repository,
+            experiment_id,
+            "reranking",
+            reranking,
+            lease_token=lease_token,
+            lease_duration_seconds=lease_duration_seconds,
+        )
 
     if len(target_stages) >= 3:
         reranking = stage_results["reranking"]
@@ -1458,6 +1592,7 @@ def _run_experiment_stages(
         if reusable is not None:
             context, _ = reusable
         else:
+            renew_lease()
             started = time.perf_counter()
             candidates = reranking.get("results", retrieval["results"])
             context = _context_stage(candidates, request.context.token_budget)
@@ -1470,7 +1605,14 @@ def _run_experiment_stages(
             }
             context = _stage_with_identity(context, context_fp, reused=False)
         stage_results["context"] = context
-        _persist_stage(repository, experiment_id, "context", context)
+        _persist_stage(
+            repository,
+            experiment_id,
+            "context",
+            context,
+            lease_token=lease_token,
+            lease_duration_seconds=lease_duration_seconds,
+        )
 
     if len(target_stages) >= 4:
         context = stage_results["context"]
@@ -1486,6 +1628,7 @@ def _run_experiment_stages(
         if reusable is not None:
             generation, _ = reusable
         else:
+            renew_lease()
             started = time.perf_counter()
             generation = _generation_stage(request.query, context, request.generation, get_service())
             generation["durationMs"] = max(1, math.ceil((time.perf_counter() - started) * 1000))
@@ -1507,7 +1650,14 @@ def _run_experiment_stages(
             }
             generation = _stage_with_identity(generation, generation_fp, reused=False)
         stage_results["generation"] = generation
-        _persist_stage(repository, experiment_id, "generation", generation)
+        _persist_stage(
+            repository,
+            experiment_id,
+            "generation",
+            generation,
+            lease_token=lease_token,
+            lease_duration_seconds=lease_duration_seconds,
+        )
     return stage_results
 
 
@@ -1520,6 +1670,7 @@ def _create_experiment(
     continued_from_experiment_id: str | None = None,
     force_generation: bool = False,
     allow_exact_reuse: bool = True,
+    lease_token: str | None = None,
 ) -> dict[str, Any]:
     settings = get_settings()
     _require_write(repository, settings)
@@ -1530,6 +1681,7 @@ def _create_experiment(
         if existing is not None and _exact_experiment_reusable(existing, request, chunk_run_id, embedding_run_id, embedding, settings):
             return _experiment_response(existing, reused_experiment=True, continued_from_experiment_id=continued_from_experiment_id)
 
+    started_at = now_utc()
     row = {
         "id": new_id(),
         "document_id": request.document_id,
@@ -1541,14 +1693,27 @@ def _create_experiment(
         "config": {**_safe_model_dump(request), "pipelineContext": pipeline_context},
         "stage_results": {},
         "status": "running",
-        "started_at": now_utc(),
+        "started_at": started_at,
         "completed_at": None,
         "duration_ms": None,
     }
+    lease_duration_seconds = pipeline_lease_duration_seconds(settings) if lease_token else None
+    if lease_token is not None and lease_duration_seconds is not None:
+        row.update(
+            {
+                "attempt_count": 1,
+                "lease_token": lease_token,
+                "lease_expires_at": started_at + timedelta(seconds=lease_duration_seconds),
+                "worker_started_at": started_at,
+            }
+        )
     claimed, owner = repository.claim_experiment(row)
     if not owner:
         raise ApiProblem(409, "experiment_in_progress", "The exact experiment is currently being created.")
     try:
+        if lease_token is not None and lease_duration_seconds is not None:
+            if repository.start_pipeline_worker("experiment", claimed["id"], lease_token, lease_duration_seconds) is None:
+                raise ApiProblem(409, "worker_lease_lost", "The experiment worker lease was lost.")
         _run_experiment_stages(
             request,
             repository,
@@ -1560,8 +1725,9 @@ def _create_experiment(
             seed_stage_results=seed_stage_results,
             seed_experiment_id=seed_experiment_id,
             force_generation=force_generation,
+            lease_token=lease_token,
         )
-        completed = repository.complete_experiment(claimed["id"])
+        completed = repository.complete_experiment(claimed["id"], lease_token)
         if completed is None:
             raise ApiProblem(500, "persistence_failed", "The experiment could not be completed.")
         return _experiment_response(
@@ -1570,13 +1736,14 @@ def _create_experiment(
             generation_rerun=force_generation,
         )
     except ApiProblem as exc:
-        repository.fail_experiment(claimed["id"], exc.code, exc.message)
+        repository.fail_experiment(claimed["id"], exc.code, exc.message, lease_token)
         raise
     except Exception as exc:
         repository.fail_experiment(
             claimed["id"],
             "experiment_failed",
             "The experiment failed before completion.",
+            lease_token,
         )
         raise exc
 
@@ -1585,7 +1752,16 @@ def create_experiment(request: ExperimentCreateRequest, *, repository: Repositor
     return _create_experiment(request, repository=repository or get_repository())
 
 
-def queue_experiment(request: ExperimentCreateRequest, *, repository: Repository | None = None) -> dict[str, Any]:
+def queue_experiment(
+    request: ExperimentCreateRequest,
+    *,
+    repository: Repository | None = None,
+    seed_stage_results: dict[str, Any] | None = None,
+    seed_experiment_id: str | None = None,
+    continued_from_experiment_id: str | None = None,
+    force_generation: bool = False,
+    allow_exact_reuse: bool = True,
+) -> dict[str, Any]:
     """Persist a real running experiment before returning to the browser.
 
     Stage execution is started by the API background task and each completed
@@ -1598,8 +1774,16 @@ def queue_experiment(request: ExperimentCreateRequest, *, repository: Repository
     _document, chunk_run_id, embedding_run_id, embedding, pipeline_context = _prepare_experiment_lineage(request, repository, settings)
     experiment_fingerprint = _experiment_fingerprint(request, chunk_run_id, embedding_run_id, embedding, settings)
     existing = repository.get_completed_experiment_by_fingerprint(request.document_id, experiment_fingerprint)
-    if existing is not None and _exact_experiment_reusable(existing, request, chunk_run_id, embedding_run_id, embedding, settings):
-        return _experiment_response(existing, reused_experiment=True)
+    if allow_exact_reuse and existing is not None and _exact_experiment_reusable(existing, request, chunk_run_id, embedding_run_id, embedding, settings):
+        return _experiment_response(
+            existing,
+            reused_experiment=True,
+            continued_from_experiment_id=continued_from_experiment_id,
+            generation_rerun=force_generation,
+        )
+    queued_at = now_utc()
+    lease_token = str(uuid.uuid4())
+    lease_duration_seconds = pipeline_lease_duration_seconds(settings)
     claimed, owner = repository.claim_experiment({
         "id": new_id(),
         "document_id": request.document_id,
@@ -1608,19 +1792,40 @@ def queue_experiment(request: ExperimentCreateRequest, *, repository: Repository
         "query": request.query,
         "target_stage": request.target_stage,
         "experiment_fingerprint": experiment_fingerprint,
-        "config": {**_safe_model_dump(request), "pipelineContext": pipeline_context},
+        "config": {
+            **_safe_model_dump(request),
+            "pipelineContext": pipeline_context,
+            "_execution": {
+                "seedStageResults": seed_stage_results or {},
+                "seedExperimentId": seed_experiment_id,
+                "continuedFromExperimentId": continued_from_experiment_id,
+                "forceGeneration": force_generation,
+                "allowExactReuse": allow_exact_reuse,
+            },
+        },
         "stage_results": {},
-        "status": "running",
-        "started_at": now_utc(),
+        "status": "queued",
+        "started_at": queued_at,
         "completed_at": None,
         "duration_ms": None,
+        "dispatch_id": None,
+        "attempt_count": 1,
+        "lease_token": lease_token,
+        "lease_expires_at": queued_at + timedelta(seconds=lease_duration_seconds),
+        "worker_started_at": None,
     })
     if not owner:
-        raise ApiProblem(409, "experiment_in_progress", "The exact experiment is currently being created.")
-    return _experiment_response(claimed)
+        return _experiment_response(claimed)
+    return _experiment_response(claimed, continued_from_experiment_id=continued_from_experiment_id, generation_rerun=force_generation)
 
 
-def run_queued_experiment(request: ExperimentCreateRequest, experiment_id: str, *, repository: Repository | None = None) -> dict[str, Any] | None:
+def run_queued_experiment(
+    request: ExperimentCreateRequest,
+    experiment_id: str,
+    *,
+    repository: Repository | None = None,
+    lease_token: str | None = None,
+) -> dict[str, Any] | None:
     repository = repository or get_repository()
     settings = get_settings()
     try:
@@ -1630,7 +1835,20 @@ def run_queued_experiment(request: ExperimentCreateRequest, experiment_id: str, 
         persisted = repository.get_experiment_row(experiment_id)
         if persisted is None:
             raise ApiProblem(404, "experiment_not_found", "The experiment was not found.")
+        lease_token = lease_token or persisted.get("lease_token")
+        if not lease_token and persisted.get("status") not in {"queued", "running"}:
+            return _experiment_response(persisted)
+        if lease_token:
+            if repository.start_pipeline_worker(
+                "experiment", experiment_id, lease_token, pipeline_lease_duration_seconds(settings)
+            ) is None:
+                return None
         _document = _document_or_404(repository, persisted["document_id"])
+        execution = (persisted.get("config") or {}).get("_execution") or {}
+        request_data = copy.deepcopy(persisted.get("config") or {})
+        request_data.pop("_execution", None)
+        request_data.pop("pipelineContext", None)
+        request = ExperimentCreateRequest.model_validate(request_data)
         chunk_run_id = persisted["chunk_run_id"]
         _require_compatible_chunk(repository, persisted["document_id"], chunk_run_id)
         embedding_run_id = persisted.get("embedding_run_id")
@@ -1654,14 +1872,28 @@ def run_queued_experiment(request: ExperimentCreateRequest, experiment_id: str, 
             chunk_run_id=chunk_run_id,
             embedding_run_id=embedding_run_id,
             embedding=embedding,
+            seed_stage_results=execution.get("seedStageResults") or None,
+            seed_experiment_id=execution.get("seedExperimentId"),
+            force_generation=bool(execution.get("forceGeneration", False)),
+            lease_token=lease_token,
         )
-        completed = repository.complete_experiment(experiment_id)
-        return _experiment_response(completed) if completed else None
+        completed = repository.complete_pipeline_worker("experiment", experiment_id, lease_token) if lease_token else repository.complete_experiment(experiment_id)
+        return _experiment_response(
+            completed,
+            continued_from_experiment_id=execution.get("continuedFromExperimentId"),
+            generation_rerun=bool(execution.get("forceGeneration", False)),
+        ) if completed else None
     except ApiProblem as exc:
-        repository.fail_experiment(experiment_id, exc.code, exc.message)
+        if lease_token:
+            repository.fail_pipeline_worker("experiment", experiment_id, lease_token, exc.code, exc.message)
+        else:
+            repository.fail_experiment(experiment_id, exc.code, exc.message)
         return None
     except Exception:
-        repository.fail_experiment(experiment_id, "experiment_failed", "The experiment failed before completion.")
+        if lease_token:
+            repository.fail_pipeline_worker("experiment", experiment_id, lease_token, "experiment_failed", "The experiment failed before completion.")
+        else:
+            repository.fail_experiment(experiment_id, "experiment_failed", "The experiment failed before completion.")
         return None
 
 
@@ -1670,7 +1902,7 @@ def continue_experiment(experiment_id: str, *, repository: Repository | None = N
     row = repository.get_experiment_row(experiment_id)
     if row is None:
         raise ApiProblem(404, "experiment_not_found", "The experiment was not found.")
-    if row.get("status") == "running":
+    if row.get("status") in {"queued", "running"}:
         raise ApiProblem(409, "experiment_in_progress", "The experiment is still running.")
     prefix = _complete_prefix(row.get("stage_results") or {})
     if not prefix:
@@ -1698,7 +1930,7 @@ def rerun_generation(experiment_id: str, *, repository: Repository | None = None
     row = repository.get_experiment_row(experiment_id)
     if row is None:
         raise ApiProblem(404, "experiment_not_found", "The experiment was not found.")
-    if row.get("status") == "running":
+    if row.get("status") in {"queued", "running"}:
         raise ApiProblem(409, "experiment_in_progress", "The experiment is still running.")
     prefix = _complete_prefix(row.get("stage_results") or {})
     if len(prefix) < 3:
@@ -1711,6 +1943,67 @@ def rerun_generation(experiment_id: str, *, repository: Repository | None = None
         "target_stage": "generation",
     })
     return _create_experiment(
+        ExperimentCreateRequest.model_validate(request_data),
+        repository=repository,
+        seed_stage_results=row.get("stage_results") or {},
+        seed_experiment_id=row["id"],
+        force_generation=True,
+        allow_exact_reuse=False,
+    )
+
+
+def queue_continue_experiment(experiment_id: str, *, repository: Repository | None = None) -> dict[str, Any]:
+    """Create the durable continuation artifact without starting it inline."""
+
+    repository = repository or get_repository()
+    row = repository.get_experiment_row(experiment_id)
+    if row is None:
+        raise ApiProblem(404, "experiment_not_found", "The experiment was not found.")
+    if row.get("status") in {"queued", "running"}:
+        raise ApiProblem(409, "experiment_in_progress", "The experiment is still running.")
+    prefix = _complete_prefix(row.get("stage_results") or {})
+    if not prefix:
+        raise ApiProblem(409, "experiment_prefix_missing", "The experiment has no persisted completed stage prefix.")
+    if len(prefix) >= len(STAGE_ORDER):
+        return _experiment_response(row, reused_experiment=True)
+    request_data = copy.deepcopy(row.get("config") or {})
+    request_data.pop("_execution", None)
+    request_data.update({
+        "document_id": row["document_id"],
+        "chunk_run_id": row["chunk_run_id"],
+        "embedding_run_id": row.get("embedding_run_id"),
+        "target_stage": STAGE_ORDER[len(prefix)],
+    })
+    return queue_experiment(
+        ExperimentCreateRequest.model_validate(request_data),
+        repository=repository,
+        seed_stage_results=row.get("stage_results") or {},
+        seed_experiment_id=row["id"],
+        continued_from_experiment_id=row["id"],
+    )
+
+
+def queue_rerun_generation(experiment_id: str, *, repository: Repository | None = None) -> dict[str, Any]:
+    """Create a durable generation-only rerun artifact."""
+
+    repository = repository or get_repository()
+    row = repository.get_experiment_row(experiment_id)
+    if row is None:
+        raise ApiProblem(404, "experiment_not_found", "The experiment was not found.")
+    if row.get("status") in {"queued", "running"}:
+        raise ApiProblem(409, "experiment_in_progress", "The experiment is still running.")
+    prefix = _complete_prefix(row.get("stage_results") or {})
+    if len(prefix) < 3:
+        raise ApiProblem(409, "context_required", "A completed context stage is required before rerunning generation.")
+    request_data = copy.deepcopy(row.get("config") or {})
+    request_data.pop("_execution", None)
+    request_data.update({
+        "document_id": row["document_id"],
+        "chunk_run_id": row["chunk_run_id"],
+        "embedding_run_id": row.get("embedding_run_id"),
+        "target_stage": "generation",
+    })
+    return queue_experiment(
         ExperimentCreateRequest.model_validate(request_data),
         repository=repository,
         seed_stage_results=row.get("stage_results") or {},
@@ -1733,8 +2026,21 @@ def create_dataset(request: EvaluationDatasetRequest, *, repository: Repository 
 
 def _evaluation_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
     if not results:
-        return {"caseCount": 0, "hitAtK": 0, "precisionAtK": 0, "recallAtK": 0, "mrr": 0}
-    return {
+        return {
+            "caseCount": 0,
+            "hitAtK": 0,
+            "precisionAtK": 0,
+            "recallAtK": 0,
+            "mrr": 0,
+            "generationMetrics": {
+                "faithfulness": None,
+                "answerRelevance": None,
+                "answerCorrectness": None,
+                "eligibleCaseCount": 0,
+                "scoredCaseCount": 0,
+            },
+        }
+    metrics: dict[str, Any] = {
         "caseCount": len(results),
         "hitAtK": sum(item["hitAtK"] for item in results) / len(results),
         "precisionAtK": sum(item["precisionAtK"] for item in results) / len(results),
@@ -1743,17 +2049,40 @@ def _evaluation_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
         "citationValidity": sum(item.get("citationValidity", 0) for item in results) / len(results),
         "groundedness": sum(item.get("groundedness", 0) for item in results) / len(results),
     }
+    by_metric = {
+        metric: [
+            item["generationMetrics"][metric]
+            for item in results
+            if isinstance(item.get("generationMetrics"), dict)
+            and isinstance(item["generationMetrics"].get(metric), (int, float))
+        ]
+        for metric in ("faithfulness", "answerRelevance", "answerCorrectness")
+    }
+    eligible = sum(
+        1
+        for item in results
+        if isinstance(item.get("generationMetrics"), dict)
+        and item["generationMetrics"].get("answerCorrectness") is not None
+    )
+    scored = sum(1 for item in results if isinstance(item.get("generationMetrics"), dict) and item["generationMetrics"].get("faithfulness") is not None)
+    metrics["generationMetrics"] = {
+        metric: (sum(values) / len(values) if values else None)
+        for metric, values in by_metric.items()
+    } | {"eligibleCaseCount": eligible, "scoredCaseCount": scored}
+    return metrics
 
 
 def _deterministic_groundedness(experiment: dict[str, Any]) -> dict[str, Any]:
     generation = experiment.get("stage_results", {}).get("generation", {})
     context = experiment.get("stage_results", {}).get("context", {})
     selected = {item.get("citationId"): item.get("text", "") for item in context.get("selected", [])}
-    claims = generation.get("claims", [])
-    if not claims:
+    segments = generation.get("segments")
+    if segments is None:
+        segments = generation.get("claims", [])
+    if not segments:
         return {"method": "citation_token_overlap_v1", "score": 0.0, "claimResults": []}
     claim_results: list[dict[str, Any]] = []
-    for claim in claims:
+    for claim in segments:
         claim_text = str(claim.get("text", ""))
         tokens = {token.lower() for token in re.findall(r"[\wÀ-ÿ]+", claim_text) if len(token) > 2}
         cited_text = " ".join(selected.get(identifier, "") for identifier in claim.get("citationIds", []))
@@ -1775,41 +2104,94 @@ def queue_evaluation(request: EvaluationRunRequest, *, repository: Repository | 
     if dataset is None:
         raise ApiProblem(404, "dataset_not_found", "The evaluation dataset was not found.")
     _document_or_404(repository, dataset["document_id"])
+    evaluation_fingerprint = _fingerprint({
+        "schema": "evaluation-fingerprint-v1",
+        "datasetId": request.dataset_id,
+        "config": _safe_model_dump(request),
+    })
+    existing = repository.get_evaluation_by_fingerprint(request.dataset_id, evaluation_fingerprint)
+    # Completed artifacts are reusable immediately. Active rows must still go
+    # through the atomic claim path so an expired lease can be reclaimed and a
+    # healthy equivalent run can be returned without creating a duplicate.
+    if existing is not None and existing.get("status") == "completed":
+        return _evaluation_response(existing)
+    queued_at = now_utc()
     evaluation_id = new_id()
-    return repository.save_evaluation({
+    lease_token = str(uuid.uuid4())
+    lease_duration_seconds = pipeline_lease_duration_seconds(get_settings())
+    claimed, _owner = repository.claim_evaluation({
         "id": evaluation_id,
         "dataset_id": request.dataset_id,
+        "evaluation_fingerprint": evaluation_fingerprint,
+        "identity_claimed": True,
         "config": _safe_model_dump(request),
         "child_experiment_ids": [],
         "results": {"aggregate": {"caseCount": 0}, "caseResults": []},
         "status": "queued",
-        "started_at": None,
+        "dispatch_id": None,
+        "attempt_count": 1,
+        "lease_token": lease_token,
+        "lease_expires_at": queued_at + timedelta(seconds=lease_duration_seconds),
+        "worker_started_at": None,
+        "started_at": queued_at,
         "completed_at": None,
         "duration_ms": None,
     })
+    return _evaluation_response(claimed)
 
 
-def run_queued_evaluation(request: EvaluationRunRequest, evaluation_id: str, *, repository: Repository | None = None) -> dict[str, Any] | None:
+def run_queued_evaluation(
+    request: EvaluationRunRequest,
+    evaluation_id: str,
+    *,
+    repository: Repository | None = None,
+    lease_token: str | None = None,
+) -> dict[str, Any] | None:
     repository = repository or get_repository()
     try:
-        return create_evaluation(request, repository=repository, evaluation_id=evaluation_id)
+        persisted = repository.get_evaluation_row(evaluation_id)
+        if persisted is None:
+            raise ApiProblem(404, "evaluation_run_not_found", "The evaluation run was not found.")
+        if not lease_token and persisted.get("status") not in {"queued", "running"}:
+            return _evaluation_response(persisted)
+        lease_token = lease_token or persisted.get("lease_token")
+        if lease_token:
+            if repository.start_pipeline_worker(
+                "evaluation", evaluation_id, lease_token, pipeline_lease_duration_seconds(get_settings())
+            ) is None:
+                return None
+        return _evaluation_response(create_evaluation(request, repository=repository, evaluation_id=evaluation_id, lease_token=lease_token))
     except ApiProblem as exc:
         completed_at = now_utc()
-        repository.update_evaluation(evaluation_id, {
-            "status": "failed", "completed_at": completed_at,
-            "error_code": exc.code, "error_message": exc.message,
-        })
+        if lease_token:
+            repository.fail_pipeline_worker("evaluation", evaluation_id, lease_token, exc.code, exc.message)
+        else:
+            repository.update_evaluation(evaluation_id, {
+                "status": "failed", "completed_at": completed_at,
+                "error_code": exc.code, "error_message": exc.message,
+                "identity_claimed": None,
+            })
         return None
     except Exception:
         completed_at = now_utc()
-        repository.update_evaluation(evaluation_id, {
-            "status": "failed", "completed_at": completed_at,
-            "error_code": "evaluation_failed", "error_message": "The evaluation failed before completing all cases.",
-        })
+        if lease_token:
+            repository.fail_pipeline_worker("evaluation", evaluation_id, lease_token, "evaluation_failed", "The evaluation failed before completing all cases.")
+        else:
+            repository.update_evaluation(evaluation_id, {
+                "status": "failed", "completed_at": completed_at,
+                "error_code": "evaluation_failed", "error_message": "The evaluation failed before completing all cases.",
+                "identity_claimed": None,
+            })
         return None
 
 
-def create_evaluation(request: EvaluationRunRequest, *, repository: Repository | None = None, evaluation_id: str | None = None) -> dict[str, Any]:
+def create_evaluation(
+    request: EvaluationRunRequest,
+    *,
+    repository: Repository | None = None,
+    evaluation_id: str | None = None,
+    lease_token: str | None = None,
+) -> dict[str, Any]:
     repository = repository or get_repository()
     _require_write(repository, get_settings())
     dataset = repository.get_dataset_row(request.dataset_id)
@@ -1851,6 +2233,13 @@ def create_evaluation(request: EvaluationRunRequest, *, repository: Repository |
     child_ids: list[str] = []
     started_at = now_utc()
     evaluation_id = evaluation_id or new_id()
+    evaluation_lease_duration = pipeline_lease_duration_seconds(get_settings()) if lease_token else None
+
+    def renew_evaluation_lease() -> None:
+        if lease_token and evaluation_lease_duration is not None:
+            if repository.renew_pipeline_lease("evaluation", evaluation_id, lease_token, evaluation_lease_duration) is None:
+                raise ApiProblem(409, "worker_lease_lost", "The evaluation worker lease was lost.")
+
     existing_evaluation = repository.get_evaluation_row(evaluation_id)
     if existing_evaluation is None:
         repository.save_evaluation({
@@ -1860,8 +2249,10 @@ def create_evaluation(request: EvaluationRunRequest, *, repository: Repository |
             "status": "running", "started_at": started_at, "completed_at": None, "duration_ms": None,
         })
     else:
-        repository.update_evaluation(evaluation_id, {"status": "running", "started_at": started_at})
+        if repository.update_evaluation(evaluation_id, {"status": "running", "started_at": started_at}, lease_token) is None:
+            raise ApiProblem(409, "worker_lease_lost", "The evaluation worker lease was lost.")
     for case in dataset["cases"][:10]:
+        renew_evaluation_lease()
         exp_request = ExperimentCreateRequest(
             document_id=dataset["document_id"],
             pipeline_id=request.pipeline_id,
@@ -1875,7 +2266,12 @@ def create_evaluation(request: EvaluationRunRequest, *, repository: Repository |
             generation=request.generation,
         )
         try:
-            experiment = create_experiment(exp_request, repository=repository)
+            child_lease_token = str(uuid.uuid4()) if lease_token else None
+            experiment = _create_experiment(
+                exp_request,
+                repository=repository,
+                lease_token=child_lease_token,
+            )
         except ApiProblem as exc:
             failed_at = now_utc()
             repository.update_evaluation(evaluation_id, {
@@ -1884,7 +2280,8 @@ def create_evaluation(request: EvaluationRunRequest, *, repository: Repository |
                 "duration_ms": duration_ms_between(started_at, failed_at),
                 "error_code": exc.code,
                 "error_message": exc.message,
-            })
+                "identity_claimed": None,
+            }, lease_token)
             raise
         except Exception as exc:
             failed_at = now_utc()
@@ -1894,7 +2291,8 @@ def create_evaluation(request: EvaluationRunRequest, *, repository: Repository |
                 "duration_ms": duration_ms_between(started_at, failed_at),
                 "error_code": "evaluation_failed",
                 "error_message": "The evaluation failed before completing all cases.",
-            })
+                "identity_claimed": None,
+            }, lease_token)
             raise exc
         child_ids.append(experiment["id"])
         retrieval_results = experiment["stage_results"].get("retrieval", {}).get("results", [])
@@ -1907,25 +2305,68 @@ def create_evaluation(request: EvaluationRunRequest, *, repository: Repository |
         denominator = len(expected) or 1
         citation_validity = 1.0 if experiment["stage_results"].get("generation", {}).get("citationValidity", {}).get("valid") else 0.0
         groundedness = _deterministic_groundedness(experiment)
+        generation_metrics = {
+            "faithfulness": groundedness["score"],
+            "answerRelevance": None,
+            "answerCorrectness": None,
+            "method": groundedness["method"],
+            "metricVersion": JUDGE_METRIC_VERSION,
+        }
         if request.judge and judge_service is not None:
             generation = experiment["stage_results"].get("generation", {})
             judge_prompt = (
-                "Evaluate whether each claim is supported by its cited context. Return JSON with "
-                "groundedness (0..1) and claimResults.\n"
-                f"Claims: {generation.get('claims', [])}\nContext: {experiment['stage_results'].get('context', {}).get('selected', [])}"
+                "Evaluate the answer against the question and supplied context. Return JSON with numeric "
+                "faithfulness (0..1), answerRelevance (0..1), answerCorrectness (0..1 or null), and claimResults. "
+                "answerCorrectness must be null when no reference answer is supplied.\n"
+                f"Question: {case['question']}\n"
+                f"Answer: {generation.get('answer', '')}\n"
+                f"Segments: {generation.get('segments', generation.get('claims', []))}\n"
+                f"Context: {experiment['stage_results'].get('context', {}).get('selected', [])}\n"
+                f"Reference answer: {case.get('reference_answer') or '(none)'}"
             )
             judge_value, judge_metadata = judge_service.judge(judge_prompt)
-            score = float(judge_value.get("groundedness", judge_value.get("score", -1)))
-            if score < 0 or score > 1:
-                raise ApiProblem(503, "invalid_groundedness", "The groundedness judge returned an invalid score.")
+            legacy_score = judge_value.get("groundedness", judge_value.get("score"))
+            faithfulness_raw = judge_value.get("faithfulness", legacy_score)
+            relevance_raw = judge_value.get("answerRelevance")
+            if relevance_raw is None and legacy_score is not None:
+                # Compatibility for pre-v2 judge adapters; v2 providers return
+                # an explicit answerRelevance value.
+                relevance_raw = legacy_score
+            correctness_raw = judge_value.get("answerCorrectness", judge_value.get("correctness"))
+            if case.get("reference_answer") is None:
+                correctness_raw = None
+            if faithfulness_raw is None or relevance_raw is None or (
+                case.get("reference_answer") is not None and correctness_raw is None
+            ):
+                raise ApiProblem(503, "invalid_generation_metrics", "The generation judge omitted a required metric.")
+            try:
+                faithfulness = float(faithfulness_raw)
+                answer_relevance = float(relevance_raw)
+                answer_correctness = None if correctness_raw is None else float(correctness_raw)
+            except (TypeError, ValueError) as exc:
+                raise ApiProblem(503, "invalid_generation_metrics", "The generation judge returned a non-numeric metric.") from exc
+            values = [faithfulness, answer_relevance] + ([] if answer_correctness is None else [answer_correctness])
+            if any(value < 0 or value > 1 for value in values):
+                raise ApiProblem(503, "invalid_generation_metrics", "The generation judge returned an invalid metric.")
             groundedness = {
-                "method": "gemini_claim_support_v1",
-                "score": score,
+                "method": "gemini_generation_metrics_v2",
+                "score": faithfulness,
                 "claimResults": judge_value.get("claimResults", []),
                 "configuredModel": judge_metadata.configured_model,
                 "effectiveModel": judge_metadata.effective_model,
-                "promptVersion": "groundedness-judge-v1",
+                "promptVersion": JUDGE_PROMPT_VERSION,
             }
+            generation_metrics = {
+                "faithfulness": faithfulness,
+                "answerRelevance": answer_relevance,
+                "answerCorrectness": answer_correctness,
+                "method": groundedness["method"],
+                "configuredModel": judge_metadata.configured_model,
+                "effectiveModel": judge_metadata.effective_model,
+                "promptVersion": JUDGE_PROMPT_VERSION,
+                "metricVersion": JUDGE_METRIC_VERSION,
+            }
+        generation = experiment["stage_results"].get("generation", {})
         case_results.append({
             "question": case["question"],
             "expectedElementIds": sorted(expected),
@@ -1935,8 +2376,10 @@ def create_evaluation(request: EvaluationRunRequest, *, repository: Repository |
                 for source in result.get("sourceElementIds", [])
             }),
             "referenceAnswer": case.get("reference_answer"),
-            "answer": experiment["stage_results"].get("generation", {}).get("answer"),
-            "citations": experiment["stage_results"].get("generation", {}).get("citations", []),
+            "answer": generation.get("answer"),
+            "segments": generation.get("segments", generation.get("claims", [])),
+            "citations": generation.get("citations", []),
+            "citationCoverage": generation.get("citationCoverage"),
             "hitAtK": 1.0 if relevant_ranks else 0.0,
             "precisionAtK": len(relevant_ranks) / max(1, len(retrieval_results)),
             "recallAtK": len({source for result in retrieval_results for source in set(result.get("sourceElementIds", [])) & expected}) / denominator,
@@ -1944,24 +2387,52 @@ def create_evaluation(request: EvaluationRunRequest, *, repository: Repository |
             "citationValidity": citation_validity,
             "groundedness": groundedness["score"],
             "groundednessDetail": groundedness,
+            "generationMetrics": generation_metrics,
             "experimentId": experiment["id"],
         })
         partial_aggregate = _evaluation_metrics(case_results)
         partial_aggregate["judgeModel"] = get_settings().gemini_judge_model if request.judge else None
-        repository.update_evaluation(evaluation_id, {
+        if repository.update_evaluation(evaluation_id, {
             "child_experiment_ids": child_ids,
             "results": {"aggregate": partial_aggregate, "caseResults": case_results},
-        })
+        }, lease_token) is None:
+            raise ApiProblem(409, "worker_lease_lost", "The evaluation worker lease was lost.")
+        renew_evaluation_lease()
     aggregate = _evaluation_metrics(case_results)
     aggregate["judgeModel"] = get_settings().gemini_judge_model if request.judge else None
     completed_at = now_utc()
     completed = repository.update_evaluation(evaluation_id, {
         "child_experiment_ids": child_ids,
         "results": {"aggregate": aggregate, "caseResults": case_results},
-        "status": "completed",
         "completed_at": completed_at,
         "duration_ms": duration_ms_between(started_at, completed_at),
-    })
+    }, lease_token)
+    if lease_token:
+        completed = repository.complete_pipeline_worker("evaluation", evaluation_id, lease_token) if completed is not None else None
+    else:
+        completed = repository.update_evaluation(
+            evaluation_id,
+            {"status": "completed", "identity_claimed": None},
+        ) if completed is not None else None
     if completed is None:
         raise ApiProblem(500, "persistence_failed", "The evaluation could not be completed.")
     return completed
+
+
+def run_pipeline_worker(kind: str, run_id: str, lease_token: str) -> dict[str, Any] | None:
+    """Execute one persisted experiment/evaluation under a fencing lease."""
+
+    repository = get_repository()
+    if kind == "experiment":
+        row = repository.get_experiment_row(run_id)
+        if row is None:
+            raise ApiProblem(404, "experiment_not_found", "The experiment was not found.")
+        request = ExperimentCreateRequest.model_validate(row.get("config") or {})
+        return run_queued_experiment(request, run_id, repository=repository, lease_token=lease_token)
+    if kind == "evaluation":
+        row = repository.get_evaluation_row(run_id)
+        if row is None:
+            raise ApiProblem(404, "evaluation_run_not_found", "The evaluation run was not found.")
+        request = EvaluationRunRequest.model_validate(row.get("config") or {})
+        return run_queued_evaluation(request, run_id, repository=repository, lease_token=lease_token)
+    raise ApiProblem(400, "pipeline_kind_invalid", "The pipeline worker kind is invalid.")

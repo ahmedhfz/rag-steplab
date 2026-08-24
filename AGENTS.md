@@ -193,3 +193,32 @@ Implementasyon, UI ve dokümantasyon bu yanıtları görünür kılmalıdır.
 - `.env` gibi secret dosyaları gerektiğinde `.gitignore` benzeri korumalara dahil edilmelidir.
 - Gemini API key ileride environment variable üzerinden alınmalıdır.
 - Log, test fixture, örnek çıktı veya hata mesajları secret sızdırmamalıdır.
+
+## Codex iteration ve path-aware verification
+
+- **Scope-first:** Scoped görevde önce yalnız ilgili dosyaları ve doğrudan dependency'lerini incele; kullanıcı repo-wide audit istemedikçe tüm repo'yu yeniden tarama.
+- **No unrelated work:** Scope dışı refactor, cleanup, naming, dependency upgrade veya “while I’m here” değişikliği yapma.
+- **Targeted-first:** Development loop'unda yalnız değişiklikle ilgili targeted testleri çalıştır; her küçük edit sonrası full suite çalıştırma.
+- **Final full verification:** Implementation tamamlandıktan sonra, değişen path'lerin gerektirdiği final gate'te geniş backend/frontend suite'leri, lint, typecheck ve build kontrollerini bir kez çalıştır.
+- **Failure loop:** Full test failure'ında önce yalnız failing test'i debug et; targeted test green olmadan full suite'i tekrar çalıştırma.
+- **Path-aware verification:** Yalnız değişen path'lerin gerektirdiği gate'leri seç. Codex/local loop'unda backend değişikliği unrelated frontend E2E'yi, frontend değişikliği unrelated backend/provider testlerini otomatik tetiklemez; CI'nin mevcut classifier'ının zorunlu gate'leri korunur.
+- **Expensive E2E:** Seeded, hosted ve real-provider E2E'leri development loop'unda tekrarlama; ilgili flow değiştiyse final verification'da çalıştır. `npm run e2e:full` scheduled/manual veya release doğrulamasına aittir.
+- **Reuse evidence:** Aynı turda değişmemiş dosyayı, başarıyla geçmiş pahalı testi veya doğrulanmış external contract'ı gereksiz yere yeniden inceleme.
+- **No automatic second audit:** Implementation ve gerekli final verification başarılıysa repo-wide ikinci audit yapmadan bitir; ikinci audit yalnız kullanıcı isterse veya somut sistemik risk çıkarsa yapılır.
+- **Parallelize safe work:** Bağımsız inspection ve targeted testleri mümkünse paralel yürüt; dependency sırası olan editleri paralelleştirme.
+- **Stop condition:** İstenen davranış implement edilmiş, regression testleri geçmiş, gerekli final gate'ler green ve git diff scope içindeyse task tamamdır; yeni improvement arama.
+- **Correctness over speed:** Bu optimizasyonlar gerekli security, migration, concurrency veya production contract testlerini atlamak için kullanılamaz; amaç aynı kanıtı tekrar tekrar üretmemektir.
+
+### Path-aware verification matrix
+
+`<ilgili_test>.py` ve `<ilgili_test>` mevcut test yoluyla daraltmadır; yeni script veya komut değildir.
+
+| Değişen path | Development loop | Final gate / CI karşılığı |
+| --- | --- | --- |
+| `backend/` | `python -m pytest backend/tests/<ilgili_test>.py` | `python -m pytest backend/tests`; ilgili kullanıcı akışında `npm run e2e:smoke` |
+| Frontend (`app/`, `components/`, `lib/`, `test/`, `e2e/`) | `npm test -- --maxWorkers=1 <ilgili_test>` | `npm run lint`; `npm run typecheck`; `npm test -- --maxWorkers=1`; `npm run build`; `node --check scripts/smoke.mjs`; ilgili akışta `npm run e2e:smoke`, auth değişikliğinde `npm run e2e:auth` |
+| `supabase/` veya migration authority | `node scripts/check-migration-authority.mjs` | `node scripts/check-migration-authority.mjs`; `supabase start`; `supabase db reset --local --no-seed`; `supabase test db --local`; `supabase db lint --local --schema rag_lab --fail-on error` |
+| `modal/worker` (`backend/modal_app.py`, worker ile ilgili `backend/app/`) | `python -m pytest backend/tests/<ilgili_test>.py` | `python -m pytest backend/tests`; release CI'de `modal deploy --env "$MODAL_ENVIRONMENT" --tag "$GITHUB_SHA" --strategy rolling backend/modal_app.py`; ilgili contract için `npm run e2e:smoke`, real-provider doğrulaması için yalnız `npm run e2e:full` |
+| Docs-only (`AGENTS.md`, `README.md`, `docs/`) | Test yok; gerekirse `git diff --check` | Frontend/backend/database/modal/E2E gate'lerini çalıştırma; CI'nin docs-only classification ve always-on `secret-hygiene` kontrolü yeterlidir |
+
+Migration production apply (`supabase db push --linked --yes --skip-vault`) ve Modal/hosted E2E yalnız ilgili CI/release yetkisi ve final gate kapsamında çalıştırılır.

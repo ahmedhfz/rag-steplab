@@ -80,6 +80,9 @@ class Settings:
     cors_origin_regex: str | None = None
     write_enabled: bool = True
     max_concurrent_pipeline_runs: int = 1
+    pipeline_worker_timeout_seconds: int = 1800
+    pipeline_worker_startup_timeout_seconds: int = 300
+    pipeline_lease_grace_seconds: int = 120
     max_file_size_bytes: int = 50 * 1024 * 1024
     # Modal ve Docling değerleri deploy sırasında environment'tan gelir.
     # Varsayılanlar local import/test akışını belirli bir platforma kilitlemez.
@@ -91,6 +94,29 @@ class Settings:
     local_parse_worker_enabled: bool = False
     docling_artifacts_path: str | None = None
     docling_parser_version: str = "docling-2.117.0"
+
+
+def pipeline_lease_duration_seconds(settings: Settings) -> int:
+    """Bound the lease by the real worker/provider execution budget.
+
+    The Modal invocation timeout is the hard upper bound for a healthy
+    worker. Provider retry envelopes are included so a provider call cannot
+    outlive the lease calculation if the worker timeout is reduced.
+    """
+
+    retry_attempts = max(0, settings.gemini_max_retries) + 1
+    # A structured generation can retry the provider call for transport
+    # errors, invalid JSON, and (for citations) invalid output. Bound the
+    # nested envelope conservatively so a reduced worker timeout cannot make
+    # a healthy provider operation outlive its fencing lease.
+    provider_attempts = retry_attempts**3
+    provider_budget = max(1, settings.gemini_timeout_seconds) * provider_attempts + provider_attempts * 2
+    operation_budget = max(settings.pipeline_worker_timeout_seconds, provider_budget)
+    return (
+        settings.pipeline_worker_startup_timeout_seconds
+        + operation_budget
+        + settings.pipeline_lease_grace_seconds
+    )
 
 
 @lru_cache(maxsize=1)
@@ -130,6 +156,9 @@ def get_settings() -> Settings:
         cors_origin_regex=os.getenv("CORS_ORIGIN_REGEX") or None,
         write_enabled=_bool("WRITE_ENABLED", True),
         max_concurrent_pipeline_runs=max(1, _int("MAX_CONCURRENT_PIPELINE_RUNS", 1)),
+        pipeline_worker_timeout_seconds=max(60, _int("PIPELINE_WORKER_TIMEOUT_SECONDS", 1800)),
+        pipeline_worker_startup_timeout_seconds=max(30, _int("PIPELINE_WORKER_STARTUP_TIMEOUT_SECONDS", 300)),
+        pipeline_lease_grace_seconds=max(10, _int("PIPELINE_LEASE_GRACE_SECONDS", 120)),
         max_file_size_bytes=max(1, _int("MAX_FILE_SIZE_BYTES", 50 * 1024 * 1024)),
         modal_app_name=os.getenv("MODAL_APP_NAME", "rag-steplab-api"),
         modal_parse_function_name=os.getenv("MODAL_PARSE_FUNCTION_NAME", "parse_worker"),

@@ -1,6 +1,6 @@
 begin;
 
-select plan(48);
+select plan(50);
 
 select ok(to_regnamespace('rag_lab') is not null, 'rag_lab schema exists');
 
@@ -168,7 +168,25 @@ select ok(
       and conname = 'ck_experiment_runs_identity_claim'
       and contype = 'c'
   ),
-  'experiment identity claim only permits running rows'
+  'experiment identity claim only permits queued/running rows'
+);
+
+select ok(
+  (select count(*) from information_schema.columns
+   where table_schema = 'rag_lab'
+     and table_name in ('chunk_runs', 'embedding_runs', 'experiment_runs', 'evaluation_runs')
+     and column_name in ('lease_token', 'lease_expires_at')) = 8
+  and exists (select 1 from information_schema.columns where table_schema = 'rag_lab' and table_name = 'experiment_runs' and column_name = 'dispatch_id')
+  and exists (select 1 from information_schema.columns where table_schema = 'rag_lab' and table_name = 'evaluation_runs' and column_name = 'worker_started_at'),
+  'durable worker lease and dispatch columns exist'
+);
+
+select ok(
+  exists (select 1 from information_schema.check_constraints where constraint_schema = 'rag_lab' and constraint_name = 'ck_experiment_runs_lease_pair')
+  and exists (select 1 from information_schema.check_constraints where constraint_schema = 'rag_lab' and constraint_name = 'ck_evaluation_runs_lease_pair')
+  and exists (select 1 from information_schema.check_constraints where constraint_schema = 'rag_lab' and constraint_name = 'ck_chunk_runs_lease_pair')
+  and exists (select 1 from information_schema.check_constraints where constraint_schema = 'rag_lab' and constraint_name = 'ck_embedding_runs_lease_pair'),
+  'lease token and expiry are atomically paired'
 );
 
 select ok(

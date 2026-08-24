@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import copy
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,6 +21,7 @@ from .modal_dispatch import (
     ModalDispatchError,
     dispatch_local_parse_run,
     dispatch_parse_run,
+    dispatch_pipeline_run,
     parse_call_terminal_failure,
 )
 from .pipeline import (
@@ -30,6 +33,8 @@ from .pipeline import (
     run_queued_evaluation,
     create_experiment,
     queue_experiment,
+    queue_continue_experiment,
+    queue_rerun_generation,
     run_queued_experiment,
     continue_experiment,
     rerun_generation,
@@ -137,6 +142,72 @@ def _camelize(value: Any) -> Any:
     if isinstance(value, list):
         return [_camelize(item) for item in value]
     return value
+
+
+def _public_run_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Remove worker-only credentials and execution bookkeeping from DTOs."""
+
+    result = copy.deepcopy(row)
+    result.pop("lease_token", None)
+    if isinstance(result.get("config"), dict):
+        result["config"].pop("_execution", None)
+    return result
+
+
+def _public_artifact_row(row: dict[str, Any]) -> dict[str, Any]:
+    result = copy.deepcopy(row)
+    result.pop("lease_token", None)
+    return result
+
+
+def _durable_pipeline_response(kind: str, row: dict[str, Any], repository) -> JSONResponse:
+    """Dispatch a persisted run exactly once and return its state-machine DTO."""
+
+    current = repository.get_experiment_row(row["id"]) if kind == "experiment" else repository.get_evaluation_row(row["id"])
+    current = current or row
+    status = current.get("status")
+    if status == "completed":
+        return JSONResponse(status_code=200, content=jsonable_encoder(_camelize(_public_run_row(current))))
+    if status not in {"queued", "running"}:
+        return JSONResponse(status_code=200, content=jsonable_encoder(_camelize(_public_run_row(current))))
+    if current.get("dispatch_id"):
+        return JSONResponse(status_code=202, content=jsonable_encoder(_camelize(_public_run_row(current))))
+    lease_token = current.get("lease_token")
+    if not lease_token:
+        raise ApiProblem(409, "worker_lease_missing", "The queued pipeline run has no fencing lease.")
+    reservation_id = f"dispatching-{uuid.uuid4()}"
+    reserved = repository.claim_pipeline_dispatch(kind, current["id"], reservation_id, str(lease_token))
+    if reserved is None:
+        raise ApiProblem(409, "worker_lease_lost", "The pipeline run lease was lost before dispatch reservation.")
+    if reserved.get("dispatch_id") != reservation_id:
+        return JSONResponse(status_code=202, content=jsonable_encoder(_camelize(_public_run_row(reserved))))
+    try:
+        dispatch_id = dispatch_pipeline_run(kind, current["id"], str(lease_token), settings=get_settings())
+        dispatched = repository.set_pipeline_dispatch(
+            kind,
+            current["id"],
+            dispatch_id,
+            str(lease_token),
+            reservation_id,
+        )
+        if dispatched is None:
+            latest = repository.get_experiment_row(current["id"]) if kind == "experiment" else repository.get_evaluation_row(current["id"])
+            if latest is not None and latest.get("status") in {"queued", "running", "completed"}:
+                status_code = 200 if latest.get("status") == "completed" else 202
+                return JSONResponse(status_code=status_code, content=jsonable_encoder(_camelize(_public_run_row(latest))))
+            raise ApiProblem(409, "worker_lease_lost", "The pipeline run lease was lost before dispatch was recorded.")
+    except ApiProblem:
+        raise
+    except ModalDispatchError as exc:
+        repository.fail_pipeline_worker(
+            kind,
+            current["id"],
+            str(lease_token),
+            "pipeline_dispatch_failed",
+            "The pipeline worker could not be started.",
+        )
+        raise ApiProblem(503, "pipeline_dispatch_failed", "The pipeline worker could not be started.") from exc
+    return JSONResponse(status_code=202, content=jsonable_encoder(_camelize(_public_run_row(dispatched))))
 
 
 def _guarded(function, *args, **kwargs):
@@ -301,7 +372,7 @@ def capabilities(_: CurrentUser = Depends(get_current_user)) -> CapabilitiesResp
             "maxFileSizeBytes": current_settings.max_file_size_bytes,
             "maxTopK": 50,
             "maxEvaluationCases": 10,
-            "maxRerankCandidates": 20,
+            "maxRerankCandidates": 200,
         },
     )
 
@@ -875,7 +946,7 @@ def delete_document_pipeline_route(
 
 @app.post("/documents/{document_id}/chunks", response_model=ChunkRunResponse)
 def chunks(document_id: str, request: ChunkRunRequest, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    return _camelize(_guarded(create_chunk_run, document_id, request, repository=_user_repository(user)))
+    return _camelize(_public_artifact_row(_guarded(create_chunk_run, document_id, request, repository=_user_repository(user))))
 
 
 @app.get("/chunk-runs/{run_id}")
@@ -883,12 +954,12 @@ def chunk_run(run_id: str, user: CurrentUser = Depends(get_current_user)) -> dic
     row = _user_repository(user).get_chunk_row(run_id)
     if row is None:
         raise ApiProblem(404, "chunk_run_not_found", "The chunk run was not found.")
-    return _camelize(row)
+    return _camelize(_public_artifact_row(row))
 
 
 @app.post("/documents/{document_id}/embeddings", response_model=EmbeddingRunResponse)
 def embeddings(document_id: str, request: dict[str, str] | None = None, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    return _camelize(_guarded(create_embedding_run, document_id, (request or {}).get("chunkRunId"), repository=_user_repository(user)))
+    return _camelize(_public_artifact_row(_guarded(create_embedding_run, document_id, (request or {}).get("chunkRunId"), repository=_user_repository(user))))
 
 
 @app.get("/embedding-runs/{run_id}")
@@ -896,7 +967,7 @@ def embedding_run(run_id: str, user: CurrentUser = Depends(get_current_user)) ->
     row = _user_repository(user).get_embedding_row(run_id)
     if row is None:
         raise ApiProblem(404, "embedding_run_not_found", "The embedding run was not found.")
-    return _camelize(row)
+    return _camelize(_public_artifact_row(row))
 
 
 @app.post("/experiments", response_model=None)
@@ -907,6 +978,11 @@ def experiments(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any] | JSONResponse:
     repository = _user_repository(user)
+    # Hosted execution is always durable async. The query flag remains a
+    # development/test convenience for the existing synchronous contract.
+    if get_settings().app_env in {"production", "staging"}:
+        queued = queue_experiment(request, repository=repository)
+        return _durable_pipeline_response("experiment", queued, repository)
     if not async_run:
         return _camelize(_guarded(create_experiment, request, repository=repository))
     if not _pipeline_semaphore.acquire(blocking=False):
@@ -948,15 +1024,17 @@ def list_experiments(document_id: str | None = Query(default=None, alias="docume
 
 @app.get("/experiments/{experiment_id}")
 def get_experiment(experiment_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    row = _user_repository(user).get_experiment_row(experiment_id)
+    repository = _user_repository(user)
+    row = repository.reconcile_pipeline_lease("experiment", experiment_id)
     if row is None:
         raise ApiProblem(404, "experiment_not_found", "The experiment was not found.")
-    return _camelize(row)
+    return _camelize(_public_run_row(row))
 
 
 @app.get("/experiments/{experiment_id}/status")
 def get_experiment_status(experiment_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    row = _user_repository(user).get_experiment_row(experiment_id)
+    repository = _user_repository(user)
+    row = repository.reconcile_pipeline_lease("experiment", experiment_id)
     if row is None:
         raise ApiProblem(404, "experiment_not_found", "The experiment was not found.")
     stage_results = row.get("stage_results") or {}
@@ -980,11 +1058,19 @@ def get_experiment_status(experiment_id: str, user: CurrentUser = Depends(get_cu
 
 @app.post("/experiments/{experiment_id}/continue")
 def continue_run(experiment_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    repository = _user_repository(user)
+    if get_settings().app_env in {"production", "staging"}:
+        queued = queue_continue_experiment(experiment_id, repository=repository)
+        return _durable_pipeline_response("experiment", queued, repository)
     return _camelize(_guarded(continue_experiment, experiment_id, repository=_user_repository(user)))
 
 
 @app.post("/experiments/{experiment_id}/rerun-generation")
 def rerun_generation_run(experiment_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    repository = _user_repository(user)
+    if get_settings().app_env in {"production", "staging"}:
+        queued = queue_rerun_generation(experiment_id, repository=repository)
+        return _durable_pipeline_response("experiment", queued, repository)
     return _camelize(_guarded(rerun_generation, experiment_id, repository=_user_repository(user)))
 
 
@@ -1014,12 +1100,18 @@ def evaluation_run(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any] | JSONResponse:
     repository = _user_repository(user)
+    if get_settings().app_env in {"production", "staging"}:
+        queued = queue_evaluation(request, repository=repository)
+        return _durable_pipeline_response("evaluation", queued, repository)
     if not async_run:
         return _camelize(_guarded(create_evaluation, request, repository=repository))
     if not _pipeline_semaphore.acquire(blocking=False):
         raise ApiProblem(429, "pipeline_busy", "Another pipeline run is currently in progress.")
     try:
         queued = queue_evaluation(request, repository=repository)
+        if queued.get("status") == "completed":
+            _pipeline_semaphore.release()
+            return JSONResponse(status_code=200, content=jsonable_encoder(_camelize(queued)))
         background_tasks.add_task(_run_queued_evaluation_and_release, request, queued["id"], repository)
         return JSONResponse(status_code=202, content=jsonable_encoder(_camelize(queued)))
     except Exception:
@@ -1054,16 +1146,17 @@ def list_evaluation_runs(dataset_id: str | None = Query(default=None, alias="dat
 
 @app.get("/evaluation/runs/{run_id}")
 def get_evaluation_run(run_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    row = _user_repository(user).get_evaluation_row(run_id)
+    repository = _user_repository(user)
+    row = repository.reconcile_pipeline_lease("evaluation", run_id)
     if row is None:
         raise ApiProblem(404, "evaluation_run_not_found", "The evaluation run was not found.")
-    return _camelize(row)
+    return _camelize(_public_run_row(row))
 
 
 @app.get("/evaluation/runs/{run_id}/status")
 def get_evaluation_run_status(run_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     repository = _user_repository(user)
-    row = repository.get_evaluation_row(run_id)
+    row = repository.reconcile_pipeline_lease("evaluation", run_id)
     if row is None:
         raise ApiProblem(404, "evaluation_run_not_found", "The evaluation run was not found.")
     results = row.get("results") or {}

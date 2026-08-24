@@ -101,6 +101,16 @@ api_options: dict[str, Any] = {
     "region": api_compute_region,
     "routing_region": api_routing_region,
 }
+pipeline_options: dict[str, Any] = {
+    "image": api_image,
+    "secrets": api_secrets,
+    "cpu": 1.0,
+    "memory": 2048,
+    "min_containers": 0,
+    "max_containers": 1,
+    "timeout": max(60, int(os.getenv("PIPELINE_WORKER_TIMEOUT_SECONDS", "1800"))),
+    "startup_timeout": max(30, int(os.getenv("PIPELINE_WORKER_STARTUP_TIMEOUT_SECONDS", "300"))),
+}
 
 
 @app.function(**worker_options)
@@ -113,6 +123,15 @@ def parse_worker(parse_run_id: str) -> dict[str, Any]:
     if result is None:
         raise RuntimeError(f"Parse run {parse_run_id} was not found.")
     return result
+
+
+@app.function(**pipeline_options)
+def pipeline_worker(kind: str, run_id: str, lease_token: str) -> dict[str, Any] | None:
+    """Execute one persisted experiment/evaluation under a fencing lease."""
+
+    from app.pipeline import run_pipeline_worker
+
+    return run_pipeline_worker(kind, run_id, lease_token)
 
 
 @app.function(**worker_options)
@@ -212,8 +231,16 @@ def local_manifest() -> dict[str, Any]:
         "volume": MODEL_VOLUME_NAME,
         "modelMountPath": MODEL_MOUNT_PATH,
         "modelArtifactsPath": MODEL_ARTIFACTS_PATH,
-        "functions": ["api_eu", "api", "parse_worker", "benchmark_parse", "prefetch_docling_models"],
+        "functions": ["api_eu", "api", "parse_worker", "pipeline_worker", "benchmark_parse", "prefetch_docling_models"],
         "workerProfile": {"cpu": 2.0, "memoryMiB": 4096, "minContainers": 0, "maxContainers": 1, "timeoutSeconds": 900},
+        "pipelineWorkerProfile": {
+            "cpu": 1.0,
+            "memoryMiB": 2048,
+            "minContainers": 0,
+            "maxContainers": 1,
+            "timeoutSeconds": pipeline_options["timeout"],
+            "startupTimeoutSeconds": pipeline_options["startup_timeout"],
+        },
         "apiProfile": {
             "cpu": 0.5,
             "memoryMiB": 1024,

@@ -926,8 +926,18 @@ export async function createExperimentAsync(
   signal?: AbortSignal,
   onProgress?: (run: ExperimentRun) => void,
 ): Promise<ExperimentRun> {
-  let run = normalizeExperiment(await request("/experiments?async=true", { method: "POST", body: JSON.stringify(input), signal }));
+  const run = normalizeExperiment(await request("/experiments?async=true", { method: "POST", body: JSON.stringify(input), signal }));
   onProgress?.(run);
+  return waitForExperimentRun(run.id, signal, onProgress, run);
+}
+
+export async function waitForExperimentRun(
+  experimentId: string,
+  signal?: AbortSignal,
+  onProgress?: (run: ExperimentRun) => void,
+  initialRun?: ExperimentRun,
+): Promise<ExperimentRun> {
+  let run = initialRun ?? await getExperiment(experimentId, signal);
   while (run.status === "queued" || run.status === "running") {
     await new Promise<void>((resolve, reject) => {
       const timeout = window.setTimeout(resolve, 650);
@@ -936,7 +946,7 @@ export async function createExperimentAsync(
         reject(new DOMException("Aborted", "AbortError"));
       }, { once: true });
     });
-    run = await getExperiment(run.id, signal);
+    run = await getExperiment(experimentId, signal);
     onProgress?.(run);
   }
   return run;
@@ -969,11 +979,13 @@ export async function getExperimentStatus(experimentId: string, signal?: AbortSi
 }
 
 export async function continueExperiment(experimentId: string, signal?: AbortSignal): Promise<ExperimentRun> {
-  return normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}/continue`, { method: "POST", signal }));
+  const run = normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}/continue`, { method: "POST", signal }));
+  return waitForExperimentRun(run.id, signal, undefined, run);
 }
 
 export async function rerunGeneration(experimentId: string, signal?: AbortSignal): Promise<ExperimentRun> {
-  return normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}/rerun-generation`, { method: "POST", signal }));
+  const run = normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}/rerun-generation`, { method: "POST", signal }));
+  return waitForExperimentRun(run.id, signal, undefined, run);
 }
 
 export async function listExperiments(documentId: string, signal?: AbortSignal): Promise<ExperimentSummary[]> {

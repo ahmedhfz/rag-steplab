@@ -10,6 +10,20 @@ from typing import Any, Iterable
 
 
 CHUNKER_VERSION = "rag-steplab-chunker-v1"
+CHUNKER_VERSIONS = {
+    "fixed_token": CHUNKER_VERSION,
+    "recursive_token": "rag-steplab-recursive-chunker-v2",
+    "structure_aware": "rag-steplab-structure-chunker-v2",
+}
+
+
+def chunker_version_for_strategy(strategy: str) -> str:
+    """Return the output contract version for one chunking strategy."""
+
+    try:
+        return CHUNKER_VERSIONS[strategy]
+    except KeyError as exc:
+        raise ValueError(f"Unknown chunk strategy: {strategy}") from exc
 
 
 class LocalTokenizer:
@@ -175,13 +189,13 @@ def _window_drafts(
     return drafts
 
 
-def _split_recursive(record: ElementRecord, size: int, overlap: int) -> list[ChunkDraft]:
+def _recursive_group_records(record: ElementRecord, size: int) -> list[ElementRecord]:
     text = record.text
     if TOKENIZER.count(text) <= size:
-        return _window_drafts([record], size, overlap)
+        return [record]
     pieces = [piece.strip() for piece in re.split(r"\n\s*\n|(?<=[.!?])\s+|\n|(?<=,|;)\s+|\s+", text) if piece.strip()]
     if not pieces:
-        return _window_drafts([record], size, overlap)
+        return [record]
     # Greedily group semantic pieces, then use token windows only for a single
     # oversized piece. This exposes the recursive boundary without hiding it.
     groups: list[str] = []
@@ -195,39 +209,41 @@ def _split_recursive(record: ElementRecord, size: int, overlap: int) -> list[Chu
             current = candidate
     if current:
         groups.append(current)
-    drafts: list[ChunkDraft] = []
+    result: list[ElementRecord] = []
     for group in groups:
-        group_record = ElementRecord(
-            id=record.id,
-            type=record.type,
-            text=group,
-            page_numbers=record.page_numbers,
-            level=record.level,
-            heading_path=record.heading_path,
+        result.append(
+            ElementRecord(
+                id=record.id,
+                type=record.type,
+                text=group,
+                page_numbers=record.page_numbers,
+                level=record.level,
+                heading_path=record.heading_path,
+            )
         )
-        if TOKENIZER.count(group) > size:
-            drafts.extend(_window_drafts([group_record], size, overlap))
-        else:
-            drafts.extend(_window_drafts([group_record], size, overlap))
-    return drafts
+    return result
 
 
 def _recursive(records: list[ElementRecord], size: int, overlap: int) -> list[ChunkDraft]:
-    result: list[ChunkDraft] = []
+    # Keep semantic boundaries as source segments, but run one continuous
+    # token window over the whole document so overlap cannot reset at every
+    # paragraph or recursive group.
+    segments: list[ElementRecord] = []
     for record in records:
-        for draft in _split_recursive(record, size, overlap):
-            result.append(
-                ChunkDraft(
-                    ordinal=len(result),
-                    text=draft.text,
-                    page_numbers=draft.page_numbers,
-                    source_element_ids=draft.source_element_ids,
-                    heading_path=draft.heading_path,
-                    token_count=draft.token_count,
-                    character_count=draft.character_count,
-                )
-            )
-    return result
+        segments.extend(_recursive_group_records(record, size))
+    drafts = _window_drafts(segments, size, overlap)
+    return [
+        ChunkDraft(
+            ordinal=index,
+            text=draft.text,
+            page_numbers=draft.page_numbers,
+            source_element_ids=draft.source_element_ids,
+            heading_path=draft.heading_path,
+            token_count=draft.token_count,
+            character_count=draft.character_count,
+        )
+        for index, draft in enumerate(drafts)
+    ]
 
 
 def _structure_aware(records: list[ElementRecord], size: int, overlap: int) -> list[ChunkDraft]:
@@ -258,21 +274,23 @@ def _structure_aware(records: list[ElementRecord], size: int, overlap: int) -> l
                 )
             )
             continue
-        # Preserve heading provenance in every fallback piece, while tables and
-        # lists remain intact whenever their individual text fits.
+        # Preserve the section boundary while allowing overlap across records
+        # inside the section. Fitted tables/lists remain atomic segments.
+        segments: list[ElementRecord] = []
         for record in section:
-            for draft in _split_recursive(record, size, overlap):
-                result.append(
-                    ChunkDraft(
-                        ordinal=len(result),
-                        text=draft.text,
-                        page_numbers=draft.page_numbers,
-                        source_element_ids=draft.source_element_ids,
-                        heading_path=draft.heading_path,
-                        token_count=draft.token_count,
-                        character_count=draft.character_count,
-                    )
+            segments.extend(_recursive_group_records(record, size))
+        for draft in _window_drafts(segments, size, overlap):
+            result.append(
+                ChunkDraft(
+                    ordinal=len(result),
+                    text=draft.text,
+                    page_numbers=draft.page_numbers,
+                    source_element_ids=draft.source_element_ids,
+                    heading_path=draft.heading_path,
+                    token_count=draft.token_count,
+                    character_count=draft.character_count,
                 )
+            )
     return result
 
 
