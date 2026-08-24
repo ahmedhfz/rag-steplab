@@ -49,8 +49,8 @@ test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğ
   await page.getByLabel("Question").fill("What is the laboratory beacon code? Answer briefly.");
   await page.getByRole("button", { name: "Run experiment" }).click();
   await expect(page.getByText("ORBIT-731", { exact: false }).first()).toBeVisible({ timeout: 3 * 60_000 });
-  await expect(page.getByText("S1", { exact: true }).first()).toBeVisible();
-  await page.getByRole("button", { name: "S1" }).click();
+  await expect(page.getByText("C1", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "C1" }).click();
   await expect(page.getByRole("dialog", { name: "Source inspector" })).toContainText("ORBIT-731");
   await page.getByRole("button", { name: "Close" }).click();
 
