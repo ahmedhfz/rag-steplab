@@ -46,16 +46,16 @@ test("Evaluation source picker, aggregate metrics, case diagnostics ve reload pe
   quality.assertClean();
 });
 
-test("Guided görünüm teknik kimlikleri gizler, Technical görünüm erişilebilir kılar", async ({ page }) => {
+test("insan odaklı görünüm teknik kimlikleri global moda bağlamaz", async ({ page }) => {
   const quality = installBrowserQualityGuards(page);
 
   await page.goto("/chunking");
   await selectSeededDocument(page);
   await expect(page.getByText("e2e-seeded-chunk-item", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Chunk 1", { exact: true })).toBeVisible();
   await page.goto("/settings");
-  await page.getByLabel("Technical", { exact: true }).click();
-  await page.goto("/chunking");
-  await expect(page.getByText(/e2e-seeded-chunk-item/)).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Technical" })).toHaveCount(0);
+  await expect(page.getByText("Technical detail", { exact: true })).toHaveCount(0);
 
   quality.assertClean();
 });

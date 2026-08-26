@@ -2,11 +2,10 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
-import type { AppLocale, DetailLevel } from "@/lib/copy";
+import type { AppLocale } from "@/lib/copy";
 
 export type AppPreferences = {
   locale: AppLocale;
-  detailLevel: DetailLevel;
   showLearningHints: boolean;
 };
 
@@ -14,15 +13,14 @@ type PreferencesContextValue = {
   preferences: AppPreferences;
   isHydrated: boolean;
   setLocale: (locale: AppLocale) => void;
-  setDetailLevel: (detailLevel: DetailLevel) => void;
   setShowLearningHints: (showLearningHints: boolean) => void;
   resetPreferences: () => void;
 };
 
-const STORAGE_KEY = "rag-steplab.preferences.v1";
+const STORAGE_KEY = "rag-steplab.preferences.v2";
+const LEGACY_STORAGE_KEY = "rag-steplab.preferences.v1";
 const DEFAULT_PREFERENCES: AppPreferences = {
   locale: "en",
-  detailLevel: "guided",
   showLearningHints: true,
 };
 
@@ -33,10 +31,9 @@ const PreferencesContext = createContext<PreferencesContextValue | null>(null);
 // bu izole yüzeylerde dil tercihinin ve erişilebilir metinlerin deterministik
 // kalmasını sağlar.
 const FALLBACK_PREFERENCES: PreferencesContextValue = {
-  preferences: { locale: "tr", detailLevel: "guided", showLearningHints: true },
+  preferences: { locale: "tr", showLearningHints: true },
   isHydrated: true,
   setLocale: () => undefined,
-  setDetailLevel: () => undefined,
   setShowLearningHints: () => undefined,
   resetPreferences: () => undefined,
 };
@@ -45,13 +42,9 @@ function isLocale(value: unknown): value is AppLocale {
   return value === "en" || value === "tr";
 }
 
-function isDetailLevel(value: unknown): value is DetailLevel {
-  return value === "guided" || value === "technical";
-}
-
 function readStoredPreferences(): AppPreferences {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_STORAGE_KEY);
     if (!raw) return DEFAULT_PREFERENCES;
 
     const parsed: unknown = JSON.parse(raw);
@@ -60,7 +53,6 @@ function readStoredPreferences(): AppPreferences {
     const stored = parsed as Partial<AppPreferences>;
     return {
       locale: isLocale(stored.locale) ? stored.locale : DEFAULT_PREFERENCES.locale,
-      detailLevel: isDetailLevel(stored.detailLevel) ? stored.detailLevel : DEFAULT_PREFERENCES.detailLevel,
       showLearningHints: typeof stored.showLearningHints === "boolean" ? stored.showLearningHints : DEFAULT_PREFERENCES.showLearningHints,
     };
   } catch {
@@ -107,10 +99,6 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
     updatePreferences((current) => ({ ...current, locale }));
   }, [updatePreferences]);
 
-  const setDetailLevel = useCallback((detailLevel: DetailLevel) => {
-    updatePreferences((current) => ({ ...current, detailLevel }));
-  }, [updatePreferences]);
-
   const setShowLearningHints = useCallback((showLearningHints: boolean) => {
     updatePreferences((current) => ({ ...current, showLearningHints }));
   }, [updatePreferences]);
@@ -123,10 +111,9 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
     preferences,
     isHydrated,
     setLocale,
-    setDetailLevel,
     setShowLearningHints,
     resetPreferences,
-  }), [isHydrated, preferences, resetPreferences, setDetailLevel, setLocale, setShowLearningHints]);
+  }), [isHydrated, preferences, resetPreferences, setLocale, setShowLearningHints]);
 
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
 }

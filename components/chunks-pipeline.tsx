@@ -6,7 +6,6 @@ import { AnimatePresence, motion } from "motion/react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { DisabledReason, EmptyPipelineState, LearningHint, PipelineErrorMessage, RunMetadata, StageSection } from "@/components/pipeline-learning-ui";
-import { usePreferences } from "@/components/preferences-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -40,7 +39,6 @@ export function EmbeddingWorkspace({ locale }: { locale: AppLocale }) {
 }
 
 export function ChunksPipeline({ locale, stage = "both" }: { locale: AppLocale; stage?: PipelineStage }) {
-  const { preferences } = usePreferences();
   const {
     activeDocument,
     selectedParseRunId,
@@ -140,13 +138,13 @@ export function ChunksPipeline({ locale, stage = "both" }: { locale: AppLocale; 
                     {chunkRun.chunks.map((chunk) => (
                       <motion.article animate={{ opacity: 1, y: 0 }} className="border p-4" initial={{ opacity: 0, y: 4 }} key={chunk.id} transition={{ duration: 0.14, ease: "easeOut" }}>
                         <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
-                          <span className={preferences.detailLevel === "technical" ? "font-mono" : "font-medium"}>#{chunk.ordinal}{preferences.detailLevel === "technical" ? ` · ${chunk.id}` : ""}</span>
+                          <span className="font-medium">Chunk {chunk.ordinal}</span>
                           <span>{chunk.tokenCount} {labels.token} · {chunk.characterCount} {labels.characters}</span>
                         </div>
                         <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">{chunk.text}</p>
                         <dl className="mt-3 grid gap-2 border-t pt-3 text-xs sm:grid-cols-3">
                           <div><dt className="text-slate-500">{labels.pages}</dt><dd className="mt-1">{chunk.pageNumbers.join(", ") || "—"}</dd></div>
-                          <div><dt className="text-slate-500">{labels.elements}</dt><dd className={preferences.detailLevel === "technical" ? "mt-1 break-all font-mono" : "mt-1"}>{preferences.detailLevel === "technical" ? chunk.sourceElementIds.join(", ") || "—" : `${chunk.sourceElementIds.length} source element${chunk.sourceElementIds.length === 1 ? "" : "s"}`}</dd></div>
+                          <div><dt className="text-slate-500">{labels.elements}</dt><dd className="mt-1">{chunk.sourceElementIds.length} {locale === "tr" ? "kaynak elementi" : `source element${chunk.sourceElementIds.length === 1 ? "" : "s"}`}</dd></div>
                           <div><dt className="text-slate-500">{labels.heading}</dt><dd className="mt-1">{chunk.headingPath.join(" › ") || "—"}</dd></div>
                         </dl>
                       </motion.article>

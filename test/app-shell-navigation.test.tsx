@@ -63,10 +63,10 @@ beforeEach(() => {
 });
 
 describe("AppShell navigation contract", () => {
-  it("renders the Phase 4 grouped navigation in order", () => {
+  it("renders the grouped navigation in order", () => {
     renderShell("/documents");
     const navigation = screen.getByRole("navigation", { name: "Primary navigation" });
-    expect(navigation).toHaveTextContent(/Overview[\s\S]*Pipeline[\s\S]*Documents[\s\S]*Parse[\s\S]*Chunking[\s\S]*Embeddings[\s\S]*Experiment[\s\S]*Playground[\s\S]*Evaluation[\s\S]*System[\s\S]*Settings/);
+    expect(navigation).toHaveTextContent(/Overview[\s\S]*Build[\s\S]*Documents[\s\S]*Parse[\s\S]*Chunking[\s\S]*Embeddings[\s\S]*Test[\s\S]*Playground[\s\S]*Evaluation[\s\S]*Settings/);
     expect(within(navigation).getByRole("link", { name: "Documents" })).toHaveAttribute("href", "/documents");
     expect(within(navigation).getByRole("link", { name: "Playground" })).toHaveAttribute("href", "/playground");
     expect(within(navigation).getAllByRole("link").every((link) => link.dataset.prefetch === "false")).toBe(true);
