@@ -280,7 +280,7 @@ export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
   const isLegacyView = view !== undefined;
 
   return (
-    <div className="min-w-0">
+    <div className="min-w-0 overflow-x-clip">
       <header className="border-b bg-white px-4 py-8 sm:px-8 sm:py-9">
         <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#969093]">{copy.documents.root}{isLegacyView ? <>&nbsp;&nbsp;›&nbsp;&nbsp;{current.title}</> : null}</div>
         <h1 className="mt-3 text-[28px] font-semibold tracking-[-0.045em]">{isLegacyView ? current.title : copy.documents.root}</h1>

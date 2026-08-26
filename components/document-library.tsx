@@ -84,7 +84,7 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
       };
 
   return (
-    <section aria-label={labels.title} className="border-t px-4 py-7 sm:px-8 sm:py-8" data-testid="document-library">
+    <section aria-label={labels.title} className="min-w-0 border-t px-4 py-7 sm:px-8 sm:py-8" data-testid="document-library">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold tracking-[-0.02em]">{labels.title}</h2>
@@ -102,7 +102,7 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                 <p className="mx-auto mt-1 max-w-sm text-sm leading-5 text-[#6e676a]">{labels.emptyDescription}</p>
               </div>
             ) : (
-              <div className="overflow-x-auto border border-[#e7e2e4] bg-white">
+              <div className="min-w-0 max-w-full overflow-x-auto border border-[#e7e2e4] bg-white">
                 <table className="w-full min-w-[720px] text-left text-sm">
                   <caption className="sr-only">{labels.title}</caption>
                   <thead className="border-b border-[#e7e2e4] bg-[#fbfafb] text-[11px] font-medium uppercase tracking-[0.08em] text-[#969093]">
@@ -112,7 +112,7 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                       <th className="px-4 py-3 font-medium">{labels.pages}</th>
                       <th className="px-4 py-3 font-medium">{labels.size}</th>
                       <th className="px-4 py-3 font-medium">{labels.updated}</th>
-                      <th className="w-10 px-4 py-3"><span className="sr-only">{labels.open}</span></th>
+                      <th aria-label={labels.open} className="w-10 px-4 py-3"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#e7e2e4]">

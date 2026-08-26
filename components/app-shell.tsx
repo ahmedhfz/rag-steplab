@@ -250,7 +250,7 @@ function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: st
 
       <nav aria-label={copy.common.primaryNavigation} className="flex-1 space-y-1 px-3 py-5">
         {navGroups.map((group) => (
-          <div className="space-y-1.5" key={group.label ?? "overview"}>
+          <div className="space-y-1.5" key={group.label ?? group.items[0].key}>
             {group.label ? <p className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#969093]">{copy.nav[group.label]}</p> : null}
             {group.items.map((item) => {
               const isActive = isNavItemActive(item.key, pathname);
