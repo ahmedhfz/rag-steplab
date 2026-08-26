@@ -20,11 +20,12 @@ export function SettingsScreen() {
   const usesDefaults = preferences.locale === "en" && preferences.showLearningHints;
 
   return (
-    <div className="mx-auto max-w-[960px]">
+    <div className="mx-auto w-full max-w-[960px]">
       <section className="border-b border-[#e7e2e4] px-4 py-8 sm:px-8 sm:py-10">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-[22px] font-semibold tracking-[-0.025em]">{copy.settings.title}</h1>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#711f3a]">{preferences.locale === "tr" ? "Sistem" : "System"}</p>
+            <h1 className="mt-2 text-[28px] font-semibold leading-8 tracking-[-0.035em]">{copy.settings.title}</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-[#6e676a]">{copy.settings.description}</p>
           </div>
           <AnimatePresence initial={false} mode="wait">
@@ -44,7 +45,8 @@ export function SettingsScreen() {
         </div>
       </section>
 
-      <div className="divide-y divide-[#e7e2e4]">
+      <div className="p-4 sm:p-8">
+        <div className="divide-y divide-[#e7e2e4] overflow-hidden rounded-[14px] border border-[#e7e2e4] bg-white">
         <motion.section animate={{ opacity: 1, y: 0 }} className="grid gap-5 px-4 py-7 sm:px-8 md:grid-cols-[minmax(180px,0.35fr)_minmax(0,1fr)]" initial={{ opacity: 0, y: 5 }} transition={{ duration: 0.16, ease: "easeOut" }}>
           <div>
             <h2 className="text-sm font-semibold">{copy.settings.languageTitle}</h2>
@@ -67,7 +69,7 @@ export function SettingsScreen() {
             <h2 className="text-sm font-semibold">{copy.settings.hintsTitle}</h2>
             <p className="mt-1 text-xs leading-5 text-[#969093]">{copy.settings.hintsDescription}</p>
           </div>
-          <label className={cn("flex max-w-xl cursor-pointer items-center justify-between gap-4 rounded-[10px] border border-[#e7e2e4] px-4 py-3 text-sm transition-colors hover:bg-[#fbf9f9]", preferences.showLearningHints && "border-[#711f3a] bg-[#fbf4f6]")} htmlFor="show-learning-hints">
+            <label className={cn("flex max-w-xl cursor-pointer items-center justify-between gap-4 rounded-[10px] border border-[#e7e2e4] px-4 py-3 text-sm transition-colors hover:bg-[#fbf9f9]", preferences.showLearningHints && "border-[#711f3a] bg-[#fbf4f6]")} htmlFor="show-learning-hints">
             <span>{copy.settings.hintsEnabled}</span>
             <Switch aria-label={copy.settings.hintsEnabled} checked={preferences.showLearningHints} id="show-learning-hints" onCheckedChange={setShowLearningHints} />
           </label>
@@ -102,6 +104,7 @@ export function SettingsScreen() {
             </motion.p>
           )}
         </AnimatePresence>
+        </div>
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 
 import { DocumentsScreen } from "@/components/documents-screen";
 import { DocumentPipelineProvider } from "@/components/document-pipeline-provider";
@@ -49,10 +50,16 @@ describe("EvaluationScreen", () => {
     renderScreen(<EvaluationScreen />);
 
     expect(screen.getByRole("heading", { name: "Evaluation" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "No evaluation data yet" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Dataset" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getAllByText("Create a dataset after the active document has current chunks and embeddings, then run a real evaluation.").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText(/Recall|Precision|MRR|accuracy/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create dataset" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Run evaluation" })).toBeDisabled();
+
+    const user = userEvent.setup();
+    return user.click(screen.getByRole("tab", { name: "Results" })).then(() => {
+      expect(screen.getByRole("tab", { name: "Results" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("heading", { name: "No evaluation data yet" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Run evaluation" })).toBeDisabled();
+    });
   });
 });

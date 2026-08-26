@@ -37,6 +37,8 @@ import { UI_COPY } from "@/lib/copy";
 import type { RetrievalMode } from "@/lib/rag-api-types";
 import { firstBlocker } from "@/lib/blockers";
 
+type EvaluationTab = "dataset" | "results" | "compare";
+
 function metric(value: number | null) {
   return value === null ? "—" : value.toFixed(3);
 }
@@ -75,10 +77,18 @@ export function EvaluationScreen() {
   const [reranker, setReranker] = useState(false);
   const [judge, setJudge] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<EvaluationTab>("dataset");
   const labels =
     preferences.locale === "tr"
       ? {
-          dataset: "Evaluation dataset",
+          dataset: "Dataset",
+          datasetTab: "Dataset",
+          resultsTab: "Sonuçlar",
+          compareTab: "Karşılaştır",
+          resultsTitle: "Evaluation sonuçları",
+          compareTitle: "Evaluation karşılaştırması",
+          compareDescription:
+            "Aynı dataset ve pipeline ayarları içindeki çalışmaları yan yana inceleyin.",
           datasetDescription:
             "Golden soru ve ilgili parse element ID'lerini kalıcı bir dataset sürümü olarak kaydeder.",
           name: "Dataset adı",
@@ -122,7 +132,14 @@ export function EvaluationScreen() {
             "Retrieval metrikleri golden relevant elementlerle hesaplanır; generation metrikleri ayrı gösterilir.",
         }
       : {
-          dataset: "Evaluation dataset",
+          dataset: "Dataset",
+          datasetTab: "Dataset",
+          resultsTab: "Results",
+          compareTab: "Compare",
+          resultsTitle: "Evaluation results",
+          compareTitle: "Compare evaluation runs",
+          compareDescription:
+            "Inspect runs side by side within the same dataset and pipeline configuration.",
           datasetDescription:
             "Persists golden questions and relevant parse element IDs as a versioned dataset.",
           name: "Dataset name",
@@ -267,16 +284,61 @@ export function EvaluationScreen() {
 
   return (
     <div>
-      <section className="border-b px-4 py-7 sm:px-8 sm:py-9">
-        <h1 className="text-[22px] font-semibold tracking-[-0.025em]">
+      <section className="border-b border-[#e7e2e4] px-4 py-7 sm:px-8 sm:py-9">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#711f3a]">
+              {preferences.locale === "tr" ? "Ölçüm" : "Measure"}
+            </p>
+            <h1 className="mt-2 text-[28px] font-semibold leading-8 tracking-[-0.035em]">
           {copy.evaluation.title}
-        </h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+            </h1>
+          </div>
+          <p className="max-w-xl text-sm leading-6 text-[#6e676a]">
           {copy.evaluation.description}
-        </p>
+          </p>
+        </div>
       </section>
 
-      <StageSection
+      <nav
+        aria-label={
+          preferences.locale === "tr"
+            ? "Evaluation görünümleri"
+            : "Evaluation views"
+        }
+        className="border-b border-[#e7e2e4] px-4 sm:px-8"
+      >
+        <div className="flex max-w-xl gap-1 overflow-x-auto" role="tablist">
+          {(
+            [
+              ["dataset", labels.datasetTab],
+              ["results", labels.resultsTab],
+              ["compare", labels.compareTab],
+            ] as const
+          ).map(([tab, label]) => (
+            <button
+              aria-controls={`evaluation-panel-${tab}`}
+              aria-selected={activeTab === tab}
+              className={
+                activeTab === tab
+                  ? "border-b-2 border-[#711f3a] px-3 py-3 text-xs font-semibold text-[#711f3a]"
+                  : "border-b-2 border-transparent px-3 py-3 text-xs font-medium text-[#6e676a] hover:border-[#d8b5c2] hover:text-[#501329]"
+              }
+              id={`evaluation-tab-${tab}`}
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              role="tab"
+              type="button"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </nav>
+
+      {activeTab === "dataset" ? (
+        <div aria-labelledby="evaluation-tab-dataset" id="evaluation-panel-dataset" role="tabpanel">
+          <StageSection
         description={labels.datasetDescription}
         locale={preferences.locale}
         status={
@@ -287,14 +349,15 @@ export function EvaluationScreen() {
               : "locked"
         }
         title={labels.dataset}
-      >
+          >
         <LearningHint locale={preferences.locale}>
           {preferences.locale === "tr"
             ? "Golden case, bir soruyu ve beklenen kaynak elementlerini birlikte saklar. Böylece retrieval sonucu ölçülebilir olur."
             : "A golden case stores a question and its expected source elements together, making retrieval measurable."}
         </LearningHint>
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.7fr)]">
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-[12px] border border-[#e7e2e4] bg-white p-4 sm:p-5">
+            <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-xs font-medium" htmlFor="dataset-name">
               {labels.name}
               <Input
@@ -326,7 +389,7 @@ export function EvaluationScreen() {
                     value={elementIds}
                   />
                   <span
-                    className="mt-1 block text-[11px] leading-4 text-slate-500"
+                    className="mt-1 block text-[11px] leading-4 text-[#969093]"
                     id="relevant-elements-hint"
                   >
                     {labels.relevantHint}
@@ -348,8 +411,8 @@ export function EvaluationScreen() {
                         aria-pressed={selected}
                         className={
                           selected
-                            ? "rounded bg-sky-100 px-2 py-1 text-left text-[10px] text-sky-900"
-                            : "rounded border px-2 py-1 text-left text-[10px] text-slate-600 hover:bg-slate-50"
+                            ? "rounded-md border border-[#d8b5c2] bg-[#fbf4f6] px-2 py-1 text-left text-[10px] text-[#501329]"
+                            : "rounded-md border border-[#e7e2e4] px-2 py-1 text-left text-[10px] text-[#6e676a] hover:border-[#d8b5c2] hover:bg-[#fbf4f6]"
                         }
                         key={element.id}
                         onClick={() =>
@@ -375,6 +438,7 @@ export function EvaluationScreen() {
                 value={referenceAnswer}
               />
             </label>
+          </div>
           </div>
           {additionalCases.length ? (
             <div className="mt-4 space-y-3 sm:col-span-2">
@@ -440,8 +504,8 @@ export function EvaluationScreen() {
                             aria-pressed={selected}
                             className={
                               selected
-                                ? "rounded bg-sky-100 px-2 py-1 text-left text-[10px] text-sky-900"
-                                : "rounded border px-2 py-1 text-left text-[10px] text-slate-600"
+                                ? "rounded-md border border-[#d8b5c2] bg-[#fbf4f6] px-2 py-1 text-left text-[10px] text-[#501329]"
+                                : "rounded-md border border-[#e7e2e4] px-2 py-1 text-left text-[10px] text-[#6e676a]"
                             }
                             key={element.id}
                             onClick={() =>
@@ -591,8 +655,8 @@ export function EvaluationScreen() {
                   <article
                     className={
                       dataset.id === baseDatasetId
-                        ? "border border-sky-300 bg-sky-50 p-3"
-                        : "border p-3"
+                      ? "rounded-[10px] border border-[#d8b5c2] bg-[#fbf4f6] p-3"
+                      : "rounded-[10px] border border-[#e7e2e4] bg-white p-3"
                     }
                     key={dataset.id}
                   >
@@ -607,7 +671,7 @@ export function EvaluationScreen() {
                       <div className="text-sm font-medium">
                         {dataset.name} · v{dataset.version}
                       </div>
-                      <div className="mt-2 text-xs text-slate-500">
+                      <div className="mt-2 text-xs text-[#6e676a]">
                         {dataset.caseCount} {labels.cases}
                       </div>
                     </button>
@@ -621,14 +685,18 @@ export function EvaluationScreen() {
             )}
           </div>
         </div>
-      </StageSection>
+          </StageSection>
+        </div>
+      ) : null}
 
-      <StageSection
+      {activeTab === "results" ? (
+        <div aria-labelledby="evaluation-tab-results" id="evaluation-panel-results" role="tabpanel">
+          <StageSection
         description={labels.retrievalNote}
         locale={preferences.locale}
         status={evaluationStatus}
-        title={labels.metrics}
-      >
+        title={labels.resultsTitle}
+          >
         {evaluationRun ? (
           <LearningHint locale={preferences.locale}>
             {preferences.locale === "tr"
@@ -637,7 +705,7 @@ export function EvaluationScreen() {
           </LearningHint>
         ) : null}
         <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-          <div className="space-y-3 border p-4">
+          <div className="space-y-3 rounded-[12px] border border-[#e7e2e4] bg-white p-4">
             <label className="text-xs font-medium" htmlFor="evaluation-dataset">
               {labels.selectDataset}
               <Select
@@ -716,7 +784,7 @@ export function EvaluationScreen() {
                 >
                   <span>
                     {labels.judge}
-                    <span className="mt-1 block font-normal text-slate-500">
+                    <span className="mt-1 block font-normal text-[#6e676a]">
                       {labels.judgeModel}: {capabilities?.judgeModel || "—"}
                     </span>
                   </span>
@@ -758,11 +826,11 @@ export function EvaluationScreen() {
                   aria-valuemax={totalCases}
                   aria-valuemin={0}
                   aria-valuenow={completedCases}
-                  className="mt-2 h-2 overflow-hidden rounded bg-slate-200"
+                  className="mt-2 h-2 overflow-hidden rounded-full bg-[#f2eff0]"
                   role="progressbar"
                 >
                   <div
-                    className="h-full bg-sky-600 transition-[width]"
+                    className="h-full bg-[#711f3a] transition-[width]"
                     style={{
                       width: `${Math.min(100, (completedCases / totalCases) * 100)}%`,
                     }}
@@ -816,14 +884,14 @@ export function EvaluationScreen() {
                     }
                   >
                     {evaluationRun.caseResults.map((item, index) => (
-                      <article
-                        className="border p-3 text-xs"
+                          <article
+                        className="rounded-[10px] border border-[#e7e2e4] bg-white p-3 text-xs"
                         key={item.experimentId || `${item.question}-${index}`}
                       >
                         <div className="font-medium">
                           {index + 1}. {item.question}
                         </div>
-                        <div className="mt-2 grid grid-cols-2 gap-2 text-slate-600 sm:grid-cols-4">
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-[#6e676a] sm:grid-cols-4">
                           <span>Hit {item.hitAtK.toFixed(3)}</span>
                           <span>Recall {item.recallAtK.toFixed(3)}</span>
                           <span>Precision {item.precisionAtK.toFixed(3)}</span>
@@ -832,21 +900,21 @@ export function EvaluationScreen() {
                         <div className="mt-3 grid gap-3 border-t pt-3 sm:grid-cols-2">
                           <div>
                             <p className="font-medium">{labels.expected}</p>
-                            <p className="mt-1 text-slate-600">{item.expectedElementIds.length || "—"}</p>
+                            <p className="mt-1 text-[#6e676a]">{item.expectedElementIds.length || "—"}</p>
                             {item.expectedElementIds.length ? <SourceInspector documentId={activeDocument?.id ?? null} parseResult={parseResult} sourceElementIds={item.expectedElementIds} triggerLabel={labels.expected} /> : null}
                           </div>
                           <div>
                             <p className="font-medium">{labels.retrieved}</p>
-                            <p className="mt-1 text-slate-600">{item.retrievedElementIds.length || "—"}</p>
+                            <p className="mt-1 text-[#6e676a]">{item.retrievedElementIds.length || "—"}</p>
                             {item.retrievedElementIds.length ? <SourceInspector documentId={activeDocument?.id ?? null} parseResult={parseResult} sourceElementIds={item.retrievedElementIds} triggerLabel={labels.retrieved} /> : null}
                           </div>
                         </div>
                         <div className="mt-3 border-t pt-3">
                           <p className="font-medium">{labels.answer}</p>
-                          <p className="mt-1 whitespace-pre-wrap leading-5 text-slate-600">{item.answer || labels.noAnswer}</p>
-                          {item.citations.length ? <p className="mt-2 text-slate-600">{labels.citations}: {item.citations.length}</p> : null}
+                          <p className="mt-1 whitespace-pre-wrap leading-5 text-[#6e676a]">{item.answer || labels.noAnswer}</p>
+                          {item.citations.length ? <p className="mt-2 text-[#6e676a]">{labels.citations}: {item.citations.length}</p> : null}
                         </div>
-                        {item.experimentId ? <details className="mt-2"><summary className="cursor-pointer text-[10px] text-slate-500">{preferences.locale === "tr" ? "Teknik deney kimliği" : "Technical experiment ID"}</summary><p className="mt-1 break-all font-mono text-[10px] text-slate-500">experiment: {item.experimentId}</p></details> : null}
+                        {item.experimentId ? <details className="mt-2"><summary className="cursor-pointer text-[10px] text-[#6e676a]">{preferences.locale === "tr" ? "Teknik deney kimliği" : "Technical experiment ID"}</summary><p className="mt-1 break-all font-mono text-[10px] text-[#6e676a]">experiment: {item.experimentId}</p></details> : null}
                       </article>
                     ))}
                   </div>
@@ -856,27 +924,34 @@ export function EvaluationScreen() {
               <div className="flex min-h-64 flex-col items-center justify-center border-y px-5 text-center">
                 <BarChart3
                   aria-hidden="true"
-                  className="size-9 text-slate-500"
+                  className="size-9 text-[#969093]"
                 />
                 <h2 className="mt-4 text-sm font-semibold">
                   {copy.evaluation.emptyTitle}
                 </h2>
-                <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
+                <p className="mt-2 max-w-md text-sm leading-6 text-[#6e676a]">
                   {copy.evaluation.emptyDescription}
                 </p>
-                <p className="mt-2 text-xs text-slate-500">
+                <p className="mt-2 text-xs text-[#969093]">
                   {copy.evaluation.emptyNote}
                 </p>
               </div>
             )}
           </div>
         </div>
-      </StageSection>
+          </StageSection>
+        </div>
+      ) : null}
 
-      <section className="border-t px-4 py-6 sm:px-8">
-        <h2 className="text-sm font-semibold">{labels.history}</h2>
+      {activeTab === "compare" ? (
+        <div aria-labelledby="evaluation-tab-compare" id="evaluation-panel-compare" role="tabpanel">
+          <section className="border-t border-[#e7e2e4] px-4 py-7 sm:px-8">
+        <div className="mb-5">
+          <h2 className="text-sm font-semibold">{labels.compareTitle}</h2>
+          <p className="mt-1 max-w-2xl text-xs leading-5 text-[#6e676a]">{labels.compareDescription}</p>
+        </div>
         {evaluationHistory.length ? (
-          <div className="mt-4 overflow-x-auto border-t">
+          <div className="mt-4 overflow-x-auto rounded-[12px] border border-[#e7e2e4] bg-white">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -906,7 +981,7 @@ export function EvaluationScreen() {
                     </TableCell>
                     <TableCell className="text-xs">
                       <span>Run {evaluationHistory.length - index}</span>
-                      <details className="mt-1"><summary className="cursor-pointer text-[10px] text-slate-500">{preferences.locale === "tr" ? "Teknik kimlik" : "Technical ID"}</summary><span className="break-all font-mono text-[10px] text-slate-500">{run.id}</span></details>
+                      <details className="mt-1"><summary className="cursor-pointer text-[10px] text-[#6e676a]">{preferences.locale === "tr" ? "Teknik kimlik" : "Technical ID"}</summary><span className="break-all font-mono text-[10px] text-[#6e676a]">{run.id}</span></details>
                     </TableCell>
                     <TableCell>{metric(run.results.hitAtK)}</TableCell>
                     <TableCell>{metric(run.results.recallAtK)}</TableCell>
@@ -927,8 +1002,9 @@ export function EvaluationScreen() {
         {selectedRuns.length ? (
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             {selectedRuns.map((run) => (
-              <div className="border p-4" key={run.id}>
-                <div className="break-all font-mono text-xs">{run.id}</div>
+              <div className="rounded-[12px] border border-[#e7e2e4] bg-white p-4" key={run.id}>
+                <div className="text-xs font-semibold text-[#501329]">{labels.compareTab}</div>
+                <details className="mt-2"><summary className="cursor-pointer text-[10px] text-[#6e676a]">{preferences.locale === "tr" ? "Teknik kimlik" : "Technical ID"}</summary><div className="break-all font-mono text-[10px] text-[#6e676a]">{run.id}</div></details>
                 <div className="mt-3 grid grid-cols-3 gap-2">
                   {[
                     [labels.recall, metric(run.results.recallAtK)],
@@ -942,7 +1018,9 @@ export function EvaluationScreen() {
             ))}
           </div>
         ) : null}
-      </section>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

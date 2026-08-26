@@ -37,10 +37,12 @@ test("Evaluation source picker, aggregate metrics, case diagnostics ve reload pe
   await page.goto("/evaluation");
   await selectSeededDocument(page);
   await expect(page.getByLabel("Select from parsed source elements")).toBeVisible();
+  await page.getByRole("tab", { name: "Results" }).click();
   await expect(page.getByText("Hit@K", { exact: true }).first()).toBeVisible();
   await expect(page.getByText(/What is the laboratory beacon code\?/).first()).toBeVisible();
   await expect(page.getByText("ORBIT-731", { exact: false }).first()).toBeVisible();
   await page.reload();
+  await page.getByRole("tab", { name: "Results" }).click();
   await expect(page.getByText(/What is the laboratory beacon code\?/).first()).toBeVisible();
 
   quality.assertClean();
