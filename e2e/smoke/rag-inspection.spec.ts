@@ -25,6 +25,7 @@ test("Playground stage rail, provenance ve Source Inspector contractını göste
   await expect(dialog.locator("iframe")).toHaveAttribute("src", /#page=1$/);
   await page.getByRole("button", { name: "Close" }).click();
 
+  await page.getByRole("button", { name: /Answer/ }).click();
   await page.getByRole("button", { name: "S1" }).click();
   await expect(page.getByRole("dialog", { name: "Source inspector" })).toContainText("laboratory beacon code is ORBIT-731");
 

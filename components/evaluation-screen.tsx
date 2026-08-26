@@ -78,6 +78,7 @@ export function EvaluationScreen() {
   const [judge, setJudge] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<EvaluationTab>("dataset");
+  const [selectedCaseIndex, setSelectedCaseIndex] = useState(0);
   const labels =
     preferences.locale === "tr"
       ? {
@@ -130,6 +131,10 @@ export function EvaluationScreen() {
           citations: "Citation'lar",
           retrievalNote:
             "Retrieval metrikleri golden relevant elementlerle hesaplanır; generation metrikleri ayrı gösterilir.",
+          retrievalQuality: "Retrieval kalitesi",
+          answerQuality: "Answer kalitesi",
+          caseDiagnostics: "Case tanıları",
+          selectedCase: "Seçili case",
         }
       : {
           dataset: "Dataset",
@@ -180,6 +185,10 @@ export function EvaluationScreen() {
           citations: "Citations",
           retrievalNote:
             "Retrieval metrics use golden relevant elements; generation metrics remain separately visible.",
+          retrievalQuality: "Retrieval quality",
+          answerQuality: "Answer quality",
+          caseDiagnostics: "Case diagnostics",
+          selectedCase: "Selected case",
         };
   const datasetBlocker = firstBlocker(preferences.locale, [
     [evaluationStatus === "processing", "processing"],
@@ -210,6 +219,8 @@ export function EvaluationScreen() {
   );
   const completedCases = evaluationRun?.caseResults?.length ?? 0;
   const totalCases = selectedDataset?.caseCount ?? 0;
+  const activeCaseIndex = evaluationRun?.caseResults?.[selectedCaseIndex] ? selectedCaseIndex : 0;
+  const selectedCase = evaluationRun?.caseResults?.[activeCaseIndex] ?? null;
   const parseElements =
     parseResult?.structured.pages.flatMap((page) => page.elements) ?? [];
 
@@ -843,80 +854,60 @@ export function EvaluationScreen() {
             {evaluationRun ? (
               <>
                 <RunMetadata locale={preferences.locale} run={evaluationRun} />
-                <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
-                  {[
-                    [labels.hit, metric(evaluationRun.results.hitAtK)],
-                    [labels.recall, metric(evaluationRun.results.recallAtK)],
-                    [
-                      labels.precision,
-                      metric(evaluationRun.results.precisionAtK),
-                    ],
-                    [labels.mrr, metric(evaluationRun.results.mrr)],
-                    [
-                      labels.citation,
-                      metric(evaluationRun.results.citationValidity),
-                    ],
-                    [
-                      labels.groundedness,
-                      metric(evaluationRun.results.groundedness),
-                    ],
-                    [
-                      labels.cases,
-                      evaluationRun.results.caseCount === null
-                        ? "—"
-                        : String(evaluationRun.results.caseCount),
-                    ],
-                    [
-                      labels.judgeModel,
-                      evaluationRun.results.judgeModel ?? "—",
-                    ],
-                  ].map(([label, value]) => (
-                    <MetricCard key={label} label={label} value={value} />
-                  ))}
+                <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                  <section className="rounded-[12px] border border-[#e7e2e4] bg-white p-4">
+                    <h3 className="text-xs font-semibold text-[#501329]">{labels.retrievalQuality}</h3>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {[
+                        [labels.hit, metric(evaluationRun.results.hitAtK)],
+                        [labels.recall, metric(evaluationRun.results.recallAtK)],
+                        [labels.precision, metric(evaluationRun.results.precisionAtK)],
+                        [labels.mrr, metric(evaluationRun.results.mrr)],
+                      ].map(([label, value]) => <MetricCard key={label} label={label} value={value} />)}
+                    </div>
+                  </section>
+                  <section className="rounded-[12px] border border-[#e7e2e4] bg-white p-4">
+                    <h3 className="text-xs font-semibold text-[#501329]">{labels.answerQuality}</h3>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {[
+                        [labels.citation, metric(evaluationRun.results.citationValidity)],
+                        [labels.groundedness, metric(evaluationRun.results.groundedness)],
+                        [labels.cases, evaluationRun.results.caseCount === null ? "—" : String(evaluationRun.results.caseCount)],
+                        [labels.judgeModel, evaluationRun.results.judgeModel ?? "—"],
+                      ].map(([label, value]) => <MetricCard key={label} label={label} value={value} />)}
+                    </div>
+                  </section>
                 </div>
                 {evaluationRun.caseResults?.length ? (
-                  <div
-                    className="mt-4 space-y-2"
-                    aria-label={
-                      preferences.locale === "tr"
-                        ? "Case tanıları"
-                        : "Case diagnostics"
-                    }
-                  >
-                    {evaluationRun.caseResults.map((item, index) => (
-                          <article
-                        className="rounded-[10px] border border-[#e7e2e4] bg-white p-3 text-xs"
-                        key={item.experimentId || `${item.question}-${index}`}
-                      >
-                        <div className="font-medium">
-                          {index + 1}. {item.question}
-                        </div>
-                        <div className="mt-2 grid grid-cols-2 gap-2 text-[#6e676a] sm:grid-cols-4">
-                          <span>Hit {item.hitAtK.toFixed(3)}</span>
-                          <span>Recall {item.recallAtK.toFixed(3)}</span>
-                          <span>Precision {item.precisionAtK.toFixed(3)}</span>
-                          <span>MRR {item.mrr.toFixed(3)}</span>
-                        </div>
-                        <div className="mt-3 grid gap-3 border-t pt-3 sm:grid-cols-2">
-                          <div>
-                            <p className="font-medium">{labels.expected}</p>
-                            <p className="mt-1 text-[#6e676a]">{item.expectedElementIds.length || "—"}</p>
-                            {item.expectedElementIds.length ? <SourceInspector documentId={activeDocument?.id ?? null} parseResult={parseResult} sourceElementIds={item.expectedElementIds} triggerLabel={labels.expected} /> : null}
-                          </div>
-                          <div>
-                            <p className="font-medium">{labels.retrieved}</p>
-                            <p className="mt-1 text-[#6e676a]">{item.retrievedElementIds.length || "—"}</p>
-                            {item.retrievedElementIds.length ? <SourceInspector documentId={activeDocument?.id ?? null} parseResult={parseResult} sourceElementIds={item.retrievedElementIds} triggerLabel={labels.retrieved} /> : null}
-                          </div>
-                        </div>
-                        <div className="mt-3 border-t pt-3">
-                          <p className="font-medium">{labels.answer}</p>
-                          <p className="mt-1 whitespace-pre-wrap leading-5 text-[#6e676a]">{item.answer || labels.noAnswer}</p>
-                          {item.citations.length ? <p className="mt-2 text-[#6e676a]">{labels.citations}: {item.citations.length}</p> : null}
-                        </div>
-                        {item.experimentId ? <details className="mt-2"><summary className="cursor-pointer text-[10px] text-[#6e676a]">{preferences.locale === "tr" ? "Teknik deney kimliği" : "Technical experiment ID"}</summary><p className="mt-1 break-all font-mono text-[10px] text-[#6e676a]">experiment: {item.experimentId}</p></details> : null}
-                      </article>
-                    ))}
+                  <div className="mt-5" aria-label={labels.caseDiagnostics}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-xs font-semibold text-[#501329]">{labels.caseDiagnostics}</h3>
+                      <span className="text-[11px] text-[#969093]">{activeCaseIndex + 1}/{evaluationRun.caseResults.length}</span>
+                    </div>
+                    <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(220px,0.34fr)_minmax(0,0.66fr)]">
+                      <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                        {evaluationRun.caseResults.map((item, index) => (
+                          <button
+                            aria-pressed={activeCaseIndex === index}
+                            className={activeCaseIndex === index ? "w-full rounded-[10px] border border-[#d8b5c2] bg-[#fbf4f6] p-3 text-left" : "w-full rounded-[10px] border border-[#e7e2e4] bg-white p-3 text-left hover:border-[#d8b5c2]"}
+                            key={item.experimentId || `${item.question}-${index}`}
+                            onClick={() => setSelectedCaseIndex(index)}
+                            type="button"
+                          >
+                            <span className="block truncate text-xs font-medium text-[#171416]">{index + 1}. {item.question}</span>
+                            <span className="mt-2 grid grid-cols-2 gap-1 text-[10px] text-[#6e676a]"><span>Hit {item.hitAtK.toFixed(3)}</span><span>MRR {item.mrr.toFixed(3)}</span><span>Citation {item.citationValidity.toFixed(3)}</span><span>Grounded {item.groundedness.toFixed(3)}</span></span>
+                          </button>
+                        ))}
+                      </div>
+                      {selectedCase ? (
+                        <article className="min-w-0 rounded-[10px] border border-[#e7e2e4] bg-white p-4 text-xs">
+                          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] font-medium uppercase tracking-[0.12em] text-[#969093]">{labels.selectedCase}</p><h4 className="mt-1 text-sm font-semibold text-[#171416]">{selectedCase.question}</h4></div><div className="grid grid-cols-4 gap-2 text-center text-[10px]"><span><strong className="block text-sm text-[#171416]">{selectedCase.hitAtK.toFixed(3)}</strong>Hit</span><span><strong className="block text-sm text-[#171416]">{selectedCase.recallAtK.toFixed(3)}</strong>Recall</span><span><strong className="block text-sm text-[#171416]">{selectedCase.precisionAtK.toFixed(3)}</strong>Precision</span><span><strong className="block text-sm text-[#171416]">{selectedCase.mrr.toFixed(3)}</strong>MRR</span></div></div>
+                          <div className="mt-4 grid gap-3 border-t border-[#e7e2e4] pt-3 sm:grid-cols-2"><div><p className="font-medium">{labels.expected}</p><p className="mt-1 text-[#6e676a]">{selectedCase.expectedElementIds.length || "—"}</p>{selectedCase.expectedElementIds.length ? <SourceInspector documentId={activeDocument?.id ?? null} parseResult={parseResult} sourceElementIds={selectedCase.expectedElementIds} triggerLabel={labels.expected} /> : null}</div><div><p className="font-medium">{labels.retrieved}</p><p className="mt-1 text-[#6e676a]">{selectedCase.retrievedElementIds.length || "—"}</p>{selectedCase.retrievedElementIds.length ? <SourceInspector documentId={activeDocument?.id ?? null} parseResult={parseResult} sourceElementIds={selectedCase.retrievedElementIds} triggerLabel={labels.retrieved} /> : null}</div></div>
+                          <div className="mt-4 border-t border-[#e7e2e4] pt-3"><p className="font-medium">{labels.answer}</p><p className="mt-1 whitespace-pre-wrap leading-5 text-[#6e676a]">{selectedCase.answer || labels.noAnswer}</p>{selectedCase.citations.length ? <p className="mt-2 text-[#6e676a]">{labels.citations}: {selectedCase.citations.length}</p> : null}</div>
+                          {selectedCase.experimentId ? <details className="mt-3"><summary className="cursor-pointer text-[10px] text-[#6e676a]">{preferences.locale === "tr" ? "Teknik deney kimliği" : "Technical experiment ID"}</summary><p className="mt-1 break-all font-mono text-[10px] text-[#6e676a]">experiment: {selectedCase.experimentId}</p></details> : null}
+                        </article>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
               </>
