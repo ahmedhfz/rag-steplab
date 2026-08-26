@@ -46,26 +46,26 @@ function ArtifactHistory({
   if (!runs.length) return <EmptyPipelineState>{labels.empty}</EmptyPipelineState>;
 
   return (
-    <section className="border-t px-4 py-6 sm:px-7">
-      <h2 className="text-sm font-semibold">{title}</h2>
+    <section className="border-t border-[#e7e2e4] px-4 py-7 sm:px-8">
+      <div className="flex items-center justify-between gap-3"><h2 className="text-sm font-semibold text-[#171416]">{title}</h2><span className="text-[11px] uppercase tracking-[0.12em] text-[#969093]">{labels.run}</span></div>
       <div className="mt-4 space-y-2">
         {runs.map((run) => {
           const selectable = runSelectable(run);
           const isSelected = run.id === selectedId;
           return (
-            <div className="flex flex-col gap-3 border p-3 sm:flex-row sm:items-center sm:justify-between" data-testid={`${kind}-history-row`} key={run.id}>
+            <div className="flex flex-col gap-3 border border-[#e7e2e4] bg-white p-3 sm:flex-row sm:items-center sm:justify-between" data-testid={`${kind}-history-row`} key={run.id}>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2 text-xs">
                   <span className="font-semibold">{kind === "chunk" ? "Chunk" : "Embedding"} {run.runNumber ?? "—"}</span>
-                  {isSelected ? <span className="rounded border border-slate-300 px-1.5 py-0.5 text-[10px]">{labels.selected}</span> : null}
-                  {run.id === defaultId ? <span className="rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">{labels.active}</span> : null}
-                  {run.historicalLineage ? <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">{labels.historical}</span> : null}
+                  {isSelected ? <span className="rounded-full border border-[#d8b5c2] bg-[#fbf4f6] px-1.5 py-0.5 text-[10px] text-[#711f3a]">{labels.selected}</span> : null}
+                  {run.id === defaultId ? <span className="rounded-full border border-[#c6ddcc] bg-[#eef4ef] px-1.5 py-0.5 text-[10px] text-[#3f7a55]">{labels.active}</span> : null}
+                  {run.historicalLineage ? <span className="rounded-full border border-[#eadfc9] bg-[#fffaf1] px-1.5 py-0.5 text-[10px] text-[#8d651e]">{labels.historical}</span> : null}
                 </div>
-                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500"><span>{labels.status}: {runStatusLabel(run, locale)}</span><span>{labels.upstream}: {Object.values(run.upstream).filter(Boolean).length ? `${Object.values(run.upstream).filter(Boolean).length} ${locale === "tr" ? "artifact" : "artifacts"}` : "—"}</span></div>
-                {run.error?.message ? <p className="mt-1 text-xs text-red-700">{run.error.message}</p> : null}
-                {!run.isCompatible && run.compatibilityReason ? <p className="mt-1 text-xs text-orange-700">{run.compatibilityReason}</p> : null}
-                {kind === "chunk" && run.strategy ? <p className="mt-1 text-[11px] text-slate-500">{run.strategy}{run.chunkCount === null || run.chunkCount === undefined ? "" : ` · ${run.chunkCount} chunks`}</p> : null}
-                {kind === "embedding" && run.model ? <p className="mt-1 text-[11px] text-slate-500">{run.model} · {run.dimensions ?? "—"}d · {run.embeddingFormatVersion ?? "—"}{run.effectiveModel && run.effectiveModel !== run.model ? ` · ${run.effectiveModel}` : ""}</p> : null}
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[#6e676a]"><span>{labels.status}: {runStatusLabel(run, locale)}</span><span>{labels.upstream}: {Object.values(run.upstream).filter(Boolean).length ? `${Object.values(run.upstream).filter(Boolean).length} ${locale === "tr" ? "artifact" : "artifacts"}` : "—"}</span></div>
+                {run.error?.message ? <p className="mt-1 text-xs text-[#a23b3b]">{run.error.message}</p> : null}
+                {!run.isCompatible && run.compatibilityReason ? <p className="mt-1 text-xs text-[#8d651e]">{run.compatibilityReason}</p> : null}
+                {kind === "chunk" && run.strategy ? <p className="mt-1 text-[11px] text-[#6e676a]">{run.strategy}{run.chunkCount === null || run.chunkCount === undefined ? "" : ` · ${run.chunkCount} chunks`}</p> : null}
+                {kind === "embedding" && run.model ? <p className="mt-1 text-[11px] text-[#6e676a]">{run.model} · {run.dimensions ?? "—"}d · {run.embeddingFormatVersion ?? "—"}{run.effectiveModel && run.effectiveModel !== run.model ? ` · ${run.effectiveModel}` : ""}</p> : null}
               </div>
               <Button disabled={!selectable || isSelected} onClick={() => void onSelect(run.id)} size="sm" variant={isSelected ? "secondary" : "outline"}>{isSelected ? labels.selected : labels.select}</Button>
             </div>
@@ -88,13 +88,13 @@ export function ChunkingScreen() {
     : { title: "Chunking", description: "Inspect strategy, config, chunk preview, and version history for the selected parse lineage.", history: "Chunk version history", next: "Go to Embeddings", nextReason: "Select a compatible completed chunk run first." };
 
   return (
-    <div>
+    <div className="min-w-0 overflow-x-clip">
       <PipelineContextBar />
-      <header className="px-4 py-6 sm:px-7"><h1 className="text-[22px] font-semibold tracking-[-0.025em]">{labels.title}</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{labels.description}</p></header>
+      <header className="border-b border-[#e7e2e4] bg-white px-4 py-8 sm:px-8"><p className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#969093]">Build / {labels.title}</p><h1 className="mt-3 text-[28px] font-semibold tracking-[-0.045em] text-[#171416]">{labels.title}</h1><p className="mt-2 max-w-2xl text-sm leading-5 text-[#6e676a]">{labels.description}</p></header>
       <ChunkingWorkspace locale={locale} />
-      {chunkRun ? <section className="border-t px-4 py-6 sm:px-7"><h2 className="text-sm font-semibold">{locale === "tr" ? "Chunk metrikleri" : "Chunk metrics"}</h2><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4"><MetricCard label={locale === "tr" ? "Chunk sayısı" : "Chunks"} value={String(chunkRun.chunkCount)} /><MetricCard label={locale === "tr" ? "Min token" : "Min tokens"} value={chunks.length ? String(Math.min(...chunks.map((chunk) => chunk.tokenCount))) : "—"} /><MetricCard label={locale === "tr" ? "Ortalama token" : "Average tokens"} value={String(averageTokens)} /><MetricCard label={locale === "tr" ? "Max token" : "Max tokens"} value={chunks.length ? String(Math.max(...chunks.map((chunk) => chunk.tokenCount))) : "—"} /></div></section> : null}
+      {chunkRun ? <section className="border-t border-[#e7e2e4] px-4 py-7 sm:px-8"><h2 className="text-sm font-semibold text-[#171416]">{locale === "tr" ? "Chunk metrikleri" : "Chunk metrics"}</h2><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4"><MetricCard label={locale === "tr" ? "Chunk sayısı" : "Chunks"} value={String(chunkRun.chunkCount)} /><MetricCard label={locale === "tr" ? "Min token" : "Min tokens"} value={chunks.length ? String(Math.min(...chunks.map((chunk) => chunk.tokenCount))) : "—"} /><MetricCard label={locale === "tr" ? "Ortalama token" : "Average tokens"} value={String(averageTokens)} /><MetricCard label={locale === "tr" ? "Max token" : "Max tokens"} value={chunks.length ? String(Math.max(...chunks.map((chunk) => chunk.tokenCount))) : "—"} /></div></section> : null}
       <ArtifactHistory defaultId={activeDocument?.activeChunkRunId} kind="chunk" locale={locale} onSelect={selectChunkRun} runs={activeDocument?.chunkRuns.filter((run) => run.upstream.parseRunId === selectedParseRunId) ?? []} selectedId={selectedChunkRunId} title={labels.history} />
-      <section className="border-t px-4 py-6 sm:px-7">{compatibleChunks.some((run) => run.id === selectedChunkRunId) ? <Button asChild size="sm" variant="outline"><Link href="/embeddings">{labels.next}<ArrowRight aria-hidden="true" className="ml-2 size-4" /></Link></Button> : <Button disabled size="sm" variant="outline">{labels.next}</Button>}{!compatibleChunks.some((run) => run.id === selectedChunkRunId) ? <DisabledReason id="chunking-next-disabled-reason">{labels.nextReason}</DisabledReason> : null}</section>
+      <section className="border-t border-[#e7e2e4] px-4 py-7 sm:px-8">{compatibleChunks.some((run) => run.id === selectedChunkRunId) ? <Button asChild size="sm" variant="outline"><Link href="/embeddings">{labels.next}<ArrowRight aria-hidden="true" className="ml-2 size-4" /></Link></Button> : <Button disabled size="sm" variant="outline">{labels.next}</Button>}{!compatibleChunks.some((run) => run.id === selectedChunkRunId) ? <DisabledReason id="chunking-next-disabled-reason">{labels.nextReason}</DisabledReason> : null}</section>
     </div>
   );
 }
@@ -112,14 +112,14 @@ export function EmbeddingsScreen() {
   const canPlayground = Boolean(activeDocument?.id && selectedChunk?.status === "completed" && selectedChunk.isCompatible && selectedChunkRunId);
 
   return (
-    <div>
+    <div className="min-w-0 overflow-x-clip">
       <PipelineContextBar />
-      <header className="px-4 py-6 sm:px-7"><h1 className="text-[22px] font-semibold tracking-[-0.025em]">{labels.title}</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{labels.description}</p></header>
-      <section className="border-t px-4 py-5 sm:px-7"><h2 className="text-sm font-semibold">{labels.input}</h2>{selectedChunk ? <p className="mt-2 text-xs text-slate-600" title={selectedChunk.id}>{selectedChunkNumber > 0 ? `C${selectedChunkNumber}` : "C—"} · {selectedChunk.chunkCount ?? "—"} chunks · {selectedParseNumber > 0 ? `P${selectedParseNumber}` : "P—"}</p> : <p className="mt-2 text-sm text-slate-500">{labels.noInput}</p>}</section>
+      <header className="border-b border-[#e7e2e4] bg-white px-4 py-8 sm:px-8"><p className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#969093]">Build / {labels.title}</p><h1 className="mt-3 text-[28px] font-semibold tracking-[-0.045em] text-[#171416]">{labels.title}</h1><p className="mt-2 max-w-2xl text-sm leading-5 text-[#6e676a]">{labels.description}</p></header>
+      <section className="border-b border-[#e7e2e4] bg-[#fbfafb] px-4 py-5 sm:px-8"><h2 className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#969093]">{labels.input}</h2>{selectedChunk ? <p className="mt-2 text-sm font-medium text-[#501329]" title={selectedChunk.id}>{selectedChunkNumber > 0 ? `Chunking ${selectedChunkNumber}` : "Chunking —"} · {selectedChunk.chunkCount ?? "—"} {locale === "tr" ? "chunk" : "chunks"} · {selectedParseNumber > 0 ? `${locale === "tr" ? "Ayrıştırma" : "Parsing"} ${selectedParseNumber}` : `${locale === "tr" ? "Ayrıştırma" : "Parsing"} —`}</p> : <p className="mt-2 text-sm text-[#6e676a]">{labels.noInput}</p>}</section>
       <EmbeddingWorkspace locale={locale} />
-      {embeddingRun ? <section className="border-t px-4 py-5 sm:px-7"><div className="grid grid-cols-2 gap-3 sm:grid-cols-5"><MetricCard label="Model" value={embeddingRun.model || "—"} /><MetricCard label={locale === "tr" ? "Effective model" : "Effective model"} value={embeddingRun.effectiveModel || embeddingRun.model || "—"} /><MetricCard label={locale === "tr" ? "Boyut" : "Dimensions"} value={String(embeddingRun.dimensions)} /><MetricCard label={locale === "tr" ? "Vektör" : "Vectors"} value={String(embeddingRun.embeddingCount)} /><MetricCard label="Format" value={embeddingRun.embeddingFormatVersion} /></div></section> : null}
+      {embeddingRun ? <section className="border-t border-[#e7e2e4] px-4 py-7 sm:px-8"><div className="grid grid-cols-2 gap-3 sm:grid-cols-5"><MetricCard label="Model" value={embeddingRun.model || "—"} /><MetricCard label={locale === "tr" ? "Effective model" : "Effective model"} value={embeddingRun.effectiveModel || embeddingRun.model || "—"} /><MetricCard label={locale === "tr" ? "Boyut" : "Dimensions"} value={String(embeddingRun.dimensions)} /><MetricCard label={locale === "tr" ? "Vektör" : "Vectors"} value={String(embeddingRun.embeddingCount)} /><MetricCard label="Format" value={embeddingRun.embeddingFormatVersion} /></div></section> : null}
       <ArtifactHistory defaultId={activeDocument?.activeEmbeddingRunId} kind="embedding" locale={locale} onSelect={selectEmbeddingRun} runs={activeDocument?.embeddingRuns.filter((run) => run.upstream.chunkRunId === selectedChunkRunId) ?? []} selectedId={selectedEmbeddingRunId} title={labels.history} />
-      <section className="border-t px-4 py-6 sm:px-7">{canPlayground ? <Button asChild size="sm" variant="outline"><Link href="/playground">{labels.next}<ArrowRight aria-hidden="true" className="ml-2 size-4" /></Link></Button> : <Button disabled size="sm" variant="outline">{labels.next}</Button>}{!canPlayground ? <DisabledReason id="embeddings-next-disabled-reason">{labels.nextReason}</DisabledReason> : null}</section>
+      <section className="border-t border-[#e7e2e4] px-4 py-7 sm:px-8">{canPlayground ? <Button asChild size="sm" variant="outline"><Link href="/playground">{labels.next}<ArrowRight aria-hidden="true" className="ml-2 size-4" /></Link></Button> : <Button disabled size="sm" variant="outline">{labels.next}</Button>}{!canPlayground ? <DisabledReason id="embeddings-next-disabled-reason">{labels.nextReason}</DisabledReason> : null}</section>
     </div>
   );
 }

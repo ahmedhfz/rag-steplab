@@ -16,13 +16,13 @@ const statusCopy = {
 } as const;
 
 const statusStyles: Record<PipelineOperationStatus, string> = {
-  locked: "border-slate-200 bg-slate-50 text-slate-500",
-  ready: "border-blue-200 bg-blue-50 text-blue-700",
-  processing: "border-amber-200 bg-amber-50 text-amber-700",
-  completed: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  skipped: "border-slate-200 bg-slate-50 text-slate-500",
-  error: "border-red-200 bg-red-50 text-red-700",
-  stale: "border-orange-200 bg-orange-50 text-orange-700",
+  locked: "border-[#e7e2e4] bg-[#f7f5f6] text-[#969093]",
+  ready: "border-[#d8b5c2] bg-[#fbf4f6] text-[#711f3a]",
+  processing: "border-[#eadfc9] bg-[#fffaf1] text-[#8d651e]",
+  completed: "border-[#c6ddcc] bg-[#eef4ef] text-[#3f7a55]",
+  skipped: "border-[#e7e2e4] bg-[#f7f5f6] text-[#969093]",
+  error: "border-[#edcfcf] bg-[#fbefef] text-[#a23b3b]",
+  stale: "border-[#eadfc9] bg-[#fffaf1] text-[#8d651e]",
 };
 
 function StatusIcon({ status }: { status: PipelineOperationStatus }) {
@@ -60,14 +60,14 @@ export function StageSection({
   return (
     <motion.section
       animate={{ opacity: 1, y: 0 }}
-      className="border-t px-4 py-6 sm:px-7"
+      className="border-t border-[#e7e2e4] px-4 py-7 sm:px-8"
       initial={{ opacity: 0, y: 4 }}
       transition={{ duration: 0.16, ease: "easeOut" }}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold">{title}</h2>
-          <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">{description}</p>
+          <p className="mt-1 max-w-3xl text-xs leading-5 text-[#6e676a]">{description}</p>
         </div>
         <OperationStatusBadge locale={locale} status={status} />
       </div>
@@ -82,15 +82,15 @@ export function RunMetadata({ run, locale }: { run: RunSummary; locale: AppLocal
     : { run: "Run", duration: "Duration", lineage: "Lineage", config: "Technical details", compatible: "Compatible", incompatible: "This lineage is not compatible with the current contract." };
   const upstream = Object.entries(run.upstream).filter((entry): entry is [string, string] => Boolean(entry[1]));
   return (
-    <div className="grid gap-3 border bg-slate-50/60 p-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
-      <div><div className="text-slate-500">{labels.run}</div><div className="mt-1 font-medium">{run.status === "completed" ? labels.compatible : run.status}</div><details className="mt-2"><summary className="cursor-pointer text-[10px] text-slate-500">{locale === "tr" ? "Teknik kimlik" : "Technical ID"}</summary><p className="mt-1 break-all font-mono text-[10px] text-slate-500">{run.id}</p></details></div>
-      <div><div className="text-slate-500">{labels.duration}</div><div className="mt-1 font-medium">{run.timing.durationMs === null ? "—" : `${run.timing.durationMs} ms`}</div></div>
-      <div><div className="text-slate-500">{labels.lineage}</div><div className="mt-1">{upstream.length ? `${upstream.length} ${locale === "tr" ? "üst akış çıktısı" : `upstream artifact${upstream.length === 1 ? "" : "s"}`}` : "—"}</div><details className="mt-2"><summary className="cursor-pointer text-[10px] text-slate-500">{locale === "tr" ? "Kaynakları göster" : "Show sources"}</summary><div className="mt-1 space-y-1 break-all font-mono text-[10px]">{upstream.length ? upstream.map(([key, value]) => <div key={key}>{key}: {value}</div>) : "—"}</div></details></div>
+    <div className="grid gap-3 border border-[#e7e2e4] bg-[#fbfafb] p-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
+      <div><div className="text-[#969093]">{labels.run}</div><div className="mt-1 font-medium text-[#171416]">{run.status === "completed" ? labels.compatible : run.status}</div><details className="mt-2"><summary className="cursor-pointer text-[10px] text-[#6e676a]">{locale === "tr" ? "Teknik kimlik" : "Technical ID"}</summary><p className="mt-1 break-all font-mono text-[10px] text-[#6e676a]">{run.id}</p></details></div>
+      <div><div className="text-[#969093]">{labels.duration}</div><div className="mt-1 font-medium text-[#171416]">{run.timing.durationMs === null ? "—" : `${run.timing.durationMs} ms`}</div></div>
+      <div><div className="text-[#969093]">{labels.lineage}</div><div className="mt-1 text-[#171416]">{upstream.length ? `${upstream.length} ${locale === "tr" ? "üst akış çıktısı" : `upstream artifact${upstream.length === 1 ? "" : "s"}`}` : "—"}</div><details className="mt-2"><summary className="cursor-pointer text-[10px] text-[#6e676a]">{locale === "tr" ? "Kaynakları göster" : "Show sources"}</summary><div className="mt-1 space-y-1 break-all font-mono text-[10px] text-[#6e676a]">{upstream.length ? upstream.map(([key, value]) => <div key={key}>{key}: {value}</div>) : "—"}</div></details></div>
       <details>
-        <summary className="cursor-pointer font-medium text-slate-600">{labels.config}</summary>
-        <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-5">{JSON.stringify(run.config, null, 2)}</pre>
+        <summary className="cursor-pointer font-medium text-[#6e676a]">{labels.config}</summary>
+        <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-5 text-[#6e676a]">{JSON.stringify(run.config, null, 2)}</pre>
       </details>
-      {!run.isCompatible && <p className="text-orange-700 sm:col-span-2 lg:col-span-4" role="status"><History aria-hidden="true" className="mr-1 inline size-3.5" />{labels.incompatible}</p>}
+      {!run.isCompatible && <p className="text-[#8d651e] sm:col-span-2 lg:col-span-4" role="status"><History aria-hidden="true" className="mr-1 inline size-3.5" />{labels.incompatible}</p>}
     </div>
   );
 }
@@ -98,31 +98,31 @@ export function RunMetadata({ run, locale }: { run: RunSummary; locale: AppLocal
 export function LearningHint({ locale, children }: { locale: AppLocale; children: React.ReactNode }) {
   const { preferences } = usePreferences();
   if (!preferences.showLearningHints) return null;
-  return <aside className="border-l-2 border-sky-300 bg-sky-50/60 px-3 py-2 text-xs leading-5 text-sky-900" role="note"><span className="font-semibold">{locale === "tr" ? "Öğrenme ipucu: " : "Learning hint: "}</span>{children}</aside>;
+  return <aside className="border-l-2 border-[#711f3a] bg-[#fbf4f6] px-3 py-2 text-xs leading-5 text-[#501329]" role="note"><span className="font-semibold">{locale === "tr" ? "Öğrenme ipucu: " : "Learning hint: "}</span>{children}</aside>;
 }
 
 export function PipelineErrorMessage({ message }: { message: string | null | undefined }) {
   if (!message) return null;
-  return <p className="border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800" role="alert">{message}</p>;
+  return <p className="border border-[#edcfcf] bg-[#fbefef] px-3 py-2 text-xs text-[#a23b3b]" role="alert">{message}</p>;
 }
 
 export function DisabledReason({ id, children }: { id: string; children: React.ReactNode }) {
-  return <p className="mt-2 text-xs leading-5 text-slate-500" id={id}>{children}</p>;
+  return <p className="mt-2 text-xs leading-5 text-[#6e676a]" id={id}>{children}</p>;
 }
 
 export function MetricCard({ label, value, description }: { label: string; value: string; description?: string }) {
   return (
-    <div className="border p-3">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-2 text-xl font-semibold">{value}</div>
-      {description ? <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p> : null}
+    <div className="border border-[#e7e2e4] bg-white p-3">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-[#969093]">{label}</div>
+      <div className="mt-2 text-xl font-semibold text-[#171416]">{value}</div>
+      {description ? <p className="mt-1 text-xs leading-5 text-[#6e676a]">{description}</p> : null}
     </div>
   );
 }
 
 export function EmptyPipelineState({ children }: { children: React.ReactNode }) {
   return (
-    <div aria-live="polite" className="flex min-h-24 items-center justify-center border-y px-5 py-7 text-center text-sm text-slate-500">
+    <div aria-live="polite" className="flex min-h-24 items-center justify-center border-y border-[#e7e2e4] px-5 py-7 text-center text-sm text-[#6e676a]">
       <Clock3 aria-hidden="true" className="mr-2 size-4" />{children}
     </div>
   );
