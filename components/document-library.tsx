@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronRight, CircleAlert, Clock3, FileText, LoaderCircle } from "lucide-react";
+import { Check, CircleAlert, Clock3, FileText, LoaderCircle } from "lucide-react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { EmptyPipelineState, PipelineErrorMessage } from "@/components/pipeline-learning-ui";
@@ -61,7 +61,7 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
         status: "Durum",
         pages: "Sayfa",
         size: "Boyut",
-        updated: "Güncellendi",
+        uploaded: "Yüklendi",
         active: "Aktif",
         open: "Dokümanı aç",
         noPages: "—",
@@ -77,7 +77,7 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
         status: "Status",
         pages: "Pages",
         size: "Size",
-        updated: "Updated",
+        uploaded: "Uploaded",
         active: "Active",
         open: "Open document",
         noPages: "—",
@@ -108,11 +108,10 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                   <thead className="border-b border-[#e7e2e4] bg-[#fbfafb] text-[11px] font-medium uppercase tracking-[0.08em] text-[#969093]">
                     <tr>
                       <th className="px-4 py-3 font-medium">{labels.file}</th>
-                      <th className="px-4 py-3 font-medium">{labels.status}</th>
                       <th className="px-4 py-3 font-medium">{labels.pages}</th>
                       <th className="px-4 py-3 font-medium">{labels.size}</th>
-                      <th className="px-4 py-3 font-medium">{labels.updated}</th>
-                      <th aria-label={labels.open} className="w-10 px-4 py-3"></th>
+                      <th className="px-4 py-3 font-medium">{labels.uploaded}</th>
+                      <th className="px-4 py-3 font-medium">{labels.status}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#e7e2e4]">
@@ -127,11 +126,10 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                               <span className="min-w-0"><span className="block truncate">{document.fileName}</span>{isActive ? <span className="mt-1 block text-[11px] font-medium text-[#711f3a]">{labels.active}</span> : null}</span>
                             </button>
                           </th>
-                          <td className="whitespace-nowrap px-4 py-4"><DocumentStatusBadge locale={locale} status={status} /></td>
                           <td className="whitespace-nowrap px-4 py-4 text-[#6e676a]">{status === "completed" && document.pageCount > 0 ? document.pageCount : labels.noPages}</td>
                           <td className="whitespace-nowrap px-4 py-4 text-[#6e676a]">{formatDocumentFileSize(document.sizeBytes, locale)}</td>
-                          <td className="whitespace-nowrap px-4 py-4 text-[#6e676a]">{formatUpdatedAt(document.updatedAt ?? document.createdAt, locale)}</td>
-                          <td className="px-4 py-4 text-right"><ChevronRight aria-hidden="true" className="ml-auto size-4 text-[#969093]" /></td>
+                          <td className="whitespace-nowrap px-4 py-4 text-[#6e676a]">{formatUpdatedAt(document.createdAt ?? document.updatedAt, locale)}</td>
+                          <td className="whitespace-nowrap px-4 py-4"><DocumentStatusBadge locale={locale} status={status} /></td>
                         </tr>
                       );
                     })}
