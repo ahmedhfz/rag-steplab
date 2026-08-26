@@ -73,6 +73,7 @@ describe("Retrieval reuse UI contract", () => {
 
     expect(screen.getByText("Exact experiment loaded")).toBeInTheDocument();
     expect(screen.getByTestId("stage-reuse-retrieval")).toHaveTextContent("Reused");
+    await user.click(screen.getByRole("button", { name: /Answer/ }));
     expect(screen.getByTestId("stage-reuse-generation")).toHaveTextContent("Executed");
     await user.click(screen.getByRole("button", { name: "Run generation again" }));
     expect(pipeline.runAgain).toHaveBeenCalledTimes(1);

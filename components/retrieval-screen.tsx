@@ -17,11 +17,27 @@ import { UI_COPY } from "@/lib/copy";
 import type { ExperimentRun, ExperimentTargetStage, ExperimentSummary, RetrievalMode, StageReuseMetadata } from "@/lib/rag-api-types";
 import { firstBlocker } from "@/lib/blockers";
 
-function ExperimentStageRail({ run, locale, rerankerEnabled }: { run: ExperimentRun | null; locale: "en" | "tr"; rerankerEnabled: boolean }) {
-  const labels = locale === "tr" ? { retrieval: "Retrieval", reranking: "Reranking", context: "Context", generation: "Generation", queued: "Sırada", waiting: "Bekliyor", running: "Çalışıyor", completed: "Tamamlandı", skipped: "Atlandı", reused: "Yeniden kullanıldı", failed: "Başarısız" } : { retrieval: "Retrieval", reranking: "Reranking", context: "Context", generation: "Generation", queued: "Queued", waiting: "Waiting", running: "Running", completed: "Completed", skipped: "Skipped", reused: "Reused", failed: "Failed" };
+type PlaygroundStage = "retrieval" | "reranking" | "context" | "generation";
+
+function ExperimentStageTrace({
+  activeStage,
+  locale,
+  onSelect,
+  rerankerEnabled,
+  run,
+}: {
+  activeStage: PlaygroundStage;
+  locale: "en" | "tr";
+  onSelect: (stage: PlaygroundStage) => void;
+  rerankerEnabled: boolean;
+  run: ExperimentRun | null;
+}) {
+  const labels = locale === "tr"
+    ? { query: "Soru", retrieval: "Retrieval", reranking: "Reranking", context: "Context", answer: "Answer", queued: "Sırada", waiting: "Bekliyor", running: "Çalışıyor", completed: "Tamamlandı", skipped: "Atlandı", reused: "Yeniden kullanıldı", failed: "Başarısız" }
+    : { query: "Query", retrieval: "Retrieval", reranking: "Reranking", context: "Context", answer: "Answer", queued: "Queued", waiting: "Waiting", running: "Running", completed: "Completed", skipped: "Skipped", reused: "Reused", failed: "Failed" };
   const stages = ["retrieval", "reranking", "context", "generation"] as const;
   const completedCount = stages.filter((stage) => Boolean(run?.stageResults[stage])).length;
-  const statusFor = (stage: typeof stages[number]) => {
+  const statusFor = (stage: PlaygroundStage) => {
     const result = run?.stageResults[stage];
     if (result) {
       if (stage === "reranking" && "executed" in result && !result.executed) return labels.skipped;
@@ -33,7 +49,29 @@ function ExperimentStageRail({ run, locale, rerankerEnabled }: { run: Experiment
     if (stage === "reranking" && !rerankerEnabled && run?.status === "completed") return labels.skipped;
     return labels.waiting;
   };
-  return <ol aria-label={locale === "tr" ? "Experiment aşamaları" : "Experiment stages"} className="grid gap-0 overflow-hidden border border-[#e7e2e4] bg-white sm:grid-cols-4">{stages.map((stage, index) => { const result = run?.stageResults[stage]; const skipped = Boolean(result && stage === "reranking" && "executed" in result && !result.executed); const state = statusFor(stage); const markerClass = skipped ? "border border-[#e7e2e4] bg-[#f7f5f6] text-[#969093]" : result ? "border border-[#c6ddcc] bg-[#eef4ef] text-[#3f7a55]" : state === labels.failed ? "border border-[#edcfcf] bg-[#fbefef] text-[#a23b3b]" : "border border-[#d8b5c2] bg-[#fbf4f6] text-[#711f3a]"; const textClass = skipped ? "text-[#969093]" : result ? "text-[#3f7a55]" : state === labels.failed ? "text-[#a23b3b]" : "text-[#6e676a]"; return <li className="relative flex min-w-0 items-center gap-3 border-b border-[#e7e2e4] p-4 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0" key={stage}><span aria-hidden="true" className={`grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-semibold ${markerClass}`}>{skipped ? "–" : result ? "✓" : index + 1}</span><span className="min-w-0"><span className="block truncate text-xs font-semibold text-[#171416]">{labels[stage]}</span><span className={`mt-1 block truncate text-[11px] ${textClass}`}>{state}{result && typeof result.durationMs === "number" ? ` · ${result.durationMs} ms` : ""}</span></span></li>; })}</ol>;
+
+  return (
+    <ol aria-label={locale === "tr" ? "Experiment aşamaları" : "Experiment stages"} className="relative space-y-1">
+      <li className="relative flex items-start gap-3 pb-3">
+        <span aria-hidden="true" className="relative z-10 grid size-7 shrink-0 place-items-center rounded-full border border-[#d8b5c2] bg-[#fbf4f6] text-[11px] font-semibold text-[#711f3a]">1</span>
+        <div className="min-w-0 pt-1"><p className="text-xs font-semibold text-[#171416]">{labels.query}</p><p className="mt-1 truncate text-[11px] text-[#6e676a]">{run?.query || (locale === "tr" ? "Çalıştırılmayı bekliyor" : "Waiting to run")}</p></div>
+      </li>
+      {stages.map((stage, index) => {
+        const result = run?.stageResults[stage];
+        const skipped = Boolean(result && stage === "reranking" && "executed" in result && !result.executed);
+        const state = statusFor(stage);
+        const markerClass = skipped ? "border border-[#e7e2e4] bg-[#f7f5f6] text-[#969093]" : result ? "border border-[#c6ddcc] bg-[#eef4ef] text-[#3f7a55]" : state === labels.failed ? "border border-[#edcfcf] bg-[#fbefef] text-[#a23b3b]" : "border border-[#d8b5c2] bg-[#fbf4f6] text-[#711f3a]";
+        const textClass = skipped ? "text-[#969093]" : result ? "text-[#3f7a55]" : state === labels.failed ? "text-[#a23b3b]" : "text-[#6e676a]";
+        return (
+          <li className="relative flex items-start gap-3 pb-3 last:pb-0" key={stage}>
+            <span aria-hidden="true" className="absolute left-3.5 top-0 h-full w-px bg-[#e7e2e4] last:hidden" />
+            <button aria-pressed={activeStage === stage} className={`relative z-10 grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-semibold transition-colors ${markerClass} ${activeStage === stage ? "ring-2 ring-[#711f3a]/20" : ""}`} onClick={() => onSelect(stage)} type="button">{skipped ? "–" : result ? "✓" : index + 2}</button>
+            <button aria-pressed={activeStage === stage} className="min-w-0 pt-1 text-left" onClick={() => onSelect(stage)} type="button"><span className="block text-xs font-semibold text-[#171416]">{stage === "generation" ? labels.answer : labels[stage]}</span><span className={`mt-1 block truncate text-[11px] ${textClass}`}><span>{state}</span>{result && typeof result.durationMs === "number" ? ` · ${result.durationMs} ms` : ""}</span></button>
+          </li>
+        );
+      })}
+    </ol>
+  );
 }
 
 const DEFAULT_TOP_K = "5";
@@ -131,6 +169,7 @@ export function RetrievalScreen() {
   const [tokenBudget, setTokenBudget] = useState(3000);
   const [temperature, setTemperature] = useState(0.1);
   const [targetStage, setTargetStage] = useState<ExperimentTargetStage>("generation");
+  const [activeStage, setActiveStage] = useState<PlaygroundStage>("retrieval");
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const hasChanges = question.length > 0 || topK !== DEFAULT_TOP_K || mode !== DEFAULT_MODE || rerankerEnabled || candidateCount !== 10 || tokenBudget !== 3000 || temperature !== 0.1 || targetStage !== "generation";
   const activeChunkRunId = selectedChunkRunId;
@@ -188,6 +227,7 @@ export function RetrievalScreen() {
 
   function submit() {
     if (!canAsk) return;
+    setActiveStage(targetStage);
     void runExperiment({
       query: question.trim(),
       targetStage,
@@ -221,7 +261,7 @@ export function RetrievalScreen() {
         </form>
         {!canAsk ? <DisabledReason id="ask-disabled-reason">{askBlocker?.code === "missing_document" || askBlocker?.code === "missing_chunk" ? labels.reasonNoDocument : askBlocker?.message}</DisabledReason> : null}
         {experimentRun && experimentRun.status === "completed" ? <div className={savedRunMatches ? "mt-4 border border-[#c6ddcc] bg-[#eef4ef] px-3 py-2 text-xs text-[#3f7a55]" : "mt-4 border border-[#eadfc9] bg-[#fffaf1] px-3 py-2 text-xs text-[#8d651e]"} role="status"><strong>{savedRunMatches ? labels.viewingSaved : labels.draftDiffers}</strong><span className="ml-2">{labels.savedRunHint}</span></div> : null}
-        <div className="mt-5 grid gap-3 sm:grid-cols-3"><label className="text-xs font-medium text-[#171416]" htmlFor="retrieval-mode">{copy.retrieval.mode}<Select onValueChange={(value) => setMode(value as RetrievalMode)} value={mode}><SelectTrigger className="mt-2" id="retrieval-mode"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="dense">{copy.retrieval.modes.dense}</SelectItem><SelectItem value="hybrid">{copy.retrieval.modes.hybrid}</SelectItem><SelectItem value="keyword">{copy.retrieval.modes.keyword}</SelectItem></SelectContent></Select></label><label className="text-xs font-medium text-[#171416]" htmlFor="retrieval-top-k">{copy.retrieval.topK}<Select onValueChange={setTopK} value={topK}><SelectTrigger className="mt-2" id="retrieval-top-k"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="3">3</SelectItem><SelectItem value="5">5</SelectItem><SelectItem value="10">10</SelectItem></SelectContent></Select></label><label className="text-xs font-medium text-[#171416]" htmlFor="reranker-enabled">{copy.retrieval.reranker}<span className="mt-2 flex h-9 items-center justify-between rounded-[8px] border border-[#d8d2d5] bg-white px-3"><span>{rerankerEnabled ? capabilities?.rerankModel || "Gemini" : copy.retrieval.notConfigured}</span><Switch aria-label={copy.retrieval.reranker} checked={rerankerEnabled} id="reranker-enabled" onCheckedChange={setRerankerEnabled} /></span></label></div>
+        <div className="mt-5 grid gap-3 lg:grid-cols-[1.1fr_0.8fr_0.8fr]"><fieldset className="min-w-0"><legend className="text-xs font-medium text-[#171416]">{copy.retrieval.mode}</legend><div aria-label={copy.retrieval.mode} className="mt-2 grid h-9 grid-cols-3 overflow-hidden rounded-[8px] border border-[#d8d2d5] bg-white" role="group">{(["dense", "hybrid", "keyword"] as const).map((value) => <button aria-pressed={mode === value} className={mode === value ? "border border-[#711f3a] bg-[#fbf4f6] px-2 text-xs font-semibold text-[#711f3a]" : "border border-transparent px-2 text-xs font-medium text-[#6e676a] hover:bg-[#fbfafb]"} key={value} onClick={() => setMode(value)} type="button">{copy.retrieval.modes[value]}</button>)}</div></fieldset><label className="text-xs font-medium text-[#171416]" htmlFor="retrieval-top-k">{copy.retrieval.topK}<Select onValueChange={setTopK} value={topK}><SelectTrigger className="mt-2" id="retrieval-top-k"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="3">3</SelectItem><SelectItem value="5">5</SelectItem><SelectItem value="10">10</SelectItem></SelectContent></Select></label><label className="text-xs font-medium text-[#171416]" htmlFor="reranker-enabled">{copy.retrieval.reranker}<span className="mt-2 flex h-9 items-center justify-between rounded-[8px] border border-[#d8d2d5] bg-white px-3"><span>{rerankerEnabled ? capabilities?.rerankModel || "Gemini" : copy.retrieval.notConfigured}</span><Switch aria-label={copy.retrieval.reranker} checked={rerankerEnabled} id="reranker-enabled" onCheckedChange={setRerankerEnabled} /></span></label></div>
         <LearningHint locale={preferences.locale}>{preferences.locale === "tr" ? "Retrieval, seçili indexing pipeline'ın chunk'ları arasından soruya en uygun adayları bulur." : "Retrieval finds the most relevant candidates from the selected indexing pipeline's chunks."}</LearningHint>
         <div className="mt-3"><PipelineErrorMessage message={experimentError?.message} /></div>
 
@@ -238,31 +278,52 @@ export function RetrievalScreen() {
         </details>
       </section>
 
-      <section className="bg-[#fbfafb] px-4 py-5 sm:px-8"><ExperimentStageRail locale={preferences.locale} rerankerEnabled={rerankerEnabled} run={experimentRun} /></section>
+      <section className="border-b border-[#e7e2e4] bg-[#fbfafb] px-4 py-6 sm:px-8">
+        <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
+          <aside className="rounded-[12px] border border-[#e7e2e4] bg-white p-4">
+            <h2 className="text-sm font-semibold text-[#171416]">Stage Trace</h2>
+            <p className="mt-1 text-xs leading-5 text-[#6e676a]">{preferences.locale === "tr" ? "Deneyin her aşamasını seçerek gerçek çıktıyı inceleyin." : "Select a stage to inspect the persisted output."}</p>
+            <div className="mt-5"><ExperimentStageTrace activeStage={activeStage} locale={preferences.locale} onSelect={setActiveStage} rerankerEnabled={rerankerEnabled} run={experimentRun} /></div>
+          </aside>
+          <div className="min-w-0 rounded-[12px] border border-[#e7e2e4] bg-white p-4 sm:p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#969093]">{preferences.locale === "tr" ? "Aktif inceleme" : "Active inspector"} · {activeStage === "generation" ? labels.answer : labels[activeStage]}</p>
+              {experimentRun ? <RunMetadata locale={preferences.locale} run={experimentRun} /> : null}
+            </div>
+            {experimentRun?.reusedExperiment ? <p className="mt-3 text-xs text-[#711f3a]">{labels.exactReuse}</p> : null}
 
+      {activeStage === "retrieval" ? (
       <StageSection description={labels.retrievalDescription} locale={preferences.locale} status={results?.retrieval ? "completed" : experimentStatus} title={labels.retrieval}>
-        {experimentRun ? <RunMetadata locale={preferences.locale} run={experimentRun} /> : null}
-        {experimentRun?.reusedExperiment ? <p className="mt-2 text-xs text-[#711f3a]">{labels.exactReuse}</p> : null}
         <StageReuseBadge executedLabel={labels.executed} reusedLabel={labels.reused} sourceLabel={labels.source} stage="retrieval" reuse={results?.retrieval?.reuse} />
         {results?.retrieval ? (
           <div className="mt-4 overflow-x-auto border border-[#e7e2e4] bg-white"><Table><caption className="sr-only">{copy.retrieval.retrievedChunks}</caption><TableHeader><TableRow><TableHead>{copy.retrieval.rank}</TableHead><TableHead>{mode === "hybrid" ? copy.retrieval.score : mode === "dense" ? "Similarity" : "Keyword score"}</TableHead>{mode === "hybrid" ? <><TableHead>Dense</TableHead><TableHead>Keyword</TableHead><TableHead>RRF</TableHead></> : null}<TableHead>{copy.retrieval.page}</TableHead><TableHead className="min-w-72">{copy.retrieval.preview}</TableHead></TableRow></TableHeader><TableBody>{results.retrieval.candidates.map((candidate) => <TableRow key={candidate.chunkId}><TableCell className="font-semibold text-[#711f3a]">{candidate.rank}</TableCell><TableCell>{formatScore(candidate.score)}</TableCell>{mode === "hybrid" ? <><TableCell>{formatScore(candidate.denseScore)}</TableCell><TableCell>{formatScore(candidate.keywordScore)}</TableCell><TableCell>{formatScore(candidate.rrfScore)}</TableCell></> : null}<TableCell>{candidate.pageNumbers.join(", ") || "—"}</TableCell><TableCell className="max-w-xl whitespace-normal leading-5"><p className="break-words text-[#171416]">{candidate.text}</p><details className="mt-2"><summary className="cursor-pointer text-[10px] text-[#6e676a]">{labels.provenance}</summary><p className="mt-1 break-all font-mono text-[10px] text-[#6e676a]">{candidate.sourceElementIds.join(", ") || "—"}</p></details><div className="mt-2"><SourceInspector documentId={activeDocument?.id ?? null} headingPath={candidate.headingPath} pageNumbers={candidate.pageNumbers} parseResult={parseResult} sourceElementIds={candidate.sourceElementIds} /></div></TableCell></TableRow>)}</TableBody></Table></div>
         ) : <EmptyPipelineState>{labels.noRun}</EmptyPipelineState>}
       </StageSection>
+      ) : null}
 
+      {activeStage === "reranking" ? (
       <StageSection description={labels.rerankingDescription} locale={preferences.locale} status={results?.reranking ? (results.reranking.executed ? "completed" : "skipped") : rerankerEnabled && experimentStatus === "processing" ? "processing" : rerankerEnabled ? "ready" : "skipped"} title={labels.reranking}>
         <StageReuseBadge executedLabel={labels.executed} reusedLabel={labels.reused} sourceLabel={labels.source} stage="reranking" reuse={results?.reranking?.reuse} />
         {results?.reranking?.executed ? <div className="overflow-x-auto border border-[#e7e2e4] bg-white"><Table><TableHeader><TableRow><TableHead>{copy.retrieval.rank}</TableHead><TableHead>{labels.originalRank}</TableHead><TableHead>{labels.rerankScore}</TableHead><TableHead className="min-w-72">{copy.retrieval.preview}</TableHead></TableRow></TableHeader><TableBody>{results.reranking.candidates.map((candidate) => <TableRow key={candidate.chunkId}><TableCell className="font-semibold text-[#711f3a]">{candidate.rank} {candidate.originalRank !== candidate.rank ? <span className="text-[#3f7a55]">{candidate.originalRank > candidate.rank ? `↑${candidate.originalRank - candidate.rank}` : `↓${candidate.rank - candidate.originalRank}`}</span> : null}</TableCell><TableCell>{candidate.originalRank}</TableCell><TableCell>{formatScore(candidate.rerankScore)}</TableCell><TableCell className="whitespace-normal leading-5">{candidate.text}</TableCell></TableRow>)}</TableBody></Table></div> : <EmptyPipelineState>{rerankerEnabled ? labels.noRun : labels.skipped}</EmptyPipelineState>}
       </StageSection>
+      ) : null}
 
+      {activeStage === "context" ? (
       <StageSection description={labels.contextDescription} locale={preferences.locale} status={results?.context ? "completed" : "locked"} title={labels.context}>
         <StageReuseBadge executedLabel={labels.executed} reusedLabel={labels.reused} sourceLabel={labels.source} stage="context" reuse={results?.context?.reuse} />
         {results?.context ? <div className="grid gap-4 lg:grid-cols-2"><div className="space-y-2">{results.context.candidates.map((candidate) => <article className="border border-[#e7e2e4] bg-white p-3" key={candidate.chunkId}><div className="flex items-center justify-between gap-2"><span className="text-[11px] font-medium text-[#171416]">Chunk · {candidate.pageNumbers.join(", ") || "page unknown"}</span><span className={candidate.selected ? "text-[#3f7a55]" : "text-[#969093]"}>{candidate.selected ? labels.selected : labels.excluded}</span></div><p className="mt-2 break-words text-sm leading-5 text-[#171416]">{candidate.text}</p><p className="mt-2 text-xs text-[#6e676a]">{labels.reason}: {candidate.reason || "—"} · {candidate.tokenCount} {labels.tokens}</p><details className="mt-2"><summary className="cursor-pointer text-[10px] text-[#6e676a]">{labels.provenance}</summary><p className="mt-1 break-all font-mono text-[10px] text-[#6e676a]">{candidate.sourceElementIds.join(", ") || "—"}</p></details></article>)}</div><div className="min-w-0"><h3 className="text-sm font-semibold text-[#171416]">{labels.finalContext}</h3><p className="mt-2 text-xs text-[#6e676a]">{labels.contextUsage}: {results.context.tokenCount} / {results.context.tokenBudget}</p><div aria-label={`${labels.contextUsage} ${results.context.tokenCount} / ${results.context.tokenBudget}`} className="mt-2 h-2 overflow-hidden rounded-full bg-[#e7e2e4]" role="progressbar" aria-valuemax={results.context.tokenBudget} aria-valuemin={0} aria-valuenow={Math.min(results.context.tokenCount, results.context.tokenBudget)}><div className="h-full rounded-full bg-[#711f3a]" style={{ width: `${Math.min(100, (results.context.tokenCount / Math.max(1, results.context.tokenBudget)) * 100)}%` }} /></div><pre className="mt-3 max-h-[520px] overflow-auto whitespace-pre-wrap break-words border border-[#e7e2e4] bg-[#fbfafb] p-4 font-mono text-xs leading-6 text-[#171416]">{results.context.finalContext}</pre></div></div> : <EmptyPipelineState>{labels.noRun}</EmptyPipelineState>}
       </StageSection>
+      ) : null}
 
+      {activeStage === "generation" ? (
       <StageSection description={labels.generationDescription} locale={preferences.locale} status={results?.generation ? "completed" : "locked"} title={labels.generation}>
         <StageReuseBadge executedLabel={labels.executed} reusedLabel={labels.reused} sourceLabel={labels.source} stage="generation" reuse={results?.generation?.reuse} />
         {results?.generation ? <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]"><article className="min-w-0 border border-[#e7e2e4] bg-white p-4 sm:p-6"><h3 className="text-sm font-semibold text-[#171416]">{labels.answer}</h3>{results.generation.insufficientContext ? <p className="mt-3 border border-[#eadfc9] bg-[#fffaf1] px-3 py-2 text-sm text-[#8d651e]" role="status">{labels.insufficient}</p> : null}<p className="mt-4 whitespace-pre-wrap break-words text-sm leading-7 text-[#171416]">{results.generation.answer}</p><p className="mt-5 border-t border-[#e7e2e4] pt-4 text-xs text-[#6e676a]">{labels.model}: {results.generation.model ?? "—"} · input {results.generation.inputTokens ?? "—"} · output {results.generation.outputTokens ?? "—"}</p></article><aside className="min-w-0"><h3 className="text-sm font-semibold text-[#171416]">{labels.citations}</h3><div className="mt-3 space-y-2">{results.generation.citations.length ? results.generation.citations.map((citation) => <div className={citation.valid ? "border border-[#c6ddcc] bg-[#eef4ef] p-3" : "border border-[#edcfcf] bg-[#fbefef] p-3"} key={citation.citationId}><div className="flex items-center gap-2 text-xs font-medium">{citation.valid ? <CheckCircle2 aria-hidden="true" className="size-4 text-[#3f7a55]" /> : <X aria-hidden="true" className="size-4 text-[#a23b3b]" />}<span className="text-[#171416]">{citation.citationId}</span></div><details className="mt-2"><summary className="cursor-pointer text-[10px] text-[#6e676a]">{labels.provenance}</summary><p className="mt-1 break-all font-mono text-[10px] text-[#6e676a]">chunk: {citation.chunkId}</p></details><p className="mt-1 text-[10px] text-[#6e676a]">pages: {citation.pageNumbers.join(", ") || "—"}</p>{citation.quote ? <p className="mt-2 break-words text-xs leading-5 text-[#171416]">“{citation.quote}”</p> : null}<div className="mt-2"><SourceInspector documentId={activeDocument?.id ?? null} pageNumbers={citation.pageNumbers} parseResult={parseResult} sourceElementIds={citation.sourceElementIds} triggerLabel={citation.citationId} /></div>{!citation.valid ? <p className="mt-2 text-xs text-[#a23b3b]">{labels.invalidCitation}</p> : null}</div>) : <EmptyPipelineState>{copy.retrieval.noAnswer}</EmptyPipelineState>}</div></aside></div> : <EmptyPipelineState>{copy.retrieval.noAnswer}</EmptyPipelineState>}
       </StageSection>
+      ) : null}
+          </div>
+        </div>
+      </section>
 
       <section className="border-t border-[#e7e2e4] px-4 py-7 sm:px-8">
         <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-sm font-semibold">{labels.currentActions}</h2><div className="flex flex-wrap gap-2"><Button className="gap-2" disabled={!canContinue} onClick={() => void continueExperiment()} size="sm" variant="outline">{labels.continue}</Button><Button className="gap-2" disabled={!canRerunGeneration} onClick={() => void rerunGeneration()} size="sm" variant="outline">{labels.runAgain}</Button><Button aria-describedby={!experimentRun ? "trace-disabled-reason" : undefined} className="gap-2" disabled={!experimentRun} onClick={() => experimentRun && void navigator.clipboard.writeText(JSON.stringify(experimentRun, null, 2))} size="sm" variant="outline"><Copy aria-hidden="true" className="size-4" />{copy.retrieval.copyTrace}</Button></div></div>

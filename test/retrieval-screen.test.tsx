@@ -54,15 +54,14 @@ describe("RetrievalScreen", () => {
     expect(screen.getByRole("switch", { name: "Reranker" })).toBeEnabled();
     await user.click(screen.getByRole("combobox", { name: "Top-K" }));
     await user.click(screen.getByRole("option", { name: "10" }));
-    await user.click(screen.getByRole("combobox", { name: "Mode" }));
-    await user.click(screen.getByRole("option", { name: "Hybrid" }));
+    await user.click(screen.getByRole("button", { name: "Hybrid" }));
     const reset = screen.getByRole("button", { name: "Reset" });
     expect(reset).toBeEnabled();
 
     await user.click(reset);
     expect(question).toHaveValue("");
     expect(screen.getByRole("combobox", { name: "Top-K" })).toHaveTextContent("5");
-    expect(screen.getByRole("combobox", { name: "Mode" })).toHaveTextContent("Dense");
+    expect(screen.getByRole("button", { name: "Dense" })).toHaveAttribute("aria-pressed", "true");
     expect(reset).toBeDisabled();
     expect(screen.getAllByText("No real retrieval experiment has run yet.").length).toBeGreaterThanOrEqual(1);
   });
