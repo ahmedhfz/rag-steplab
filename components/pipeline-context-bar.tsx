@@ -34,21 +34,21 @@ export function PipelineContextBar() {
   const isHistorical = Boolean(selectedParse?.historicalLineage || selectedChunk?.historicalLineage || selectedEmbedding?.historicalLineage);
 
   return (
-    <section className="border-b bg-white px-4 py-2 sm:px-7" data-testid="pipeline-context-bar">
+    <section className="border-b border-[#e7e2e4] bg-white px-4 py-2.5 sm:px-8" data-testid="pipeline-context-bar">
       <div className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-3">
-        <FileText aria-hidden="true" className="size-4 shrink-0 text-slate-500" />
+        <FileText aria-hidden="true" className="size-4 shrink-0 text-[#969093]" />
         <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
-          <SelectTrigger aria-label={labels.document} className="h-8 min-w-0 max-w-[17rem] border-0 px-1 text-xs font-medium shadow-none"><SelectValue placeholder={documentName ?? (documents.length ? labels.placeholder : labels.noDocument)} /></SelectTrigger>
+          <SelectTrigger aria-label={labels.document} className="h-8 min-w-0 max-w-[17rem] border-0 px-1 text-xs font-medium text-[#171416] shadow-none"><SelectValue placeholder={documentName ?? (documents.length ? labels.placeholder : labels.noDocument)} /></SelectTrigger>
           <SelectContent>{documents.map((document) => <SelectItem key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
         </Select>
         <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value)} value={activePipelineId ?? ""}>
-          <SelectTrigger aria-label={labels.pipeline} className="h-8 min-w-[10rem] max-w-[16rem] border-0 px-1 text-xs font-semibold shadow-none"><SelectValue placeholder={pipelines.length ? labels.pipeline : labels.noPipeline} /></SelectTrigger>
+          <SelectTrigger aria-label={labels.pipeline} className="h-8 min-w-[10rem] max-w-[16rem] border-0 px-1 text-xs font-semibold text-[#501329] shadow-none"><SelectValue placeholder={pipelines.length ? labels.pipeline : labels.noPipeline} /></SelectTrigger>
           <SelectContent>{pipelines.map((pipeline) => <SelectItem key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
         </Select>
-        <span aria-label={preferences.locale === "tr" ? "Seçili lineage" : "Selected lineage"} className="shrink-0 text-xs font-semibold tracking-wide text-slate-700">
-          <Link className="hover:underline" href="/parse" title={selectedParse?.id}>{labels.parse} {parseNumber ?? "—"}</Link><span className="px-1 text-slate-400">→</span><Link className="hover:underline" href="/chunking" title={selectedChunk?.id}>{labels.chunk} {chunkNumber ?? "—"}</Link><span className="px-1 text-slate-400">→</span><Link className="hover:underline" href="/embeddings" title={selectedEmbedding?.id}>{labels.embedding} {embeddingNumber ?? "—"}</Link>
+        <span aria-label={preferences.locale === "tr" ? "Seçili lineage" : "Selected lineage"} className="shrink-0 text-xs font-semibold tracking-wide text-[#501329]">
+          <Link className="hover:underline" href="/parse" title={selectedParse?.id}>{labels.parse} {parseNumber ?? "—"}</Link><span className="px-1 text-[#d8d2d5]">→</span><Link className="hover:underline" href="/chunking" title={selectedChunk?.id}>{labels.chunk} {chunkNumber ?? "—"}</Link><span className="px-1 text-[#d8d2d5]">→</span><Link className="hover:underline" href="/embeddings" title={selectedEmbedding?.id}>{labels.embedding} {embeddingNumber ?? "—"}</Link>
         </span>
-        {isHistorical ? <span className="truncate text-[10px] text-amber-700">({labels.historical})</span> : null}
+        {isHistorical ? <span className="truncate text-[10px] text-[#8d651e]">({labels.historical})</span> : null}
       </div>
     </section>
   );
