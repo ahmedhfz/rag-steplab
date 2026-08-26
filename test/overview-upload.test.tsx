@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 describe("Phase 6B document ownership", () => {
-  it("shows the read-only stage diagram and empty Documents CTA without upload or parse actions", async () => {
+  it("shows the Figma-first journey and continuation CTA without upload or parse actions", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       const payload = url.endsWith("/capabilities") ? capabilities : { items: [] };
       return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }));
@@ -29,7 +29,10 @@ describe("Phase 6B document ownership", () => {
     renderWithPipeline(<OverviewScreen />);
 
     expect(screen.getByRole("heading", { name: "RAG Pipeline" })).toBeInTheDocument();
-    expect(screen.getByText("Retrieve")).toBeInTheDocument();
+    expect(screen.getByTestId("continue-surface")).toBeInTheDocument();
+    expect(screen.getByTestId("current-setup")).toBeInTheDocument();
+    expect(screen.getByTestId("overview-journey")).toContainElement(screen.getByText("Build Context"));
+    expect(screen.getByText("Retrieval")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText(/No documents yet/)).toBeInTheDocument());
     expect(screen.getByRole("link", { name: "Go to Documents" })).toHaveAttribute("href", "/documents");
     expect(screen.queryByRole("button", { name: /Add PDF|Choose PDF|Parse Document|Reparse/i })).not.toBeInTheDocument();
