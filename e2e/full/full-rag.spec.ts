@@ -8,13 +8,14 @@ import { generatedFixturePath } from "../support/fixture-path";
 
 test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğrular", async ({ page }) => {
   test.setTimeout(25 * 60 * 1_000);
-  const quality = installBrowserQualityGuards(page);
   const runId = process.env.E2E_RUN_ID ?? `${Date.now()}`;
   const fileName = `e2e-${runId}-rag-steplab-golden.pdf`;
   const pdf = await readFile(generatedFixturePath);
 
   await signIn(page, requireE2ECredentials());
   await page.goto("/documents");
+  await expect(page.getByRole("button", { name: "Add PDF" })).toBeVisible();
+  const quality = installBrowserQualityGuards(page);
   await page.getByRole("button", { name: "Add PDF" }).click();
   await page.getByLabel("Choose PDF").setInputFiles({ name: fileName, mimeType: "application/pdf", buffer: pdf });
   await page.getByRole("button", { name: "Save document" }).click();
@@ -42,7 +43,9 @@ test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğ
   await page.getByRole("button", { name: "Create chunks" }).click();
   await expect(page.getByText("ORBIT-731", { exact: false }).first()).toBeVisible({ timeout: 60_000 });
   await page.goto("/embeddings");
-  await page.getByRole("button", { name: "Create embeddings" }).click();
+  const createEmbeddingsButton = page.getByRole("button", { name: "Create embeddings" });
+  await expect(createEmbeddingsButton).toBeEnabled({ timeout: 60_000 });
+  await createEmbeddingsButton.click();
   await expect(page.getByText("gemini-embedding-2", { exact: false }).first()).toBeVisible({ timeout: 2 * 60_000 });
 
   await page.goto("/playground");
@@ -50,7 +53,7 @@ test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğ
   await page.getByRole("button", { name: "Run experiment" }).click();
   await expect(page.getByRole("heading", { name: "Grounded answer" })).toBeVisible({ timeout: 3 * 60_000 });
   await expect(page.getByText("C1", { exact: true }).first()).toBeVisible();
-  await page.getByRole("button", { name: "C1" }).click();
+  await page.getByRole("button", { name: "C1", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Source inspector" })).toContainText("ORBIT-731");
   await page.getByRole("button", { name: "Close" }).click();
 
