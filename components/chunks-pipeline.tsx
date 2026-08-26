@@ -35,7 +35,8 @@ function ChunkInspector({ run, labels }: { run: ChunkRun; labels: Record<string,
   if (!selectedChunk) return <EmptyPipelineState>{labels.chunkEmpty}</EmptyPipelineState>;
 
   function chunkPreview(chunk: ChunkItem) {
-    return chunk.text.replace(/\s+/g, " ").trim().slice(0, 96) || labels.emptyChunk;
+    const preview = chunk.text.replace(/\s+/g, " ").trim().split(" ").slice(0, 6).join(" ");
+    return preview ? `${preview}${chunk.text.trim().split(/\s+/).length > 6 ? " …" : ""}` : labels.emptyChunk;
   }
 
   return (
