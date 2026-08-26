@@ -207,9 +207,7 @@ export function EvaluationScreen() {
   }
 
   function sourceLabel(element: (typeof parseElements)[number]) {
-    if (preferences.detailLevel === "technical")
-      return `${element.type} · ${element.id}`;
-    return `${element.pageNumbers[0] ? `P${element.pageNumbers[0]} · ` : ""}${element.type} · ${element.text.slice(0, 42)}`;
+    return `${element.pageNumbers[0] ? `${preferences.locale === "tr" ? "Sayfa" : "Page"} ${element.pageNumbers[0]} · ` : ""}${element.type} · ${element.text.slice(0, 42)}`;
   }
 
   useEffect(() => {
@@ -317,7 +315,7 @@ export function EvaluationScreen() {
             </label>
             <div className="text-xs font-medium">
               {labels.relevant}
-              {preferences.detailLevel === "technical" ? (
+              {
                 <>
                   <Input
                     aria-describedby="relevant-elements-hint"
@@ -334,7 +332,7 @@ export function EvaluationScreen() {
                     {labels.relevantHint}
                   </span>
                 </>
-              ) : null}
+              }
               {parseElements.length ? (
                 <div
                   aria-label={labels.sourcePicker}
@@ -412,7 +410,7 @@ export function EvaluationScreen() {
                   </label>
                   <div className="text-xs font-medium">
                     {labels.relevant}
-                    {preferences.detailLevel === "technical" ? (
+                    {
                       <Input
                         className="mt-2 font-mono"
                         id={`case-elements-${index}`}
@@ -427,7 +425,7 @@ export function EvaluationScreen() {
                         }
                         value={item.elements}
                       />
-                    ) : null}
+                    }
                     <div
                       aria-label={`${labels.sourcePicker} ${index + 2}`}
                       className="mt-2 flex max-h-28 flex-wrap gap-1 overflow-y-auto rounded border p-2"
@@ -848,12 +846,7 @@ export function EvaluationScreen() {
                           <p className="mt-1 whitespace-pre-wrap leading-5 text-slate-600">{item.answer || labels.noAnswer}</p>
                           {item.citations.length ? <p className="mt-2 text-slate-600">{labels.citations}: {item.citations.length}</p> : null}
                         </div>
-                        {preferences.detailLevel === "technical" &&
-                        item.experimentId ? (
-                          <p className="mt-2 break-all font-mono text-[10px] text-slate-500">
-                            experiment: {item.experimentId}
-                          </p>
-                        ) : null}
+                        {item.experimentId ? <details className="mt-2"><summary className="cursor-pointer text-[10px] text-slate-500">{preferences.locale === "tr" ? "Teknik deney kimliği" : "Technical experiment ID"}</summary><p className="mt-1 break-all font-mono text-[10px] text-slate-500">experiment: {item.experimentId}</p></details> : null}
                       </article>
                     ))}
                   </div>
@@ -911,21 +904,9 @@ export function EvaluationScreen() {
                         type="checkbox"
                       />
                     </TableCell>
-                    <TableCell
-                      className={
-                        preferences.detailLevel === "technical"
-                          ? "max-w-44 truncate font-mono text-xs"
-                          : "text-xs"
-                      }
-                      title={
-                        preferences.detailLevel === "technical"
-                          ? run.id
-                          : undefined
-                      }
-                    >
-                      {preferences.detailLevel === "technical"
-                        ? run.id
-                        : `Run ${evaluationHistory.length - index}`}
+                    <TableCell className="text-xs">
+                      <span>Run {evaluationHistory.length - index}</span>
+                      <details className="mt-1"><summary className="cursor-pointer text-[10px] text-slate-500">{preferences.locale === "tr" ? "Teknik kimlik" : "Technical ID"}</summary><span className="break-all font-mono text-[10px] text-slate-500">{run.id}</span></details>
                     </TableCell>
                     <TableCell>{metric(run.results.hitAtK)}</TableCell>
                     <TableCell>{metric(run.results.recallAtK)}</TableCell>

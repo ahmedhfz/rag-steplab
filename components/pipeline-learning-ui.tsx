@@ -77,20 +77,19 @@ export function StageSection({
 }
 
 export function RunMetadata({ run, locale }: { run: RunSummary; locale: AppLocale }) {
-  const { preferences } = usePreferences();
   const labels = locale === "tr"
     ? { run: "Çalıştırma", duration: "Süre", lineage: "Lineage", config: "Teknik ayrıntılar", compatible: "Uyumlu", incompatible: "Bu lineage mevcut uyumluluk kurallarıyla kullanılamıyor." }
     : { run: "Run", duration: "Duration", lineage: "Lineage", config: "Technical details", compatible: "Compatible", incompatible: "This lineage is not compatible with the current contract." };
   const upstream = Object.entries(run.upstream).filter((entry): entry is [string, string] => Boolean(entry[1]));
   return (
     <div className="grid gap-3 border bg-slate-50/60 p-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
-      <div><div className="text-slate-500">{labels.run}</div><div className="mt-1 font-medium">{preferences.detailLevel === "technical" ? run.id : (run.status === "completed" ? labels.compatible : run.status)}</div></div>
+      <div><div className="text-slate-500">{labels.run}</div><div className="mt-1 font-medium">{run.status === "completed" ? labels.compatible : run.status}</div><details className="mt-2"><summary className="cursor-pointer text-[10px] text-slate-500">{locale === "tr" ? "Teknik kimlik" : "Technical ID"}</summary><p className="mt-1 break-all font-mono text-[10px] text-slate-500">{run.id}</p></details></div>
       <div><div className="text-slate-500">{labels.duration}</div><div className="mt-1 font-medium">{run.timing.durationMs === null ? "—" : `${run.timing.durationMs} ms`}</div></div>
-      <div><div className="text-slate-500">{labels.lineage}</div><div className="mt-1">{preferences.detailLevel === "technical" ? <div className="space-y-1 font-mono">{upstream.length ? upstream.map(([key, value]) => <div className="break-all" key={key}>{key}: {value}</div>) : "—"}</div> : <span>{upstream.length ? `${upstream.length} upstream artifact${upstream.length === 1 ? "" : "s"}` : "—"}</span>}</div></div>
-      {preferences.detailLevel === "technical" ? <details>
+      <div><div className="text-slate-500">{labels.lineage}</div><div className="mt-1">{upstream.length ? `${upstream.length} ${locale === "tr" ? "üst akış çıktısı" : `upstream artifact${upstream.length === 1 ? "" : "s"}`}` : "—"}</div><details className="mt-2"><summary className="cursor-pointer text-[10px] text-slate-500">{locale === "tr" ? "Kaynakları göster" : "Show sources"}</summary><div className="mt-1 space-y-1 break-all font-mono text-[10px]">{upstream.length ? upstream.map(([key, value]) => <div key={key}>{key}: {value}</div>) : "—"}</div></details></div>
+      <details>
         <summary className="cursor-pointer font-medium text-slate-600">{labels.config}</summary>
         <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-5">{JSON.stringify(run.config, null, 2)}</pre>
-      </details> : <div><div className="text-slate-500">{locale === "tr" ? "Ne gösteriliyor?" : "What this means"}</div><div className="mt-1 text-slate-600">{locale === "tr" ? "Bu kart yalnızca seçili gerçek run'ın durumunu gösterir." : "This card describes the selected real run, not a new draft."}</div></div>}
+      </details>
       {!run.isCompatible && <p className="text-orange-700 sm:col-span-2 lg:col-span-4" role="status"><History aria-hidden="true" className="mr-1 inline size-3.5" />{labels.incompatible}</p>}
     </div>
   );

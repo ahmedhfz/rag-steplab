@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   BarChart3,
-  Beaker,
   Braces,
   BookOpen,
   CircleHelp,
@@ -29,6 +29,7 @@ import { PageTransition } from "@/components/page-transition";
 import { Button } from "@/components/ui/button";
 import { type AppCopy, type AppNavKey, UI_COPY } from "@/lib/copy";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { UI_ASSETS } from "@/lib/ui-assets";
 import { cn } from "@/lib/utils";
 
 type NavItem = { key: AppNavKey; href: string; icon: LucideIcon };
@@ -52,7 +53,7 @@ const navGroups: NavGroup[] = [
       { key: "evaluation", href: "/evaluation", icon: BarChart3 },
     ],
   },
-  { label: "system", items: [{ key: "settings", href: "/settings", icon: Settings }] },
+  { items: [{ key: "settings", href: "/settings", icon: Settings }] },
 ];
 
 function isNavItemActive(key: AppNavKey, pathname: string) {
@@ -99,13 +100,13 @@ type UserMenuItemProps = {
 };
 
 function UserMenuItem({ icon: Icon, label, onClick, href }: UserMenuItemProps) {
-  const className = "flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300";
+  const className = "flex h-9 w-full items-center gap-2.5 rounded-[8px] px-2.5 text-left text-sm text-[#6e676a] transition-colors hover:bg-[#fbf4f6] hover:text-[#501329] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/20";
 
   if (href) {
-    return <Link className={className} href={href} onClick={onClick}><Icon aria-hidden="true" className="size-4 text-slate-500" />{label}</Link>;
+    return <Link className={className} href={href} onClick={onClick}><Icon aria-hidden="true" className="size-4 text-[#969093]" />{label}</Link>;
   }
 
-  return <button className={className} onClick={onClick} type="button"><Icon aria-hidden="true" className="size-4 text-slate-500" />{label}</button>;
+  return <button className={className} onClick={onClick} type="button"><Icon aria-hidden="true" className="size-4 text-[#969093]" />{label}</button>;
 }
 
 type UserMenuProps = {
@@ -166,15 +167,15 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
         aria-expanded={isOpen}
         aria-haspopup="dialog"
         aria-label={`${displayName} — ${copy.common.accountMenu}`}
-        className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-slate-300"
+        className="flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left outline-none transition-colors hover:bg-[#fbf4f6] focus-visible:ring-2 focus-visible:ring-[#711f3a]/20"
         onClick={() => setOpenView(isOpen ? null : "menu")}
         ref={triggerRef}
         type="button"
       >
-        <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">{initials}</span>
+        <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-[#fbf4f6] text-xs font-semibold text-[#711f3a]">{initials}</span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-slate-800">{displayName}</span>
-          <span className="block truncate text-xs text-slate-500">{user.email ?? copy.common.frontendFoundation}</span>
+          <span className="block truncate text-sm font-medium text-[#171416]">{displayName}</span>
+          <span className="block truncate text-xs text-[#969093]">{user.email ?? copy.common.frontendFoundation}</span>
         </span>
       </button>
 
@@ -183,7 +184,7 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
           <motion.div
             animate={{ opacity: 1, y: 0 }}
             aria-label={copy.common.accountMenu}
-            className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-50 overflow-hidden rounded-lg border bg-white p-1.5 shadow-lg"
+            className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-50 overflow-hidden rounded-[12px] border border-[#e7e2e4] bg-white p-1.5 shadow-lg shadow-[#171416]/8"
             exit={{ opacity: 0, y: 4 }}
             initial={{ opacity: 0, y: 4 }}
             role="dialog"
@@ -191,9 +192,9 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
           >
             {openView === "menu" && (
               <>
-                <div className="mb-1 border-b px-2.5 pb-2.5 pt-1">
-                  <p className="truncate text-sm font-semibold text-slate-900">{displayName}</p>
-                  <p className="truncate text-xs text-slate-500">{user.email ?? copy.common.frontendFoundation}</p>
+                <div className="mb-1 border-b border-[#e7e2e4] px-2.5 pb-2.5 pt-1">
+                  <p className="truncate text-sm font-semibold text-[#171416]">{displayName}</p>
+                  <p className="truncate text-xs text-[#969093]">{user.email ?? copy.common.frontendFoundation}</p>
                 </div>
                 <UserMenuItem icon={BookOpen} label={copy.guides} onClick={() => setOpenView("guides")} />
                 <UserMenuItem icon={CircleHelp} label={copy.help} onClick={() => setOpenView("help")} />
@@ -241,24 +242,24 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
 
 function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: string; onNavigate?: () => void; copy: AppCopy; user: AuthUserSummary; onSignOut: () => Promise<void> }) {
   return (
-    <div className="flex h-full flex-col bg-[#fcfcfd]">
-      <div className="flex h-[74px] items-center gap-3 border-b px-6">
-        <Beaker aria-hidden="true" className="size-7 stroke-[1.7]" />
-        <span className="text-[21px] font-semibold tracking-[-0.03em]">{copy.productName}</span>
+    <div className="flex h-full flex-col bg-white">
+      <div className="flex h-[72px] items-center gap-3 border-b border-[#e7e2e4] px-6">
+        <Image alt="" height={30} priority src={UI_ASSETS.brand.mark} width={30} />
+        <span className="text-[19px] font-semibold tracking-[-0.035em] text-[#171416]">{copy.productName}</span>
       </div>
 
-      <nav aria-label={copy.common.primaryNavigation} className="flex-1 space-y-1.5 px-3 py-5">
+      <nav aria-label={copy.common.primaryNavigation} className="flex-1 space-y-1 px-3 py-5">
         {navGroups.map((group) => (
           <div className="space-y-1.5" key={group.label ?? "overview"}>
-            {group.label ? <p className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">{copy.nav[group.label]}</p> : null}
+            {group.label ? <p className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#969093]">{copy.nav[group.label]}</p> : null}
             {group.items.map((item) => {
               const isActive = isNavItemActive(item.key, pathname);
               return (
                 <Link
                   aria-current={isActive ? "page" : undefined}
                   className={cn(
-                    "flex h-11 items-center gap-3 rounded-md px-3 text-sm text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-950",
-                    isActive && "bg-slate-100 font-medium text-slate-950",
+                    "flex h-10 items-center gap-3 rounded-[9px] px-3 text-sm text-[#6e676a] transition-colors hover:bg-[#fbf4f6] hover:text-[#501329]",
+                    isActive && "bg-[#fbf4f6] font-medium text-[#711f3a]",
                   )}
                   href={item.href}
                   key={item.key}
@@ -274,7 +275,7 @@ function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: st
         ))}
       </nav>
 
-      <div className="border-t px-3 py-3">
+      <div className="border-t border-[#e7e2e4] px-3 py-3">
         <UserMenu copy={copy} onNavigate={onNavigate} onSignOut={onSignOut} user={user} />
       </div>
     </div>
@@ -367,14 +368,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="min-h-screen bg-[#fdfdfd] text-slate-950">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[232px] border-r lg:block">
+      <div className="min-h-screen bg-[#f8f7f7] text-[#171416]">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] border-r border-[#e7e2e4] xl:block">
         <Sidebar copy={copy} onSignOut={signOut} pathname={pathname} user={authUser} />
       </aside>
 
       <div
         aria-hidden={!mobileOpen}
-        className="fixed inset-0 z-50 pointer-events-none lg:hidden"
+        className="pointer-events-none fixed inset-0 z-50 xl:hidden"
         id="mobile-navigation"
         onKeyDown={trapMobileFocus}
       >
@@ -396,7 +397,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               animate={{ opacity: 1, x: 0 }}
               aria-label={copy.common.primaryNavigation}
               aria-modal="true"
-              className="pointer-events-auto relative h-full w-[min(86vw,280px)] border-r bg-white"
+              className="pointer-events-auto relative h-full w-[min(86vw,320px)] border-r border-[#e7e2e4] bg-white"
               exit={{ opacity: 0, x: -20 }}
               initial={{ opacity: 0, x: -20 }}
               key="mobile-panel"
@@ -413,27 +414,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </AnimatePresence>
       </div>
 
-      <div className="min-w-0 lg:pl-[232px]">
-        <header className="sticky top-0 z-30 flex h-[74px] items-center justify-between border-b bg-white px-4 sm:px-7">
+      <div className="min-w-0 xl:pl-[248px]">
+        <header className="sticky top-0 z-30 flex h-[64px] items-center justify-between border-b border-[#e7e2e4] bg-white px-4 sm:px-7 xl:hidden">
           <div className="flex min-w-0 items-center gap-3">
-            <Button aria-controls="mobile-navigation" aria-expanded={mobileOpen} aria-label={copy.common.openNavigation} className="lg:hidden" onClick={() => setMobileOpen(true)} ref={mobileOpenButtonRef} size="icon" variant="ghost">
+            <Button aria-controls="mobile-navigation" aria-expanded={mobileOpen} aria-label={copy.common.openNavigation} className="xl:hidden" onClick={() => setMobileOpen(true)} ref={mobileOpenButtonRef} size="icon" variant="ghost">
               <Menu className="size-5" />
             </Button>
             <span className="truncate text-lg font-semibold tracking-[-0.02em]">{getPageTitle(pathname, copy)}</span>
-            <span className="hidden rounded-md border bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 sm:inline-flex">
-              {copy.learningMode}: {copy.detailLevel[preferences.detailLevel]}
-            </span>
           </div>
         </header>
 
         <main className="min-w-0">
           <PageTransition>{children}</PageTransition>
         </main>
-        <footer className="flex min-h-10 items-center justify-center gap-2 border-t px-4 text-[11px] text-slate-500">
-          <span>{copy.footer.localProject}</span>
-          <span aria-hidden="true">•</span>
-          <span>{copy.footer.backendStatus}</span>
-        </footer>
       </div>
       </div>
     </MotionConfig>

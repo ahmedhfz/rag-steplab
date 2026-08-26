@@ -26,7 +26,7 @@ function RadioGroupItem({
   return (
     <RadioGroupPrimitive.Item
       className={cn(
-        "grid size-4 shrink-0 place-items-center rounded-full border border-slate-300 bg-white text-slate-950 outline-none transition-[border-color,box-shadow] focus-visible:border-slate-500 focus-visible:ring-2 focus-visible:ring-slate-200 data-[state=checked]:border-slate-950 disabled:cursor-not-allowed disabled:opacity-50",
+        "grid size-4 shrink-0 place-items-center rounded-full border border-[#bcb5b9] bg-white text-[#711f3a] outline-none transition-[border-color,box-shadow] focus-visible:border-[#711f3a] focus-visible:ring-2 focus-visible:ring-[#711f3a]/15 data-[state=checked]:border-[#711f3a] disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}
       data-slot="radio-group-item"

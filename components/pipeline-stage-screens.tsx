@@ -40,7 +40,6 @@ function ArtifactHistory({
   onSelect: (id: string) => Promise<void>;
   kind: "chunk" | "embedding";
 }) {
-  const { preferences } = usePreferences();
   const labels = locale === "tr"
     ? { empty: "Bu upstream için henüz run yok.", selected: "Seçili", active: "Varsayılan", historical: "Geçmiş", status: "Durum", run: "Run", upstream: "Upstream", select: "Seç" }
     : { empty: "No runs exist for this upstream yet.", selected: "Selected", active: "Default", historical: "Historical", status: "Status", run: "Run", upstream: "Upstream", select: "Select" };
@@ -53,17 +52,16 @@ function ArtifactHistory({
         {runs.map((run) => {
           const selectable = runSelectable(run);
           const isSelected = run.id === selectedId;
-          const upstream = Object.values(run.upstream).filter(Boolean).join(" · ");
           return (
             <div className="flex flex-col gap-3 border p-3 sm:flex-row sm:items-center sm:justify-between" data-testid={`${kind}-history-row`} key={run.id}>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className={preferences.detailLevel === "technical" ? "break-all font-mono font-medium" : "font-semibold"}>{preferences.detailLevel === "technical" ? run.id : `${kind === "chunk" ? "C" : "E"}${run.runNumber ?? "—"}`}</span>
+                  <span className="font-semibold">{kind === "chunk" ? "Chunk" : "Embedding"} {run.runNumber ?? "—"}</span>
                   {isSelected ? <span className="rounded border border-slate-300 px-1.5 py-0.5 text-[10px]">{labels.selected}</span> : null}
                   {run.id === defaultId ? <span className="rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">{labels.active}</span> : null}
                   {run.historicalLineage ? <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">{labels.historical}</span> : null}
                 </div>
-                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500"><span>{labels.status}: {runStatusLabel(run, locale)}</span><span>{labels.upstream}: {preferences.detailLevel === "technical" ? upstream || "—" : Object.values(run.upstream).filter(Boolean).length ? `${Object.values(run.upstream).filter(Boolean).length} artifact` : "—"}</span></div>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500"><span>{labels.status}: {runStatusLabel(run, locale)}</span><span>{labels.upstream}: {Object.values(run.upstream).filter(Boolean).length ? `${Object.values(run.upstream).filter(Boolean).length} ${locale === "tr" ? "artifact" : "artifacts"}` : "—"}</span></div>
                 {run.error?.message ? <p className="mt-1 text-xs text-red-700">{run.error.message}</p> : null}
                 {!run.isCompatible && run.compatibilityReason ? <p className="mt-1 text-xs text-orange-700">{run.compatibilityReason}</p> : null}
                 {kind === "chunk" && run.strategy ? <p className="mt-1 text-[11px] text-slate-500">{run.strategy}{run.chunkCount === null || run.chunkCount === undefined ? "" : ` · ${run.chunkCount} chunks`}</p> : null}

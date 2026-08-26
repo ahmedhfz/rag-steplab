@@ -26,8 +26,8 @@ export function PipelineContextBar() {
   const chunkNumber = runNumber(activeDocument?.chunkRuns ?? [], selectedChunkRunId);
   const embeddingNumber = runNumber(activeDocument?.embeddingRuns ?? [], selectedEmbeddingRunId);
   const labels = preferences.locale === "tr"
-    ? { document: "Doküman bağlamı", placeholder: "Doküman seçin", noDocument: "Aktif doküman yok", noPipeline: "Pipeline seçin", historical: "geçmiş lineage", pipeline: "Indexing pipeline" }
-    : { document: "Document context", placeholder: "Select a document", noDocument: "No active document", noPipeline: "Select a pipeline", historical: "historical lineage", pipeline: "Indexing pipeline" };
+    ? { document: "Doküman bağlamı", placeholder: "Doküman seçin", noDocument: "Aktif doküman yok", noPipeline: "Pipeline seçin", historical: "geçmiş lineage", pipeline: "Indexing pipeline", parse: "Ayrıştırma", chunk: "Parçalama", embedding: "Embedding" }
+    : { document: "Document context", placeholder: "Select a document", noDocument: "No active document", noPipeline: "Select a pipeline", historical: "historical lineage", pipeline: "Indexing pipeline", parse: "Parsing", chunk: "Chunking", embedding: "Embeddings" };
   const selectedParse = activeDocument?.parseRuns.find((run) => run.id === selectedParseRunId);
   const selectedChunk = activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId);
   const selectedEmbedding = activeDocument?.embeddingRuns.find((run) => run.id === selectedEmbeddingRunId);
@@ -46,7 +46,7 @@ export function PipelineContextBar() {
           <SelectContent>{pipelines.map((pipeline) => <SelectItem key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
         </Select>
         <span aria-label={preferences.locale === "tr" ? "Seçili lineage" : "Selected lineage"} className="shrink-0 text-xs font-semibold tracking-wide text-slate-700">
-          <Link className="hover:underline" href="/parse" title={preferences.detailLevel === "technical" ? selectedParse?.id : undefined}>{parseNumber ? `P${parseNumber}` : "P—"}</Link><span className="px-1 text-slate-400">→</span><Link className="hover:underline" href="/chunking" title={preferences.detailLevel === "technical" ? selectedChunk?.id : undefined}>{chunkNumber ? `C${chunkNumber}` : "C—"}</Link><span className="px-1 text-slate-400">→</span><Link className="hover:underline" href="/embeddings" title={preferences.detailLevel === "technical" ? selectedEmbedding?.id : undefined}>{embeddingNumber ? `E${embeddingNumber}` : "E—"}</Link>
+          <Link className="hover:underline" href="/parse" title={selectedParse?.id}>{labels.parse} {parseNumber ?? "—"}</Link><span className="px-1 text-slate-400">→</span><Link className="hover:underline" href="/chunking" title={selectedChunk?.id}>{labels.chunk} {chunkNumber ?? "—"}</Link><span className="px-1 text-slate-400">→</span><Link className="hover:underline" href="/embeddings" title={selectedEmbedding?.id}>{labels.embedding} {embeddingNumber ?? "—"}</Link>
         </span>
         {isHistorical ? <span className="truncate text-[10px] text-amber-700">({labels.historical})</span> : null}
       </div>

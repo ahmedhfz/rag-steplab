@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { PreferencesProvider } from "@/components/preferences-provider";
 import { SettingsScreen } from "@/components/settings-screen";
 
-const STORAGE_KEY = "rag-steplab.preferences.v1";
+const STORAGE_KEY = "rag-steplab.preferences.v2";
 
 function renderSettings() {
   return render(
@@ -56,19 +56,15 @@ describe("PreferencesProvider and SettingsScreen", () => {
     expect(screen.getByText("Preferences already use the defaults.")).toBeVisible();
     expect(reset).toHaveAccessibleDescription("Preferences already use the defaults.");
 
-    await user.click(screen.getByRole("radio", { name: "Technical" }));
     await user.click(screen.getByRole("switch", { name: "Show learning hints" }));
-    expect(screen.getByRole("radio", { name: "Technical" })).toBeChecked();
     expect(screen.getByRole("switch", { name: "Show learning hints" })).not.toBeChecked();
     expect(reset).toBeEnabled();
 
     await user.click(reset);
-    await waitFor(() => expect(screen.getByRole("radio", { name: "Guided" })).toBeChecked());
     expect(screen.getByRole("switch", { name: "Show learning hints" })).toBeChecked();
     expect(screen.getByRole("button", { name: "Reset" })).toBeDisabled();
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")).toMatchObject({
       locale: "en",
-      detailLevel: "guided",
       showLearningHints: true,
     });
   });
@@ -79,7 +75,6 @@ describe("PreferencesProvider and SettingsScreen", () => {
     await waitForHydration();
 
     expect(screen.getByLabelText("English")).toBeChecked();
-    expect(screen.getByRole("radio", { name: "Guided" })).toBeChecked();
     expect(screen.getByRole("switch", { name: "Show learning hints" })).toBeChecked();
   });
 });

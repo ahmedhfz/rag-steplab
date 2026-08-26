@@ -1,7 +1,6 @@
 import type { DocumentActivityEventType, PipelineStepKey, PipelineStepState } from "@/lib/rag-ui-types";
 
 export type AppLocale = "en" | "tr";
-export type DetailLevel = "guided" | "technical";
 export type AppNavKey = "overview" | "documents" | "parse" | "chunking" | "embeddings" | "playground" | "evaluation" | "settings" | "chunks" | "retrieval";
 export type DocumentViewKey = "overview" | "parsed" | "chunks";
 
@@ -12,8 +11,6 @@ type DocumentViewCopy = {
 
 export type AppCopy = {
   productName: string;
-  learningMode: string;
-  detailLevel: Record<DetailLevel, string>;
   nav: Record<AppNavKey, string> & {
     pipeline: string;
     experiment: string;
@@ -42,7 +39,7 @@ export type AppCopy = {
     steps: Record<PipelineStepKey, string>;
     pipelineStatus: string;
     noPipelineRun: string;
-    pipelineHint: Record<DetailLevel, string>;
+    pipelineHint: string;
     uploadDocument: string;
     dropPdf: string;
     choosePdf: string;
@@ -144,7 +141,7 @@ export type AppCopy = {
     rerankerUnavailable: string;
     reset: string;
     nothingToReset: string;
-    hint: Record<DetailLevel, string>;
+    hint: string;
     retrievedChunks: string;
     rank: string;
     score: string;
@@ -172,12 +169,6 @@ export type AppCopy = {
     languageDescription: string;
     english: string;
     turkish: string;
-    detailTitle: string;
-    detailDescription: string;
-    guided: string;
-    guidedDescription: string;
-    technical: string;
-    technicalDescription: string;
     hintsTitle: string;
     hintsDescription: string;
     hintsEnabled: string;
@@ -200,12 +191,10 @@ export type AppCopy = {
 export const UI_COPY = {
   en: {
     productName: "RAG StepLab",
-    learningMode: "Learning mode",
-    detailLevel: { guided: "Guided", technical: "Technical" },
     nav: {
       overview: "Overview", documents: "Documents", parse: "Parse", chunking: "Chunking", embeddings: "Embeddings",
       playground: "Playground", evaluation: "Evaluation", settings: "Settings", chunks: "Chunks", retrieval: "Retrieval",
-      pipeline: "Pipeline", experiment: "Experiment", system: "System",
+      pipeline: "Build", experiment: "Test", system: "System",
     },
     status: { "Not started": "Not started", Ready: "Ready", Processing: "Processing", Completed: "Completed", Skipped: "Skipped", Error: "Error", Locked: "Locked", Stale: "Stale" },
     guides: "Guides",
@@ -237,10 +226,7 @@ export const UI_COPY = {
       steps: { document: "Document", parse: "Parse", chunk: "Chunk", embed: "Embed", index: "Index", retrieve: "Retrieve", rerank: "Rerank", context: "Context", generate: "Generate", evaluate: "Evaluate" },
       pipelineStatus: "Pipeline Status",
       noPipelineRun: "No pipeline run yet.",
-      pipelineHint: {
-        guided: "Choose a PDF, then run Parse Document to send it through the parser service. Later stages remain locked.",
-        technical: "Selection is local until Parse Document is clicked. The parse state changes only from the real parser response.",
-      },
+      pipelineHint: "Choose a PDF, then run Parse Document to send it through the parser service. Later stages remain locked.",
       uploadDocument: "Upload Document",
       dropPdf: "Drag and drop a PDF file here",
       choosePdf: "Choose PDF",
@@ -346,10 +332,7 @@ export const UI_COPY = {
       rerankerUnavailable: "Reranking becomes available with a current retrieval-ready document.",
       reset: "Reset",
       nothingToReset: "No query settings have changed.",
-      hint: {
-        guided: "Choose retrieval settings, then run a real experiment against the active document.",
-        technical: "These controls represent request parameters only. No vector search, reranking, or generation runs in the browser.",
-      },
+      hint: "Choose retrieval settings, then run a real experiment against the active document.",
       retrievedChunks: "Retrieved Chunks",
       rank: "Rank",
       score: "Score",
@@ -377,18 +360,12 @@ export const UI_COPY = {
       languageDescription: "Change the interface language.",
       english: "English",
       turkish: "Türkçe",
-      detailTitle: "Technical detail",
-      detailDescription: "Choose how much implementation detail to emphasize while learning.",
-      guided: "Guided",
-      guidedDescription: "Short explanations and the essential concepts first.",
-      technical: "Technical",
-      technicalDescription: "More implementation vocabulary and pipeline detail.",
       hintsTitle: "Learning hints",
       hintsDescription: "Keep contextual hints visible while exploring the lab.",
       hintsEnabled: "Show learning hints",
       hintsDisabled: "Hide learning hints",
       resetTitle: "Reset preferences",
-      resetDescription: "Return language, detail level, and hints to their defaults.",
+      resetDescription: "Return language and learning hints to their defaults.",
       reset: "Reset",
       nothingToReset: "Preferences already use the defaults.",
       preferencesSaved: "Changes are saved automatically.",
@@ -403,12 +380,10 @@ export const UI_COPY = {
   },
   tr: {
     productName: "RAG StepLab",
-    learningMode: "Öğrenme modu",
-    detailLevel: { guided: "Yönlendirmeli", technical: "Teknik" },
     nav: {
       overview: "Genel Bakış", documents: "Dokümanlar", parse: "Ayrıştırma", chunking: "Parçalama", embeddings: "Embedding",
       playground: "Deney Alanı", evaluation: "Değerlendirme", settings: "Ayarlar", chunks: "Parçalar", retrieval: "Getirme",
-      pipeline: "Pipeline", experiment: "Deney", system: "Sistem",
+      pipeline: "Yapı", experiment: "Test", system: "Sistem",
     },
     status: { "Not started": "Başlatılmadı", Ready: "Hazır", Processing: "İşleniyor", Completed: "Tamamlandı", Skipped: "Atlandı", Error: "Hata", Locked: "Kilitli", Stale: "Eski" },
     guides: "Rehberler",
@@ -440,10 +415,7 @@ export const UI_COPY = {
       steps: { document: "Doküman", parse: "Ayrıştır", chunk: "Parçala", embed: "Vektörleştir", index: "İndeksle", retrieve: "Getir", rerank: "Yeniden sırala", context: "Bağlam", generate: "Üret", evaluate: "Değerlendir" },
       pipelineStatus: "İşlem Hattı Durumu",
       noPipelineRun: "İşlem hattı henüz çalışmadı.",
-      pipelineHint: {
-        guided: "PDF'i ayrıştırın; ardından gerçek parçalama, embedding, getirme, üretim ve değerlendirme aşamalarını sırayla çalıştırın.",
-        technical: "Seçim, Dokümanı Ayrıştır'a basılana kadar yereldir. Ayrıştırma durumu yalnız gerçek parser yanıtıyla değişir.",
-      },
+      pipelineHint: "PDF'i ayrıştırın; ardından gerçek parçalama, embedding, getirme, üretim ve değerlendirme aşamalarını sırayla çalıştırın.",
       uploadDocument: "Doküman Yükle",
       dropPdf: "PDF dosyasını buraya sürükleyip bırakın",
       choosePdf: "PDF Seç",
@@ -549,10 +521,7 @@ export const UI_COPY = {
       rerankerUnavailable: "Güncel ve getirmeye hazır bir dokümanla yeniden sıralama kullanılabilir.",
       reset: "Sıfırla",
       nothingToReset: "Sorgu ayarlarında değişiklik yok.",
-      hint: {
-        guided: "Getirme ayarlarını seçin, ardından aktif dokümana karşı gerçek bir deney çalıştırın.",
-        technical: "Bu kontroller yalnızca istek parametrelerini temsil eder. Tarayıcıda vektör arama, yeniden sıralama veya yanıt üretimi çalışmaz.",
-      },
+      hint: "Getirme ayarlarını seçin, ardından aktif dokümana karşı gerçek bir deney çalıştırın.",
       retrievedChunks: "Getirilen Parçalar",
       rank: "Sıra",
       score: "Skor",
@@ -580,18 +549,12 @@ export const UI_COPY = {
       languageDescription: "Arayüz dilini değiştirin.",
       english: "English",
       turkish: "Türkçe",
-      detailTitle: "Teknik detay",
-      detailDescription: "Öğrenirken ne kadar uygulama detayının öne çıkarılacağını seçin.",
-      guided: "Yönlendirmeli",
-      guidedDescription: "Önce kısa açıklamalar ve temel kavramlar.",
-      technical: "Teknik",
-      technicalDescription: "Daha fazla uygulama terminolojisi ve işlem hattı detayı.",
       hintsTitle: "Öğrenme ipuçları",
       hintsDescription: "Laboratuvarı incelerken bağlamsal ipuçlarını görünür tutun.",
       hintsEnabled: "Öğrenme ipuçlarını göster",
       hintsDisabled: "Öğrenme ipuçlarını gizle",
       resetTitle: "Tercihleri sıfırla",
-      resetDescription: "Dil, detay seviyesi ve ipuçlarını varsayılanlara döndürün.",
+      resetDescription: "Dil ve öğrenme ipuçlarını varsayılanlara döndürün.",
       reset: "Sıfırla",
       nothingToReset: "Tercihler zaten varsayılan değerlerde.",
       preferencesSaved: "Değişiklikler otomatik kaydedilir.",
