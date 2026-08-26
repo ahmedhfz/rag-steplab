@@ -28,7 +28,7 @@ describe("Phase 6B document ownership", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderWithPipeline(<OverviewScreen />);
 
-    expect(screen.getByRole("heading", { name: "RAG Pipeline" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Build your RAG, one step at a time." })).toBeInTheDocument();
     expect(screen.getByTestId("continue-surface")).toBeInTheDocument();
     expect(screen.getByTestId("current-setup")).toBeInTheDocument();
     expect(screen.getByTestId("overview-journey")).toContainElement(screen.getByText("Build Context"));

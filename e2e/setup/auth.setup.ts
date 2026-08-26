@@ -13,7 +13,7 @@ setup("dedicated E2E user storageState oluşturur", async ({ page }) => {
   await installSeededApi(page);
 
   await signIn(page, credentials);
-  await expect(page.getByRole("heading", { name: "RAG Pipeline" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Build your RAG, one step at a time." })).toBeVisible();
   await page.context().storageState({ path: authFile });
 
   quality.assertClean();

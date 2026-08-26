@@ -5,13 +5,13 @@ import { installSeededApi } from "../support/seeded-api";
 import { selectSeededDocument } from "../support/seeded-workspace";
 
 const routes = [
-  ["/", "RAG Pipeline", false],
+  ["/", "Build your RAG, one step at a time.", false],
   ["/documents", "Documents", false],
-  ["/parse", "Parse", true],
-  ["/chunking", "Chunking", true],
-  ["/embeddings", "Embeddings", true],
-  ["/playground", "Playground", true],
-  ["/evaluation", "Evaluation", true],
+  ["/parse", "Parsing", false],
+  ["/chunking", "Chunking", false],
+  ["/embeddings", "Embeddings", false],
+  ["/playground", "Playground", false],
+  ["/evaluation", "Evaluation", false],
   ["/settings", "Settings", false],
 ] as const;
 

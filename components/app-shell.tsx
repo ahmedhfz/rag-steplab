@@ -53,8 +53,20 @@ const navGroups: NavGroup[] = [
       { key: "evaluation", href: "/evaluation", icon: BarChart3 },
     ],
   },
-  { items: [{ key: "settings", href: "/settings", icon: Settings }] },
 ];
+
+const settingsNavItem: NavItem = { key: "settings", href: "/settings", icon: Settings };
+
+const navIconAssets: Partial<Record<AppNavKey, string>> = {
+  overview: "/assets/figma/overview/overview.svg",
+  documents: "/assets/figma/overview/documents.svg",
+  parse: "/assets/figma/overview/parsing.svg",
+  chunking: "/assets/figma/overview/chunking.svg",
+  embeddings: "/assets/figma/overview/embeddings.svg",
+  playground: "/assets/figma/overview/playground.svg",
+  evaluation: "/assets/figma/overview/evaluation.svg",
+  settings: "/assets/figma/overview/settings.svg",
+};
 
 function isNavItemActive(key: AppNavKey, pathname: string) {
   if (key === "overview") return pathname === "/";
@@ -172,10 +184,10 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
         ref={triggerRef}
         type="button"
       >
-        <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-[#fbf4f6] text-xs font-semibold text-[#711f3a]">{initials}</span>
+        <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-full bg-[#f3d9e0] text-[11px] font-semibold text-[#501329]">{initials}</span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-[#171416]">{displayName}</span>
-          <span className="block truncate text-xs text-[#969093]">{user.email ?? copy.common.frontendFoundation}</span>
+          <span className="block truncate text-[12.5px] leading-[18.75px] text-[#6e676a]">{displayName}</span>
+          <span className="sr-only">{user.email ?? copy.common.frontendFoundation}</span>
         </span>
       </button>
 
@@ -243,41 +255,56 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
 function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: string; onNavigate?: () => void; copy: AppCopy; user: AuthUserSummary; onSignOut: () => Promise<void> }) {
   return (
     <div className="flex h-full flex-col bg-white">
-      <div className="flex h-[72px] items-center gap-3 border-b border-[#e7e2e4] px-6">
-        <Image alt="" height={30} priority src={UI_ASSETS.brand.mark} width={30} />
-        <span className="text-[19px] font-semibold tracking-[-0.035em] text-[#171416]">{copy.productName}</span>
+      <div className="flex h-[72px] items-center gap-2.5 px-5 pb-5 pt-6">
+        <Image alt="" height={28} priority src={UI_ASSETS.brand.mark} width={28} />
+        <span className="text-[15px] font-semibold leading-[22.5px] tracking-[-0.15px] text-[#171416]">{copy.productName}</span>
       </div>
 
-      <nav aria-label={copy.common.primaryNavigation} className="flex-1 space-y-1 px-3 py-5">
+      <nav aria-label={copy.common.primaryNavigation} className="flex flex-1 flex-col overflow-hidden px-3 pb-4 pt-0">
         {navGroups.map((group) => (
-          <div className="space-y-1.5" key={group.label ?? group.items[0].key}>
-            {group.label ? <p className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#969093]">{copy.nav[group.label]}</p> : null}
-            {group.items.map((item) => {
-              const isActive = isNavItemActive(item.key, pathname);
-              return (
-                <Link
-                  aria-current={isActive ? "page" : undefined}
-                  className={cn(
-                    "flex h-10 items-center gap-3 rounded-[9px] px-3 text-sm text-[#6e676a] transition-colors hover:bg-[#fbf4f6] hover:text-[#501329]",
-                    isActive && "bg-[#fbf4f6] font-medium text-[#711f3a]",
-                  )}
-                  href={item.href}
-                  key={item.key}
-                  onClick={onNavigate}
-                  prefetch={false}
-                >
-                  <item.icon aria-hidden="true" className="size-[19px] stroke-[1.65]" />
-                  {copy.nav[item.key]}
-                </Link>
-              );
-            })}
+          <div className={cn("space-y-0", group.label && "pt-6")} key={group.label ?? group.items[0].key}>
+            {group.label ? <p className="px-3 text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.99px] text-[#969093]">{copy.nav[group.label]}</p> : null}
+            <div className={cn(group.label && "pt-1.5")}>
+              {group.items.map((item) => {
+                const isActive = isNavItemActive(item.key, pathname);
+                return (
+                  <Link
+                    aria-current={isActive ? "page" : undefined}
+                    className={cn(
+                      "flex h-[36.967px] items-center gap-3 rounded-[10px] px-3 py-2 text-sm leading-[21px] text-[#6e676a] transition-colors hover:bg-[#fbf4f6] hover:text-[#501329]",
+                      isActive && "bg-[#fbf4f6] font-medium text-[#501329]",
+                    )}
+                    href={item.href}
+                    key={item.key}
+                    onClick={onNavigate}
+                    prefetch={false}
+                  >
+                    {isActive ? <item.icon aria-hidden="true" className="size-[17.975px] stroke-[1.65]" /> : navIconAssets[item.key] ? <Image alt="" height={18} src={navIconAssets[item.key] as string} width={18} /> : <item.icon aria-hidden="true" className="size-[17.975px] stroke-[1.65]" />}
+                    {copy.nav[item.key]}
+                  </Link>
+                );
+              })}
+            </div>
           </div>
         ))}
+        <div className="mt-auto -mx-3 border-t-[1.712px] border-[#e7e2e4] px-3 pb-1 pt-4">
+          <Link
+            aria-current={isNavItemActive(settingsNavItem.key, pathname) ? "page" : undefined}
+            className={cn(
+              "flex h-[36.967px] items-center gap-3 rounded-[10px] px-3 py-2 text-sm leading-[21px] text-[#6e676a] transition-colors hover:bg-[#fbf4f6] hover:text-[#501329]",
+              isNavItemActive(settingsNavItem.key, pathname) && "bg-[#fbf4f6] font-medium text-[#501329]",
+            )}
+            href={settingsNavItem.href}
+            onClick={onNavigate}
+            prefetch={false}
+          >
+            {isNavItemActive(settingsNavItem.key, pathname) ? <settingsNavItem.icon aria-hidden="true" className="size-[17.975px] stroke-[1.65]" /> : <Image alt="" height={18} src={navIconAssets.settings as string} width={18} />}
+            {copy.nav.settings}
+          </Link>
+        </div>
       </nav>
 
-      <div className="border-t border-[#e7e2e4] px-3 py-3">
-        <UserMenu copy={copy} onNavigate={onNavigate} onSignOut={onSignOut} user={user} />
-      </div>
+      <div className="px-3 pb-3 pt-1"><UserMenu copy={copy} onNavigate={onNavigate} onSignOut={onSignOut} user={user} /></div>
     </div>
   );
 }

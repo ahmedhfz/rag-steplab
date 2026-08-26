@@ -1,6 +1,6 @@
 import { EvaluationScreen } from "@/components/evaluation-screen";
-import { PipelineContextBar } from "@/components/pipeline-context-bar";
+import { ConditionalPipelineContextBar } from "@/components/pipeline-context-bar";
 
 export default function EvaluationPage() {
-  return <><PipelineContextBar /><EvaluationScreen /></>;
+  return <><ConditionalPipelineContextBar /><EvaluationScreen /></>;
 }

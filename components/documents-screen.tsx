@@ -239,19 +239,19 @@ function outlineSection(result: DocumentParseResponse, entry: OutlineEntry | und
 function ContentOutline({ copy, entries, selectedId, onSelect }: { copy: AppCopy["documents"]; entries: OutlineEntry[]; selectedId: string | null; onSelect: (id: string) => void }) {
   const hasHeadings = entries.some((entry) => entry.kind === "heading");
   return (
-    <aside className="border-b bg-[#fbfafb] lg:border-b-0 lg:border-r" data-testid="parsed-content-outline">
-      <div className="border-b px-4 py-4 sm:px-6">
-        <h2 className="text-sm font-semibold">{copy.outline}</h2>
+    <aside className="min-h-0 overflow-hidden rounded-[12px] bg-[#fbfafb]" data-testid="parsed-content-outline">
+      <div className="border-b border-[#eee9eb] px-4 py-4">
+        <h2 className="text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.66px] text-[#969093]">{copy.outline}</h2>
         <p className="mt-1 text-xs leading-5 text-[#969093]">{hasHeadings ? copy.parsedElements : copy.noOutline}</p>
       </div>
       {entries.length > 0 ? (
-        <div className="relative space-y-1 p-2" role="list" aria-label={copy.outline}>
+        <div className="relative max-h-[365px] space-y-1 overflow-y-auto p-2" role="list" aria-label={copy.outline}>
           {entries.map((entry) => {
             const selected = entry.id === selectedId;
             return (
               <button
                 aria-current={selected ? "true" : undefined}
-                className={cn("relative block w-full rounded-[7px] px-3 py-2.5 text-left text-sm text-[#6e676a] transition-colors hover:bg-[#fbf4f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#711f3a]/25", selected && "bg-[#fbf4f6] font-medium text-[#501329]")}
+                className={cn("relative block w-full rounded-[7px] px-3 py-2 text-left text-[13px] leading-[19.5px] text-[#6e676a] transition-colors hover:bg-[#fbf4f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#711f3a]/25", selected && "bg-[#fbf4f6] font-medium text-[#501329]")}
                 key={entry.id}
                 onClick={() => onSelect(entry.id)}
                 style={{ paddingLeft: entry.level ? `${Math.min(entry.level, 4) * 0.75 + 0.75}rem` : undefined }}
@@ -273,8 +273,8 @@ function StructuredSectionInspector({ copy, elements }: { copy: AppCopy["documen
   if (elements.length === 0) return <EmptyState>{copy.noParsedElements}</EmptyState>;
 
   return (
-    <div className="min-w-0" data-testid="parsed-section-inspector">
-      <div className="border-b bg-[#fbfafb] px-4 py-4 sm:px-6">
+    <div className="min-h-0 min-w-0 overflow-y-auto" data-testid="parsed-section-inspector">
+      <div className="border-b border-[#eee9eb] px-5 py-3">
         <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#969093]">{copy.selectedSection}</p>
         <h3 className="mt-1 text-base font-semibold text-[#171416]">{copy.parsedElements}</h3>
         <p className="mt-1 text-xs text-[#6e676a]">{elements.length} {copy.pageElements}</p>
@@ -286,7 +286,35 @@ function StructuredSectionInspector({ copy, elements }: { copy: AppCopy["documen
   );
 }
 
-export function ParsedContentTab({ copy, result }: { copy: AppCopy["documents"]; result: DocumentParseResponse | null }) {
+export function DeveloperOutput({ copy, result }: { copy: AppCopy["documents"]; result: DocumentParseResponse | null }) {
+  const [activeView, setActiveView] = useState<ParsedView>("structured");
+  const viewOptions: Array<{ key: Exclude<ParsedView, "structured">; label: string }> = [
+    { key: "markdown", label: copy.markdown },
+    { key: "json", label: copy.json },
+  ];
+
+  return (
+    <details className="rounded-[10px] border border-[#e7e2e4] bg-white">
+      <summary className="flex h-[46px] cursor-pointer list-none items-center justify-between px-4 text-[13px] font-medium text-[#171416] outline-none hover:bg-[#fbf4f6] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#711f3a]/25 sm:px-5">
+        <span>{copy.markdown === "Markdown" ? "Developer output — Markdown & JSON" : "Geliştirici çıktısı — Markdown ve JSON"}</span>
+        <span aria-hidden="true" className="text-[#969093]">⌄</span>
+      </summary>
+      <div className="border-t border-[#e7e2e4]">
+        {!result ? <p className="px-4 py-4 text-xs text-[#6e676a]">{copy.parsedViewsUnavailable}</p> : (
+          <>
+            <div aria-label={copy.viewMode} className="flex gap-1 border-b bg-[#fbfafb] px-4 py-2" role="group">
+              {viewOptions.map((view) => <Button aria-pressed={activeView === view.key} key={view.key} onClick={() => setActiveView(view.key)} size="sm" variant={activeView === view.key ? "secondary" : "ghost"}>{view.label}</Button>)}
+            </div>
+            {activeView === "markdown" ? <pre className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-[#6e676a]" data-testid="parsed-markdown">{result.markdown}</pre> : null}
+            {activeView === "json" ? <pre className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-[#6e676a]" data-testid="parsed-json">{JSON.stringify(result.structured, null, 2)}</pre> : null}
+          </>
+        )}
+      </div>
+    </details>
+  );
+}
+
+export function ParsedContentTab({ copy, result, showDeveloperOutput = true }: { copy: AppCopy["documents"]; result: DocumentParseResponse | null; showDeveloperOutput?: boolean }) {
   const [activeView, setActiveView] = useState<ParsedView>("structured");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [developerOutputOpen, setDeveloperOutputOpen] = useState(false);
@@ -306,18 +334,18 @@ export function ParsedContentTab({ copy, result }: { copy: AppCopy["documents"];
   }
 
   return (
-    <div className="grid border-t lg:grid-cols-[250px_minmax(0,1fr)]">
+    <div className="grid min-h-0 h-full gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
       <ContentOutline copy={copy} entries={outline} onSelect={setSelectedId} selectedId={effectiveSelectedId} />
-      <section className="min-w-0">
-        <div className="border-b px-4 py-4 sm:px-6">
+      <section className="min-h-0 min-w-0 overflow-hidden rounded-[10px] border border-[#eee9eb]">
+        <div className="border-b border-[#eee9eb] px-5 py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div><h2 className="text-sm font-semibold">{copy.parsedElements}</h2><p className="mt-1 text-xs text-[#6e676a]">{copy.structured}</p></div>
             <span className="rounded-full border border-[#d8b5c2] bg-[#fbf4f6] px-2.5 py-1 text-[11px] font-medium text-[#711f3a]">{result ? copy.source : copy.parsedViewsUnavailable}</span>
           </div>
         </div>
-        {!result ? <p className="border-b px-4 py-3 text-xs text-[#6e676a] sm:px-6" id="parsed-view-disabled-reason">{copy.parsedViewsUnavailable}</p> : null}
+        {!result ? <p className="border-b border-[#eee9eb] px-5 py-3 text-xs text-[#6e676a]" id="parsed-view-disabled-reason">{copy.parsedViewsUnavailable}</p> : null}
         {activeView === "structured" ? <StructuredSectionInspector copy={copy} elements={selectedElements} /> : null}
-        <details className="border-t border-[#e7e2e4]" onToggle={(event) => setDeveloperOutputOpen(event.currentTarget.open)} open={developerOutputOpen}>
+        {showDeveloperOutput ? <details className="border-t border-[#e7e2e4]" onToggle={(event) => setDeveloperOutputOpen(event.currentTarget.open)} open={developerOutputOpen}>
           <summary className="cursor-pointer list-none px-4 py-4 text-sm font-semibold text-[#6e676a] outline-none hover:bg-[#fbf4f6] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#711f3a]/25 sm:px-6">{copy.markdown === "Markdown" ? "Developer output" : "Geliştirici çıktısı"}</summary>
           <div className="border-t border-[#e7e2e4]">
             <div aria-describedby={!result ? "parsed-view-disabled-reason" : undefined} aria-label={copy.viewMode} className="flex flex-wrap gap-1 border-b bg-[#fbfafb] px-4 py-2 sm:px-6" role="group">
@@ -329,7 +357,9 @@ export function ParsedContentTab({ copy, result }: { copy: AppCopy["documents"];
               <pre className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-[#6e676a] sm:px-6" data-testid="parsed-json">{JSON.stringify(result.structured, null, 2)}</pre>
             ) : null}
           </div>
-        </details>
+        </details> : <div aria-label={copy.viewMode} className="sr-only" role="group">
+          {viewOptions.map((view) => <Button aria-pressed={activeView === view.key} disabled={!result} key={view.key} onClick={() => selectView(view.key)} size="sm" variant="ghost">{view.label}</Button>)}
+        </div>}
       </section>
     </div>
   );
@@ -344,30 +374,25 @@ export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
   const isLegacyView = view !== undefined;
 
   return (
-    <div className="min-w-0 overflow-x-clip">
-      <header className="px-4 pb-6 pt-6 sm:px-8 sm:pb-7">
-        <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#969093]">{copy.documents.root}{isLegacyView ? <>&nbsp;&nbsp;›&nbsp;&nbsp;{current.title}</> : null}</div>
-        <h1 className="mt-3 text-[28px] font-semibold tracking-[-0.045em]">{isLegacyView ? current.title : copy.documents.root}</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-5 text-[#6e676a]">{isLegacyView ? current.description : preferences.locale === "tr" ? "PDF kitaplığını yönetin." : "Manage the PDF library."}</p>
-        {isLegacyView ? <ParseRunSelector locale={preferences.locale} /> : null}
-      </header>
+    <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]">
+      <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
+        <header className="flex items-start justify-between gap-6" data-testid="documents-page-header">
+          <div className="max-w-[640px]">
+            <p className="text-xs font-semibold uppercase leading-[18px] tracking-[0.96px] text-[#711f3a]">{copy.documents.root}</p>
+            <h1 className="mt-2 text-[30px] font-semibold leading-9 tracking-[-0.6px] text-[#171416]">{isLegacyView ? current.title : copy.documents.root}</h1>
+            <p className="mt-2 text-sm leading-[21px] text-[#6e676a]">{isLegacyView ? current.description : preferences.locale === "tr" ? "RAG'ınızda kullanılan kaynak dokümanları ekleyin ve yönetin." : "Add and manage the source documents used by your RAG."}</p>
+            {isLegacyView ? <ParseRunSelector locale={preferences.locale} /> : null}
+          </div>
+        </header>
 
-      {isLegacyView ? <nav aria-label={copy.documents.root} className="flex min-w-0 gap-6 overflow-x-auto border-t px-4 sm:px-7">
-        {documentTabs.map((tab) => (
-          <Link
-            aria-current={view === tab.view ? "page" : undefined}
-            className={cn("-mb-px border-b-2 border-transparent py-3 text-sm text-[#6e676a] outline-none hover:text-[#501329] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25", view === tab.view && "border-[#711f3a] font-medium text-[#501329]")}
-            href={tab.href}
-            key={tab.view}
-          >
-            {copy.documents.tabs[tab.view]}
-          </Link>
-        ))}
-      </nav> : null}
+        {isLegacyView ? <nav aria-label={copy.documents.root} className="mt-6 flex min-w-0 gap-6 overflow-x-auto border-b border-[#e7e2e4]">
+          {documentTabs.map((tab) => <Link aria-current={view === tab.view ? "page" : undefined} className={cn("-mb-px border-b-2 border-transparent py-3 text-sm text-[#6e676a] outline-none hover:text-[#501329] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25", view === tab.view && "border-[#711f3a] font-medium text-[#501329]")} href={tab.href} key={tab.view}>{copy.documents.tabs[tab.view]}</Link>)}
+        </nav> : null}
 
-      {!isLegacyView ? <section className="border-y px-4 py-4 sm:px-8"><DocumentUploadPanel /></section> : null}
-      {!isLegacyView && uploadNotice ? <p aria-live="polite" className={cn("border-b px-4 py-3 text-sm sm:px-8", uploadNotice === "reused" ? "bg-[#fbf4f6] text-[#501329]" : "bg-[#f0f6f1] text-[#3f7a55]")} role="status">{uploadNotice === "reused" ? (preferences.locale === "tr" ? "Mevcut doküman yeniden kullanıldı; duplicate oluşturulmadı. Parse ekranından devam edebilirsiniz." : "Existing document reused; no duplicate was created. Continue from Parse.") : (preferences.locale === "tr" ? "Doküman eklendi; parse etmeye hazır." : "Document added; ready to parse.")} <Link className="ml-1 font-medium underline" href="/parse">{preferences.locale === "tr" ? "Parse'a devam et" : "Continue to Parse"}</Link></p> : null}
-      {effectiveView === "overview" ? <DocumentLibrary locale={preferences.locale} /> : null}
+        {!isLegacyView ? <DocumentUploadPanel /> : null}
+        {!isLegacyView && uploadNotice ? <p aria-live="polite" className={cn("mt-4 rounded-[10px] border px-4 py-3 text-sm", uploadNotice === "reused" ? "border-[#ead6dd] bg-[#fbf4f6] text-[#501329]" : "border-[#d6e5da] bg-[#f0f6f1] text-[#3f7a55]")} role="status">{uploadNotice === "reused" ? (preferences.locale === "tr" ? "Mevcut doküman yeniden kullanıldı; duplicate oluşturulmadı. Parse ekranından devam edebilirsiniz." : "Existing document reused; no duplicate was created. Continue from Parse.") : (preferences.locale === "tr" ? "Doküman eklendi; parse etmeye hazır." : "Document added; ready to parse.")} <Link className="ml-1 font-medium underline" href="/parse">{preferences.locale === "tr" ? "Parse'a devam et" : "Continue to Parse"}</Link></p> : null}
+        {effectiveView === "overview" ? <DocumentLibrary locale={preferences.locale} /> : null}
+      </div>
     </div>
   );
 }

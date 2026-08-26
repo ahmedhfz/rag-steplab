@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, CircleAlert, Clock3, FileText, LoaderCircle } from "lucide-react";
+import { FileText } from "lucide-react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { EmptyPipelineState, PipelineErrorMessage } from "@/components/pipeline-learning-ui";
@@ -12,10 +12,10 @@ import { cn } from "@/lib/utils";
 type DocumentStatus = "not-started" | "processing" | "completed" | "failed";
 
 const statusStyles: Record<DocumentStatus, string> = {
-  "not-started": "border-[#e7e2e4] bg-[#f7f5f6] text-[#6e676a]",
-  processing: "border-[#eadfc9] bg-[#fbf5e9] text-[#8d651e]",
-  completed: "border-[#d6e5da] bg-[#f0f6f1] text-[#3f7a55]",
-  failed: "border-[#edcfcf] bg-[#fbefef] text-[#a23b3b]",
+  "not-started": "bg-[#f2eff0] text-[#6e676a]",
+  processing: "bg-[#fbf5e9] text-[#8d651e]",
+  completed: "bg-[#eef4ef] text-[#3f7a55]",
+  failed: "bg-[#fbefef] text-[#a23b3b]",
 };
 
 function getDocumentStatus(status: ParseRunStatus | null | undefined): DocumentStatus {
@@ -27,17 +27,9 @@ function getDocumentStatus(status: ParseRunStatus | null | undefined): DocumentS
 
 function DocumentStatusBadge({ locale, status }: { locale: AppLocale; status: DocumentStatus }) {
   const labels = locale === "tr"
-    ? { "not-started": "Ayrıştırılmadı", processing: "Ayrıştırılıyor", completed: "Ayrıştırıldı", failed: "Başarısız" }
-    : { "not-started": "Not parsed", processing: "Parsing", completed: "Parsed", failed: "Failed" };
-  const icon = status === "processing"
-    ? <LoaderCircle aria-hidden="true" className="size-3 animate-spin" />
-    : status === "completed"
-      ? <Check aria-hidden="true" className="size-3" />
-      : status === "failed"
-        ? <CircleAlert aria-hidden="true" className="size-3" />
-        : <Clock3 aria-hidden="true" className="size-3" />;
-
-  return <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] font-medium", statusStyles[status])}>{icon}{labels[status]}</span>;
+    ? { "not-started": "Parse için hazır", processing: "Ayrıştırılıyor", completed: "Parsed", failed: "Başarısız" }
+    : { "not-started": "Ready to parse", processing: "Processing", completed: "Parsed", failed: "Failed" };
+  return <span className={cn("inline-flex h-[26px] items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium", statusStyles[status])}><span aria-hidden="true" className="size-1.5 rounded-full bg-current" />{labels[status]}</span>;
 }
 
 function formatUpdatedAt(value: string | null, locale: AppLocale) {
@@ -84,34 +76,33 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
       };
 
   return (
-    <section aria-label={labels.title} className="min-w-0 border-t px-4 py-7 sm:px-8 sm:py-8" data-testid="document-library">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+    <section aria-label={labels.title} className="mt-8 min-w-0" data-testid="document-library">
+      <div className="flex h-[26px] items-center justify-between gap-3">
         <div>
-          <h2 className="text-base font-semibold tracking-[-0.02em]">{labels.title}</h2>
-          <p className="mt-1 text-sm text-[#6e676a]">{labels.description}</p>
+          <h2 className="text-lg font-semibold leading-[26px] tracking-[-0.02em] text-[#171416]">{labels.title}</h2>
         </div>
-        {documents.length > 0 ? <span className="text-xs text-[#969093]">{documents.length} {locale === "tr" ? "doküman" : documents.length === 1 ? "document" : "documents"}</span> : null}
+        {documents.length > 0 ? <span className="text-[13px] leading-[19.5px] text-[#6e676a]">{documents.length} {locale === "tr" ? "doküman" : documents.length === 1 ? "document" : "documents"}</span> : null}
       </div>
-      <div className="mt-5">
+      <div className="mt-4">
         {persistenceStatus === "checking" ? <EmptyPipelineState>{labels.loading}</EmptyPipelineState> :
           persistenceStatus === "unavailable" ? <><EmptyPipelineState>{labels.unavailable}</EmptyPipelineState><PipelineErrorMessage message={persistenceError?.message} /></> :
             documents.length === 0 ? (
-              <div className="border border-dashed border-[#d8d2d5] bg-white px-6 py-12 text-center">
+              <div className="rounded-[16px] border-[1.712px] border-dashed border-[#d8d2d5] bg-white px-6 py-12 text-center">
                 <span className="mx-auto grid size-11 place-items-center rounded-full bg-[#fbf4f6] text-[#711f3a]"><FileText aria-hidden="true" className="size-5" /></span>
                 <h3 className="mt-4 text-sm font-semibold">{labels.empty}</h3>
                 <p className="mx-auto mt-1 max-w-sm text-sm leading-5 text-[#6e676a]">{labels.emptyDescription}</p>
               </div>
             ) : (
-              <div className="min-w-0 max-w-full overflow-x-auto border border-[#e7e2e4] bg-white">
+              <div className="min-w-0 max-w-full overflow-x-auto rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white">
                 <table className="w-full min-w-[720px] text-left text-sm">
                   <caption className="sr-only">{labels.title}</caption>
-                  <thead className="border-b border-[#e7e2e4] bg-[#fbfafb] text-[11px] font-medium uppercase tracking-[0.08em] text-[#969093]">
+                  <thead className="h-[43px] border-b-[1.712px] border-[#e7e2e4] bg-white text-xs font-medium uppercase tracking-[0.48px] text-[#969093]">
                     <tr>
-                      <th className="px-4 py-3 font-medium">{labels.file}</th>
-                      <th className="px-4 py-3 font-medium">{labels.pages}</th>
-                      <th className="px-4 py-3 font-medium">{labels.size}</th>
-                      <th className="px-4 py-3 font-medium">{labels.uploaded}</th>
-                      <th className="px-4 py-3 font-medium">{labels.status}</th>
+                      <th className="px-5 py-3 font-medium">{labels.file}</th>
+                      <th className="px-5 py-3 font-medium">{labels.pages}</th>
+                      <th className="px-5 py-3 font-medium">{labels.size}</th>
+                      <th className="px-5 py-3 font-medium">{labels.uploaded}</th>
+                      <th className="px-5 py-3 font-medium">{labels.status}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#e7e2e4]">
@@ -119,17 +110,17 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                       const isActive = document.id === activeDocumentId;
                       const status = getDocumentStatus(document.latestParseStatus);
                       return (
-                        <tr className={cn("transition-colors hover:bg-[#fbf4f6]/60", isActive && "bg-[#fbf4f6]/70")} key={document.id}>
-                          <th className="max-w-[340px] px-4 py-4 text-left font-medium text-[#171416]" scope="row">
+                        <tr className={cn("h-[69px] transition-colors hover:bg-[#fbf4f6]/60", isActive && "bg-[#fbf4f6]/70")} key={document.id}>
+                          <th className="max-w-[340px] px-5 py-[15px] text-left font-medium text-[#171416]" scope="row">
                             <button aria-label={`${labels.open}: ${document.fileName}`} aria-pressed={isActive} className="flex min-w-0 items-center gap-3 rounded-[7px] text-left outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => void selectPersistedDocument(document.id)} type="button">
-                              <span className={cn("grid size-8 shrink-0 place-items-center rounded-[7px] border bg-white", isActive ? "border-[#d8b5c2] text-[#711f3a]" : "border-[#e7e2e4] text-[#6e676a]")}><FileText aria-hidden="true" className="size-4" /></span>
-                              <span className="min-w-0"><span className="block truncate">{document.fileName}</span>{isActive ? <span className="mt-1 block text-[11px] font-medium text-[#711f3a]">{labels.active}</span> : null}</span>
+                              <span className={cn("grid size-9 shrink-0 place-items-center rounded-[9px] bg-[#fbf4f6]", isActive ? "text-[#711f3a]" : "text-[#711f3a]")}><FileText aria-hidden="true" className="size-[17px]" /></span>
+                              <span className="min-w-0"><span className="block truncate text-sm leading-[21px]">{document.fileName} {isActive ? <span className="font-normal text-[11px] text-[#711f3a]">· {labels.active}</span> : null}</span><span className="mt-0.5 block text-xs leading-[18px] text-[#969093]">PDF</span></span>
                             </button>
                           </th>
-                          <td className="whitespace-nowrap px-4 py-4 text-[#6e676a]">{status === "completed" && document.pageCount > 0 ? document.pageCount : labels.noPages}</td>
-                          <td className="whitespace-nowrap px-4 py-4 text-[#6e676a]">{formatDocumentFileSize(document.sizeBytes, locale)}</td>
-                          <td className="whitespace-nowrap px-4 py-4 text-[#6e676a]">{formatUpdatedAt(document.createdAt ?? document.updatedAt, locale)}</td>
-                          <td className="whitespace-nowrap px-4 py-4"><DocumentStatusBadge locale={locale} status={status} /></td>
+                          <td className="whitespace-nowrap px-5 py-4 text-[13px] leading-[19.5px] text-[#6e676a]">{status === "completed" && document.pageCount > 0 ? document.pageCount : labels.noPages}</td>
+                          <td className="whitespace-nowrap px-5 py-4 text-[13px] leading-[19.5px] text-[#6e676a]">{formatDocumentFileSize(document.sizeBytes, locale)}</td>
+                          <td className="whitespace-nowrap px-5 py-4 text-[13px] leading-[19.5px] text-[#6e676a]">{formatUpdatedAt(document.createdAt ?? document.updatedAt, locale)}</td>
+                          <td className="whitespace-nowrap px-5 py-4"><DocumentStatusBadge locale={locale} status={status} /></td>
                         </tr>
                       );
                     })}

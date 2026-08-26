@@ -196,7 +196,7 @@ export const UI_COPY = {
   en: {
     productName: "RAG StepLab",
     nav: {
-      overview: "Overview", documents: "Documents", parse: "Parse", chunking: "Chunking", embeddings: "Embeddings",
+      overview: "Overview", documents: "Documents", parse: "Parsing", chunking: "Chunking", embeddings: "Embeddings",
       playground: "Playground", evaluation: "Evaluation", settings: "Settings", chunks: "Chunks", retrieval: "Retrieval",
       pipeline: "Build", experiment: "Test", system: "System",
     },
@@ -226,7 +226,7 @@ export const UI_COPY = {
       learningHint: "Learning hint",
     },
     overview: {
-      title: "RAG Pipeline",
+      title: "Build your RAG, one step at a time.",
       steps: { document: "Document", parse: "Parse", chunk: "Chunk", embed: "Embed", index: "Index", retrieve: "Retrieve", rerank: "Rerank", context: "Context", generate: "Generate", evaluate: "Evaluate" },
       pipelineStatus: "Pipeline Status",
       noPipelineRun: "No pipeline run yet.",
@@ -419,7 +419,7 @@ export const UI_COPY = {
       learningHint: "Öğrenme ipucu",
     },
     overview: {
-      title: "RAG İşlem Hattı",
+      title: "RAG'ınızı adım adım oluşturun.",
       steps: { document: "Doküman", parse: "Ayrıştır", chunk: "Parçala", embed: "Vektörleştir", index: "İndeksle", retrieve: "Getir", rerank: "Yeniden sırala", context: "Bağlam", generate: "Üret", evaluate: "Değerlendir" },
       pipelineStatus: "İşlem Hattı Durumu",
       noPipelineRun: "İşlem hattı henüz çalışmadı.",
