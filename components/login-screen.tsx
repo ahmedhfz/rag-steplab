@@ -1,25 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, LockKeyhole, Mail } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 
+import { AuthShell } from "@/components/auth-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePreferences } from "@/components/preferences-provider";
 import { getSupabaseBrowserClient, supabaseAuthErrorMessage } from "@/lib/supabase/browser";
 import type { AppLocale } from "@/lib/copy";
-import { cn } from "@/lib/utils";
-
-function StepLabMark({ className }: { className?: string }) {
-  return (
-    <svg aria-hidden="true" className={cn("size-8", className)} fill="none" viewBox="0 0 24 24">
-      <path d="M6.5 4.5h11v5.25A4.75 4.75 0 0 1 12.75 14h-1.5A4.75 4.75 0 0 1 6.5 9.75V4.5Z" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" />
-      <path d="M6.5 8.25h11M9.5 14v5.5h5V14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" />
-    </svg>
-  );
-}
 
 function GoogleMark() {
   return (
@@ -70,7 +60,7 @@ function friendlyAuthError(error: unknown, locale: AppLocale) {
 }
 
 export function LoginScreen() {
-  const { preferences, setLocale } = usePreferences();
+  const { preferences } = usePreferences();
   const router = useRouter();
   const urlAuthErrorCode = useSyncExternalStore(subscribeToAuthError, getAuthErrorMessage, getServerAuthErrorMessage);
   const [mode, setMode] = useState<Mode>("signin");
@@ -146,28 +136,24 @@ export function LoginScreen() {
   const urlStatusMessage = AUTH_ERROR_MESSAGES[preferences.locale][urlAuthErrorCode] ?? "";
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#fbfcfe] text-[#172033]">
-      <header className="flex h-[66px] shrink-0 items-center border-b border-slate-200/80 bg-white px-4 sm:px-8">
-        <div className="flex items-center justify-between gap-3"><Link aria-label={labels.home} className="flex items-center gap-3" href="/"><StepLabMark className="size-7" /><span className="text-[15px] font-semibold tracking-[-0.025em] text-slate-900">RAG StepLab</span></Link><div aria-label={labels.language} className="flex gap-1" role="group"><button className={cn("rounded px-2 py-1 text-[10px]", preferences.locale === "en" && "bg-slate-100 font-semibold")} onClick={() => setLocale("en")} type="button">EN</button><button className={cn("rounded px-2 py-1 text-[10px]", preferences.locale === "tr" && "bg-slate-100 font-semibold")} onClick={() => setLocale("tr")} type="button">TR</button></div></div>
-      </header>
-      <main className="flex flex-1 items-center justify-center px-4 py-8 sm:py-10">
-        <section aria-label={labels.form} className="w-full max-w-[350px] overflow-hidden rounded-[5px] border border-slate-200 bg-white shadow-[0_1px_3px_rgba(15,23,42,0.03)]">
-          <div className="px-6 pb-6 pt-7">
-            <div className="flex flex-col items-center text-center"><StepLabMark className="size-8 text-slate-900" /><h1 className="mt-2 text-[21px] font-semibold tracking-[-0.04em] text-slate-900">RAG StepLab</h1><p className="mt-1 text-xs text-slate-500">{title}</p></div>
-            <form aria-describedby="login-status" className="mt-6 space-y-4" onSubmit={submit}>
-              <div className="space-y-1.5"><label className="text-[11px] font-semibold text-slate-700" htmlFor="login-email">{labels.email}</label><div className="relative"><Mail aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-slate-500" /><Input autoComplete="email" className="h-8 border-slate-200 pl-8 pr-3 text-xs shadow-none placeholder:text-[11px] focus-visible:border-slate-400 focus-visible:ring-2 focus-visible:ring-slate-200" id="login-email" onChange={(event) => setEmail(event.target.value)} placeholder={labels.emailPlaceholder} required type="email" value={email} /></div></div>
-              {mode !== "forgot" && <div className="space-y-1.5"><label className="text-[11px] font-semibold text-slate-700" htmlFor="login-password">{labels.password}</label><div className="relative"><LockKeyhole aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-slate-500" /><Input autoComplete={mode === "signup" ? "new-password" : "current-password"} className="h-8 border-slate-200 pl-8 pr-9 text-xs shadow-none placeholder:text-[11px] focus-visible:border-slate-400 focus-visible:ring-2 focus-visible:ring-slate-200" id="login-password" minLength={mode === "signup" ? 10 : undefined} onChange={(event) => setPassword(event.target.value)} placeholder={labels.password} required type={showPassword ? "text" : "password"} value={password} /><button aria-label={showPassword ? labels.hidePassword : labels.showPassword} className="absolute right-2 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-slate-500 outline-none transition-colors hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-slate-300" onClick={() => setShowPassword((current) => !current)} type="button">{showPassword ? <EyeOff aria-hidden="true" className="size-3.5" /> : <Eye aria-hidden="true" className="size-3.5" />}</button></div></div>}
-              {mode === "signup" && <div className="space-y-1.5"><label className="text-[11px] font-semibold text-slate-700" htmlFor="login-password-confirm">{labels.confirm}</label><Input autoComplete="new-password" className="h-8 border-slate-200 text-xs shadow-none placeholder:text-[11px] focus-visible:border-slate-400 focus-visible:ring-2 focus-visible:ring-slate-200" id="login-password-confirm" minLength={10} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.confirm} required type="password" value={confirmation} /></div>}
-              <Button className="h-9 w-full bg-[#4b5c74] text-xs font-semibold text-white hover:bg-[#405069]" disabled={busy} type="submit">{busy ? labels.wait : submitLabel}</Button>
-            </form>
-            {mode === "signin" && <><div className="my-6 flex items-center gap-3 text-[10px] text-slate-500"><span aria-hidden="true" className="h-px flex-1 bg-slate-200" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-slate-200" /></div><Button asChild className="h-9 w-full border-slate-200 bg-white text-xs font-medium text-slate-800 shadow-none hover:bg-slate-50" variant="outline"><a href="/auth/google"><GoogleMark />{labels.google}</a></Button><div className="mt-5 text-center"><button className="text-xs font-medium text-blue-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200" onClick={() => setAuthMode("forgot")} type="button">{labels.forgot}</button></div></>}
-            {mode !== "signin" && <div className="mt-5 text-center"><button className="text-xs font-medium text-blue-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200" onClick={() => setAuthMode("signin")} type="button">{labels.back}</button></div>}
-            <p aria-live="polite" className="mt-3 min-h-4 text-center text-[10px] leading-4 text-slate-500" id="login-status" role="status">{statusMessage ?? urlStatusMessage}</p>
-          </div>
-          {mode === "signin" ? <div className="border-t border-slate-200 px-6 py-6 text-center text-xs text-slate-500"><span>{labels.noAccount}</span>{" "}<button className="font-medium text-blue-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200" onClick={() => setAuthMode("signup")} type="button">{labels.submitSignUp}</button></div> : null}
-        </section>
-      </main>
-      <footer className="flex min-h-[50px] shrink-0 items-center justify-center gap-2 border-t border-slate-200/80 bg-white px-4 text-[10px] text-slate-500 sm:text-[11px]"><span>{labels.footer}</span><span aria-hidden="true">•</span><span>{labels.backend}</span></footer>
-    </div>
+    <AuthShell>
+      <section aria-label={labels.form} className="w-full max-w-[430px] border border-[#e7e2e4] bg-white p-6 shadow-[0_12px_35px_rgba(23,20,22,0.04)] sm:p-9">
+        <div className="border-b border-[#e7e2e4] pb-6">
+          <p className="text-[11px] font-medium uppercase tracking-[0.13em] text-[#711f3a]">RAG StepLab</p>
+          <h1 className="mt-3 text-[27px] font-semibold tracking-[-0.045em] text-[#171416]">{title}</h1>
+          <p className="mt-2 text-sm leading-5 text-[#6e676a]">{mode === "signin" ? labels.backend : mode === "signup" ? labels.footer : labels.backend}</p>
+        </div>
+        <form aria-describedby="login-status" className="mt-6 space-y-4" onSubmit={submit}>
+          <div className="space-y-2"><label className="text-xs font-medium text-[#171416]" htmlFor="login-email">{labels.email}</label><div className="relative"><Mail aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#969093]" /><Input autoComplete="email" className="h-11 border-[#d8d2d5] bg-white pl-10 pr-3 text-sm shadow-none placeholder:text-[#969093] focus-visible:border-[#711f3a] focus-visible:ring-[#711f3a]/15" id="login-email" onChange={(event) => setEmail(event.target.value)} placeholder={labels.emailPlaceholder} required type="email" value={email} /></div></div>
+          {mode !== "forgot" && <div className="space-y-2"><label className="text-xs font-medium text-[#171416]" htmlFor="login-password">{labels.password}</label><div className="relative"><LockKeyhole aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#969093]" /><Input autoComplete={mode === "signup" ? "new-password" : "current-password"} className="h-11 border-[#d8d2d5] bg-white pl-10 pr-10 text-sm shadow-none placeholder:text-[#969093] focus-visible:border-[#711f3a] focus-visible:ring-[#711f3a]/15" id="login-password" minLength={mode === "signup" ? 10 : undefined} onChange={(event) => setPassword(event.target.value)} placeholder={labels.password} required type={showPassword ? "text" : "password"} value={password} /><button aria-label={showPassword ? labels.hidePassword : labels.showPassword} className="absolute right-2.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded text-[#969093] outline-none transition-colors hover:text-[#501329] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setShowPassword((current) => !current)} type="button">{showPassword ? <EyeOff aria-hidden="true" className="size-4" /> : <Eye aria-hidden="true" className="size-4" />}</button></div></div>}
+          {mode === "signup" && <div className="space-y-2"><label className="text-xs font-medium text-[#171416]" htmlFor="login-password-confirm">{labels.confirm}</label><Input autoComplete="new-password" className="h-11 border-[#d8d2d5] bg-white text-sm shadow-none placeholder:text-[#969093] focus-visible:border-[#711f3a] focus-visible:ring-[#711f3a]/15" id="login-password-confirm" minLength={10} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.confirm} required type="password" value={confirmation} /></div>}
+          <Button className="h-11 w-full bg-[#171416] text-sm font-semibold text-white hover:bg-[#30292c]" disabled={busy} type="submit">{busy ? labels.wait : submitLabel}</Button>
+        </form>
+        {mode === "signin" && <><div className="my-6 flex items-center gap-3 text-[11px] text-[#969093]"><span aria-hidden="true" className="h-px flex-1 bg-[#e7e2e4]" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-[#e7e2e4]" /></div><Button asChild className="h-11 w-full border-[#d8d2d5] bg-white text-sm font-medium text-[#171416] shadow-none hover:bg-[#fbf4f6]" variant="outline"><a href="/auth/google"><GoogleMark />{labels.google}</a></Button><div className="mt-5 text-center"><button className="text-sm font-medium text-[#711f3a] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setAuthMode("forgot")} type="button">{labels.forgot}</button></div></>}
+        {mode !== "signin" && <div className="mt-5 text-center"><button className="text-sm font-medium text-[#711f3a] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setAuthMode("signin")} type="button">{labels.back}</button></div>}
+        <p aria-live="polite" className="mt-4 min-h-5 text-center text-xs leading-5 text-[#6e676a]" id="login-status" role="status">{statusMessage ?? urlStatusMessage}</p>
+        {mode === "signin" ? <div className="mt-6 border-t border-[#e7e2e4] pt-6 text-center text-sm text-[#6e676a]"><span>{labels.noAccount}</span>{" "}<button className="font-medium text-[#711f3a] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setAuthMode("signup")} type="button">{labels.submitSignUp}</button></div> : null}
+      </section>
+    </AuthShell>
   );
 }

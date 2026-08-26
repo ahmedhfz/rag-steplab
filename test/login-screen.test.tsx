@@ -20,7 +20,7 @@ describe("LoginScreen", () => {
   it("renders the reference login structure with the custom auth entry points", () => {
     render(<LoginScreen />);
 
-    expect(screen.getByRole("heading", { name: "RAG StepLab" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: /giriş yapın|sign in to your account/i })).toBeVisible();
     expect(screen.getByLabelText("E-posta")).toHaveAttribute("placeholder", "ornek@firma.com");
     expect(screen.getByLabelText("Şifre")).toHaveAttribute("type", "password");
     expect(screen.getByRole("link", { name: "Google ile devam et" }))
