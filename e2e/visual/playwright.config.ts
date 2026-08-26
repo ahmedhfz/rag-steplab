@@ -11,7 +11,7 @@ export default defineConfig({
   testDir: ".",
   testMatch: "figma-overview.spec.ts",
   outputDir: "../../output/playwright/figma-visual/test-results",
-  snapshotPathTemplate: "../../tests/visual/figma/reference/{arg}{ext}",
+  snapshotPathTemplate: "reference/{arg}{ext}",
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: 0,

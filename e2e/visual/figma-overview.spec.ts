@@ -85,7 +85,7 @@ test("Figma Overview 4:147 golden visual contract", async ({ page }) => {
     process.execPath,
     [
       path.resolve("e2e/visual/figma-visual-diff.mjs"),
-      path.resolve("tests/visual/figma/reference/overview-4-147.png"),
+      path.resolve("e2e/visual/reference/overview-4-147.png"),
       actualPath,
       diffPath,
       metricsPath,
