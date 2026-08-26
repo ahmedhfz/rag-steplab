@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { type AppCopy, type DocumentViewKey, UI_COPY } from "@/lib/copy";
 import { formatDocumentFileSize } from "@/lib/document-file";
-import type { DocumentParseResponse, ParsedElement, ParsedPage } from "@/lib/document-parse-types";
+import type { DocumentParseResponse, ParsedElement } from "@/lib/document-parse-types";
 import type { PersistedDocument } from "@/lib/rag-api-types";
 import { cn } from "@/lib/utils";
 
@@ -187,34 +187,100 @@ function StructuredElement({ copy, element, index }: { copy: AppCopy["documents"
   );
 }
 
-function PageList({ copy, pages, selectedPageNumber, onSelect }: { copy: AppCopy["documents"]; pages: ParsedPage[]; selectedPageNumber: number | null; onSelect: (pageNumber: number) => void }) {
+type OutlineEntry = {
+  id: string;
+  label: string;
+  pageNumber: number | null;
+  level: number | null;
+  kind: "heading" | "page";
+};
+
+function parsedElements(result: DocumentParseResponse) {
+  return result.structured.elements.length > 0
+    ? result.structured.elements
+    : result.structured.pages.flatMap((page) => page.elements);
+}
+
+function buildOutline(result: DocumentParseResponse | null, copy: AppCopy["documents"]): OutlineEntry[] {
+  if (!result) return [];
+  const elements = parsedElements(result);
+  const headings = elements.filter((element) => element.type === "heading" && element.text.trim());
+  if (headings.length > 0) {
+    return headings.map((element) => ({
+      id: element.id,
+      label: element.text,
+      pageNumber: element.pageNumbers[0] ?? null,
+      level: Math.max(1, element.level ?? 1),
+      kind: "heading" as const,
+    }));
+  }
+
+  return result.structured.pages.map((page) => ({
+    id: `page-${page.pageNumber}`,
+    label: `${copy.page} ${page.pageNumber}`,
+    pageNumber: page.pageNumber,
+    level: null,
+    kind: "page" as const,
+  }));
+}
+
+function outlineSection(result: DocumentParseResponse, entry: OutlineEntry | undefined) {
+  if (!entry) return [];
+  if (entry.kind === "page") return result.structured.pages.find((page) => page.pageNumber === entry.pageNumber)?.elements ?? [];
+
+  const elements = parsedElements(result);
+  const start = elements.findIndex((element) => element.id === entry.id);
+  if (start < 0) return [];
+  const level = Math.max(1, entry.level ?? 1);
+  const end = elements.findIndex((element, index) => index > start && element.type === "heading" && Math.max(1, element.level ?? 1) <= level);
+  return elements.slice(start, end < 0 ? elements.length : end);
+}
+
+function ContentOutline({ copy, entries, selectedId, onSelect }: { copy: AppCopy["documents"]; entries: OutlineEntry[]; selectedId: string | null; onSelect: (id: string) => void }) {
+  const hasHeadings = entries.some((entry) => entry.kind === "heading");
   return (
-    <div className="relative divide-y">
-      {pages.map((page) => (
-        <button
-          aria-pressed={page.pageNumber === selectedPageNumber}
-          className={cn("relative flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm hover:bg-[#fbf4f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#711f3a]/25", page.pageNumber === selectedPageNumber && "bg-[#fbf4f6] font-medium")}
-          key={page.pageNumber}
-          onClick={() => onSelect(page.pageNumber)}
-          type="button"
-        >
-          {page.pageNumber === selectedPageNumber && <motion.span aria-hidden="true" className="absolute inset-y-2 left-0 w-0.5 bg-[#711f3a]" layoutId="parsed-page-active" transition={{ type: "spring", stiffness: 500, damping: 35 }} />}
-          <span>{copy.page} {page.pageNumber}</span>
-          <span className="text-xs text-[#6e676a]">{page.elements.length} {copy.pageElements}</span>
-        </button>
-      ))}
-    </div>
+    <aside className="border-b bg-[#fbfafb] lg:border-b-0 lg:border-r" data-testid="parsed-content-outline">
+      <div className="border-b px-4 py-4 sm:px-6">
+        <h2 className="text-sm font-semibold">{copy.outline}</h2>
+        <p className="mt-1 text-xs leading-5 text-[#969093]">{hasHeadings ? copy.parsedElements : copy.noOutline}</p>
+      </div>
+      {entries.length > 0 ? (
+        <div className="relative space-y-1 p-2" role="list" aria-label={copy.outline}>
+          {entries.map((entry) => {
+            const selected = entry.id === selectedId;
+            return (
+              <button
+                aria-current={selected ? "true" : undefined}
+                className={cn("relative block w-full rounded-[7px] px-3 py-2.5 text-left text-sm text-[#6e676a] transition-colors hover:bg-[#fbf4f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#711f3a]/25", selected && "bg-[#fbf4f6] font-medium text-[#501329]")}
+                key={entry.id}
+                onClick={() => onSelect(entry.id)}
+                style={{ paddingLeft: entry.level ? `${Math.min(entry.level, 4) * 0.75 + 0.75}rem` : undefined }}
+                type="button"
+              >
+                {selected ? <motion.span aria-hidden="true" className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-[#711f3a]" layoutId="parsed-outline-active" transition={{ type: "spring", stiffness: 500, damping: 35 }} /> : null}
+                <span className="block truncate">{entry.label}</span>
+                {entry.pageNumber !== null ? <span className="mt-1 block text-[10px] text-[#969093]">{copy.page} {entry.pageNumber}</span> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : <EmptyState>{copy.noPages}</EmptyState>}
+    </aside>
   );
 }
 
-function StructuredView({ copy, page }: { copy: AppCopy["documents"]; page: ParsedPage | undefined }) {
-  if (!page) return <EmptyState>{copy.noParsedElements}</EmptyState>;
-  if (page.elements.length === 0) return <EmptyState>{copy.noParsedElements}</EmptyState>;
+function StructuredSectionInspector({ copy, elements }: { copy: AppCopy["documents"]; elements: ParsedElement[] }) {
+  if (elements.length === 0) return <EmptyState>{copy.noParsedElements}</EmptyState>;
 
   return (
-    <div className="border-t">
+    <div className="min-w-0" data-testid="parsed-section-inspector">
+      <div className="border-b bg-[#fbfafb] px-4 py-4 sm:px-6">
+        <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#969093]">{copy.selectedSection}</p>
+        <h3 className="mt-1 text-base font-semibold text-[#171416]">{copy.parsedElements}</h3>
+        <p className="mt-1 text-xs text-[#6e676a]">{elements.length} {copy.pageElements}</p>
+      </div>
       <AnimatePresence initial={false} mode="popLayout">
-        {page.elements.map((element, index) => <StructuredElement copy={copy} element={element} index={index} key={element.id} />)}
+        {elements.map((element, index) => <StructuredElement copy={copy} element={element} index={index} key={element.id} />)}
       </AnimatePresence>
     </div>
   );
@@ -222,58 +288,48 @@ function StructuredView({ copy, page }: { copy: AppCopy["documents"]; page: Pars
 
 export function ParsedContentTab({ copy, result }: { copy: AppCopy["documents"]; result: DocumentParseResponse | null }) {
   const [activeView, setActiveView] = useState<ParsedView>("structured");
-  const [selectedPageNumber, setSelectedPageNumber] = useState<number | null>(null);
-  const pages = result?.structured.pages ?? [];
-
-  const effectiveSelectedPageNumber = selectedPageNumber ?? pages[0]?.pageNumber ?? null;
-  const selectedPage = pages.find((page) => page.pageNumber === effectiveSelectedPageNumber);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [developerOutputOpen, setDeveloperOutputOpen] = useState(false);
+  const outline = buildOutline(result, copy);
+  const effectiveSelectedId = selectedId && outline.some((entry) => entry.id === selectedId) ? selectedId : outline[0]?.id ?? null;
+  const selectedEntry = outline.find((entry) => entry.id === effectiveSelectedId);
+  const selectedElements = result && selectedEntry ? outlineSection(result, selectedEntry) : [];
   const viewOptions: Array<{ key: ParsedView; label: string }> = [
     { key: "structured", label: copy.structured },
     { key: "markdown", label: copy.markdown },
     { key: "json", label: copy.json },
   ];
 
+  function selectView(view: ParsedView) {
+    setActiveView(view);
+    setDeveloperOutputOpen(view !== "structured");
+  }
+
   return (
     <div className="grid border-t lg:grid-cols-[250px_minmax(0,1fr)]">
-      <aside className="border-b bg-[#fbfafb] lg:border-b-0 lg:border-r">
-        <div className="border-b px-4 py-4 sm:px-6"><h2 className="text-sm font-semibold">{copy.pages}</h2><p className="mt-1 text-xs text-[#969093]">{copy.pageElements}</p></div>
-        {result ? (pages.length > 0 ? <PageList copy={copy} onSelect={setSelectedPageNumber} pages={pages} selectedPageNumber={effectiveSelectedPageNumber} /> : <EmptyState>{copy.noPages}</EmptyState>) : <EmptyState>{copy.noPages}</EmptyState>}
-      </aside>
-
+      <ContentOutline copy={copy} entries={outline} onSelect={setSelectedId} selectedId={effectiveSelectedId} />
       <section className="min-w-0">
-        <div className="flex flex-col gap-3 border-b px-4 py-4 sm:px-6">
+        <div className="border-b px-4 py-4 sm:px-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div><h2 className="text-sm font-semibold">{copy.parsedElements}</h2><p className="mt-1 text-xs text-[#6e676a]">{copy.structured}</p></div>
-            <div className="flex items-center gap-2">
-              <div aria-describedby={!result ? "parsed-view-disabled-reason" : undefined} aria-label={copy.viewMode} className="inline-flex w-fit rounded-[8px] border border-[#e7e2e4] bg-[#fbfafb] p-0.5" role="group">
-                {viewOptions.slice(0, 1).map((view) => <Button aria-pressed={activeView === view.key} disabled={!result} key={view.key} onClick={() => setActiveView(view.key)} size="sm" variant={activeView === view.key ? "secondary" : "ghost"}>{view.label}</Button>)}
-              </div>
-              <details className="relative" open={activeView !== "structured"}>
-                <summary className="cursor-pointer list-none rounded-[8px] border border-[#e7e2e4] px-3 py-2 text-xs font-medium text-[#6e676a] outline-none hover:bg-[#fbf4f6] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25">{copy.markdown === "Markdown" ? "Developer output" : "Geliştirici çıktısı"}</summary>
-                <div className="absolute right-0 top-[calc(100%+0.5rem)] z-20 flex min-w-[150px] flex-col gap-1 rounded-[10px] border border-[#e7e2e4] bg-white p-1.5 shadow-[0_10px_28px_rgba(23,20,22,0.1)]">
-                  {viewOptions.slice(1).map((view) => <Button aria-pressed={activeView === view.key} disabled={!result} key={view.key} onClick={() => setActiveView(view.key)} size="sm" variant={activeView === view.key ? "secondary" : "ghost"}>{view.label}</Button>)}
-                </div>
-              </details>
-            </div>
+            <span className="rounded-full border border-[#d8b5c2] bg-[#fbf4f6] px-2.5 py-1 text-[11px] font-medium text-[#711f3a]">{result ? copy.source : copy.parsedViewsUnavailable}</span>
           </div>
         </div>
-        {!result && <p className="border-b px-4 py-3 text-xs text-[#6e676a] sm:px-6" id="parsed-view-disabled-reason">{copy.parsedViewsUnavailable}</p>}
-        <AnimatePresence initial={false} mode="wait">
-          <motion.div
-            animate={{ opacity: 1, y: 0 }}
-            className="min-w-0"
-            exit={{ opacity: 0, y: -4 }}
-            initial={{ opacity: 0, y: 4 }}
-            key={`${activeView}-${result ? "ready" : "empty"}`}
-            transition={{ duration: 0.16, ease: "easeOut" }}
-          >
-            {!result ? <EmptyState>{copy.noParsedElements}</EmptyState> : activeView === "structured" ? <StructuredView copy={copy} page={selectedPage} /> : activeView === "markdown" ? (
+        {!result ? <p className="border-b px-4 py-3 text-xs text-[#6e676a] sm:px-6" id="parsed-view-disabled-reason">{copy.parsedViewsUnavailable}</p> : null}
+        {activeView === "structured" ? <StructuredSectionInspector copy={copy} elements={selectedElements} /> : null}
+        <details className="border-t border-[#e7e2e4]" onToggle={(event) => setDeveloperOutputOpen(event.currentTarget.open)} open={developerOutputOpen}>
+          <summary className="cursor-pointer list-none px-4 py-4 text-sm font-semibold text-[#6e676a] outline-none hover:bg-[#fbf4f6] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#711f3a]/25 sm:px-6">{copy.markdown === "Markdown" ? "Developer output" : "Geliştirici çıktısı"}</summary>
+          <div className="border-t border-[#e7e2e4]">
+            <div aria-describedby={!result ? "parsed-view-disabled-reason" : undefined} aria-label={copy.viewMode} className="flex flex-wrap gap-1 border-b bg-[#fbfafb] px-4 py-2 sm:px-6" role="group">
+              {viewOptions.map((view) => <Button aria-pressed={activeView === view.key} disabled={!result} key={view.key} onClick={() => selectView(view.key)} size="sm" variant={activeView === view.key ? "secondary" : "ghost"}>{view.label}</Button>)}
+            </div>
+            {!result ? <p className="px-4 py-4 text-xs text-[#6e676a] sm:px-6">{copy.noParsedElements}</p> : activeView === "markdown" ? (
               <pre className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-[#6e676a] sm:px-6" data-testid="parsed-markdown">{result.markdown}</pre>
-            ) : (
+            ) : activeView === "json" ? (
               <pre className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-[#6e676a] sm:px-6" data-testid="parsed-json">{JSON.stringify(result.structured, null, 2)}</pre>
-            )}
-          </motion.div>
-        </AnimatePresence>
+            ) : null}
+          </div>
+        </details>
       </section>
     </div>
   );
@@ -289,7 +345,7 @@ export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
 
   return (
     <div className="min-w-0 overflow-x-clip">
-      <header className="border-b bg-white px-4 py-8 sm:px-8 sm:py-9">
+      <header className="px-4 pb-6 pt-6 sm:px-8 sm:pb-7">
         <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#969093]">{copy.documents.root}{isLegacyView ? <>&nbsp;&nbsp;›&nbsp;&nbsp;{current.title}</> : null}</div>
         <h1 className="mt-3 text-[28px] font-semibold tracking-[-0.045em]">{isLegacyView ? current.title : copy.documents.root}</h1>
         <p className="mt-2 max-w-2xl text-sm leading-5 text-[#6e676a]">{isLegacyView ? current.description : preferences.locale === "tr" ? "PDF kitaplığını yönetin." : "Manage the PDF library."}</p>
@@ -309,7 +365,7 @@ export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
         ))}
       </nav> : null}
 
-      {!isLegacyView ? <section className="border-b px-4 py-5 sm:px-8"><DocumentUploadPanel /></section> : null}
+      {!isLegacyView ? <section className="border-y px-4 py-4 sm:px-8"><DocumentUploadPanel /></section> : null}
       {!isLegacyView && uploadNotice ? <p aria-live="polite" className={cn("border-b px-4 py-3 text-sm sm:px-8", uploadNotice === "reused" ? "bg-[#fbf4f6] text-[#501329]" : "bg-[#f0f6f1] text-[#3f7a55]")} role="status">{uploadNotice === "reused" ? (preferences.locale === "tr" ? "Mevcut doküman yeniden kullanıldı; duplicate oluşturulmadı. Parse ekranından devam edebilirsiniz." : "Existing document reused; no duplicate was created. Continue from Parse.") : (preferences.locale === "tr" ? "Doküman eklendi; parse etmeye hazır." : "Document added; ready to parse.")} <Link className="ml-1 font-medium underline" href="/parse">{preferences.locale === "tr" ? "Parse'a devam et" : "Continue to Parse"}</Link></p> : null}
       {effectiveView === "overview" ? <DocumentLibrary locale={preferences.locale} /> : null}
     </div>

@@ -124,7 +124,7 @@ describe("Parse ownership and lifecycle", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Parse" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Parse" }));
 
-    await waitFor(() => expect(screen.getByText("Lesson")).toBeInTheDocument(), { timeout: 5_000 });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Lesson" })).toBeInTheDocument(), { timeout: 5_000 });
     expect(fetchMock.mock.calls.filter(([url, request]) => String(url).endsWith("/documents/document-1/parse") && (request as RequestInit | undefined)?.method === "POST")).toHaveLength(1);
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/documents/parse"))).toBe(false);
     expect(pollCalls).toBeGreaterThanOrEqual(2);
@@ -163,7 +163,7 @@ describe("Parse ownership and lifecycle", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Running" })).toBeDisabled());
     fireEvent.click(screen.getByRole("button", { name: "Running" }));
 
-    await waitFor(() => expect(screen.getByText("Lesson")).toBeInTheDocument(), { timeout: 5_000 });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Lesson" })).toBeInTheDocument(), { timeout: 5_000 });
     expect(postCalls).toBe(1);
   });
 
@@ -183,7 +183,7 @@ describe("Parse ownership and lifecycle", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Parse" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Parse" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The parse worker could not be started.");
-    expect(screen.queryByText("Lesson")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Lesson" })).not.toBeInTheDocument();
   });
 
   it("recovers from a transient polling outage without failing the parse", async () => {
@@ -212,7 +212,7 @@ describe("Parse ownership and lifecycle", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Parse" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Parse" }));
-    await waitFor(() => expect(screen.getByText("Lesson")).toBeInTheDocument(), { timeout: 5_000 });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Lesson" })).toBeInTheDocument(), { timeout: 5_000 });
     expect(pollCalls).toBeGreaterThanOrEqual(3);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -263,7 +263,7 @@ describe("Parse ownership and lifecycle", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderScreen(<ParseScreen />);
 
-    await waitFor(() => expect(screen.getByText("Lesson")).toBeInTheDocument(), { timeout: 5_000 });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Lesson" })).toBeInTheDocument(), { timeout: 5_000 });
     expect(pollCalls).toBeGreaterThanOrEqual(2);
     expect(fetchMock.mock.calls.some(([url, request]) => String(url).endsWith("/documents/document-1/parse") && (request as RequestInit | undefined)?.method === "POST")).toBe(false);
   });

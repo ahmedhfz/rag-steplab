@@ -26,12 +26,14 @@ export function PipelineContextBar() {
   const chunkNumber = runNumber(activeDocument?.chunkRuns ?? [], selectedChunkRunId);
   const embeddingNumber = runNumber(activeDocument?.embeddingRuns ?? [], selectedEmbeddingRunId);
   const labels = preferences.locale === "tr"
-    ? { document: "Doküman bağlamı", placeholder: "Doküman seçin", noDocument: "Aktif doküman yok", noPipeline: "Pipeline seçin", historical: "geçmiş lineage", pipeline: "Indexing pipeline", parse: "Ayrıştırma", chunk: "Parçalama", embedding: "Embedding" }
-    : { document: "Document context", placeholder: "Select a document", noDocument: "No active document", noPipeline: "Select a pipeline", historical: "historical lineage", pipeline: "Indexing pipeline", parse: "Parsing", chunk: "Chunking", embedding: "Embeddings" };
+    ? { document: "Doküman bağlamı", placeholder: "Doküman seçin", noDocument: "Aktif doküman yok", noPipeline: "Pipeline seçin", historical: "geçmiş lineage", pipeline: "Indexing pipeline", parse: "Son Ayrıştırma", chunk: "Güncel Parçalama", embedding: "Embedding" }
+    : { document: "Document context", placeholder: "Select a document", noDocument: "No active document", noPipeline: "Select a pipeline", historical: "historical lineage", pipeline: "Indexing pipeline", parse: "Latest Parse", chunk: "Current Chunking", embedding: "Embedding" };
   const selectedParse = activeDocument?.parseRuns.find((run) => run.id === selectedParseRunId);
   const selectedChunk = activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId);
   const selectedEmbedding = activeDocument?.embeddingRuns.find((run) => run.id === selectedEmbeddingRunId);
   const isHistorical = Boolean(selectedParse?.historicalLineage || selectedChunk?.historicalLineage || selectedEmbedding?.historicalLineage);
+  const embeddingLabel = selectedEmbedding?.model?.toLowerCase().includes("gemini") ? (preferences.locale === "tr" ? "Gemini Embedding" : "Gemini Embedding") : labels.embedding;
+  const technicalSuffix = preferences.locale === "tr" ? " teknik kimlik" : " technical identity";
 
   return (
     <section className="border-b border-[#e7e2e4] bg-white px-4 py-2.5 sm:px-8" data-testid="pipeline-context-bar">
@@ -46,7 +48,7 @@ export function PipelineContextBar() {
           <SelectContent>{pipelines.map((pipeline) => <SelectItem key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
         </Select>
         <span aria-label={preferences.locale === "tr" ? "Seçili lineage" : "Selected lineage"} className="shrink-0 text-xs font-semibold tracking-wide text-[#501329]">
-          <Link className="hover:underline" href="/parse" title={selectedParse?.id}>{labels.parse} {parseNumber ?? "—"}</Link><span className="px-1 text-[#d8d2d5]">→</span><Link className="hover:underline" href="/chunking" title={selectedChunk?.id}>{labels.chunk} {chunkNumber ?? "—"}</Link><span className="px-1 text-[#d8d2d5]">→</span><Link className="hover:underline" href="/embeddings" title={selectedEmbedding?.id}>{labels.embedding} {embeddingNumber ?? "—"}</Link>
+          <Link className="hover:underline" href="/parse" title={selectedParse ? `${labels.parse} ${parseNumber ?? "—"}${technicalSuffix}` : labels.parse}>{labels.parse}</Link><span className="px-1 text-[#d8d2d5]">→</span><Link className="hover:underline" href="/chunking" title={selectedChunk ? `${labels.chunk} ${chunkNumber ?? "—"}${technicalSuffix}` : labels.chunk}>{labels.chunk}</Link><span className="px-1 text-[#d8d2d5]">→</span><Link className="hover:underline" href="/embeddings" title={selectedEmbedding ? `${embeddingLabel} ${embeddingNumber ?? "—"}${technicalSuffix}` : embeddingLabel}>{embeddingLabel}</Link>
         </span>
         {isHistorical ? <span className="truncate text-[10px] text-[#8d651e]">({labels.historical})</span> : null}
       </div>

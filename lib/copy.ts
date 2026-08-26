@@ -107,6 +107,10 @@ export type AppCopy = {
     pages: string;
     noPages: string;
     parsedElements: string;
+    outline: string;
+    selectedSection: string;
+    source: string;
+    noOutline: string;
     noParsedElements: string;
     viewMode: string;
     structured: string;
@@ -304,6 +308,10 @@ export const UI_COPY = {
       pages: "Pages",
       noPages: "No pages are available until parsing completes.",
       parsedElements: "Parsed Elements",
+      outline: "Content outline",
+      selectedSection: "Selected section",
+      source: "Source",
+      noOutline: "The parser returned content, but no heading hierarchy was available.",
       noParsedElements: "Select a parsed page to inspect its elements.",
       viewMode: "Parsed content view mode",
       structured: "Structured",
@@ -493,6 +501,10 @@ export const UI_COPY = {
       pages: "Sayfalar",
       noPages: "Ayrıştırma tamamlanana kadar sayfa bulunmaz.",
       parsedElements: "Ayrıştırılmış Öğeler",
+      outline: "İçerik hiyerarşisi",
+      selectedSection: "Seçili bölüm",
+      source: "Kaynak",
+      noOutline: "Ayrıştırıcı içerik döndürdü ancak başlık hiyerarşisi bulunamadı.",
       noParsedElements: "Öğelerini incelemek için ayrıştırılmış bir sayfa seçin.",
       viewMode: "Ayrıştırılmış içerik görünüm modu",
       structured: "Yapısal",

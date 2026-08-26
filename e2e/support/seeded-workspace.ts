@@ -6,5 +6,5 @@ export async function selectSeededDocument(page: Page) {
   await documentContext.click();
   await page.getByRole("option", { name: "e2e-seeded-golden.pdf" }).click();
   await expect(documentContext).toContainText("e2e-seeded-golden.pdf");
-  await expect(page.getByLabel("Selected lineage")).toContainText("Parsing 1");
+  await expect(page.getByLabel("Selected lineage")).toContainText("Latest Parse");
 }
