@@ -59,7 +59,7 @@ function ArtifactHistory({
               <div className="flex flex-col gap-3 rounded-[10px] border-[1.712px] border-[#e7e2e4] bg-white p-3 sm:flex-row sm:items-center sm:justify-between" data-testid={`${kind}-history-row`} key={run.id}>
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <span className="font-semibold">{kind === "chunk" ? "Chunk" : "Embedding"} {run.runNumber ?? "—"}</span>
+                    <span className="font-semibold">{kind === "chunk" ? "Chunk run" : "Embedding"} {run.runNumber ?? "—"}</span>
                     {isSelected ? <span className="rounded-full bg-[#fbf4f6] px-1.5 py-0.5 text-[10px] text-[#711f3a]">{labels.selected}</span> : null}
                     {run.id === defaultId ? <span className="rounded-full bg-[#eef4ef] px-1.5 py-0.5 text-[10px] text-[#3f7a55]">{labels.active}</span> : null}
                     {run.historicalLineage ? <span className="rounded-full bg-[#fffaf1] px-1.5 py-0.5 text-[10px] text-[#8d651e]">{labels.historical}</span> : null}
