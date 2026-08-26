@@ -31,7 +31,7 @@ describe("Phase 6B pipeline IA", () => {
 
   it("keeps Parse, Chunking, and Embeddings actions disabled with explicit upstream reasons", () => {
     renderWithPipeline(<ParseScreen />);
-    expect(screen.getByRole("heading", { name: "Parse", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Parsing", level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Parse" })).toBeDisabled();
     expect(screen.getByText("Select a persisted document before parsing.")).toBeInTheDocument();
 

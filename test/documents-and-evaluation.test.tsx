@@ -30,7 +30,7 @@ describe("DocumentsScreen", () => {
   it("keeps parse output and parse mutation on Parse", () => {
     renderScreen(<ParseScreen />);
 
-    expect(screen.getByRole("heading", { name: "Parse" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Parsing" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Parse" })).toBeDisabled();
     expect(screen.getByRole("group", { name: "Parsed content view mode" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Structured" })).toBeDisabled();

@@ -1,6 +1,6 @@
 export const UI_ASSETS = {
   brand: {
-    mark: "/assets/brand/rag-steplab-mark.svg",
+    mark: "/assets/figma/overview/brand-mark.svg",
     appIcon: "/assets/brand/rag-steplab-app-icon.svg",
   },
   illustrations: {

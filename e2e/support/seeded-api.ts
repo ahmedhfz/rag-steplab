@@ -199,12 +199,13 @@ const evaluation = {
   },
 };
 
-function summary() {
+function summary(includeEmbedding = true) {
   return {
     ...document,
+    activeEmbeddingRunId: includeEmbedding ? document.activeEmbeddingRunId : null,
     parseRuns: [{ ...runBase, id: parseRunId, runNumber: 1, phase: "completed", progress: 100, upstream: { documentId, parseRunId: null, chunkRunId: null, embeddingRunId: null } }],
     chunkRuns: [{ ...runBase, id: chunkRunId, runNumber: 1, strategy: "structure_aware", chunkCount: 1, upstream: { documentId, parseRunId, chunkRunId: null, embeddingRunId: null } }],
-    embeddingRuns: [{ ...runBase, id: embeddingRunId, runNumber: 1, model: embedding.model, dimensions: 768, embeddingCount: 1, embeddingFormatVersion: embedding.embeddingFormatVersion, upstream: { documentId, parseRunId, chunkRunId, embeddingRunId: null } }],
+    embeddingRuns: includeEmbedding ? [{ ...runBase, id: embeddingRunId, runNumber: 1, model: embedding.model, dimensions: 768, embeddingCount: 1, embeddingFormatVersion: embedding.embeddingFormatVersion, upstream: { documentId, parseRunId, chunkRunId, embeddingRunId: null } }] : [],
     experiments: [{ ...runBase, id: experimentId, runNumber: 1, documentId, chunkRunId, embeddingRunId, query: experiment.query, targetStage: "generation", candidateCount: 1, experimentFingerprint: experiment.experimentFingerprint, stageStatuses: { retrieval: "completed", reranking: "skipped", context: "completed", generation: "completed" }, upstream: { documentId, parseRunId, chunkRunId, embeddingRunId } }],
     evaluationDatasets: [{ ...dataset, cases: undefined }],
     evaluationRuns: [{ id: evaluationRunId, datasetId, parseRunId, chunkRunId, embeddingRunId, status: "completed", timing: runBase.timing, error: null }],
@@ -221,6 +222,7 @@ export async function installSeededApi(page: Page) {
   let experimentPoll = 0;
   let evaluationPoll = 0;
   let pipelineRevision = 1;
+  let embeddingAvailable = true;
 
   await page.route("**/*", async (route) => {
     const request = route.request();
@@ -238,7 +240,7 @@ export async function installSeededApi(page: Page) {
     if (pathname === "/capabilities") return json(route, { embeddingModel: embedding.model, embeddingDimensions: 768, generationModel: experiment.stageResults.generation.model, rerankModel: "gemini-flash-lite-latest", judgeModel: "gemini-flash-lite-latest", embeddingFormatVersion: embedding.embeddingFormatVersion, limits: { maxTopK: 20 } });
     if (pathname === "/documents" && method === "GET") return json(route, { items: [document] });
     if (pathname === "/documents" && method === "POST") return json(route, { document, reusedDocument: true }, 200);
-    if (pathname === `/documents/${documentId}/summary`) return json(route, summary());
+    if (pathname === `/documents/${documentId}/summary`) return json(route, summary(embeddingAvailable));
     if (pathname === `/documents/${documentId}/pipelines`) return json(route, [{ id: pipelineId, documentId, name: "Seeded indexing pipeline", parseRunId, chunkRunId, embeddingRunId, revision: 1, isDefault: true, createdAt: null, updatedAt: null }]);
     if (pathname === `/document-pipelines/${pipelineId}` && method === "PATCH") {
       const input = request.postDataJSON() as { parseRunId?: string | null; chunkRunId?: string | null; embeddingRunId?: string | null };
@@ -265,9 +267,13 @@ export async function installSeededApi(page: Page) {
     if (pathname === `/documents/${documentId}/parse` && method === "POST") return json(route, { id: "e2e-seeded-reparse", parseRunId: "e2e-seeded-reparse", documentId, status: "queued", progress: 0, phase: "queued", reusedDocument: true }, 202);
     if (pathname === `/chunk-runs/${chunkRunId}`) return json(route, chunk);
     if (pathname === `/embedding-runs/${embeddingRunId}`) return json(route, embedding);
-    if (pathname === `/documents/${documentId}/chunks` && method === "POST") return json(route, chunk);
+    if (pathname === `/documents/${documentId}/chunks` && method === "POST") {
+      embeddingAvailable = false;
+      return json(route, chunk);
+    }
     if (pathname === `/documents/${documentId}/embeddings` && method === "POST") {
       await new Promise((resolve) => setTimeout(resolve, 300));
+      embeddingAvailable = true;
       return json(route, embedding);
     }
     if (pathname === `/experiments/${experimentId}`) return json(route, experiment);

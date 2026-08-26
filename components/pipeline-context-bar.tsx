@@ -55,3 +55,9 @@ export function PipelineContextBar() {
     </section>
   );
 }
+
+/** Keep the selector available for an unselected workspace without adding a visual band to canonical active-state pages. */
+export function ConditionalPipelineContextBar() {
+  const { activeDocumentId } = useDocumentPipeline();
+  return <div className={activeDocumentId ? "sr-only" : undefined}><PipelineContextBar /></div>;
+}

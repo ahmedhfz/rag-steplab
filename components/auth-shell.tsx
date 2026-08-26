@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { Check, ImageIcon } from "lucide-react";
 
 import { usePreferences } from "@/components/preferences-provider";
 import { UI_ASSETS } from "@/lib/ui-assets";
@@ -14,39 +15,45 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     ? {
         home: "RAG StepLab ana sayfa",
         language: "Dil",
-        eyebrow: "RAG öğrenme laboratuvarı",
-        title: "RAG pipeline'ını adım adım anlayın.",
-        description: "Dokümanınızı gerçek pipeline'dan geçirip her aşamanın girdisini, çıktısını ve kararlarını inceleyin.",
-        stages: ["Parse", "Chunk", "Retrieve", "Evaluate"],
-        footer: "RAG learning workspace",
+        title: "RAG'inizin her adımını anlayın.",
+        description: "RAG pipeline'ınızı güvenle oluşturun, inceleyin ve değerlendirin.",
+        features: [
+          ["Gerçek parsing", "Yapıyı ve anlamı hassasiyetle çıkarın."],
+          ["İncelenebilir retrieval", "Her adımda chunk'ları, bağlamı ve kaynakları görün."],
+          ["Ölçülebilir evaluation", "RAG'inizi anlamlı metriklerle değerlendirin."],
+        ],
+        asset: "ASSET / LOGIN / HERO",
       }
     : {
         home: "RAG StepLab home",
         language: "Language",
-        eyebrow: "RAG learning laboratory",
-        title: "Understand your RAG pipeline, step by step.",
-        description: "Run a real document through the pipeline and inspect the inputs, outputs, and decisions at every stage.",
-        stages: ["Parse", "Chunk", "Retrieve", "Evaluate"],
-        footer: "RAG learning workspace",
+        title: "Understand every step of your RAG.",
+        description: "Build, inspect, and evaluate your RAG pipeline with confidence.",
+        features: [
+          ["Real parsing", "Extract structure and meaning with precision."],
+          ["Inspectable retrieval", "See chunks, context, and sources at every step."],
+          ["Measurable evaluation", "Evaluate your RAG with metrics that matter."],
+        ],
+        asset: "ASSET / LOGIN / HERO",
       };
 
   return (
     <div className="min-h-screen bg-[#f8f7f7] text-[#171416]">
-      <header className="flex h-[72px] items-center justify-between border-b border-[#e7e2e4] bg-white px-5 sm:px-8">
-        <Link aria-label={labels.home} className="flex items-center gap-3" href="/">
-          <Image alt="" height={30} priority src={UI_ASSETS.brand.mark} width={30} />
-          <span className="text-[17px] font-semibold tracking-[-0.035em]">RAG StepLab</span>
+      <header className="flex h-[72px] items-center justify-between px-11 max-md:px-6">
+        <Link aria-label={labels.home} className="flex items-center gap-1" href="/">
+          <Image alt="" height={28} priority src={UI_ASSETS.brand.mark} width={28} />
+          <span className="text-[15px] font-semibold leading-[22.5px] tracking-[-0.15px]">RAG StepLab</span>
         </Link>
-        <div aria-label={labels.language} className="flex items-center gap-1 rounded-[8px] border border-[#e7e2e4] bg-white p-1" role="group">
-          {(["en", "tr"] as const).map((locale) => (
+        <div aria-label={labels.language} className="flex h-[34px] items-center gap-0.5 rounded-[10px] border border-[#e7e2e4] bg-white p-1 shadow-sm" role="group">
+          {["en", "tr"].map((locale) => (
             <button
               aria-pressed={preferences.locale === locale}
               className={cn(
-                "rounded-[6px] px-2.5 py-1 text-[11px] font-medium text-[#969093] transition-colors hover:text-[#501329] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25",
-                preferences.locale === locale && "bg-[#fbf4f6] text-[#711f3a]",
+                "h-[26px] rounded-[7px] px-2.5 text-[12px] font-medium text-[#969093] transition-colors hover:text-[#501329] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25",
+                preferences.locale === locale && "bg-[#f2eff0] text-[#171416] shadow-sm",
               )}
               key={locale}
-              onClick={() => setLocale(locale)}
+              onClick={() => setLocale(locale as "en" | "tr")}
               type="button"
             >
               {locale.toUpperCase()}
@@ -55,27 +62,39 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <main className="mx-auto grid min-h-[calc(100vh-122px)] max-w-[1440px] lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.78fr)]">
-        <section className="relative hidden overflow-hidden border-r border-[#e7e2e4] px-10 py-12 lg:flex lg:flex-col lg:justify-between xl:px-16">
-          <Image alt="" className="absolute inset-0 h-full w-full object-cover opacity-[0.18]" fill priority={false} sizes="(min-width: 1024px) 55vw, 0px" src={UI_ASSETS.illustrations.login} />
-          <div className="relative max-w-[520px]">
-            <p className="inline-flex rounded-full border border-[#d8d2d5] bg-white/80 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.13em] text-[#711f3a] backdrop-blur-sm">{labels.eyebrow}</p>
-            <h1 className="mt-6 max-w-[480px] text-4xl font-semibold leading-[1.08] tracking-[-0.055em] xl:text-5xl">{labels.title}</h1>
-            <p className="mt-5 max-w-[460px] text-sm leading-6 text-[#6e676a]">{labels.description}</p>
-          </div>
-          <div className="relative grid max-w-[540px] grid-cols-4 gap-2">
-            {labels.stages.map((stage, index) => (
-              <div className="border border-[#e7e2e4] bg-white/85 p-3 backdrop-blur-sm" key={stage}>
-                <span className="text-[10px] font-medium text-[#969093]">0{index + 1}</span>
-                <span className="mt-5 block text-xs font-semibold text-[#501329]">{stage}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-        <section className="flex items-center justify-center px-5 py-10 sm:px-8 lg:px-12 xl:px-20">{children}</section>
-      </main>
+      <main className="flex min-h-[calc(100vh-72px)] items-center justify-center px-6 py-8 max-md:px-4">
+        <div className="grid w-full max-w-[1040px] overflow-hidden rounded-[24px] border-[1.712px] border-[#e7e2e4] bg-white shadow-[0_20px_40px_rgba(23,20,22,0.07)] lg:h-[668px] lg:grid-cols-2">
+          <section className="flex flex-col bg-[#fdf8f9] px-10 py-10 max-md:px-6 max-md:py-8">
+            <div>
+              <h1 className="max-w-[380px] text-[30px] font-semibold leading-[36px] tracking-[-0.75px] text-[#171416]">{labels.title}</h1>
+              <p className="mt-3 max-w-[370px] text-[14px] leading-[21px] text-[#6e676a]">{labels.description}</p>
+            </div>
 
-      <footer className="flex min-h-[50px] items-center justify-center border-t border-[#e7e2e4] bg-white px-4 text-[11px] text-[#969093]">{labels.footer}</footer>
+            <div className="mt-8 space-y-4">
+              {labels.features.map(([title, description]) => (
+                <div className="flex gap-3" key={title}>
+                  <span aria-hidden="true" className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-[#f3d9e0] text-[#711f3a]"><Check className="size-3" strokeWidth={2} /></span>
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-semibold leading-[19px] text-[#171416]">{title}</p>
+                    <p className="text-[13px] leading-[19px] text-[#6e676a]">{description}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-auto flex h-[246px] flex-none items-center justify-center rounded-[16px] border-[1.5px] border-dashed border-[#d8d2d5] bg-white/30">
+              <div className="flex flex-col items-center gap-3 text-center">
+                <span className="grid size-11 place-items-center rounded-[10px] border border-[#e7e2e4] bg-white text-[#711f3a] shadow-sm"><ImageIcon aria-hidden="true" className="size-[18px]" strokeWidth={1.5} /></span>
+                <span className="font-mono text-[10px] tracking-[0.07em] text-[#969093]">{labels.asset}</span>
+              </div>
+            </div>
+          </section>
+
+          <section className="flex items-center justify-center px-20 py-10 max-md:px-6">
+            {children}
+          </section>
+        </div>
+      </main>
     </div>
   );
 }

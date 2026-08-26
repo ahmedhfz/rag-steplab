@@ -12,7 +12,7 @@ test("login, logout ve protected route gerçek Supabase auth ile çalışır", a
   await expect(page).toHaveURL(/\/login(?:\?|$)/);
 
   await signIn(page, requireE2ECredentials());
-  await expect(page.getByRole("heading", { name: "RAG Pipeline" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Build your RAG, one step at a time." })).toBeVisible();
 
   await signOut(page);
   await page.goto("/evaluation");

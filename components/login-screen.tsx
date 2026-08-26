@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff, LockKeyhole, Mail } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 
 import { AuthShell } from "@/components/auth-shell";
@@ -83,11 +83,11 @@ export function LoginScreen() {
     setBusy(true);
     setStatusMessage("");
     try {
-        const supabase = getSupabaseBrowserClient();
-        if (mode === "forgot") {
-          const { error } = await supabase.auth.resetPasswordForEmail(email, {
-            redirectTo: `${window.location.origin}/auth/confirm?next=/auth/reset-password`,
-          });
+      const supabase = getSupabaseBrowserClient();
+      if (mode === "forgot") {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${window.location.origin}/auth/confirm?next=/auth/reset-password`,
+        });
         if (error) throw error;
         setStatusMessage(preferences.locale === "tr" ? "Şifre yenileme bağlantısı e-posta adresinize gönderildi." : "A password reset link was sent to your email.");
         return;
@@ -110,8 +110,7 @@ export function LoginScreen() {
         if (data.session) {
           router.replace("/");
           router.refresh();
-        }
-        else setStatusMessage(preferences.locale === "tr" ? "Kayıt tamamlandı. Devam etmek için e-posta adresinizi doğrulayın." : "Account created. Confirm your email address before continuing.");
+        } else setStatusMessage(preferences.locale === "tr" ? "Kayıt tamamlandı. Devam etmek için e-posta adresinizi doğrulayın." : "Account created. Confirm your email address before continuing.");
         return;
       }
       const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -126,33 +125,64 @@ export function LoginScreen() {
     }
   }
 
-  const labels = preferences.locale === "tr" ? {
-    titleSignIn: "Hesabınıza giriş yapın", titleSignUp: "Hesap oluşturun", titleForgot: "Şifrenizi yenileyin", submitSignIn: "Giriş yap", submitSignUp: "Kayıt ol", submitForgot: "Bağlantı gönder", wait: "Bekleyin…", email: "E-posta", emailPlaceholder: "ornek@firma.com", password: "Şifre", showPassword: "Şifreyi göster", hidePassword: "Şifreyi gizle", confirm: "Şifre tekrarı", google: "Google ile devam et", forgot: "Şifremi unuttum", back: "Giriş ekranına dön", noAccount: "Hesabın yok mu?", home: "RAG StepLab ana sayfa", form: "Giriş formu", footer: "RAG öğrenme laboratuvarı", backend: "RAG öğrenme pipeline'ı", or: "veya", language: "Dil",
-  } : {
-    titleSignIn: "Sign in to your account", titleSignUp: "Create an account", titleForgot: "Reset your password", submitSignIn: "Sign in", submitSignUp: "Sign up", submitForgot: "Send reset link", wait: "Please wait…", email: "Email", emailPlaceholder: "name@example.com", password: "Password", showPassword: "Show password", hidePassword: "Hide password", confirm: "Confirm password", google: "Continue with Google", forgot: "Forgot password?", back: "Back to sign in", noAccount: "Don't have an account?", home: "RAG StepLab home", form: "Sign-in form", footer: "RAG learning laboratory", backend: "RAG learning pipeline", or: "or", language: "Language",
-  };
+  const labels = preferences.locale === "tr"
+    ? {
+        titleSignIn: "Hesabınıza giriş yapın", titleSignInAccessible: "Hesabınıza giriş yapın", titleSignUp: "Hesap oluşturun", titleForgot: "Şifrenizi yenileyin", subtitleSignIn: "RAG StepLab çalışma alanınıza devam edin.", subtitleSignUp: "RAG'inizi oluşturmaya ve anlamaya başlayın.", subtitleForgot: "Yeni bir şifre belirlemek için size güvenli bir bağlantı göndereceğiz.", submitSignIn: "Giriş yap", submitSignUp: "Kayıt ol", submitForgot: "Bağlantı gönder", wait: "Bekleyin…", email: "E-posta", emailPlaceholder: "ornek@firma.com", emailPlaceholderSignup: "siz@firma.com", password: "Şifre", passwordPlaceholder: "••••••••", showPassword: "Şifreyi göster", hidePassword: "Şifreyi gizle", confirm: "Şifre tekrarı", confirmPlaceholder: "Şifrenizi yeniden girin", google: "Google ile devam et", forgot: "Şifremi unuttum", back: "Giriş ekranına dön", noAccount: "Hesabın yok mu?", alreadyAccount: "Zaten hesabınız var mı?", home: "RAG StepLab ana sayfa", form: "Giriş formu", or: "veya", language: "Dil",
+      }
+    : {
+        titleSignIn: "Sign in", titleSignInAccessible: "Sign in to your account", titleSignUp: "Create account", titleForgot: "Reset your password", subtitleSignIn: "Continue to your RAG StepLab workspace.", subtitleSignUp: "Start building and understanding your RAG.", subtitleForgot: "We'll email you a secure link to set a new password.", submitSignIn: "Sign in", submitSignUp: "Create account", submitForgot: "Send reset link", wait: "Please wait…", email: "Email", emailPlaceholder: "ayse@steplab.dev", emailPlaceholderSignup: "you@company.com", password: "Password", passwordPlaceholder: "••••••••", showPassword: "Show password", hidePassword: "Hide password", confirm: "Confirm password", confirmPlaceholder: "Re-enter password", google: "Continue with Google", forgot: "Forgot password?", back: "Back to sign in", noAccount: "Don't have an account?", alreadyAccount: "Already have an account?", home: "RAG StepLab home", form: "Sign-in form", or: "or", language: "Language",
+      };
   const title = mode === "signup" ? labels.titleSignUp : mode === "forgot" ? labels.titleForgot : labels.titleSignIn;
+  const titleAccessible = mode === "signin" ? labels.titleSignInAccessible : title;
+  const subtitle = mode === "signin" ? labels.subtitleSignIn : mode === "signup" ? labels.subtitleSignUp : labels.subtitleForgot;
   const submitLabel = mode === "signup" ? labels.submitSignUp : mode === "forgot" ? labels.submitForgot : labels.submitSignIn;
   const urlStatusMessage = AUTH_ERROR_MESSAGES[preferences.locale][urlAuthErrorCode] ?? "";
+  const visibleStatus = statusMessage || urlStatusMessage;
 
   return (
     <AuthShell>
-      <section aria-label={labels.form} className="w-full max-w-[430px] border border-[#e7e2e4] bg-white p-6 shadow-[0_12px_35px_rgba(23,20,22,0.04)] sm:p-9">
-        <div className="border-b border-[#e7e2e4] pb-6">
-          <p className="text-[11px] font-medium uppercase tracking-[0.13em] text-[#711f3a]">RAG StepLab</p>
-          <h1 className="mt-3 text-[27px] font-semibold tracking-[-0.045em] text-[#171416]">{title}</h1>
-          <p className="mt-2 text-sm leading-5 text-[#6e676a]">{mode === "signin" ? labels.backend : mode === "signup" ? labels.footer : labels.backend}</p>
-        </div>
-        <form aria-describedby="login-status" className="mt-6 space-y-4" onSubmit={submit}>
-          <div className="space-y-2"><label className="text-xs font-medium text-[#171416]" htmlFor="login-email">{labels.email}</label><div className="relative"><Mail aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#969093]" /><Input autoComplete="email" className="h-11 border-[#d8d2d5] bg-white pl-10 pr-3 text-sm shadow-none placeholder:text-[#969093] focus-visible:border-[#711f3a] focus-visible:ring-[#711f3a]/15" id="login-email" onChange={(event) => setEmail(event.target.value)} placeholder={labels.emailPlaceholder} required type="email" value={email} /></div></div>
-          {mode !== "forgot" && <div className="space-y-2"><label className="text-xs font-medium text-[#171416]" htmlFor="login-password">{labels.password}</label><div className="relative"><LockKeyhole aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#969093]" /><Input autoComplete={mode === "signup" ? "new-password" : "current-password"} className="h-11 border-[#d8d2d5] bg-white pl-10 pr-10 text-sm shadow-none placeholder:text-[#969093] focus-visible:border-[#711f3a] focus-visible:ring-[#711f3a]/15" id="login-password" minLength={mode === "signup" ? 10 : undefined} onChange={(event) => setPassword(event.target.value)} placeholder={labels.password} required type={showPassword ? "text" : "password"} value={password} /><button aria-label={showPassword ? labels.hidePassword : labels.showPassword} className="absolute right-2.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded text-[#969093] outline-none transition-colors hover:text-[#501329] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setShowPassword((current) => !current)} type="button">{showPassword ? <EyeOff aria-hidden="true" className="size-4" /> : <Eye aria-hidden="true" className="size-4" />}</button></div></div>}
-          {mode === "signup" && <div className="space-y-2"><label className="text-xs font-medium text-[#171416]" htmlFor="login-password-confirm">{labels.confirm}</label><Input autoComplete="new-password" className="h-11 border-[#d8d2d5] bg-white text-sm shadow-none placeholder:text-[#969093] focus-visible:border-[#711f3a] focus-visible:ring-[#711f3a]/15" id="login-password-confirm" minLength={10} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.confirm} required type="password" value={confirmation} /></div>}
-          <Button className="h-11 w-full bg-[#171416] text-sm font-semibold text-white hover:bg-[#30292c]" disabled={busy} type="submit">{busy ? labels.wait : submitLabel}</Button>
+      <section aria-label={labels.form} className="w-full max-w-[360px]">
+        <h1 className="text-[24px] font-semibold leading-[29px] tracking-[-0.48px] text-[#171416]">{title}<span className="sr-only">{titleAccessible}</span></h1>
+        <p className="mt-1.5 text-[13px] leading-5 text-[#6e676a]">{subtitle}</p>
+
+        <form aria-describedby="login-status" className="mt-7" onSubmit={submit}>
+          <div className="space-y-2">
+            <label className="flex items-center justify-between text-[13px] font-medium leading-[19px] text-[#171416]" htmlFor="login-email">
+              <span>{labels.email}</span>
+            </label>
+            <Input autoComplete="email" className="h-[44px] rounded-[10px] border-[1.5px] border-[#d8d2d5] bg-white px-3 text-[13px] shadow-none placeholder:text-[#969093] focus-visible:border-[#711f3a] focus-visible:ring-[#711f3a]/15" id="login-email" onChange={(event) => setEmail(event.target.value)} placeholder={mode === "signup" || mode === "forgot" ? labels.emailPlaceholderSignup : labels.emailPlaceholder} required type="email" value={email} />
+          </div>
+
+          {mode !== "forgot" ? <div className="mt-4 space-y-2">
+            <div className="flex items-center justify-between text-[13px] font-medium leading-[19px] text-[#171416]"><label htmlFor="login-password">{labels.password}</label>{mode === "signin" ? <button className="font-medium text-[#711f3a] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setAuthMode("forgot")} type="button">{labels.forgot}</button> : null}</div>
+            <div className="relative">
+              <Input autoComplete={mode === "signup" ? "new-password" : "current-password"} className="h-[44px] rounded-[10px] border-[1.5px] border-[#d8d2d5] bg-white px-3 pr-10 text-[13px] shadow-none placeholder:text-[#969093] focus-visible:border-[#711f3a] focus-visible:ring-[#711f3a]/15" id="login-password" minLength={mode === "signup" ? 10 : undefined} onChange={(event) => setPassword(event.target.value)} placeholder={labels.passwordPlaceholder} required type={showPassword ? "text" : "password"} value={password} />
+              <button aria-label={showPassword ? labels.hidePassword : labels.showPassword} className="absolute right-2.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded text-[#969093] outline-none transition-colors hover:text-[#501329] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setShowPassword((current) => !current)} type="button">{showPassword ? <EyeOff aria-hidden="true" className="size-4" /> : <Eye aria-hidden="true" className="size-4" />}</button>
+            </div>
+          </div> : null}
+
+          {mode === "signup" ? <div className="mt-4 space-y-2">
+            <label className="text-[13px] font-medium leading-[19px] text-[#171416]" htmlFor="login-password-confirm">{labels.confirm}</label>
+            <Input autoComplete="new-password" className="h-[44px] rounded-[10px] border-[1.5px] border-[#d8d2d5] bg-white px-3 text-[13px] shadow-none placeholder:text-[#969093] focus-visible:border-[#711f3a] focus-visible:ring-[#711f3a]/15" id="login-password-confirm" minLength={10} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.confirmPlaceholder} required type="password" value={confirmation} />
+          </div> : null}
+
+          <Button className="mt-6 h-[43px] w-full rounded-[10px] bg-[#171416] text-[13px] font-medium text-white hover:bg-[#30292c]" disabled={busy} type="submit">{busy ? labels.wait : submitLabel}{mode === "signin" && !busy ? <span aria-hidden="true" className="text-[16px] leading-none">→</span> : null}</Button>
         </form>
-        {mode === "signin" && <><div className="my-6 flex items-center gap-3 text-[11px] text-[#969093]"><span aria-hidden="true" className="h-px flex-1 bg-[#e7e2e4]" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-[#e7e2e4]" /></div><Button asChild className="h-11 w-full border-[#d8d2d5] bg-white text-sm font-medium text-[#171416] shadow-none hover:bg-[#fbf4f6]" variant="outline"><a href="/auth/google"><GoogleMark />{labels.google}</a></Button><div className="mt-5 text-center"><button className="text-sm font-medium text-[#711f3a] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setAuthMode("forgot")} type="button">{labels.forgot}</button></div></>}
-        {mode !== "signin" && <div className="mt-5 text-center"><button className="text-sm font-medium text-[#711f3a] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setAuthMode("signin")} type="button">{labels.back}</button></div>}
-        <p aria-live="polite" className="mt-4 min-h-5 text-center text-xs leading-5 text-[#6e676a]" id="login-status" role="status">{statusMessage ?? urlStatusMessage}</p>
-        {mode === "signin" ? <div className="mt-6 border-t border-[#e7e2e4] pt-6 text-center text-sm text-[#6e676a]"><span>{labels.noAccount}</span>{" "}<button className="font-medium text-[#711f3a] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setAuthMode("signup")} type="button">{labels.submitSignUp}</button></div> : null}
+
+        {mode === "signin" ? <>
+          <div className="my-6 flex items-center gap-3 text-[11px] text-[#969093]"><span aria-hidden="true" className="h-px flex-1 bg-[#e7e2e4]" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-[#e7e2e4]" /></div>
+          <Button asChild className="h-[42px] w-full rounded-[10px] border-[1.5px] border-[#d8d2d5] bg-white text-[13px] font-medium text-[#171416] shadow-none hover:bg-[#fbf4f6]" variant="outline"><a href="/auth/google"><GoogleMark />{labels.google}</a></Button>
+        </> : null}
+
+        {mode === "signup" ? <>
+          <div className="my-6 flex items-center gap-3 text-[11px] text-[#969093]"><span aria-hidden="true" className="h-px flex-1 bg-[#e7e2e4]" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-[#e7e2e4]" /></div>
+          <Button asChild className="h-[42px] w-full rounded-[10px] border-[1.5px] border-[#d8d2d5] bg-white text-[13px] font-medium text-[#171416] shadow-none hover:bg-[#fbf4f6]" variant="outline"><a href="/auth/google"><GoogleMark />{labels.google}</a></Button>
+        </> : null}
+
+        {mode === "forgot" ? <div className="mt-6 text-center"><button className="text-[13px] font-medium text-[#711f3a] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setAuthMode("signin")} type="button">{labels.back}</button></div> : null}
+        <p aria-live="polite" className={visibleStatus ? "mt-4 min-h-5 text-center text-xs leading-5 text-[#6e676a]" : "sr-only"} id="login-status" role="status">{visibleStatus}</p>
+        {mode === "signin" ? <div className="mt-6 text-center text-[13px] text-[#6e676a]"><span>{labels.noAccount}</span>{" "}<button className="font-medium text-[#711f3a] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setAuthMode("signup")} type="button">{labels.submitSignUp}</button></div> : null}
+        {mode === "signup" ? <div className="mt-6 text-center text-[13px] text-[#6e676a]"><span>{labels.alreadyAccount}</span>{" "}<button className="font-medium text-[#711f3a] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setAuthMode("signin")} type="button">{labels.submitSignIn}</button></div> : null}
       </section>
     </AuthShell>
   );

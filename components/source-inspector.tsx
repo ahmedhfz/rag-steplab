@@ -16,9 +16,10 @@ type SourceInspectorProps = {
   sourceElementIds?: string[];
   headingPath?: string[];
   triggerLabel?: string;
+  triggerAriaLabel?: string;
 };
 
-export function SourceInspector({ documentId, parseResult, pageNumbers = [], sourceElementIds = [], headingPath = [], triggerLabel }: SourceInspectorProps) {
+export function SourceInspector({ documentId, parseResult, pageNumbers = [], sourceElementIds = [], headingPath = [], triggerLabel, triggerAriaLabel }: SourceInspectorProps) {
   const { preferences } = usePreferences();
   const [open, setOpen] = useState(false);
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
@@ -57,7 +58,7 @@ export function SourceInspector({ documentId, parseResult, pageNumbers = [], sou
 
   return (
     <DialogPrimitive.Root onOpenChange={(next) => { setOpen(next); if (next) void loadSource(); else setError(null); }} open={open}>
-      <DialogPrimitive.Trigger asChild><Button className="gap-2" disabled={!documentId} size="sm" type="button" variant="outline"><FileSearch aria-hidden="true" className="size-4" />{triggerLabel ?? labels.open}</Button></DialogPrimitive.Trigger>
+      <DialogPrimitive.Trigger asChild><Button aria-label={triggerAriaLabel} className="gap-2" disabled={!documentId} size="sm" type="button" variant="outline"><FileSearch aria-hidden="true" className="size-4" />{triggerLabel ?? labels.open}</Button></DialogPrimitive.Trigger>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-[#171416]/35" />
         <DialogPrimitive.Content className="fixed inset-x-3 bottom-3 top-3 z-50 ml-auto flex max-w-5xl flex-col overflow-hidden border border-[#e7e2e4] bg-white shadow-2xl focus:outline-none sm:inset-x-6 sm:bottom-6 sm:top-6">
