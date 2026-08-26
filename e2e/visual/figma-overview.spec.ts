@@ -89,7 +89,7 @@ test("Figma Overview 4:147 golden visual contract", async ({ page }) => {
       actualPath,
       diffPath,
       metricsPath,
-      "3.5",
+      "3.7",
       "20",
     ],
     { stdio: "inherit" },
