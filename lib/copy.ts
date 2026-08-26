@@ -167,6 +167,7 @@ export type AppCopy = {
     noTrace: string;
   };
   settings: {
+    workspace: string;
     title: string;
     description: string;
     languageTitle: string;
@@ -362,18 +363,19 @@ export const UI_COPY = {
       noTrace: "No trace data is available yet.",
     },
     settings: {
+      workspace: "Workspace",
       title: "Settings",
-      description: "Choose how RAG StepLab presents the learning interface. These preferences are saved locally in this browser.",
+      description: "Manage your workspace preferences.",
       languageTitle: "Language",
-      languageDescription: "Change the interface language.",
+      languageDescription: "Choose the language used across the interface.",
       english: "English",
       turkish: "Türkçe",
       hintsTitle: "Learning hints",
-      hintsDescription: "Keep contextual hints visible while exploring the lab.",
+      hintsDescription: "Show inline “Why this matters” notes that explain each RAG stage.",
       hintsEnabled: "Show learning hints",
       hintsDisabled: "Hide learning hints",
       resetTitle: "Reset preferences",
-      resetDescription: "Return language and learning hints to their defaults.",
+      resetDescription: "Restore language and learning hints to their default values.",
       reset: "Reset",
       nothingToReset: "Preferences already use the defaults.",
       preferencesSaved: "Changes are saved automatically.",
@@ -555,18 +557,19 @@ export const UI_COPY = {
       noTrace: "Henüz iz verisi yok.",
     },
     settings: {
+      workspace: "Çalışma alanı",
       title: "Ayarlar",
-      description: "RAG StepLab'in öğrenme arayüzünü nasıl sunacağını seçin. Bu tercihler bu tarayıcıya kaydedilir.",
+      description: "Çalışma alanı tercihlerinizi yönetin.",
       languageTitle: "Dil",
-      languageDescription: "Arayüz dilini değiştirin.",
+      languageDescription: "Arayüz genelinde kullanılacak dili seçin.",
       english: "English",
       turkish: "Türkçe",
       hintsTitle: "Öğrenme ipuçları",
-      hintsDescription: "Laboratuvarı incelerken bağlamsal ipuçlarını görünür tutun.",
+      hintsDescription: "Her RAG aşamasını açıklayan “Bu neden önemli?” notlarını gösterin.",
       hintsEnabled: "Öğrenme ipuçlarını göster",
       hintsDisabled: "Öğrenme ipuçlarını gizle",
       resetTitle: "Tercihleri sıfırla",
-      resetDescription: "Dil ve öğrenme ipuçlarını varsayılanlara döndürün.",
+      resetDescription: "Dili ve öğrenme ipuçlarını varsayılan değerlerine döndürün.",
       reset: "Sıfırla",
       nothingToReset: "Tercihler zaten varsayılan değerlerde.",
       preferencesSaved: "Değişiklikler otomatik kaydedilir.",
