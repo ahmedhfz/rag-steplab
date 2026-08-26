@@ -62,34 +62,34 @@ export function DocumentUploadPanel() {
   }
 
   return (
-    <section className="flex items-center justify-between gap-3" data-testid="document-upload-panel">
-      <div><h2 className="text-sm font-semibold">{labels.title}</h2><p className="mt-1 text-xs text-slate-500">{copy.overview.fileRequirements}</p></div>
+    <section className="flex flex-wrap items-center justify-between gap-4 border border-[#e7e2e4] bg-white px-4 py-4 sm:px-5" data-testid="document-upload-panel">
+      <div className="flex min-w-0 items-center gap-3"><span className="grid size-9 shrink-0 place-items-center rounded-[8px] bg-[#fbf4f6] text-[#711f3a]"><FilePlus aria-hidden="true" className="size-4" /></span><div><h2 className="text-sm font-semibold">{labels.title}</h2><p className="mt-1 text-xs text-[#6e676a]">{copy.overview.fileRequirements}</p></div></div>
       <DialogPrimitive.Root onOpenChange={(next) => { if (isSubmitting) return; setOpen(next); if (next) reset(); }} open={open}>
-        <DialogPrimitive.Trigger asChild><Button className="gap-2" type="button"><FilePlus aria-hidden="true" className="size-4" />{labels.title}</Button></DialogPrimitive.Trigger>
+        <DialogPrimitive.Trigger asChild><Button className="gap-2" type="button">{labels.title}</Button></DialogPrimitive.Trigger>
         <DialogPrimitive.Portal>
-          <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-slate-950/35" />
-          <DialogPrimitive.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border bg-white p-5 shadow-xl focus:outline-none" onEscapeKeyDown={(event) => { if (isSubmitting) event.preventDefault(); }} onInteractOutside={(event) => { if (isSubmitting) event.preventDefault(); }}>
+          <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-[#171416]/35" />
+          <DialogPrimitive.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-[12px] border border-[#e7e2e4] bg-white p-5 shadow-[0_20px_60px_rgba(23,20,22,0.16)] focus:outline-none sm:p-6" onEscapeKeyDown={(event) => { if (isSubmitting) event.preventDefault(); }} onInteractOutside={(event) => { if (isSubmitting) event.preventDefault(); }}>
             <div className="flex items-start justify-between gap-4">
-              <div><DialogPrimitive.Title className="text-base font-semibold">{labels.title}</DialogPrimitive.Title><DialogPrimitive.Description className="mt-1 text-sm leading-5 text-slate-600">{copy.overview.fileRequirements}</DialogPrimitive.Description></div>
+              <div><DialogPrimitive.Title className="text-base font-semibold">{labels.title}</DialogPrimitive.Title><DialogPrimitive.Description className="mt-1 text-sm leading-5 text-[#6e676a]">{copy.overview.fileRequirements}</DialogPrimitive.Description></div>
               <DialogPrimitive.Close asChild><Button aria-label={labels.close} disabled={isSubmitting} size="icon-sm" type="button" variant="ghost"><X aria-hidden="true" className="size-4" /></Button></DialogPrimitive.Close>
             </div>
             <div
               data-testid="pdf-drop-zone"
-              className={cn("mt-5 rounded-md border border-dashed p-5 text-center transition-colors", dragActive && "border-sky-500 bg-sky-50")}
+              className={cn("mt-5 rounded-[10px] border border-dashed border-[#d8d2d5] bg-[#fbfafb] p-7 text-center transition-colors", dragActive && "border-[#711f3a] bg-[#fbf4f6]")}
               onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
               onDragLeave={(event) => { event.preventDefault(); if (event.currentTarget === event.target) setDragActive(false); }}
               onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setDragActive(true); }}
               onDrop={(event) => { event.preventDefault(); setDragActive(false); chooseFile(event.dataTransfer.files?.[0]); }}
             >
-              <Upload aria-hidden="true" className="mx-auto size-6 text-slate-500" />
-              <p className="mt-2 text-sm text-slate-600">{dragActive ? labels.drop : copy.overview.choosePdf}</p>
+              <Upload aria-hidden="true" className="mx-auto size-6 text-[#711f3a]" />
+              <p className="mt-2 text-sm text-[#6e676a]">{dragActive ? labels.drop : copy.overview.choosePdf}</p>
               <input accept="application/pdf,.pdf" aria-label={copy.overview.choosePdf} className="sr-only" onChange={(event) => { chooseFile(event.target.files?.[0]); event.target.value = ""; }} ref={fileInputRef} type="file" />
               <Button autoFocus className="mt-3" onClick={() => fileInputRef.current?.click()} type="button" variant="outline">{copy.overview.choosePdf}</Button>
-              <p className="mt-2 text-xs text-slate-500">{copy.overview.noFileSent}</p>
+              <p className="mt-2 text-xs text-[#969093]">{copy.overview.noFileSent}</p>
             </div>
-            {file ? <div className="mt-4 flex items-center justify-between gap-3 border px-3 py-2 text-sm"><span className="min-w-0 truncate"><span className="font-medium">{labels.selected}: </span>{file.name}<span className="ml-2 text-xs text-slate-500">{formatDocumentFileSize(file.size, preferences.locale)}</span></span><Button aria-label={labels.close} onClick={() => { setFile(null); setValidationError(null); }} size="icon-xs" type="button" variant="ghost"><X aria-hidden="true" className="size-3.5" /></Button></div> : <p className="mt-4 text-sm text-slate-500">{labels.empty}</p>}
-            {validationError ? <p className="mt-3 text-sm text-red-700" role="alert">{validationMessage(validationError, copy.overview)}</p> : null}
-            {submitError ? <p className="mt-3 text-sm text-red-700" role="alert">{submitError}</p> : null}
+            {file ? <div className="mt-4 flex items-center justify-between gap-3 rounded-[8px] border border-[#e7e2e4] bg-[#fbfafb] px-3 py-2 text-sm"><span className="min-w-0 truncate"><span className="font-medium">{labels.selected}: </span>{file.name}<span className="ml-2 text-xs text-[#6e676a]">{formatDocumentFileSize(file.size, preferences.locale)}</span></span><Button aria-label={labels.close} onClick={() => { setFile(null); setValidationError(null); }} size="icon-xs" type="button" variant="ghost"><X aria-hidden="true" className="size-3.5" /></Button></div> : <p className="mt-4 text-sm text-[#969093]">{labels.empty}</p>}
+            {validationError ? <p className="mt-3 text-sm text-[#a23b3b]" role="alert">{validationMessage(validationError, copy.overview)}</p> : null}
+            {submitError ? <p className="mt-3 text-sm text-[#a23b3b]" role="alert">{submitError}</p> : null}
             <div className="mt-5 flex justify-end gap-2">
               <DialogPrimitive.Close asChild><Button disabled={isSubmitting} type="button" variant="outline">{labels.close}</Button></DialogPrimitive.Close>
               <Button aria-busy={isSubmitting} disabled={!file || Boolean(validationError) || isSubmitting} onClick={() => void submit()} type="button">{isSubmitting ? <><LoaderCircle aria-hidden="true" className="size-4 animate-spin" />{labels.saving}</> : labels.submit}</Button>

@@ -37,7 +37,7 @@ export function ParseRunSelector({ locale }: { locale: "en" | "tr" }) {
       <Select onValueChange={(value) => void selectParseRun(value)} value={selectedParseRunId}>
         <SelectTrigger className="mt-2" id="selected-parse-run"><SelectValue /></SelectTrigger>
         <SelectContent>
-          {runs.map((run) => <SelectItem key={run.id} value={run.id}>{run.id}{run.historicalLineage ? " · historical" : " · active"}</SelectItem>)}
+          {runs.map((run, index) => <SelectItem key={run.id} value={run.id}>{locale === "tr" ? "Ayrıştırma" : "Parse"} {run.runNumber ?? index + 1}{run.historicalLineage ? (locale === "tr" ? " · geçmiş" : " · historical") : (locale === "tr" ? " · aktif" : " · active")}</SelectItem>)}
         </SelectContent>
       </Select>
     </div>
@@ -280,11 +280,11 @@ export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
   const isLegacyView = view !== undefined;
 
   return (
-    <div>
-      <header className="border-b px-4 py-6 sm:px-7">
-        <div className="text-xs text-slate-500">{copy.documents.root}{isLegacyView ? <>&nbsp;&nbsp;›&nbsp;&nbsp;{current.title}</> : null}</div>
-        <h1 className="mt-3 text-[22px] font-semibold tracking-[-0.025em]">{isLegacyView ? current.title : copy.documents.root}</h1>
-        <p className="mt-1 max-w-2xl text-sm text-slate-500">{isLegacyView ? current.description : preferences.locale === "tr" ? "PDF kitaplığını yönetin." : "Manage the PDF library."}</p>
+    <div className="min-w-0 overflow-x-clip">
+      <header className="border-b bg-white px-4 py-8 sm:px-8 sm:py-9">
+        <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#969093]">{copy.documents.root}{isLegacyView ? <>&nbsp;&nbsp;›&nbsp;&nbsp;{current.title}</> : null}</div>
+        <h1 className="mt-3 text-[28px] font-semibold tracking-[-0.045em]">{isLegacyView ? current.title : copy.documents.root}</h1>
+        <p className="mt-2 max-w-2xl text-sm leading-5 text-[#6e676a]">{isLegacyView ? current.description : preferences.locale === "tr" ? "PDF kitaplığını yönetin." : "Manage the PDF library."}</p>
         {isLegacyView ? <ParseRunSelector locale={preferences.locale} /> : null}
       </header>
 
@@ -301,8 +301,8 @@ export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
         ))}
       </nav> : null}
 
-      {!isLegacyView ? <section className="border-b px-4 py-5 sm:px-7"><DocumentUploadPanel /></section> : null}
-      {!isLegacyView && uploadNotice ? <p aria-live="polite" className={cn("border-b px-4 py-3 text-sm sm:px-7", uploadNotice === "reused" ? "bg-sky-50 text-sky-900" : "bg-emerald-50 text-emerald-900")} role="status">{uploadNotice === "reused" ? (preferences.locale === "tr" ? "Mevcut doküman yeniden kullanıldı; duplicate oluşturulmadı. Parse ekranından devam edebilirsiniz." : "Existing document reused; no duplicate was created. Continue from Parse.") : (preferences.locale === "tr" ? "Doküman eklendi; parse etmeye hazır." : "Document added; ready to parse.")} <Link className="ml-1 font-medium underline" href="/parse">{preferences.locale === "tr" ? "Parse'a devam et" : "Continue to Parse"}</Link></p> : null}
+      {!isLegacyView ? <section className="border-b px-4 py-5 sm:px-8"><DocumentUploadPanel /></section> : null}
+      {!isLegacyView && uploadNotice ? <p aria-live="polite" className={cn("border-b px-4 py-3 text-sm sm:px-8", uploadNotice === "reused" ? "bg-[#fbf4f6] text-[#501329]" : "bg-[#f0f6f1] text-[#3f7a55]")} role="status">{uploadNotice === "reused" ? (preferences.locale === "tr" ? "Mevcut doküman yeniden kullanıldı; duplicate oluşturulmadı. Parse ekranından devam edebilirsiniz." : "Existing document reused; no duplicate was created. Continue from Parse.") : (preferences.locale === "tr" ? "Doküman eklendi; parse etmeye hazır." : "Document added; ready to parse.")} <Link className="ml-1 font-medium underline" href="/parse">{preferences.locale === "tr" ? "Parse'a devam et" : "Continue to Parse"}</Link></p> : null}
       {effectiveView === "overview" ? <DocumentLibrary locale={preferences.locale} /> : null}
     </div>
   );
