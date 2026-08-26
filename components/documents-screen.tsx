@@ -49,7 +49,7 @@ function EmptyState({ children }: { children: React.ReactNode }) {
     <motion.div
       animate={{ opacity: 1, y: 0 }}
       aria-live="polite"
-      className="flex min-h-32 items-center justify-center border-y px-6 py-8 text-center text-sm text-slate-500"
+      className="flex min-h-32 items-center justify-center border-y border-[#e7e2e4] px-6 py-8 text-center text-sm text-[#6e676a]"
       initial={{ opacity: 0, y: 5 }}
       transition={{ duration: 0.18, ease: "easeOut" }}
     >
@@ -77,12 +77,12 @@ export function SummaryGrid({ copy, result }: { copy: AppCopy["documents"]; resu
       {fields.map(([label, value], index) => (
         <motion.div
           animate={{ opacity: 1, y: 0 }}
-          className="border px-3 py-2"
+          className="rounded-[10px] border border-[#e7e2e4] bg-white px-3 py-2"
           initial={{ opacity: 0, y: 5 }}
           key={label}
           transition={{ duration: 0.16, delay: index * 0.035, ease: "easeOut" }}
         >
-          <dt className="text-[11px] text-slate-500">{label}</dt>
+          <dt className="text-[11px] text-[#969093]">{label}</dt>
           <dd className="mt-1 text-lg font-semibold">{value}</dd>
         </motion.div>
       ))}
@@ -102,16 +102,16 @@ export function DocumentOverviewTab({ copy, selectedFile, persistedDocument, res
           {fileName ? (
             <dl className="grid gap-3 border-y px-4 py-5 text-sm">
               <div className="flex items-center justify-between gap-4">
-                <dt className="text-slate-500">{copy.fileName}</dt>
+                <dt className="text-[#6e676a]">{copy.fileName}</dt>
                 <dd className="max-w-[65%] truncate font-medium" title={fileName}>{fileName}</dd>
               </div>
               <div className="flex items-center justify-between gap-4">
-                <dt className="text-slate-500">{copy.size}</dt>
+                <dt className="text-[#6e676a]">{copy.size}</dt>
                 <dd>{formatDocumentFileSize(sizeBytes ?? 0, locale)}</dd>
               </div>
               {pageCount !== undefined && (
                 <div className="flex items-center justify-between gap-4">
-                  <dt className="text-slate-500">{copy.pages}</dt>
+                  <dt className="text-[#6e676a]">{copy.pages}</dt>
                   <dd>{pageCount}</dd>
                 </div>
               )}
@@ -121,7 +121,7 @@ export function DocumentOverviewTab({ copy, selectedFile, persistedDocument, res
               <div>
                 <p>{copy.noDocumentSelected}</p>
                 <Button asChild className="mt-4" size="sm" variant="outline">
-                  <Link className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400" href="/">{copy.chooseFromOverview} <ArrowUpRight aria-hidden="true" className="size-4" /></Link>
+                  <Link className="text-[#501329] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" href="/">{copy.chooseFromOverview} <ArrowUpRight aria-hidden="true" className="size-4" /></Link>
                 </Button>
               </div>
             </EmptyState>
@@ -141,13 +141,13 @@ export function DocumentOverviewTab({ copy, selectedFile, persistedDocument, res
 
 function TableElement({ element }: { element: ParsedElement }) {
   const rows = element.table?.rows ?? [];
-  if (rows.length === 0) return <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{element.text}</p>;
+  if (rows.length === 0) return <p className="whitespace-pre-wrap text-sm leading-6 text-[#171416]">{element.text}</p>;
 
   const [header, ...body] = rows;
   return (
-    <div className="overflow-x-auto border">
+    <div className="overflow-x-auto rounded-[10px] border border-[#e7e2e4]">
       <table className="min-w-full text-left text-sm">
-        <thead className="bg-slate-50">
+        <thead className="bg-[#fbfafb]">
           <tr>{header.map((cell, index) => <th className="border-b px-3 py-2 font-medium" key={`${cell}-${index}`}>{cell}</th>)}</tr>
         </thead>
         <tbody>
@@ -166,22 +166,22 @@ function StructuredElement({ copy, element, index }: { copy: AppCopy["documents"
   return (
     <motion.article
       animate={{ opacity: 1, x: 0 }}
-      className="border-b px-4 py-5 last:border-b-0 sm:px-6"
+      className="border-b border-[#e7e2e4] px-4 py-5 last:border-b-0 sm:px-6"
       exit={{ opacity: 0, x: -5 }}
       initial={{ opacity: 0, x: 5 }}
       layout
       transition={{ duration: 0.18, delay: index * 0.035, ease: "easeOut" }}
     >
-      <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">
-        <span className="rounded border px-2 py-1">{copy.elementTypes[element.type]}</span>
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.08em] text-[#6e676a]">
+        <span className="rounded-md border border-[#e7e2e4] bg-[#fbfafb] px-2 py-1">{copy.elementTypes[element.type]}</span>
         {element.pageNumbers.length > 0 && <span>{copy.page} {element.pageNumbers.join(", ")}</span>}
       </div>
       {element.type === "table" ? <TableElement element={element} /> : element.type === "list" ? (
-        <ul className="list-disc pl-5 text-sm leading-6 text-slate-700"><li>{element.text}</li></ul>
+        <ul className="list-disc pl-5 text-sm leading-6 text-[#171416]"><li>{element.text}</li></ul>
       ) : element.type === "heading" ? (
         <h3 className="text-base font-semibold leading-6">{element.text}</h3>
       ) : (
-        <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{element.text}</p>
+        <p className="whitespace-pre-wrap text-sm leading-6 text-[#171416]">{element.text}</p>
       )}
     </motion.article>
   );
@@ -193,14 +193,14 @@ function PageList({ copy, pages, selectedPageNumber, onSelect }: { copy: AppCopy
       {pages.map((page) => (
         <button
           aria-pressed={page.pageNumber === selectedPageNumber}
-          className={cn("relative flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-slate-400", page.pageNumber === selectedPageNumber && "bg-slate-100 font-medium")}
+          className={cn("relative flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm hover:bg-[#fbf4f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#711f3a]/25", page.pageNumber === selectedPageNumber && "bg-[#fbf4f6] font-medium")}
           key={page.pageNumber}
           onClick={() => onSelect(page.pageNumber)}
           type="button"
         >
-          {page.pageNumber === selectedPageNumber && <motion.span aria-hidden="true" className="absolute inset-y-2 left-0 w-0.5 bg-slate-950" layoutId="parsed-page-active" transition={{ type: "spring", stiffness: 500, damping: 35 }} />}
+          {page.pageNumber === selectedPageNumber && <motion.span aria-hidden="true" className="absolute inset-y-2 left-0 w-0.5 bg-[#711f3a]" layoutId="parsed-page-active" transition={{ type: "spring", stiffness: 500, damping: 35 }} />}
           <span>{copy.page} {page.pageNumber}</span>
-          <span className="text-xs text-slate-500">{page.elements.length} {copy.pageElements}</span>
+          <span className="text-xs text-[#6e676a]">{page.elements.length} {copy.pageElements}</span>
         </button>
       ))}
     </div>
@@ -300,7 +300,7 @@ export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
         {documentTabs.map((tab) => (
           <Link
             aria-current={view === tab.view ? "page" : undefined}
-            className={cn("-mb-px border-b-2 border-transparent py-3 text-sm text-slate-500 outline-none hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-slate-400", view === tab.view && "border-slate-950 font-medium text-slate-950")}
+            className={cn("-mb-px border-b-2 border-transparent py-3 text-sm text-[#6e676a] outline-none hover:text-[#501329] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25", view === tab.view && "border-[#711f3a] font-medium text-[#501329]")}
             href={tab.href}
             key={tab.view}
           >

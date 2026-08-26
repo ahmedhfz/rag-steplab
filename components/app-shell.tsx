@@ -206,29 +206,29 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
 
             {openView === "guides" && (
               <div className="p-1">
-                <button className="mb-2 flex items-center gap-1.5 rounded px-1.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900" onClick={() => setOpenView("menu")} type="button">
+                <button className="mb-2 flex items-center gap-1.5 rounded px-1.5 py-1 text-xs font-medium text-[#6e676a] hover:bg-[#fbf4f6] hover:text-[#501329]" onClick={() => setOpenView("menu")} type="button">
                   <ArrowLeft aria-hidden="true" className="size-3.5" />
                   {copy.common.back}
                 </button>
-                <h2 className="px-1.5 text-sm font-semibold text-slate-900">{copy.guidePanel.title}</h2>
-                <p className="px-1.5 pt-1.5 text-xs leading-5 text-slate-600">{copy.guidePanel.description}</p>
+                <h2 className="px-1.5 text-sm font-semibold text-[#171416]">{copy.guidePanel.title}</h2>
+                <p className="px-1.5 pt-1.5 text-xs leading-5 text-[#6e676a]">{copy.guidePanel.description}</p>
                 <nav aria-label={copy.guides} className="mt-3 grid gap-1 border-t pt-2 text-sm">
-                  <Link className="rounded px-2 py-1.5 hover:bg-slate-100" href="/" onClick={closeAfterNavigation}>{copy.nav.overview}</Link>
-                  <Link className="rounded px-2 py-1.5 hover:bg-slate-100" href="/documents" onClick={closeAfterNavigation}>{copy.nav.documents}</Link>
-                  <Link className="rounded px-2 py-1.5 hover:bg-slate-100" href="/playground" onClick={closeAfterNavigation}>{copy.nav.playground}</Link>
+                  <Link className="rounded px-2 py-1.5 hover:bg-[#fbf4f6] hover:text-[#501329]" href="/" onClick={closeAfterNavigation}>{copy.nav.overview}</Link>
+                  <Link className="rounded px-2 py-1.5 hover:bg-[#fbf4f6] hover:text-[#501329]" href="/documents" onClick={closeAfterNavigation}>{copy.nav.documents}</Link>
+                  <Link className="rounded px-2 py-1.5 hover:bg-[#fbf4f6] hover:text-[#501329]" href="/playground" onClick={closeAfterNavigation}>{copy.nav.playground}</Link>
                 </nav>
               </div>
             )}
 
             {openView === "help" && (
               <div className="p-1">
-                <button className="mb-2 flex items-center gap-1.5 rounded px-1.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900" onClick={() => setOpenView("menu")} type="button">
+                <button className="mb-2 flex items-center gap-1.5 rounded px-1.5 py-1 text-xs font-medium text-[#6e676a] hover:bg-[#fbf4f6] hover:text-[#501329]" onClick={() => setOpenView("menu")} type="button">
                   <ArrowLeft aria-hidden="true" className="size-3.5" />
                   {copy.common.back}
                 </button>
-                <h2 className="px-1.5 text-sm font-semibold text-slate-900">{copy.helpPanel.title}</h2>
-                <p className="px-1.5 pt-1.5 text-xs leading-5 text-slate-600">{copy.helpPanel.description}</p>
-                <Link className="mt-3 inline-flex border-t px-1.5 pt-2 text-sm font-medium text-slate-900 underline-offset-4 hover:underline" href="/settings" onClick={closeAfterNavigation}>
+                <h2 className="px-1.5 text-sm font-semibold text-[#171416]">{copy.helpPanel.title}</h2>
+                <p className="px-1.5 pt-1.5 text-xs leading-5 text-[#6e676a]">{copy.helpPanel.description}</p>
+                <Link className="mt-3 inline-flex border-t px-1.5 pt-2 text-sm font-medium text-[#171416] underline-offset-4 hover:text-[#501329] hover:underline" href="/settings" onClick={closeAfterNavigation}>
                   {copy.helpPanel.settingsLink}
                 </Link>
               </div>
