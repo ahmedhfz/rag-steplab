@@ -234,22 +234,30 @@ export function ParsedContentTab({ copy, result }: { copy: AppCopy["documents"];
   ];
 
   return (
-    <div className="grid border-t lg:grid-cols-[260px_minmax(0,1fr)]">
-      <aside className="border-b lg:border-b-0 lg:border-r">
-        <div className="border-b px-4 py-4 sm:px-6"><h2 className="text-sm font-semibold">{copy.pages}</h2></div>
+    <div className="grid border-t lg:grid-cols-[250px_minmax(0,1fr)]">
+      <aside className="border-b bg-[#fbfafb] lg:border-b-0 lg:border-r">
+        <div className="border-b px-4 py-4 sm:px-6"><h2 className="text-sm font-semibold">{copy.pages}</h2><p className="mt-1 text-xs text-[#969093]">{copy.pageElements}</p></div>
         {result ? (pages.length > 0 ? <PageList copy={copy} onSelect={setSelectedPageNumber} pages={pages} selectedPageNumber={effectiveSelectedPageNumber} /> : <EmptyState>{copy.noPages}</EmptyState>) : <EmptyState>{copy.noPages}</EmptyState>}
       </aside>
 
       <section className="min-w-0">
-        <div className="flex flex-col gap-3 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-          <h2 className="text-sm font-semibold">{copy.parsedElements}</h2>
-          <div aria-describedby={!result ? "parsed-view-disabled-reason" : undefined} aria-label={copy.viewMode} className="inline-flex w-fit rounded-md border p-0.5" role="group">
-            {viewOptions.map((view) => (
-              <Button aria-pressed={activeView === view.key} disabled={!result} key={view.key} onClick={() => setActiveView(view.key)} size="sm" variant={activeView === view.key ? "secondary" : "ghost"}>{view.label}</Button>
-            ))}
+        <div className="flex flex-col gap-3 border-b px-4 py-4 sm:px-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div><h2 className="text-sm font-semibold">{copy.parsedElements}</h2><p className="mt-1 text-xs text-[#6e676a]">{copy.structured}</p></div>
+            <div className="flex items-center gap-2">
+              <div aria-describedby={!result ? "parsed-view-disabled-reason" : undefined} aria-label={copy.viewMode} className="inline-flex w-fit rounded-[8px] border border-[#e7e2e4] bg-[#fbfafb] p-0.5" role="group">
+                {viewOptions.slice(0, 1).map((view) => <Button aria-pressed={activeView === view.key} disabled={!result} key={view.key} onClick={() => setActiveView(view.key)} size="sm" variant={activeView === view.key ? "secondary" : "ghost"}>{view.label}</Button>)}
+              </div>
+              <details className="relative" open={activeView !== "structured"}>
+                <summary className="cursor-pointer list-none rounded-[8px] border border-[#e7e2e4] px-3 py-2 text-xs font-medium text-[#6e676a] outline-none hover:bg-[#fbf4f6] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25">{copy.markdown === "Markdown" ? "Developer output" : "Geliştirici çıktısı"}</summary>
+                <div className="absolute right-0 top-[calc(100%+0.5rem)] z-20 flex min-w-[150px] flex-col gap-1 rounded-[10px] border border-[#e7e2e4] bg-white p-1.5 shadow-[0_10px_28px_rgba(23,20,22,0.1)]">
+                  {viewOptions.slice(1).map((view) => <Button aria-pressed={activeView === view.key} disabled={!result} key={view.key} onClick={() => setActiveView(view.key)} size="sm" variant={activeView === view.key ? "secondary" : "ghost"}>{view.label}</Button>)}
+                </div>
+              </details>
+            </div>
           </div>
         </div>
-        {!result && <p className="border-b px-4 py-3 text-xs text-slate-500 sm:px-6" id="parsed-view-disabled-reason">{copy.parsedViewsUnavailable}</p>}
+        {!result && <p className="border-b px-4 py-3 text-xs text-[#6e676a] sm:px-6" id="parsed-view-disabled-reason">{copy.parsedViewsUnavailable}</p>}
         <AnimatePresence initial={false} mode="wait">
           <motion.div
             animate={{ opacity: 1, y: 0 }}
@@ -260,9 +268,9 @@ export function ParsedContentTab({ copy, result }: { copy: AppCopy["documents"];
             transition={{ duration: 0.16, ease: "easeOut" }}
           >
             {!result ? <EmptyState>{copy.noParsedElements}</EmptyState> : activeView === "structured" ? <StructuredView copy={copy} page={selectedPage} /> : activeView === "markdown" ? (
-              <pre className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-slate-700 sm:px-6" data-testid="parsed-markdown">{result.markdown}</pre>
+              <pre className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-[#6e676a] sm:px-6" data-testid="parsed-markdown">{result.markdown}</pre>
             ) : (
-              <pre className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-slate-700 sm:px-6" data-testid="parsed-json">{JSON.stringify(result.structured, null, 2)}</pre>
+              <pre className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-[#6e676a] sm:px-6" data-testid="parsed-json">{JSON.stringify(result.structured, null, 2)}</pre>
             )}
           </motion.div>
         </AnimatePresence>
