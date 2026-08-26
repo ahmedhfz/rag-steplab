@@ -44,7 +44,7 @@ Test şu sırayı uygular:
 4. Ana bölgeleri ve dokuz journey node'unu `getBoundingClientRect()` ile doğrular.
 5. Ekran görüntüsünün gerçek PNG boyutunu doğrular.
 6. Canonical Figma PNG ile Playwright snapshot karşılaştırmasını ve MAE tanısını çalıştırır.
-7. Actual, diff ve JSON metriklerini `output/playwright/figma-visual/` altında üretir.
+7. Actual, diff ve JSON metriklerini `output/playwright/figma-visual/` altında üretir. Karşılaştırma helper'ı `e2e/visual/figma-visual-diff.mjs` altında tutulur; bu yol CI tarafından frontend/E2E olarak sınıflandırılır.
 
 `npm run e2e:smoke`, bu testi seeded smoke suite'inden sonra çalıştırdığı için kontrat CI merge gate'inin parçasıdır. Fixture üretim navigasyonuna bağlı değildir; Supabase, Modal, auth veya `DocumentPipelineProvider` çağırmaz.
 

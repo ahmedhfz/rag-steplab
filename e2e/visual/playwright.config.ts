@@ -8,9 +8,10 @@ const baseURL = process.env.E2E_BASE_URL ?? "http://localhost:3000";
 const isLocal = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(baseURL);
 
 export default defineConfig({
-  testDir: "./e2e/visual",
-  outputDir: "output/playwright/figma-visual/test-results",
-  snapshotPathTemplate: "tests/visual/figma/reference/{arg}{ext}",
+  testDir: ".",
+  testMatch: "figma-overview.spec.ts",
+  outputDir: "../../output/playwright/figma-visual/test-results",
+  snapshotPathTemplate: "../../tests/visual/figma/reference/{arg}{ext}",
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: 0,

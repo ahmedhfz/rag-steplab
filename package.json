@@ -8,7 +8,7 @@
     "build": "next build",
     "e2e": "playwright test --project=chromium-seeded",
     "e2e:smoke": "playwright test --project=chromium-seeded && npm run e2e:visual",
-    "e2e:visual": "playwright test --config=playwright.visual.config.ts",
+    "e2e:visual": "playwright test --config=e2e/visual/playwright.config.ts",
     "e2e:auth": "playwright test --project=auth",
     "e2e:full": "playwright test --project=full-rag --workers=1",
     "e2e:headed": "playwright test --project=chromium-seeded --headed",
