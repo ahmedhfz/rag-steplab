@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { defineConfig } from "@playwright/test";
 
 try {
@@ -22,6 +24,7 @@ export default defineConfig({
   use: {
     baseURL,
     browserName: "chromium",
+    storageState: isLocal ? undefined : path.resolve("output/playwright/.auth/vercel-bypass.json"),
     headless: true,
     viewport: { width: 1441, height: 1041 },
     deviceScaleFactor: 1,
