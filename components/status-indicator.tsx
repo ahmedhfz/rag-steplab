@@ -9,14 +9,14 @@ import type { PipelineStepState } from "@/lib/rag-ui-types";
 import { cn } from "@/lib/utils";
 
 const stateStyles: Record<PipelineStepState, string> = {
-  "Not started": "text-slate-500",
-  Ready: "text-blue-700",
-  Completed: "text-emerald-700",
-  Skipped: "text-slate-500",
-  Processing: "text-amber-700",
-  Error: "text-red-700",
-  Locked: "text-slate-400",
-  Stale: "text-orange-700",
+  "Not started": "text-[#6e676a]",
+  Ready: "text-[#711f3a]",
+  Completed: "text-[#3f7a55]",
+  Skipped: "text-[#969093]",
+  Processing: "text-[#8d651e]",
+  Error: "text-[#a23b3b]",
+  Locked: "text-[#969093]",
+  Stale: "text-[#8d651e]",
 };
 
 function StateIcon({ state }: { state: PipelineStepState }) {
