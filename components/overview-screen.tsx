@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useState } from "react";
 import {
   ArrowRight,
+  ChevronDown,
 } from "lucide-react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
@@ -468,24 +469,22 @@ export function OverviewScreen() {
           </div>
         </aside>
 
-        <details className="sr-only" open={false}>
-          <summary>{labels.managePipeline}</summary>
-          <div>
-            <label htmlFor="overview-document">{labels.document}</label>
+        <details className="mt-6 rounded-[12px] border border-[#e7e2e4] bg-white">
+          <summary className="flex h-[46px] cursor-pointer list-none items-center justify-between px-4 text-[13px] font-medium text-[#171416]"><span>{labels.managePipeline}</span><ChevronDown aria-hidden="true" className="size-4 text-[#969093]" /></summary>
+          <div className="grid gap-4 border-t border-[#e7e2e4] p-4 lg:grid-cols-2">
+            <label className="text-xs font-medium text-[#171416]" htmlFor="overview-document">{labels.document}</label>
             <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
-              <SelectTrigger id="overview-document"><SelectValue placeholder={labels.chooseDocument} /></SelectTrigger>
+              <SelectTrigger className="lg:col-start-1" id="overview-document"><SelectValue placeholder={labels.chooseDocument} /></SelectTrigger>
               <SelectContent>{documents.map((document) => <SelectItem key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
             </Select>
-            <label htmlFor="overview-pipeline">{labels.pipeline}</label>
+            <label className="text-xs font-medium text-[#171416] lg:col-start-2 lg:row-start-1" htmlFor="overview-pipeline">{labels.pipeline}</label>
             <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value === "none" ? null : value)} value={activePipelineId ?? "none"}>
-              <SelectTrigger id="overview-pipeline"><SelectValue placeholder={labels.noPipeline} /></SelectTrigger>
+              <SelectTrigger className="lg:col-start-2" id="overview-pipeline"><SelectValue placeholder={labels.noPipeline} /></SelectTrigger>
               <SelectContent><SelectItem value="none">{labels.noPipeline}</SelectItem>{pipelines.map((pipeline) => <SelectItem key={pipeline.id} value={pipeline.id}>{pipeline.name}</SelectItem>)}</SelectContent>
             </Select>
-            <Button onClick={() => { setEditing("create"); setPipelineName(""); }} size="sm" variant="secondary">{labels.newPipeline}</Button>
-            <Button disabled={!activePipeline} onClick={() => { setEditing("rename"); setPipelineName(activePipeline?.name ?? ""); }} size="sm" variant="ghost">{labels.rename}</Button>
-            <Button disabled={!activePipeline} onClick={() => setConfirmDelete(true)} size="sm" variant="ghost">{labels.remove}</Button>
-            {editing ? <div><Input aria-label={labels.namePlaceholder} maxLength={100} onChange={(event) => setPipelineName(event.target.value)} placeholder={labels.namePlaceholder} value={pipelineName} /><Button disabled={!pipelineName.trim()} onClick={() => void savePipelineName()} size="sm">{labels.save}</Button><Button onClick={() => setEditing(null)} size="sm" variant="ghost">{labels.cancel}</Button></div> : null}
-            {confirmDelete && activePipeline ? <div aria-describedby="delete-pipeline-description" aria-labelledby="delete-pipeline-title" aria-modal="true" role="dialog"><h2 id="delete-pipeline-title">{labels.remove}</h2><p id="delete-pipeline-description">{labels.confirmDelete}</p><Button onClick={() => setConfirmDelete(false)} variant="outline">{labels.cancel}</Button><Button onClick={() => { void deletePipeline(activePipeline.id); setConfirmDelete(false); }} variant="destructive">{labels.remove}</Button></div> : null}
+            <div className="flex flex-wrap gap-2 lg:col-span-2"><Button onClick={() => { setEditing("create"); setPipelineName(""); }} size="sm" variant="secondary">{labels.newPipeline}</Button><Button disabled={!activePipeline} onClick={() => { setEditing("rename"); setPipelineName(activePipeline?.name ?? ""); }} size="sm" variant="ghost">{labels.rename}</Button><Button disabled={!activePipeline} onClick={() => setConfirmDelete(true)} size="sm" variant="ghost">{labels.remove}</Button></div>
+            {editing ? <div className="flex gap-2 lg:col-span-2"><Input aria-label={labels.namePlaceholder} maxLength={100} onChange={(event) => setPipelineName(event.target.value)} placeholder={labels.namePlaceholder} value={pipelineName} /><Button disabled={!pipelineName.trim()} onClick={() => void savePipelineName()} size="sm">{labels.save}</Button><Button onClick={() => setEditing(null)} size="sm" variant="ghost">{labels.cancel}</Button></div> : null}
+            {confirmDelete && activePipeline ? <div aria-describedby="delete-pipeline-description" aria-labelledby="delete-pipeline-title" aria-modal="true" className="rounded-[10px] border border-[#eadfc9] bg-[#fffaf1] p-4 lg:col-span-2" role="dialog"><h2 className="text-sm font-semibold" id="delete-pipeline-title">{labels.remove}</h2><p className="mt-1 text-sm text-[#6e676a]" id="delete-pipeline-description">{labels.confirmDelete}</p><div className="mt-3 flex gap-2"><Button onClick={() => setConfirmDelete(false)} variant="outline">{labels.cancel}</Button><Button onClick={() => { void deletePipeline(activePipeline.id); setConfirmDelete(false); }} variant="destructive">{labels.remove}</Button></div></div> : null}
           </div>
         </details>
 
