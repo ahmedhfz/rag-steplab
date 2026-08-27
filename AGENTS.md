@@ -42,7 +42,7 @@ Status: Persistent Document → Parse → Chunk → Retrieve → Generate → Ev
 Henüz:
 
 - auth, billing ve multi-tenancy yoktur; bunlar learning roadmap'inin parçası değildir,
-- queue/worker veya yüksek trafik ölçekleme katmanı yoktur,
+- yüksek trafik için ayrı bir queue/worker ölçekleme katmanı yoktur; parse ve experiment/evaluation run'ları kalıcı async state ve Modal worker lifecycle'ı ile çalışır,
 - ANN/HNSW, semantic/parent-child chunking ve advanced RAG experiment'leri henüz yoktur,
 - kapsamlı tracing/telemetry persistence henüz yoktur.
 
@@ -75,7 +75,7 @@ Tailwind CSS
 shadcn/ui
 ```
 
-Gerçek RAG pipeline için planlanan başlangıç yönü:
+Gerçek RAG pipeline teknoloji yönü:
 
 ```text
 Python
@@ -103,7 +103,7 @@ RAG Core
 PostgreSQL + pgvector
 ```
 
-RAG Core zamanla şu sorumlulukları açık ve incelenebilir biçimde barındırabilir:
+RAG Core şu sorumlulukları açık ve incelenebilir biçimde barındırır:
 
 - ingestion ve parsing
 - chunking
