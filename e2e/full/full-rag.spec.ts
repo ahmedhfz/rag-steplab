@@ -70,10 +70,11 @@ test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğ
   await expect(page.getByRole("button", { name: "Run evaluation" })).toBeEnabled();
   await page.getByRole("button", { name: "Run evaluation" }).click();
   await expect(page.getByText("Hit@K", { exact: true }).first()).toBeVisible({ timeout: 5 * 60_000 });
-  await expect(page.getByText("ORBIT-731", { exact: false }).first()).toBeVisible();
+  // Aggregate metrics render before the individual case answer is hydrated.
+  await expect(page.getByText("ORBIT-731", { exact: false }).first()).toBeVisible({ timeout: 5 * 60_000 });
 
   await page.reload();
-  await expect(page.getByText("ORBIT-731", { exact: false }).first()).toBeVisible();
+  await expect(page.getByText("ORBIT-731", { exact: false }).first()).toBeVisible({ timeout: 5 * 60_000 });
   await signOut(page);
   await page.goto("/playground");
   await expect(page).toHaveURL(/\/login(?:\?|$)/);
