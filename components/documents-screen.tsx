@@ -28,18 +28,20 @@ const documentTabs: Array<{ view: DocumentView; href: string }> = [
 ];
 
 export function ParseRunSelector({ locale }: { locale: "en" | "tr" }) {
-  const { activeDocument, selectedParseRunId, selectParseRun } = useDocumentPipeline();
+  const { activeDocument, activePipeline, selectedParseRunId, inspectedParseRunId, selectParseRun, setPipelineParseRun } = useDocumentPipeline();
   const runs = activeDocument?.parseRuns.filter((run) => run.status === "completed" && run.isCompatible) ?? [];
+  const inspectedId = inspectedParseRunId ?? selectedParseRunId;
   if (!selectedParseRunId || runs.length < 2) return null;
   return (
     <div className="mt-4 max-w-sm">
-      <label className="text-xs font-medium" htmlFor="selected-parse-run">{locale === "tr" ? "Seçili parse run" : "Selected parse run"}</label>
-      <Select onValueChange={(value) => void selectParseRun(value)} value={selectedParseRunId}>
+      <label className="text-xs font-medium" htmlFor="selected-parse-run">{locale === "tr" ? "İncelenen parse run" : "Inspected parse run"}</label>
+      <Select onValueChange={(value) => void selectParseRun(value)} value={inspectedId ?? selectedParseRunId}>
         <SelectTrigger className="mt-2" id="selected-parse-run"><SelectValue /></SelectTrigger>
         <SelectContent>
           {runs.map((run, index) => <SelectItem key={run.id} value={run.id}>{locale === "tr" ? "Ayrıştırma" : "Parse"} {run.runNumber ?? index + 1}{run.historicalLineage ? (locale === "tr" ? " · geçmiş" : " · historical") : (locale === "tr" ? " · aktif" : " · active")}</SelectItem>)}
         </SelectContent>
       </Select>
+      {activePipeline && inspectedId && inspectedId !== selectedParseRunId ? <Button className="mt-2" onClick={() => void setPipelineParseRun(inspectedId)} size="sm" variant="outline">{locale === "tr" ? "Pipeline'da kullan" : "Use in pipeline"}</Button> : null}
     </div>
   );
 }
@@ -378,7 +380,7 @@ export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <header className="flex items-start justify-between gap-6" data-testid="documents-page-header">
           <div className="max-w-[640px]">
-            <p className="text-xs font-semibold uppercase leading-[18px] tracking-[0.96px] text-[#711f3a]">{copy.nav.pipeline}</p>
+            <p className="text-xs font-semibold uppercase leading-[18px] tracking-[0.96px] text-[#711f3a]">{copy.nav.documents}</p>
             <h1 className="mt-2 text-[30px] font-semibold leading-9 tracking-[-0.6px] text-[#171416]">{isLegacyView ? current.title : copy.documents.root}</h1>
             <p className="mt-2 text-sm leading-[21px] text-[#6e676a]">{isLegacyView ? current.description : preferences.locale === "tr" ? "RAG'ınızda kullanılan kaynak dokümanları ekleyin ve yönetin." : "Add and manage the source documents used by your RAG."}</p>
             {isLegacyView ? <ParseRunSelector locale={preferences.locale} /> : null}

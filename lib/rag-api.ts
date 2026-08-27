@@ -15,6 +15,8 @@ import type {
   ContextCandidate,
   DocumentDetail,
   DocumentPipeline,
+  DocumentPipelineCreateInput,
+  DocumentPipelineUpdateInput,
   DocumentUploadResponse,
   DocumentSummary,
   EmbeddingRun,
@@ -271,6 +273,7 @@ function normalizeRerankedCandidate(value: unknown): RerankedCandidate {
   return {
     ...normalizeRetrievedCandidate(value),
     originalRank: requiredNumber(field(payload, "originalRank", "original_rank") ?? field(payload, "retrievalRank", "retrieval_rank") ?? payload.rank, "original retrieval rank"),
+    rerankRank: optionalNumber(field(payload, "rerankRank", "rerank_rank") ?? payload.rank),
     rerankScore: optionalNumber(field(payload, "rerankScore", "rerank_score")),
   };
 }
@@ -321,6 +324,7 @@ function normalizeStageResults(value: unknown): ExperimentStageResults {
       candidates: requiredArray(reranking.candidates ?? reranking.results, normalizeRerankedCandidate, "reranking results"),
       durationMs: optionalNumber(field(reranking, "durationMs", "duration_ms")),
       method: optionalString(reranking.method ?? reranking.effectiveModel ?? reranking.model),
+      rerankScoreSemantics: optionalString(reranking.rerankScoreSemantics),
       executed: reranking.status !== "skipped",
     },
     context: Object.keys(context).length === 0 ? null : {
@@ -356,6 +360,9 @@ function normalizeMetrics(value: unknown): EvaluationMetrics {
     groundedness: optionalNumber(metrics.groundedness ?? metrics.faithfulness),
     judgeModel: optionalString(metrics.judgeModel),
     caseCount: optionalNumber(metrics.caseCount),
+    retrievalEligibleCaseCount: optionalNumber(metrics.retrievalEligibleCaseCount),
+    abstentionEligibleCaseCount: optionalNumber(metrics.abstentionEligibleCaseCount),
+    abstentionAccuracy: optionalNumber(metrics.abstentionAccuracy),
   };
 }
 
@@ -856,7 +863,7 @@ export async function listDocumentPipelines(documentId: string, signal?: AbortSi
 
 export async function createDocumentPipeline(
   documentId: string,
-  input: { name: string; parseRunId?: string | null; chunkRunId?: string | null; embeddingRunId?: string | null },
+  input: DocumentPipelineCreateInput,
   signal?: AbortSignal,
 ): Promise<DocumentPipeline> {
   return normalizeDocumentPipeline(await request(`/documents/${encodeURIComponent(documentId)}/pipelines`, {
@@ -868,7 +875,7 @@ export async function createDocumentPipeline(
 
 export async function updateDocumentPipeline(
   pipelineId: string,
-  input: { expectedRevision: number; name?: string; parseRunId?: string | null; chunkRunId?: string | null; embeddingRunId?: string | null },
+  input: DocumentPipelineUpdateInput,
   signal?: AbortSignal,
 ): Promise<DocumentPipeline> {
   return normalizeDocumentPipeline(await request(`/document-pipelines/${encodeURIComponent(pipelineId)}`, {
@@ -993,7 +1000,7 @@ export async function listExperiments(documentId: string, signal?: AbortSignal):
   return listPayload(payload, "experiments").map(normalizeExperimentSummary);
 }
 
-export async function createEvaluationDataset(input: { documentId: string; parseRunId: string; name: string; cases: EvaluationCase[]; baseDatasetId?: string | null }, signal?: AbortSignal): Promise<EvaluationDataset> {
+export async function createEvaluationDataset(input: { documentId: string; parseRunId: string; name: string; cases: EvaluationCase[]; baseDatasetId?: string | null; evaluationMode?: "interactive" | "benchmark" }, signal?: AbortSignal): Promise<EvaluationDataset> {
   const payload = object(await request("/evaluation/datasets", { method: "POST", body: JSON.stringify(input), signal }));
   return normalizeDataset(payload);
 }
@@ -1013,6 +1020,7 @@ function normalizeDataset(value: unknown): EvaluationDataset {
         question: requiredString(evaluationCase.question, "evaluation question"),
         relevantElementIds: strings(field(evaluationCase, "relevantElementIds", "relevant_element_ids")),
         referenceAnswer: optionalString(field(evaluationCase, "referenceAnswer", "reference_answer")),
+        expectedOutcome: evaluationCase.expectedOutcome === "insufficient_context" ? "insufficient_context" : "answer",
       };
     }, "evaluation cases"),
     createdAt: optionalString(field(payload, "createdAt", "created_at")),
@@ -1086,10 +1094,14 @@ function normalizeEvaluationRun(value: unknown): EvaluationRun {
         referenceAnswer: optionalString(field(item, "referenceAnswer", "reference_answer")),
         answer: optionalString(item.answer),
         citations: array(item.citations, (citation) => normalizeCitation(citation)),
-        hitAtK: optionalNumber(item.hitAtK) ?? 0,
-        precisionAtK: optionalNumber(item.precisionAtK) ?? 0,
-        recallAtK: optionalNumber(item.recallAtK) ?? 0,
-        mrr: optionalNumber(item.mrr) ?? 0,
+        expectedOutcome: item.expectedOutcome === "insufficient_context" ? "insufficient_context" : "answer",
+        insufficientContext: typeof item.insufficientContext === "boolean" ? item.insufficientContext : undefined,
+        retrievalEligible: typeof item.retrievalEligible === "boolean" ? item.retrievalEligible : undefined,
+        abstentionCorrect: typeof item.abstentionCorrect === "boolean" ? item.abstentionCorrect : null,
+        hitAtK: optionalNumber(item.hitAtK),
+        precisionAtK: optionalNumber(item.precisionAtK),
+        recallAtK: optionalNumber(item.recallAtK),
+        mrr: optionalNumber(item.mrr),
         citationValidity: optionalNumber(item.citationValidity) ?? 0,
         groundedness: optionalNumber(item.groundedness) ?? 0,
         groundednessDetail: object(item.groundednessDetail),

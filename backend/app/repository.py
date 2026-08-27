@@ -90,6 +90,12 @@ def _lease_expired(row: dict[str, Any], now: datetime | None = None) -> bool:
     return started + timedelta(seconds=pipeline_lease_duration_seconds(get_settings())) <= current
 
 
+def simple_fts_terms(query: str) -> list[str]:
+    """Build the terms passed to PostgreSQL's intentionally unstemmed `simple` FTS config."""
+
+    return [term.lower() for term in re.findall(r"[\wÀ-ÿ]+", query) if len(term) > 1]
+
+
 def _dump(value: Any) -> Any:
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json", by_alias=False)
@@ -2936,7 +2942,7 @@ class SqlAlchemyRepository(Repository):
                 ).mappings()
                 dense = [dict(row) | {"denseScore": float(row["dense_score"])} for row in rows]
             if mode in {"keyword", "hybrid"}:
-                terms = [term.lower() for term in re.findall(r"[\wÀ-ÿ]+", query) if len(term) > 1]
+                terms = simple_fts_terms(query)
                 if not terms:
                     return dense, keyword
                 keyword_query = " | ".join(terms)

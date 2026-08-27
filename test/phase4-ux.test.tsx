@@ -39,8 +39,8 @@ describe("Phase 6B pipeline IA", () => {
 
     cleanup();
     renderWithPipeline(<ChunkingScreen />);
-    expect(screen.getByRole("button", { name: "Create chunks" })).toBeDisabled();
-    expect(screen.getByText("A persisted document and parse run are required first.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run chunking" })).toBeDisabled();
+    expect(screen.getByText("Select a document", { exact: true })).toBeInTheDocument();
 
     cleanup();
     renderWithPipeline(<EmbeddingsScreen />);

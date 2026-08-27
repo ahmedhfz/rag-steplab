@@ -27,6 +27,9 @@ describe("RetrievalScreen", () => {
     const run = screen.getByRole("button", { name: "Run experiment" });
     expect(run).toBeDisabled();
     expect(run).toHaveAccessibleDescription("Select a persisted document and complete chunking first.");
+    expect(screen.getByTestId("playground-blocker")).toHaveTextContent("Action blocked");
+    expect(screen.getByTestId("playground-blocker")).toHaveTextContent("Go to Documents");
+    expect(screen.getByRole("button", { name: "Hybrid" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("Advanced settings")).toBeInTheDocument();
 
     expect(screen.queryByRole("button", { name: "Copy trace" })).not.toBeInTheDocument();
@@ -59,7 +62,7 @@ describe("RetrievalScreen", () => {
     await user.click(reset);
     expect(question).toHaveValue("");
     expect(screen.getByRole("combobox", { name: "Top-K" })).toHaveTextContent("5");
-    expect(screen.getByRole("button", { name: "Dense" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Hybrid" })).toHaveAttribute("aria-pressed", "true");
     expect(reset).toBeDisabled();
     expect(screen.getAllByText("No real retrieval experiment has run yet.").length).toBeGreaterThanOrEqual(1);
   });

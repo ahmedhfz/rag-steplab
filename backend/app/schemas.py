@@ -166,6 +166,11 @@ class DocumentPipelineResponse(CamelCaseModel):
 ChunkStrategy = Literal["fixed_token", "recursive_token", "structure_aware"]
 RetrievalMode = Literal["dense", "keyword", "hybrid"]
 ExperimentTargetStage = Literal["retrieval", "reranking", "context", "generation"]
+EvaluationMode = Literal["interactive", "benchmark"]
+EvaluationOutcome = Literal["answer", "insufficient_context"]
+
+MAX_INTERACTIVE_EVALUATION_CASES = 10
+MAX_BENCHMARK_EVALUATION_CASES = 200
 
 
 class ChunkConfig(CamelCaseModel):
@@ -273,14 +278,25 @@ class EvaluationCase(CamelCaseModel):
     question: str = Field(min_length=1, max_length=4000)
     relevant_element_ids: list[str] = Field(default_factory=list)
     reference_answer: str | None = None
+    expected_outcome: EvaluationOutcome = "answer"
 
 
 class EvaluationDatasetRequest(CamelCaseModel):
     document_id: str
     parse_run_id: str | None = None
     name: str = Field(min_length=1, max_length=200)
-    cases: list[EvaluationCase] = Field(min_length=1, max_length=10)
+    cases: list[EvaluationCase] = Field(min_length=1, max_length=MAX_BENCHMARK_EVALUATION_CASES)
     base_dataset_id: str | None = None
+    evaluation_mode: EvaluationMode = "interactive"
+
+    @model_validator(mode="after")
+    def validate_case_limit(self) -> "EvaluationDatasetRequest":
+        if self.evaluation_mode == "interactive" and len(self.cases) > MAX_INTERACTIVE_EVALUATION_CASES:
+            raise ValueError(
+                f"Interactive evaluation datasets support at most {MAX_INTERACTIVE_EVALUATION_CASES} cases; "
+                f"use evaluationMode=benchmark for up to {MAX_BENCHMARK_EVALUATION_CASES} cases."
+            )
+        return self
 
 
 class EvaluationDatasetResponse(CamelCaseModel):

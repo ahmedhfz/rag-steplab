@@ -32,18 +32,21 @@ from .chunking import (
 from .config import Settings, get_settings, pipeline_lease_duration_seconds
 from .errors import ApiProblem
 from .gemini import EMBEDDING_FORMAT_VERSION, GeminiService, document_embedding_text
+from .quality import compute_retrieval_metrics
 from .repository import (
     Repository,
     duration_ms_between,
     get_repository,
     new_id,
     now_utc,
+    simple_fts_terms,
 )
 from .schemas import (
     ChunkRunRequest,
     EvaluationDatasetRequest,
     EvaluationRunRequest,
     ExperimentCreateRequest,
+    MAX_BENCHMARK_EVALUATION_CASES,
     ParseResponse,
 )
 from .storage import get_storage
@@ -60,10 +63,12 @@ RETRIEVAL_ALGORITHM_VERSION = "retrieval-sql-rrf-v2"
 RERANK_ALGORITHM_VERSION = "gemini-listwise-v2"
 RERANK_PROMPT_VERSION = "rerank-query-candidate-order-v2"
 CONTEXT_ALGORITHM_VERSION = "greedy-budget-dedup-v1"
-GENERATION_PROMPT_VERSION = "grounded-json-segments-v2"
+GENERATION_PROMPT_VERSION = "grounded-json-segments-v3"
 GENERATION_VALIDATION_VERSION = "citation-validation-v2"
 JUDGE_PROMPT_VERSION = "generation-metrics-judge-v2"
 JUDGE_METRIC_VERSION = "generation-metrics-v1"
+CITATION_VALIDITY_METHOD = "context_id_membership_v1"
+RERANK_SCORE_SEMANTICS = "deprecated_ordinal_not_confidence"
 
 
 def _safe_model_dump(value: Any) -> dict[str, Any]:
@@ -862,7 +867,7 @@ def _dot_cosine(left: list[float], right: list[float]) -> float:
 
 
 def _keyword_score(query: str, text: str) -> float:
-    terms = [term.lower() for term in re.findall(r"[\wÀ-ÿ]+", query) if len(term) > 1]
+    terms = simple_fts_terms(query)
     if not terms:
         return 0.0
     haystack = text.lower()
@@ -994,6 +999,9 @@ def _rerank_stage(
             **by_id[identifier],
             "retrievalRank": by_id[identifier].get("poolRank", by_id[identifier].get("rank")),
             "rank": index + 1,
+            "rerankRank": index + 1,
+            # Kept for historical clients; this is an ordinal compatibility
+            # value and must not be presented as model confidence.
             "rerankScore": len(ordered) - index,
         }
         for index, identifier in enumerate(ordered[:top_k])
@@ -1005,6 +1013,7 @@ def _rerank_stage(
         "candidateCount": effective_candidate_count,
         "configuredModel": metadata.configured_model,
         "effectiveModel": metadata.effective_model,
+        "rerankScoreSemantics": RERANK_SCORE_SEMANTICS,
         "candidates": candidates,
         "results": results,
     }
@@ -1045,16 +1054,18 @@ def _generation_stage(query: str, context: dict[str, Any], config: Any, service:
         return {
             "status": "completed",
             "insufficientContext": True,
-            "answer": "Yeterli bağlam bulunamadı.",
+            "answer": "",
             "segments": [],
             "claims": [],
             "citations": [],
+            "citationValidity": {"valid": True, "count": 0, "method": CITATION_VALIDITY_METHOD},
             "citationCoverage": {"segmentCount": 0, "citedSegmentCount": 0, "ratio": 1.0},
             "configuredModel": service.settings.gemini_generation_model,
             "effectiveModel": None,
         }
     prompt = (
-        "Answer only from the supplied context. If it is insufficient, set insufficientContext=true and return no segments. "
+        "Answer only from the supplied context. Answer in the language of the user's question unless the user explicitly requests another language. "
+        "If it is insufficient, set insufficientContext=true and return no segments. "
         "Return JSON: {insufficientContext:boolean,segments:[{text:string,citationIds:string[]}]}. "
         "Every non-empty segment must cite one or more supplied citation IDs; do not repeat an ID inside a segment.\n"
         f"Question: {query}\nContext:\n{context['formattedContext']}"
@@ -1105,7 +1116,7 @@ def _generation_stage(query: str, context: dict[str, Any], config: Any, service:
                             "valid": True,
                         })
                         seen_citations.add(identifier)
-            answer = "\n\n".join(segment["text"] for segment in segments) if not insufficient else "Yeterli bağlam bulunamadı."
+            answer = "\n\n".join(segment["text"] for segment in segments) if not insufficient else ""
             claims = copy.deepcopy(segments)
             break
         except ApiProblem:
@@ -1118,7 +1129,7 @@ def _generation_stage(query: str, context: dict[str, Any], config: Any, service:
         "segments": segments,
         "claims": claims,
         "citations": citations,
-        "citationValidity": {"valid": True, "count": len(citations)},
+        "citationValidity": {"valid": True, "count": len(citations), "method": CITATION_VALIDITY_METHOD},
         "citationCoverage": {
             "segmentCount": len(segments),
             "citedSegmentCount": sum(1 for segment in segments if segment.get("citationIds")),
@@ -2025,6 +2036,14 @@ def create_dataset(request: EvaluationDatasetRequest, *, repository: Repository 
 
 
 def _evaluation_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
+    def average(metric: str) -> float | None:
+        values = [
+            item.get(metric)
+            for item in results
+            if isinstance(item.get(metric), (int, float))
+        ]
+        return sum(values) / len(values) if values else None
+
     if not results:
         return {
             "caseCount": 0,
@@ -2032,6 +2051,11 @@ def _evaluation_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
             "precisionAtK": 0,
             "recallAtK": 0,
             "mrr": 0,
+            "citationValidity": None,
+            "groundedness": None,
+            "retrievalEligibleCaseCount": 0,
+            "abstentionEligibleCaseCount": 0,
+            "abstentionAccuracy": None,
             "generationMetrics": {
                 "faithfulness": None,
                 "answerRelevance": None,
@@ -2042,13 +2066,37 @@ def _evaluation_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
         }
     metrics: dict[str, Any] = {
         "caseCount": len(results),
-        "hitAtK": sum(item["hitAtK"] for item in results) / len(results),
-        "precisionAtK": sum(item["precisionAtK"] for item in results) / len(results),
-        "recallAtK": sum(item["recallAtK"] for item in results) / len(results),
-        "mrr": sum(item["mrr"] for item in results) / len(results),
-        "citationValidity": sum(item.get("citationValidity", 0) for item in results) / len(results),
-        "groundedness": sum(item.get("groundedness", 0) for item in results) / len(results),
+        # No-answer cases have null retrieval metrics and are excluded from
+        # answerable retrieval averages instead of being counted as misses.
+        "hitAtK": average("hitAtK"),
+        "precisionAtK": average("precisionAtK"),
+        "recallAtK": average("recallAtK"),
+        "mrr": average("mrr"),
+        "citationValidity": average("citationValidity"),
+        "groundedness": average("groundedness"),
+        "retrievalEligibleCaseCount": sum(
+            1
+            for item in results
+            if item.get("retrievalEligible") is True
+            or (
+                "retrievalEligible" not in item
+                and isinstance(item.get("hitAtK"), (int, float))
+            )
+        ),
     }
+    abstention_results = [
+        item
+        for item in results
+        if item.get("abstentionEligible") is True
+        and isinstance(item.get("abstentionCorrect"), bool)
+    ]
+    metrics["abstentionEligibleCaseCount"] = len(abstention_results)
+    metrics["abstentionAccuracy"] = (
+        sum(1 for item in abstention_results if item["abstentionCorrect"])
+        / len(abstention_results)
+        if abstention_results
+        else None
+    )
     by_metric = {
         metric: [
             item["generationMetrics"][metric]
@@ -2197,6 +2245,15 @@ def create_evaluation(
     dataset = repository.get_dataset_row(request.dataset_id)
     if dataset is None:
         raise ApiProblem(404, "dataset_not_found", "The evaluation dataset was not found.")
+    dataset_cases = dataset.get("cases") or []
+    if not isinstance(dataset_cases, list) or not dataset_cases:
+        raise ApiProblem(422, "evaluation_dataset_invalid", "The evaluation dataset has no cases.")
+    if len(dataset_cases) > MAX_BENCHMARK_EVALUATION_CASES:
+        raise ApiProblem(
+            422,
+            "evaluation_dataset_too_large",
+            f"An evaluation dataset may contain at most {MAX_BENCHMARK_EVALUATION_CASES} cases.",
+        )
     document = _document_or_404(repository, dataset["document_id"])
     _require_compatible_parse(repository, dataset["document_id"], dataset["parse_run_id"])
     pipelines = repository.list_document_pipeline_rows(dataset["document_id"]) or []
@@ -2251,7 +2308,7 @@ def create_evaluation(
     else:
         if repository.update_evaluation(evaluation_id, {"status": "running", "started_at": started_at}, lease_token) is None:
             raise ApiProblem(409, "worker_lease_lost", "The evaluation worker lease was lost.")
-    for case in dataset["cases"][:10]:
+    for case in dataset_cases:
         renew_evaluation_lease()
         exp_request = ExperimentCreateRequest(
             document_id=dataset["document_id"],
@@ -2297,13 +2354,11 @@ def create_evaluation(
         child_ids.append(experiment["id"])
         retrieval_results = experiment["stage_results"].get("retrieval", {}).get("results", [])
         expected = set(case.get("relevant_element_ids", []))
-        relevant_ranks = [
-            index + 1
-            for index, result in enumerate(retrieval_results)
-            if expected.intersection(result.get("sourceElementIds", []))
-        ]
-        denominator = len(expected) or 1
-        citation_validity = 1.0 if experiment["stage_results"].get("generation", {}).get("citationValidity", {}).get("valid") else 0.0
+        retrieval_metrics = compute_retrieval_metrics(retrieval_results, expected)
+        expected_outcome = case.get("expected_outcome", "answer")
+        generation = experiment["stage_results"].get("generation", {})
+        insufficient_context = bool(generation.get("insufficientContext", False))
+        citation_validity = 1.0 if generation.get("citationValidity", {}).get("valid") else 0.0
         groundedness = _deterministic_groundedness(experiment)
         generation_metrics = {
             "faithfulness": groundedness["score"],
@@ -2313,7 +2368,6 @@ def create_evaluation(
             "metricVersion": JUDGE_METRIC_VERSION,
         }
         if request.judge and judge_service is not None:
-            generation = experiment["stage_results"].get("generation", {})
             judge_prompt = (
                 "Evaluate the answer against the question and supplied context. Return JSON with numeric "
                 "faithfulness (0..1), answerRelevance (0..1), answerCorrectness (0..1 or null), and claimResults. "
@@ -2366,7 +2420,6 @@ def create_evaluation(
                 "promptVersion": JUDGE_PROMPT_VERSION,
                 "metricVersion": JUDGE_METRIC_VERSION,
             }
-        generation = experiment["stage_results"].get("generation", {})
         case_results.append({
             "question": case["question"],
             "expectedElementIds": sorted(expected),
@@ -2376,14 +2429,17 @@ def create_evaluation(
                 for source in result.get("sourceElementIds", [])
             }),
             "referenceAnswer": case.get("reference_answer"),
+            "expectedOutcome": expected_outcome,
             "answer": generation.get("answer"),
             "segments": generation.get("segments", generation.get("claims", [])),
             "citations": generation.get("citations", []),
             "citationCoverage": generation.get("citationCoverage"),
-            "hitAtK": 1.0 if relevant_ranks else 0.0,
-            "precisionAtK": len(relevant_ranks) / max(1, len(retrieval_results)),
-            "recallAtK": len({source for result in retrieval_results for source in set(result.get("sourceElementIds", [])) & expected}) / denominator,
-            "mrr": 1 / relevant_ranks[0] if relevant_ranks else 0.0,
+            "insufficientContext": insufficient_context,
+            "abstentionEligible": expected_outcome == "insufficient_context",
+            "abstentionCorrect": (
+                insufficient_context if expected_outcome == "insufficient_context" else None
+            ),
+            **retrieval_metrics,
             "citationValidity": citation_validity,
             "groundedness": groundedness["score"],
             "groundednessDetail": groundedness,

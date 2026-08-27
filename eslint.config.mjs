@@ -5,5 +5,5 @@ import nextTypescript from "eslint-config-next/typescript";
 export default defineConfig([
   ...nextVitals,
   ...nextTypescript,
-  globalIgnores([".next/**", "node_modules/**", "backend/.venv/**", "backend/**/__pycache__/**"]),
+  globalIgnores([".next/**", "node_modules/**", "output/**", "backend/.venv/**", "backend/**/__pycache__/**"]),
 ]);

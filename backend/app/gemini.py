@@ -13,6 +13,46 @@ from .errors import ApiProblem
 
 EMBEDDING_FORMAT_VERSION = "gemini-embedding-2-qa-prefix-v1"
 
+# The SDK/provider constrain the JSON shape, while pipeline code below still
+# performs parsing and semantic validation for IDs, citations, and scores.
+GENERATION_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "insufficientContext": {"type": "boolean"},
+        "segments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "citationIds": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["text", "citationIds"],
+            },
+        },
+    },
+    "required": ["insufficientContext", "segments"],
+}
+
+RERANK_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "orderedCandidateIds": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["orderedCandidateIds"],
+}
+
+JUDGE_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "faithfulness": {"type": "number"},
+        "answerRelevance": {"type": "number"},
+        "answerCorrectness": {"type": "number", "nullable": True},
+        "claimResults": {"type": "array", "items": {"type": "object"}},
+    },
+    "required": ["faithfulness", "answerRelevance"],
+}
+
 
 @dataclass(frozen=True)
 class GeminiCallMetadata:
@@ -174,7 +214,11 @@ class GeminiService:
 
     def generate_json(self, prompt: str, config: dict[str, Any] | None = None) -> tuple[dict[str, Any], GeminiCallMetadata]:
         model = self.settings.gemini_generation_model
-        request_config = {"response_mime_type": "application/json", **(config or {})}
+        request_config = {
+            "response_mime_type": "application/json",
+            "response_json_schema": GENERATION_RESPONSE_SCHEMA,
+            **(config or {}),
+        }
 
         def call():
             return self.client.models.generate_content(
@@ -195,7 +239,10 @@ class GeminiService:
 
     def rerank(self, prompt: str) -> tuple[list[str], GeminiCallMetadata]:
         model = self.settings.gemini_rerank_model
-        request_config = {"response_mime_type": "application/json"}
+        request_config = {
+            "response_mime_type": "application/json",
+            "response_json_schema": RERANK_RESPONSE_SCHEMA,
+        }
 
         def call():
             return self.client.models.generate_content(model=model, contents=prompt, config=request_config)
@@ -213,7 +260,10 @@ class GeminiService:
 
     def judge(self, prompt: str) -> tuple[dict[str, Any], GeminiCallMetadata]:
         model = self.settings.gemini_judge_model
-        request_config = {"response_mime_type": "application/json"}
+        request_config = {
+            "response_mime_type": "application/json",
+            "response_json_schema": JUDGE_RESPONSE_SCHEMA,
+        }
 
         def call():
             return self.client.models.generate_content(model=model, contents=prompt, config=request_config)

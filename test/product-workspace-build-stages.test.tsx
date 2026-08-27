@@ -1,0 +1,238 @@
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const pipeline = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
+
+vi.mock("@/components/document-pipeline-provider", () => ({
+  useDocumentPipeline: () => pipeline.value,
+}));
+
+import { EmbeddingsScreen } from "@/components/pipeline-stage-screens";
+import { ParseScreen } from "@/components/parse-screen";
+import { OverviewScreen } from "@/components/overview-screen";
+import { PreferencesProvider } from "@/components/preferences-provider";
+
+const documentItem = {
+  id: "document-1",
+  fileName: "annual-report.pdf",
+  mediaType: "application/pdf",
+  sizeBytes: 128,
+  pageCount: 12,
+  sha256: "sha-1",
+  activeParseRunId: "parse-1",
+  activeChunkRunId: "chunk-1",
+  activeEmbeddingRunId: "embedding-1",
+  createdAt: null,
+  updatedAt: null,
+};
+
+const timing = { startedAt: null, completedAt: null, durationMs: null };
+
+const parseRun = {
+  id: "parse-1",
+  runNumber: 1,
+  status: "completed",
+  progress: 100,
+  isStale: false,
+  isCompatible: true,
+  compatibilityReason: null,
+  historicalLineage: false,
+  upstream: { documentId: "document-1" },
+  config: {},
+  timing,
+  error: null,
+};
+
+const chunkRun = {
+  id: "chunk-1",
+  runNumber: 1,
+  status: "completed",
+  progress: 100,
+  isStale: false,
+  isCompatible: true,
+  compatibilityReason: null,
+  historicalLineage: false,
+  upstream: { documentId: "document-1", parseRunId: "parse-1" },
+  config: { chunkSizeTokens: 512, overlapTokens: 64 },
+  timing,
+  error: null,
+  strategy: "structure_aware",
+  chunkCount: 12,
+  chunks: [],
+};
+
+const embeddingRun = {
+  id: "embedding-1",
+  runNumber: 1,
+  status: "completed",
+  progress: 100,
+  isStale: false,
+  isCompatible: true,
+  compatibilityReason: null,
+  historicalLineage: false,
+  upstream: { documentId: "document-1", chunkRunId: "chunk-1" },
+  config: {},
+  timing,
+  error: null,
+  model: "gemini",
+  dimensions: 768,
+  embeddingFormatVersion: "v1",
+  embeddingCount: 12,
+  effectiveModel: "gemini",
+};
+
+const activeDocument = {
+  ...documentItem,
+  parseRuns: [parseRun],
+  chunkRuns: [chunkRun],
+  embeddingRuns: [embeddingRun],
+  experiments: [],
+  evaluationDatasets: [],
+  evaluationRuns: [],
+};
+
+const savedPipeline = {
+  id: "pipeline-1",
+  documentId: "document-1",
+  name: "Structure Aware",
+  parseRunId: "parse-1",
+  chunkRunId: "chunk-1",
+  embeddingRunId: "embedding-1",
+  revision: 1,
+  isDefault: true,
+  createdAt: null,
+  updatedAt: null,
+};
+
+function asyncNoop() {
+  return Promise.resolve(null);
+}
+
+function createPipelineValue() {
+  return {
+    pendingUpload: null,
+    fileError: null,
+    parseStatus: "completed",
+    parseProgress: 100,
+    parseProgressEstimated: false,
+    parsePhase: "completed",
+    parseResult: null,
+    parseError: null,
+    activity: [],
+    persistenceStatus: "available",
+    persistenceError: null,
+    capabilities: { embeddingModel: "gemini", embeddingDimensions: 768, generationModel: "gemini", rerankModel: "gemini", judgeModel: "gemini", embeddingFormatVersion: "v1", limits: {} },
+    documents: [documentItem],
+    activeDocumentId: documentItem.id,
+    activeDocumentMetadata: documentItem,
+    activeDocument,
+    selectedParseRunId: parseRun.id,
+    selectedChunkRunId: chunkRun.id,
+    selectedEmbeddingRunId: embeddingRun.id,
+    inspectedParseRunId: null,
+    inspectedChunkRunId: null,
+    inspectedEmbeddingRunId: null,
+    chunkStatus: "completed",
+    chunkRun,
+    chunkError: null,
+    embeddingStatus: "completed",
+    embeddingRun,
+    embeddingError: null,
+    experimentStatus: "ready",
+    experimentRun: null,
+    experimentError: null,
+    experimentHistory: [],
+    evaluationDatasets: [],
+    evaluationStatus: "ready",
+    evaluationRun: null,
+    evaluationError: null,
+    evaluationHistory: [],
+    uploadNotice: null,
+    pipelines: [savedPipeline],
+    activePipelineId: savedPipeline.id,
+    activePipeline: savedPipeline,
+    pipelineSelectionMode: "saved",
+    selectFile: vi.fn(),
+    addDocument: vi.fn(asyncNoop),
+    selectPersistedDocument: vi.fn(asyncNoop),
+    selectParseRun: vi.fn(asyncNoop),
+    selectChunkRun: vi.fn(asyncNoop),
+    selectEmbeddingRun: vi.fn(asyncNoop),
+    inspectParseRun: vi.fn(asyncNoop),
+    inspectChunkRun: vi.fn(asyncNoop),
+    inspectEmbeddingRun: vi.fn(asyncNoop),
+    setPipelineParseRun: vi.fn(asyncNoop),
+    setPipelineChunkRun: vi.fn(asyncNoop),
+    setPipelineEmbeddingRun: vi.fn(asyncNoop),
+    selectPipeline: vi.fn(asyncNoop),
+    createPipeline: vi.fn(asyncNoop),
+    renamePipeline: vi.fn(asyncNoop),
+    deletePipeline: vi.fn(asyncNoop),
+    removeFile: vi.fn(),
+    parseSelectedFile: vi.fn(asyncNoop),
+    reparseActiveDocument: vi.fn(asyncNoop),
+    parseActiveDocument: vi.fn(asyncNoop),
+    runChunking: vi.fn(asyncNoop),
+    runEmbedding: vi.fn(asyncNoop),
+    runExperiment: vi.fn(asyncNoop),
+    loadExperiment: vi.fn(asyncNoop),
+    loadEvaluationDataset: vi.fn(asyncNoop),
+    loadEvaluationRun: vi.fn(asyncNoop),
+    continueExperiment: vi.fn(asyncNoop),
+    rerunGeneration: vi.fn(asyncNoop),
+    createDataset: vi.fn(asyncNoop),
+    runEvaluation: vi.fn(asyncNoop),
+    refreshPersistence: vi.fn(asyncNoop),
+    refreshEvaluationRuns: vi.fn(asyncNoop),
+  };
+}
+
+function renderScreen(node: React.ReactNode) {
+  return render(<PreferencesProvider>{node}</PreferencesProvider>);
+}
+
+describe("Product workspace and build-stage semantic contract", () => {
+  beforeEach(() => {
+    pipeline.value = createPipelineValue();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("keeps document and pipeline management in the Overview primary surface", () => {
+    renderScreen(<OverviewScreen />);
+
+    expect(screen.getByTestId("workspace-control-plane")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: /^Document/ })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Indexing pipeline" })).toBeVisible();
+    expect(screen.getByTestId("overview-lineage")).toHaveTextContent("annual-report.pdf");
+    expect(screen.getByTestId("overview-lineage")).toHaveTextContent("Structure Aware");
+    expect(screen.getByRole("button", { name: "New pipeline" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Rename" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeVisible();
+    expect(screen.queryByTestId("continue-surface")).not.toBeInTheDocument();
+  });
+
+  it("keeps the active document and pipeline context visible on Parsing", () => {
+    renderScreen(<ParseScreen />);
+
+    const context = screen.getByTestId("pipeline-context-bar");
+    expect(context).toBeVisible();
+    expect(context).not.toHaveClass("sr-only");
+    expect(screen.getByTestId("pipeline-context-document-selector")).toHaveTextContent("annual-report.pdf");
+    expect(screen.getByTestId("pipeline-context-pipeline-selector")).toHaveTextContent("Structure Aware");
+  });
+
+  it("shows the active document on Embeddings with one dominant Playground CTA", () => {
+    renderScreen(<EmbeddingsScreen />);
+
+    expect(screen.getByTestId("pipeline-context-bar")).toHaveTextContent("annual-report.pdf");
+    expect(screen.getByTestId("pipeline-context-pipeline-selector")).toHaveTextContent("Structure Aware");
+    expect(screen.getByTestId("embedding-input")).toHaveTextContent("12 chunks");
+    expect(screen.getByTestId("embedding-input")).toHaveTextContent("gemini");
+    expect(screen.getAllByRole("link", { name: /Go to Playground/ })).toHaveLength(1);
+    expect(screen.queryAllByRole("button", { name: /Go to Playground/ })).toHaveLength(0);
+  });
+});

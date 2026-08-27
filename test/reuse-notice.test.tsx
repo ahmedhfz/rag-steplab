@@ -6,7 +6,7 @@ const pipeline = vi.hoisted(() => ({
   value: {
     activeDocument: {
       id: "document-1",
-      parseRuns: [],
+      parseRuns: [{ id: "parse-1", status: "completed", isCompatible: true }],
       chunkRuns: [{ id: "chunk-1", status: "completed", isCompatible: true, upstream: { parseRunId: "parse-1" } }],
       embeddingRuns: [],
     },
@@ -46,7 +46,7 @@ describe("artifact reuse UX contract", () => {
     const user = userEvent.setup();
 
     render(<ChunksPipeline locale="en" stage="chunking" />);
-    await user.click(screen.getByRole("button", { name: "Create chunks" }));
+    await user.click(screen.getByRole("button", { name: "Run chunking" }));
 
     expect(await screen.findByTestId("chunk-reuse-notice")).toHaveTextContent("The existing artifact was reused.");
   });
@@ -56,7 +56,7 @@ describe("artifact reuse UX contract", () => {
     const user = userEvent.setup();
 
     render(<ChunksPipeline locale="en" stage="chunking" />);
-    await user.click(screen.getByRole("button", { name: "Create chunks" }));
+    await user.click(screen.getByRole("button", { name: "Run chunking" }));
 
     expect(screen.queryByTestId("chunk-reuse-notice")).not.toBeInTheDocument();
   });
