@@ -13,10 +13,12 @@ test("Playground stage rail, provenance ve Source Inspector contractını göste
 
   await page.goto("/playground");
   await selectSeededDocument(page);
+  await expect(page.getByTestId("playground-workspace-context")).toBeVisible();
   await expect(page.getByTestId("pipeline-context-bar")).toContainText("e2e-seeded-golden.pdf");
   await expect(page.getByTestId("pipeline-context-bar")).toContainText("Seeded indexing pipeline");
   await expect(page.getByLabel("Indexing lineage")).toContainText("Embedding");
-  await expect(page.getByTestId("playground-draft-configuration")).toContainText("Draft configuration");
+  await expect(page.getByTestId("playground-draft-configuration")).toHaveCount(0);
+  await expect(page.getByTestId("playground-question-help")).toBeVisible();
   await expect(page.getByRole("button", { name: "Hybrid", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("Experiment stages")).toBeVisible();
   await expect(page.getByLabel("Experiment stages")).toContainText("Retrieval");
@@ -50,6 +52,7 @@ test("Playground stage rail, provenance ve Source Inspector contractını göste
   await expect(page.getByText("Citation reference valid", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "S1" }).click();
   await expect(page.getByRole("dialog", { name: "Source inspector" })).toContainText("laboratory beacon code is ORBIT-731");
+  await expect(page.getByTestId("playground-screen")).not.toContainText("persisted backend");
 
   quality.assertClean();
 });
@@ -150,6 +153,7 @@ test("Reranking tablosu ham ordering değerini pozisyon bilgisinden ayırır", a
   await expect(content).toContainText("Reranked position");
   await expect(content).toContainText("Original rank");
   await expect(content).not.toContainText("Rerank score");
+  await expect(content).not.toContainText("confidence");
 
   quality.assertClean();
 });
@@ -181,9 +185,41 @@ test("Geçmiş experiment yüklemek aktif indexing pipeline'ı değiştirmez", a
   await selectSeededDocument(page);
   const pipelineSelector = page.getByRole("combobox", { name: "Indexing pipeline" });
   await expect(pipelineSelector).toContainText("Seeded indexing pipeline");
-  await page.getByTestId("playground-stage-rail").getByRole("button", { name: "Load Experiment 1" }).click();
-  await expect(page.getByTestId("playground-run-state")).toContainText("Viewing experiment");
+  const history = page.getByTestId("playground-history");
+  await history.locator("summary").click();
+  await history.getByRole("button", { name: "Load Experiment 1" }).click();
+  await expect(page.getByTestId("playground-run-state")).toContainText("Viewing");
+  await expect(page.getByTestId("playground-run-state")).toContainText("Unsaved changes");
   await expect(pipelineSelector).toContainText("Seeded indexing pipeline");
+
+  quality.assertClean();
+});
+
+test("Playground question CTA geometry and responsive overflow contractını korur", async ({ page }) => {
+  const quality = installBrowserQualityGuards(page);
+  const viewports = [1440, 1280, 1024, 768, 390];
+
+  for (const width of viewports) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/playground");
+    await selectSeededDocument(page);
+
+    const dimensions = await page.evaluate(() => ({
+      bodyScrollWidth: document.body.scrollWidth,
+      documentScrollWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+    }));
+    expect(dimensions.bodyScrollWidth, `body overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewportWidth);
+    expect(dimensions.documentScrollWidth, `document overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewportWidth);
+
+    if (width >= 768) {
+      const question = await page.getByTestId("playground-question").boundingBox();
+      const cta = await page.getByTestId("playground-run-cta").boundingBox();
+      expect(question).not.toBeNull();
+      expect(cta).not.toBeNull();
+      expect(Math.abs((question!.y + question!.height / 2) - (cta!.y + cta!.height / 2)), `CTA center alignment at ${width}px`).toBeLessThanOrEqual(1);
+    }
+  }
 
   quality.assertClean();
 });

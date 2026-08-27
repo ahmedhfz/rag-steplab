@@ -191,6 +191,7 @@ async function prepareState(page: Page, state: VisualState) {
     await expect(rerankingContent.getByRole("heading", { name: "Reranking", level: 2 })).toBeVisible();
     await expect(rerankingContent).toContainText("Reranked position");
     await expect(rerankingContent).not.toContainText("Rerank score");
+    await expect(rerankingContent).not.toContainText("confidence");
   } else if (state.key === "playground-context") {
     await expect(page.getByTestId("experiment-stage-trace")).toBeVisible();
     await page.getByTestId("experiment-stage-trace").getByRole("button", { name: /^Context\b/ }).click();
@@ -221,7 +222,7 @@ async function prepareState(page: Page, state: VisualState) {
   }
 
   if (state.key === "playground-empty") {
-    await expect(page.getByText("Ready to test your RAG", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("playground-blocker")).toBeVisible();
     await expect(page.getByTestId("experiment-stage-trace")).toHaveCount(0);
   } else if (state.key === "playground-retrieval") {
     await expect(page.getByTestId("experiment-stage-trace")).toBeVisible();
