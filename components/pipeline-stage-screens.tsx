@@ -102,7 +102,7 @@ export function ChunkingScreen() {
   const parsedElementCount = parseResult?.structured.elements.length ?? "—";
 
   return (
-    <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]">
+    <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]" data-testid="chunking-screen">
       <ConditionalPipelineContextBar />
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <StageHeader description={labels.description} eyebrow="Build" title="Chunking" />
@@ -133,7 +133,7 @@ export function EmbeddingsScreen() {
     : { description: "Turn chunks into vectors for semantic search and make them searchable.", source: "Input", basedOn: "Based on", chunks: "chunks", model: "Model", noDocument: "Select a document", latest: "Current Chunking", create: "Create embeddings", history: "Embedding version history", next: "Go to Playground", nextReason: "A successful, current chunk run is required first." };
 
   return (
-    <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]">
+    <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]" data-testid="embeddings-screen">
       <ConditionalPipelineContextBar />
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <StageHeader

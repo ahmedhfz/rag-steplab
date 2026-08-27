@@ -304,7 +304,7 @@ function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: st
         </div>
       </nav>
 
-      <div className="px-3 pb-3 pt-1"><UserMenu copy={copy} onNavigate={onNavigate} onSignOut={onSignOut} user={user} /></div>
+      <div className="px-3 pb-3 pt-1" data-testid="app-shell-user"><UserMenu copy={copy} onNavigate={onNavigate} onSignOut={onSignOut} user={user} /></div>
     </div>
   );
 }
