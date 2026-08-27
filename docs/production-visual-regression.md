@@ -42,9 +42,12 @@ Görsel toleranslar ekran grubuna göre ayrıdır:
 | Grup | MAE | Changed pixel |
 | --- | ---: | ---: |
 | Overview | `≤3.7` | `≤5%` |
-| Documents, Parsing, Chunking, Embeddings, Playground, Evaluation, Settings | `≤4.5` | `≤8%` |
+| Documents, Parsing, Embeddings, Playground, Evaluation, Settings | `≤4.5` | `≤8%` |
+| Chunking | `≤5.0` | `≤8%` |
 
 Önceki ortak production eşiği `MAE ≤12`, changed pixel `≤30%` idi. Figma static canonical clone gate'i de ekran bazlı sözleşmeye sahiptir; mevcut clone farkı yüksek kalan Evaluation Compare için `MAE ≤12`, changed pixel `≤10%` sınırı bilinçli olarak ayrı tutulur.
+
+Chunking grubundaki küçük MAE farkı, Windows'ta üretilen tracked referans ile CI/Linux Chromium arasındaki metin rasterization ve satır kayması farkını karşılar; geometri kontratı yine `±1px` olarak kalır.
 
 ## Çalıştırma
 

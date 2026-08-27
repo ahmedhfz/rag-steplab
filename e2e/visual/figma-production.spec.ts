@@ -45,7 +45,7 @@ const visualContracts: Record<VisualGroup, { maxMae: number; maxChangedPixelPerc
   overview: { maxMae: 3.7, maxChangedPixelPercentage: 5 },
   documents: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
   parsing: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
-  chunking: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
+  chunking: { maxMae: 5, maxChangedPixelPercentage: 8 },
   embeddings: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
   playground: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
   evaluation: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
