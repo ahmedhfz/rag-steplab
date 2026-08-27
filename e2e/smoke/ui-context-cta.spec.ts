@@ -61,10 +61,10 @@ test("UI context and CTA remain reachable without horizontal overflow at support
 
   for (const viewport of viewports) {
     await page.setViewportSize(viewport);
-    await page.goto("/parse", { waitUntil: "networkidle" });
+    await page.goto("/parse", { waitUntil: "domcontentloaded" });
     if (viewport === viewports[0]) await selectSeededDocument(page, seededStressNames.document);
 
-    await page.goto("/", { waitUntil: "networkidle" });
+    await page.goto("/", { waitUntil: "domcontentloaded" });
     await expect(page.getByTestId("continue-surface")).toBeVisible();
     if (viewport.width >= 1440) {
       await expect(page.getByTestId("overview-journey-desktop")).toBeVisible();
@@ -77,13 +77,13 @@ test("UI context and CTA remain reachable without horizontal overflow at support
     await assertNoHorizontalOverflow(page);
 
     for (const route of ["/parse", "/chunking", "/embeddings"]) {
-      await page.goto(route, { waitUntil: "networkidle" });
+      await page.goto(route, { waitUntil: "domcontentloaded" });
       await assertStageContext(page);
       await assertNoHorizontalOverflow(page);
     }
 
     for (const route of ["/playground", "/evaluation"]) {
-      await page.goto(route, { waitUntil: "networkidle" });
+      await page.goto(route, { waitUntil: "domcontentloaded" });
       await assertStageContext(page);
       await assertNoHorizontalOverflow(page);
     }
