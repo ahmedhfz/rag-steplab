@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pipeline = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
@@ -7,7 +7,7 @@ vi.mock("@/components/document-pipeline-provider", () => ({
   useDocumentPipeline: () => pipeline.value,
 }));
 
-import { EmbeddingsScreen } from "@/components/pipeline-stage-screens";
+import { ChunkingScreen, EmbeddingsScreen } from "@/components/pipeline-stage-screens";
 import { ParseScreen } from "@/components/parse-screen";
 import { OverviewScreen } from "@/components/overview-screen";
 import { PreferencesProvider } from "@/components/preferences-provider";
@@ -207,12 +207,13 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(screen.getByTestId("workspace-control-plane")).toBeVisible();
     expect(screen.getByRole("combobox", { name: /^Document/ })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Indexing pipeline" })).toBeVisible();
-    expect(screen.getByTestId("overview-lineage")).toHaveTextContent("annual-report.pdf");
-    expect(screen.getByTestId("overview-lineage")).toHaveTextContent("Structure Aware");
+    expect(screen.queryByTestId("overview-lineage")).not.toBeInTheDocument();
+    expect(screen.getByTestId("continue-surface")).toBeVisible();
+    expect(screen.getByTestId("overview-continue-action")).toHaveAttribute("href", "/playground");
+    expect(screen.getByTestId("overview-continue-action")).toHaveTextContent("Continue to Playground");
     expect(screen.getByRole("button", { name: "New pipeline" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Rename" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Delete" })).toBeVisible();
-    expect(screen.queryByTestId("continue-surface")).not.toBeInTheDocument();
   });
 
   it("keeps the active document and pipeline context visible on Parsing", () => {
@@ -223,6 +224,10 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(context).not.toHaveClass("sr-only");
     expect(screen.getByTestId("pipeline-context-document-selector")).toHaveTextContent("annual-report.pdf");
     expect(screen.getByTestId("pipeline-context-pipeline-selector")).toHaveTextContent("Structure Aware");
+    expect(screen.queryByRole("navigation", { name: "Indexing lineage" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("parse-page-header")).toContainElement(screen.getByTestId("parse-next-action"));
+    expect(screen.getByTestId("parse-next-action")).toBeDisabled();
+    expect(screen.getByText("Complete parsing before continuing to Chunking.", { exact: true })).toBeInTheDocument();
   });
 
   it("shows the active document on Embeddings with one dominant Playground CTA", () => {
@@ -230,9 +235,53 @@ describe("Product workspace and build-stage semantic contract", () => {
 
     expect(screen.getByTestId("pipeline-context-bar")).toHaveTextContent("annual-report.pdf");
     expect(screen.getByTestId("pipeline-context-pipeline-selector")).toHaveTextContent("Structure Aware");
-    expect(screen.getByTestId("embedding-input")).toHaveTextContent("12 chunks");
-    expect(screen.getByTestId("embedding-input")).toHaveTextContent("gemini");
+    expect(screen.queryByTestId("embedding-input")).not.toBeInTheDocument();
+    expect(screen.getByTestId("embedding-primary-result")).toHaveTextContent("12 chunks");
+    expect(screen.getByTestId("embedding-primary-result")).toHaveTextContent("Selected chunk set");
+    expect(screen.getByTestId("embedding-output-result")).toHaveTextContent("12 embeddings");
+    expect(screen.getByTestId("embedding-details")).toHaveTextContent("gemini");
     expect(screen.getAllByRole("link", { name: /Go to Playground/ })).toHaveLength(1);
     expect(screen.queryAllByRole("button", { name: /Go to Playground/ })).toHaveLength(0);
+    expect(screen.getByTestId("embeddings-page-header")).toContainElement(screen.getByTestId("embeddings-next-action"));
+    expect(screen.getByTestId("embeddings-page-header")).not.toContainElement(screen.getByTestId("embedding-run-action"));
+    expect(screen.getByTestId("embedding-run-action")).toBeVisible();
+  });
+
+  it("keeps a locked next action in the header with its remediation", () => {
+    pipeline.value = {
+      ...createPipelineValue(),
+      activeDocument: { ...activeDocument, activeEmbeddingRunId: null, embeddingRuns: [] },
+      activePipeline: { ...savedPipeline, embeddingRunId: null },
+      embeddingRun: null,
+      pipelines: [{ ...savedPipeline, embeddingRunId: null }],
+      selectedEmbeddingRunId: null,
+    };
+    renderScreen(<EmbeddingsScreen />);
+
+    const nextAction = screen.getByTestId("embeddings-next-action");
+    expect(screen.getByTestId("embeddings-page-header")).toContainElement(nextAction);
+    expect(nextAction).toBeDisabled();
+    expect(nextAction).toHaveAttribute("aria-describedby", "embeddings-next-action-disabled-reason");
+    expect(screen.getByText("Create embeddings before continuing to Playground.", { exact: true })).toBeInTheDocument();
+  });
+
+  it("uses the same header next-action slot on Chunking", () => {
+    renderScreen(<ChunkingScreen />);
+
+    expect(screen.getByTestId("chunking-page-header")).toContainElement(screen.getByTestId("chunking-next-action"));
+    expect(screen.getByTestId("chunking-next-action")).toHaveAttribute("href", "/embeddings");
+    expect(screen.getAllByRole("link", { name: /Go to Embeddings/ })).toHaveLength(1);
+    expect(screen.getByTestId("chunking-workspace")).toContainElement(screen.getByTestId("chunking-run-action"));
+  });
+
+  it("keeps the pipeline placeholder out of selectable domain items", () => {
+    pipeline.value = { ...createPipelineValue(), activePipelineId: null, activePipeline: null };
+    renderScreen(<OverviewScreen />);
+
+    const selector = screen.getByRole("combobox", { name: "Indexing pipeline" });
+    expect(selector).toHaveTextContent("Select a pipeline");
+    fireEvent.click(selector);
+    expect(screen.queryByRole("option", { name: "Select a pipeline" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("clear-pipeline-selection")).not.toBeInTheDocument();
   });
 });

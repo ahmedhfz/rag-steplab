@@ -2,5 +2,5 @@ import { PipelineContextBar } from "@/components/pipeline-context-bar";
 import { RetrievalScreen } from "@/components/retrieval-screen";
 
 export default function PlaygroundPage() {
-  return <><PipelineContextBar /><RetrievalScreen /></>;
+  return <><div className="min-w-0 max-w-full overflow-x-clip" data-testid="playground-workspace-context"><PipelineContextBar /></div><RetrievalScreen /></>;
 }

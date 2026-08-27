@@ -25,6 +25,8 @@ describe("LoginScreen", () => {
     expect(screen.getByLabelText("Şifre")).toHaveAttribute("type", "password");
     expect(screen.getByRole("link", { name: "Google ile devam et" }))
       .toHaveAttribute("href", "/auth/google");
+    expect(screen.getByTestId("auth-hero-image")).toHaveAttribute("alt", expect.stringContaining("RAG"));
+    expect(screen.queryByText("RAG'inizin her adımını anlayın.")).not.toBeInTheDocument();
   });
 
   it("supports password visibility and maps missing local auth configuration safely", async () => {

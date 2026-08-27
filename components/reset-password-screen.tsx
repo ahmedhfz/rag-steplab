@@ -41,7 +41,7 @@ export function ResetPasswordScreen() {
 
   return (
     <AuthShell>
-      <section aria-label={labels.form} className="w-full max-w-[430px] border border-[#e7e2e4] bg-white p-6 shadow-[0_12px_35px_rgba(23,20,22,0.04)] sm:p-9">
+      <section aria-label={labels.form} className="w-full max-w-[430px] rounded-[16px] border border-[#e7e2e4] bg-white p-6 shadow-[0_12px_35px_rgba(23,20,22,0.04)] sm:p-9">
         <div className="border-b border-[#e7e2e4] pb-6">
           <p className="text-[11px] font-medium uppercase tracking-[0.13em] text-[#711f3a]">RAG StepLab</p>
           <h1 className="mt-3 text-[27px] font-semibold tracking-[-0.045em] text-[#171416]">{labels.title}</h1>

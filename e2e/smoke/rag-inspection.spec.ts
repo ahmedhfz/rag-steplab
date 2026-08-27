@@ -13,10 +13,12 @@ test("Playground stage rail, provenance ve Source Inspector contractını göste
 
   await page.goto("/playground");
   await selectSeededDocument(page);
+  await expect(page.getByTestId("playground-workspace-context")).toBeVisible();
   await expect(page.getByTestId("pipeline-context-bar")).toContainText("e2e-seeded-golden.pdf");
   await expect(page.getByTestId("pipeline-context-bar")).toContainText("Seeded indexing pipeline");
   await expect(page.getByLabel("Indexing lineage")).toContainText("Embedding");
-  await expect(page.getByTestId("playground-draft-configuration")).toContainText("Draft configuration");
+  await expect(page.getByTestId("playground-draft-configuration")).toHaveCount(0);
+  await expect(page.getByTestId("playground-question-help")).toBeVisible();
   await expect(page.getByRole("button", { name: "Hybrid", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("Experiment stages")).toBeVisible();
   await expect(page.getByLabel("Experiment stages")).toContainText("Retrieval");
@@ -30,10 +32,27 @@ test("Playground stage rail, provenance ve Source Inspector contractını göste
   await expect(dialog.locator("iframe")).toHaveAttribute("src", /#page=1$/);
   await page.getByRole("button", { name: "Close" }).click();
 
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Inspect source" }).first().click();
+  const mobileDialog = page.getByRole("dialog", { name: "Source inspector" });
+  await expect(mobileDialog).toBeVisible();
+  const mobileDialogRect = await mobileDialog.evaluate((element) => {
+    const { x, y, width, height } = element.getBoundingClientRect();
+    return { x, y, width, height };
+  });
+  expect(mobileDialogRect).toMatchObject({ x: 0, y: 0, width: 390, height: 844 });
+  await expect(mobileDialog.locator("aside")).toBeVisible();
+  await expect(mobileDialog.locator("details").first()).toBeVisible();
+  await page.screenshot({ path: "output/playwright/responsive-shell/source-inspector-390.png", fullPage: true });
+  await page.keyboard.press("Escape");
+  await expect(mobileDialog).toHaveCount(0);
+  await page.setViewportSize({ width: 1441, height: 1041 });
+
   await page.getByRole("button", { name: /Answer/ }).click();
   await expect(page.getByText("Citation reference valid", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "S1" }).click();
   await expect(page.getByRole("dialog", { name: "Source inspector" })).toContainText("laboratory beacon code is ORBIT-731");
+  await expect(page.getByTestId("playground-screen")).not.toContainText("persisted backend");
 
   quality.assertClean();
 });
@@ -58,12 +77,12 @@ test("Evaluation source picker, aggregate metrics, case diagnostics ve reload pe
   await expect(page.getByText("Hit@K", { exact: true }).first()).toBeVisible();
   await expect(page.getByText(/What is the laboratory beacon code\?/).first()).toBeVisible();
   await expect(page.getByText(/What is the launch code\?/).first()).toBeVisible();
-  await expect(page.getByText("correct abstention", { exact: true })).toBeVisible();
+  await expect(page.getByText("Correct no-answer", { exact: true })).toBeVisible();
   await expect(page.getByText("ORBIT-731", { exact: false }).first()).toBeVisible();
   await page.reload();
   await page.getByRole("tab", { name: "Results" }).click();
   await expect(page.getByText(/What is the laboratory beacon code\?/).first()).toBeVisible();
-  await expect(page.getByText("correct abstention", { exact: true })).toBeVisible();
+  await expect(page.getByText("Correct no-answer", { exact: true })).toBeVisible();
 
   quality.assertClean();
 });
@@ -78,8 +97,8 @@ test("Evaluation dataset normal cevap ve yetersiz bağlam case'lerini ayrı kont
   await page.getByTestId("source-picker-relevant-elements").getByRole("button", { name: /Golden fact: The laboratory/ }).click();
   await page.getByRole("button", { name: "Add case" }).click();
   await page.getByLabel("Golden question").nth(1).fill("What is the launch code?");
-  await page.getByRole("combobox", { name: "Expected outcome" }).nth(1).click();
-  await page.getByRole("option", { name: "Insufficient context / no answer" }).click();
+  await page.getByRole("combobox", { name: "Expected result" }).nth(1).click();
+  await page.getByRole("option", { name: "Insufficient context" }).click();
   await expect(page.getByText("Source evidence is not required.", { exact: true })).toBeVisible();
 
   const requestPromise = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/evaluation/datasets");
@@ -134,6 +153,7 @@ test("Reranking tablosu ham ordering değerini pozisyon bilgisinden ayırır", a
   await expect(content).toContainText("Reranked position");
   await expect(content).toContainText("Original rank");
   await expect(content).not.toContainText("Rerank score");
+  await expect(content).not.toContainText("confidence");
 
   quality.assertClean();
 });
@@ -165,9 +185,41 @@ test("Geçmiş experiment yüklemek aktif indexing pipeline'ı değiştirmez", a
   await selectSeededDocument(page);
   const pipelineSelector = page.getByRole("combobox", { name: "Indexing pipeline" });
   await expect(pipelineSelector).toContainText("Seeded indexing pipeline");
-  await page.getByTestId("playground-stage-rail").getByRole("button", { name: "Load Experiment 1" }).click();
-  await expect(page.getByTestId("playground-run-state")).toContainText("Viewing experiment");
+  const history = page.getByTestId("playground-history");
+  await history.locator("summary").click();
+  await history.getByRole("button", { name: "Load Experiment 1" }).click();
+  await expect(page.getByTestId("playground-run-state")).toContainText("Viewing");
+  await expect(page.getByTestId("playground-run-state")).toContainText("Unsaved changes");
   await expect(pipelineSelector).toContainText("Seeded indexing pipeline");
+
+  quality.assertClean();
+});
+
+test("Playground question CTA geometry and responsive overflow contractını korur", async ({ page }) => {
+  const quality = installBrowserQualityGuards(page);
+  const viewports = [1440, 1280, 1024, 768, 390];
+
+  for (const width of viewports) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/playground");
+    await selectSeededDocument(page);
+
+    const dimensions = await page.evaluate(() => ({
+      bodyScrollWidth: document.body.scrollWidth,
+      documentScrollWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+    }));
+    expect(dimensions.bodyScrollWidth, `body overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewportWidth);
+    expect(dimensions.documentScrollWidth, `document overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewportWidth);
+
+    if (width >= 768) {
+      const question = await page.getByTestId("playground-question").boundingBox();
+      const cta = await page.getByTestId("playground-run-cta").boundingBox();
+      expect(question).not.toBeNull();
+      expect(cta).not.toBeNull();
+      expect(Math.abs((question!.y + question!.height / 2) - (cta!.y + cta!.height / 2)), `CTA center alignment at ${width}px`).toBeLessThanOrEqual(1);
+    }
+  }
 
   quality.assertClean();
 });

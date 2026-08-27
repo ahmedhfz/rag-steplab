@@ -46,9 +46,47 @@ test("seeded state reload sonrası korunur ve responsive gezinme çalışır", a
   await expect(page.getByText("e2e-seeded-golden.pdf").first()).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
-  await page.getByRole("button", { name: "Open navigation" }).click();
-  await expect(page.getByRole("navigation", { name: "Primary navigation" })).toBeVisible();
+  const mobileLibrary = page.getByTestId("document-library-mobile");
+  await expect(mobileLibrary).toBeVisible();
+  await expect(page.getByTestId("document-library-table")).toBeHidden();
+  const mobileDocument = page.getByTestId("document-library-mobile-item").first();
+  await expect(mobileDocument).toBeVisible();
+  await expect(mobileDocument.getByRole("button", { name: "Open document: e2e-seeded-golden.pdf" })).toBeVisible();
+  await mobileDocument.locator("summary").click();
+  await expect(mobileDocument.getByRole("link", { name: "Open parsed content" })).toBeVisible();
+  await mobileDocument.locator("summary").click();
+  await page.screenshot({ path: "output/playwright/responsive-shell/documents-390.png", fullPage: true });
+
+  await page.goto("/settings");
+  const languageDescription = page.getByText("Choose the language used across the interface.");
+  const languageControl = page.getByRole("radiogroup", { name: "Language" });
+  const descriptionBox = await languageDescription.boundingBox();
+  const languageControlBox = await languageControl.boundingBox();
+  expect(descriptionBox).not.toBeNull();
+  expect(languageControlBox).not.toBeNull();
+  expect(languageControlBox!.y).toBeGreaterThanOrEqual(descriptionBox!.y + descriptionBox!.height);
+
+  for (const width of [390, 768, 1024]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.locator("html")).toHaveJSProperty("scrollWidth", width);
+    await expect(page.locator("body")).toHaveJSProperty("scrollWidth", width);
+
+    const openNavigation = page.getByRole("button", { name: "Open navigation" });
+    await openNavigation.click();
+    const mobileDialog = page.getByRole("dialog", { name: "Primary navigation" });
+    await expect(mobileDialog).toBeVisible();
+    await expect(mobileDialog.getByRole("button", { name: "Close" })).toBeFocused();
+    await expect.poll(() => page.evaluate(() => document.body.style.overflow)).toBe("hidden");
+
+    await page.keyboard.press("Escape");
+    await expect(mobileDialog).toHaveCount(0);
+    await expect(openNavigation).toBeFocused();
+    await expect.poll(() => page.evaluate(() => document.body.style.overflow)).toBe("");
+  }
+
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await expect(page.getByTestId("app-shell-sidebar")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open navigation" })).toBeHidden();
 
   quality.assertClean();
 });

@@ -61,16 +61,16 @@ export function SourceInspector({ documentId, parseResult, pageNumbers = [], sou
       <DialogPrimitive.Trigger asChild><Button aria-label={triggerAriaLabel} className="gap-2" disabled={!documentId} size="sm" type="button" variant="outline"><FileSearch aria-hidden="true" className="size-4" />{triggerLabel ?? labels.open}</Button></DialogPrimitive.Trigger>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-[#171416]/35" />
-        <DialogPrimitive.Content className="fixed inset-x-3 bottom-3 top-3 z-50 ml-auto flex max-w-5xl flex-col overflow-hidden border border-[#e7e2e4] bg-white shadow-2xl focus:outline-none sm:inset-x-6 sm:bottom-6 sm:top-6">
+        <DialogPrimitive.Content className="fixed inset-0 z-50 ml-0 flex max-w-none flex-col overflow-hidden border-0 bg-white shadow-2xl focus:outline-none sm:inset-x-6 sm:bottom-6 sm:top-6 sm:ml-auto sm:max-w-5xl sm:border sm:border-[#e7e2e4]" data-testid="source-inspector-content">
           <header className="flex items-start justify-between gap-4 border-b border-[#e7e2e4] p-4 sm:px-6">
             <div><DialogPrimitive.Title className="text-base font-semibold text-[#171416]">{labels.title}</DialogPrimitive.Title><DialogPrimitive.Description className="mt-1 text-xs text-[#6e676a]">{labels.fallback}</DialogPrimitive.Description></div>
             <DialogPrimitive.Close asChild><Button aria-label={labels.close} size="icon-sm" type="button" variant="ghost"><X aria-hidden="true" className="size-4" /></Button></DialogPrimitive.Close>
           </header>
-          <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_340px]">
-            <div className="min-h-[45vh] bg-[#f2f0f1]">
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:grid lg:overflow-hidden lg:grid-cols-[minmax(0,1fr)_340px]">
+            <div className="h-[min(45vh,420px)] min-h-[260px] shrink-0 bg-[#f2f0f1] lg:h-auto lg:min-h-[45vh]">
               {loading ? <div className="grid h-full place-items-center text-sm text-[#6e676a]" role="status"><span className="flex items-center gap-2"><LoaderCircle aria-hidden="true" className="size-4 animate-spin" />{labels.loading}</span></div> : error ? <p className="p-5 text-sm text-[#a23b3b]" role="alert">{error}</p> : sourceUrl ? <iframe className="h-full min-h-[45vh] w-full" src={`${sourceUrl}${selectedPage ? `#page=${selectedPage}` : ""}`} title={labels.title} /> : <p className="p-5 text-sm text-[#6e676a]">{labels.unavailable}</p>}
             </div>
-            <aside className="min-h-0 overflow-y-auto border-t border-[#e7e2e4] p-4 lg:border-l lg:border-t-0 sm:p-5">
+            <aside className="border-t border-[#e7e2e4] p-4 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 sm:p-5">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-[#969093]">{labels.provenance}</h3>
               <p className="mt-2 text-sm text-[#171416]">Document → {selectedPage ? `${labels.page} ${selectedPage}` : labels.page} → Parse element → Chunk → Retrieval/Context → Citation</p>
               {headingPath.length ? <p className="mt-3 text-xs text-[#6e676a]">{headingPath.join(" › ")}</p> : null}

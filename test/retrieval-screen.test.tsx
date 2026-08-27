@@ -20,25 +20,28 @@ afterEach(() => {
 });
 
 describe("RetrievalScreen", () => {
-  it("exposes labelled controls, disabled backend actions, reasons, and truthful empty states", () => {
+  it("exposes the compact controls and one truthful blocker state", () => {
     renderRetrieval();
 
     expect(screen.getByRole("textbox", { name: "Question" })).toHaveAccessibleName("Question");
     const run = screen.getByRole("button", { name: "Run experiment" });
     expect(run).toBeDisabled();
-    expect(run).toHaveAccessibleDescription("Select a persisted document and complete chunking first.");
+    expect(run).toHaveAccessibleDescription("Select a document and complete indexing setup first.");
     expect(screen.getByTestId("playground-blocker")).toHaveTextContent("Action blocked");
     expect(screen.getByTestId("playground-blocker")).toHaveTextContent("Go to Documents");
     expect(screen.getByRole("button", { name: "Hybrid" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("switch", { name: "Reranker" })).toHaveAttribute("aria-checked", "false");
     expect(screen.getByText("Advanced settings")).toBeInTheDocument();
+    expect(screen.queryByTestId("playground-draft-configuration")).not.toBeInTheDocument();
+    expect(screen.queryByText(/persisted backend|upstream artifact|reranker score/i)).not.toBeInTheDocument();
 
     expect(screen.queryByRole("button", { name: "Copy trace" })).not.toBeInTheDocument();
 
     const reset = screen.getByRole("button", { name: "Reset" });
     expect(reset).toBeDisabled();
     expect(reset).toHaveAccessibleDescription("No query settings have changed.");
-    expect(screen.getAllByText("No real retrieval experiment has run yet.").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("No trace data is available yet.")).toBeInTheDocument();
+    expect(screen.getByTestId("playground-blocker")).toHaveTextContent("Select a document");
+    expect(screen.queryByText("No trace data is available yet.")).not.toBeInTheDocument();
   });
 
   it("allows request parameters to be prepared and reset without running fake retrieval", async () => {
@@ -64,6 +67,6 @@ describe("RetrievalScreen", () => {
     expect(screen.getByRole("combobox", { name: "Top-K" })).toHaveTextContent("5");
     expect(screen.getByRole("button", { name: "Hybrid" })).toHaveAttribute("aria-pressed", "true");
     expect(reset).toBeDisabled();
-    expect(screen.getAllByText("No real retrieval experiment has run yet.").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByTestId("playground-blocker")).toHaveTextContent("Select a document");
   });
 });
