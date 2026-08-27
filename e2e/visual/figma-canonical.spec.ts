@@ -64,7 +64,9 @@ test.describe("Figma canonical static golden clones", () => {
   for (const [screen, referenceName] of screens) {
     test(`${screen} preserves the canonical desktop geometry and visual contract`, async ({ page }) => {
       await page.setViewportSize(viewport);
-      const response = await page.goto(`/__visual__/figma-canonical.html?screen=${screen}`, { waitUntil: "networkidle" });
+      // Preview ortamında kalıcı analytics/transport bağlantıları networkidle'ı bloke edebilir.
+      // Statik fixture için DOM + aşağıdaki font/görsel beklemesi yeterlidir.
+      const response = await page.goto(`/__visual__/figma-canonical.html?screen=${screen}`, { waitUntil: "domcontentloaded" });
       expect(response?.ok()).toBe(true);
       await settle(page);
 
