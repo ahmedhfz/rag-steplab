@@ -382,10 +382,10 @@ export const UI_COPY = {
     },
     evaluation: {
       title: "Evaluation",
-      description: "Compare retrieval and grounded-answer quality with persisted evaluation datasets and runs.",
+      description: "Measure how reliably your RAG finds relevant evidence and keeps answers grounded.",
       emptyTitle: "No evaluation data yet",
       emptyDescription: "Create a dataset after the active document has current chunks and embeddings, then run a real evaluation.",
-      emptyNote: "This screen will host reproducible experiment results and comparisons without fabricating placeholder metrics.",
+      emptyNote: "Results appear here after a reproducible evaluation run.",
     },
   },
   tr: {
@@ -576,10 +576,10 @@ export const UI_COPY = {
     },
     evaluation: {
       title: "Değerlendirme",
-      description: "Kalıcı değerlendirme veri setleri ve çalışmalarıyla getirme ve grounded cevap kalitesini karşılaştırın.",
+      description: "RAG sisteminizin ilgili kanıtı ne kadar iyi bulduğunu ve cevaplarını ne kadar sağlam tuttuğunu ölçün.",
       emptyTitle: "Henüz değerlendirme verisi yok",
       emptyDescription: "Aktif dokümanın güncel parçaları ve embedding'leri hazır olduktan sonra veri seti oluşturup gerçek değerlendirme çalıştırın.",
-      emptyNote: "Bu ekran sahte metrik üretmeden tekrarlanabilir deney sonuçlarını ve karşılaştırmaları barındıracaktır.",
+      emptyNote: "Sonuçlar, tekrarlanabilir bir değerlendirme çalışmasından sonra burada görünür.",
     },
   },
 } as const satisfies Record<AppLocale, AppCopy>;

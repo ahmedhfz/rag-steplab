@@ -8,7 +8,7 @@ they are intentionally not final illustrations and can be replaced in place.
 | --- | --- | --- | --- | --- |
 | `brand/rag-steplab-mark.svg` | Sidebar and compact app brand | 1:1 / vector | No | Temporary replaceable mark; restrained Dark Cherry/graphite geometry |
 | `brand/rag-steplab-app-icon.svg` | Browser/app icon source | 1:1 / vector | No | Temporary replaceable mark |
-| `illustrations/login-hero.png` | Login supporting visual | 4:3 / 1536x1024 | Yes/near-neutral | Temporary placeholder; quiet technical, light-first, no text |
+| `illustrations/login-hero.png` | Login supporting visual | 1122x1402 / 0.80:1 | No/near-neutral | User-provided final Auth hero; rendered with contain to preserve the original composition |
 | `illustrations/documents.png` | Documents empty-state visual | 4:3 / 1536x1024 | Yes/near-neutral | Temporary placeholder; document/data motif later |
 | `illustrations/parsing.png` | Parsing empty/help visual | 4:3 / 1536x1024 | Yes/near-neutral | Temporary placeholder; structured document motif later |
 | `illustrations/chunking.png` | Chunking empty/help visual | 4:3 / 1536x1024 | Yes/near-neutral | Temporary placeholder; segmented content motif later |

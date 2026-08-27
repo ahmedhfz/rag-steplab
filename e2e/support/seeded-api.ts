@@ -269,7 +269,7 @@ const evaluation = {
     judge: false,
   },
   results: {
-    aggregate: { hitAtK: 1, recallAtK: 1, precisionAtK: 1, mrr: 1, citationValidity: 1, groundedness: 1, judgeModel: "gemini-flash-lite-latest", caseCount: 2, retrievalEligibleCaseCount: 1, abstentionEligibleCaseCount: 1, abstentionAccuracy: 1 },
+    aggregate: { hitAtK: 1, recallAtK: 1, precisionAtK: 1, mrr: 1, citationValidity: 1, groundedness: 1, judgeModel: "gemini-flash-lite-latest", caseCount: 2, retrievalEligibleCaseCount: 1, abstentionEligibleCaseCount: 1, abstentionAccuracy: 1, generationMetrics: { faithfulness: 1, answerRelevance: null, answerCorrectness: null, eligibleCaseCount: 0, scoredCaseCount: 2 } },
     caseResults: [{
       question: "What is the laboratory beacon code?",
       expectedElementIds: ["element-fact"],
@@ -284,6 +284,7 @@ const evaluation = {
       citationValidity: 1,
       groundedness: 1,
       groundednessDetail: {},
+      generationMetrics: { faithfulness: 1, answerRelevance: null, answerCorrectness: null, eligibleCaseCount: 0, scoredCaseCount: 1 },
       experimentId,
       expectedOutcome: "answer",
       insufficientContext: false,
@@ -303,6 +304,7 @@ const evaluation = {
       citationValidity: 1,
       groundedness: 1,
       groundednessDetail: {},
+      generationMetrics: { faithfulness: 1, answerRelevance: null, answerCorrectness: null, eligibleCaseCount: 0, scoredCaseCount: 1 },
       experimentId: "e2e-seeded-no-answer-experiment",
       expectedOutcome: "insufficient_context",
       insufficientContext: true,
@@ -325,7 +327,7 @@ const evaluationB = {
     judge: true,
   },
   results: {
-    aggregate: { hitAtK: 0.9, recallAtK: 0.8, precisionAtK: 0.9, mrr: 0.8, citationValidity: 0.95, groundedness: 0.9, judgeModel: "gemini-2.5-flash", caseCount: 2, retrievalEligibleCaseCount: 1, abstentionEligibleCaseCount: 1, abstentionAccuracy: 1 },
+    aggregate: { hitAtK: 0.9, recallAtK: 0.8, precisionAtK: 0.9, mrr: 0.8, citationValidity: 0.95, groundedness: 0.9, judgeModel: "gemini-2.5-flash", caseCount: 2, retrievalEligibleCaseCount: 1, abstentionEligibleCaseCount: 1, abstentionAccuracy: 1, generationMetrics: { faithfulness: 0.9, answerRelevance: 0.85, answerCorrectness: 0.8, eligibleCaseCount: 1, scoredCaseCount: 1 } },
     caseResults: [{
       ...evaluation.results.caseResults[0],
       hitAtK: 0.9,
@@ -334,6 +336,7 @@ const evaluationB = {
       mrr: 0.8,
       citationValidity: 0.95,
       groundedness: 0.9,
+      generationMetrics: { faithfulness: 0.9, answerRelevance: 0.85, answerCorrectness: 0.8, eligibleCaseCount: 1, scoredCaseCount: 1 },
     }, evaluation.results.caseResults[1]],
   },
 };

@@ -23,6 +23,7 @@ import type {
   EvaluationCase,
   EvaluationDataset,
   EvaluationDatasetSummary,
+  EvaluationGenerationMetrics,
   EvaluationMetrics,
   EvaluationRun,
   EvaluationRunSummary,
@@ -351,6 +352,8 @@ function normalizeStageResults(value: unknown): ExperimentStageResults {
 function normalizeMetrics(value: unknown): EvaluationMetrics {
   const payload = object(value);
   const metrics = object(payload.aggregate ?? payload.metrics ?? payload);
+  const generationMetricsPayload = field(metrics, "generationMetrics", "generation_metrics") ?? field(payload, "generationMetrics", "generation_metrics");
+  const generationMetrics = normalizeGenerationMetrics(generationMetricsPayload);
   return {
     hitAtK: optionalNumber(metrics.hitAtK),
     recallAtK: optionalNumber(metrics.recallAtK),
@@ -363,6 +366,19 @@ function normalizeMetrics(value: unknown): EvaluationMetrics {
     retrievalEligibleCaseCount: optionalNumber(metrics.retrievalEligibleCaseCount),
     abstentionEligibleCaseCount: optionalNumber(metrics.abstentionEligibleCaseCount),
     abstentionAccuracy: optionalNumber(metrics.abstentionAccuracy),
+    generationMetrics,
+  };
+}
+
+function normalizeGenerationMetrics(value: unknown): EvaluationGenerationMetrics | null {
+  const metrics = object(value);
+  if (Object.keys(metrics).length === 0) return null;
+  return {
+    faithfulness: optionalNumber(metrics.faithfulness),
+    answerRelevance: optionalNumber(field(metrics, "answerRelevance", "answer_relevance")),
+    answerCorrectness: optionalNumber(field(metrics, "answerCorrectness", "answer_correctness")),
+    eligibleCaseCount: optionalNumber(field(metrics, "eligibleCaseCount", "eligible_case_count")),
+    scoredCaseCount: optionalNumber(field(metrics, "scoredCaseCount", "scored_case_count")),
   };
 }
 
@@ -1105,6 +1121,7 @@ function normalizeEvaluationRun(value: unknown): EvaluationRun {
         citationValidity: optionalNumber(item.citationValidity) ?? 0,
         groundedness: optionalNumber(item.groundedness) ?? 0,
         groundednessDetail: object(item.groundednessDetail),
+        generationMetrics: normalizeGenerationMetrics(field(item, "generationMetrics", "generation_metrics")),
         experimentId: string(item.experimentId),
       }))
       : [],

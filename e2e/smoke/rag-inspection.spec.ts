@@ -77,12 +77,12 @@ test("Evaluation source picker, aggregate metrics, case diagnostics ve reload pe
   await expect(page.getByText("Hit@K", { exact: true }).first()).toBeVisible();
   await expect(page.getByText(/What is the laboratory beacon code\?/).first()).toBeVisible();
   await expect(page.getByText(/What is the launch code\?/).first()).toBeVisible();
-  await expect(page.getByText("correct abstention", { exact: true })).toBeVisible();
+  await expect(page.getByText("Correct no-answer", { exact: true })).toBeVisible();
   await expect(page.getByText("ORBIT-731", { exact: false }).first()).toBeVisible();
   await page.reload();
   await page.getByRole("tab", { name: "Results" }).click();
   await expect(page.getByText(/What is the laboratory beacon code\?/).first()).toBeVisible();
-  await expect(page.getByText("correct abstention", { exact: true })).toBeVisible();
+  await expect(page.getByText("Correct no-answer", { exact: true })).toBeVisible();
 
   quality.assertClean();
 });
@@ -97,8 +97,8 @@ test("Evaluation dataset normal cevap ve yetersiz bağlam case'lerini ayrı kont
   await page.getByTestId("source-picker-relevant-elements").getByRole("button", { name: /Golden fact: The laboratory/ }).click();
   await page.getByRole("button", { name: "Add case" }).click();
   await page.getByLabel("Golden question").nth(1).fill("What is the launch code?");
-  await page.getByRole("combobox", { name: "Expected outcome" }).nth(1).click();
-  await page.getByRole("option", { name: "Insufficient context / no answer" }).click();
+  await page.getByRole("combobox", { name: "Expected result" }).nth(1).click();
+  await page.getByRole("option", { name: "Insufficient context" }).click();
   await expect(page.getByText("Source evidence is not required.", { exact: true })).toBeVisible();
 
   const requestPromise = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/evaluation/datasets");

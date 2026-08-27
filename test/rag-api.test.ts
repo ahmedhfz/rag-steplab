@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { continueExperiment, createDocumentPipeline, createExperimentAsync, deleteDocumentPipeline, getChunkRun, getDocument, getDocumentSummary, getEmbeddingRun, getExperiment, getParseRun, listDocumentPipelines, listDocuments, parseAndPersistDocument, rerunGeneration, updateDocumentPipeline, uploadDocument, waitForParseRun } from "@/lib/rag-api";
+import { continueExperiment, createDocumentPipeline, createExperimentAsync, deleteDocumentPipeline, getChunkRun, getDocument, getDocumentSummary, getEmbeddingRun, getEvaluationRun, getExperiment, getParseRun, listDocumentPipelines, listDocuments, parseAndPersistDocument, rerunGeneration, updateDocumentPipeline, uploadDocument, waitForParseRun } from "@/lib/rag-api";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -106,6 +106,37 @@ describe("RAG API contract normalization", () => {
       evaluationRuns: [{ id: "evaluation-1", chunkRunId: "chunk-1" }],
     });
     expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8000/documents/document-1/summary", expect.anything());
+  });
+
+  it("keeps nested answer-quality metrics available to the evaluation UI", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "evaluation-1",
+      datasetId: "dataset-1",
+      status: "completed",
+      timing: {},
+      upstream: {},
+      results: {
+        aggregate: {
+          hitAtK: 1,
+          recallAtK: 1,
+          precisionAtK: 1,
+          mrr: 1,
+          citationValidity: 1,
+          groundedness: 0.9,
+          judgeModel: "judge",
+          caseCount: 1,
+          retrievalEligibleCaseCount: 1,
+          abstentionEligibleCaseCount: 0,
+          abstentionAccuracy: null,
+          generationMetrics: { faithfulness: 0.9, answerRelevance: 0.8, answerCorrectness: 0.7, eligibleCaseCount: 1, scoredCaseCount: 1 },
+        },
+        caseResults: [],
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(getEvaluationRun("evaluation-1")).resolves.toMatchObject({
+      results: { generationMetrics: { faithfulness: 0.9, answerRelevance: 0.8, answerCorrectness: 0.7, eligibleCaseCount: 1, scoredCaseCount: 1 } },
+    });
   });
 
   it("normalizes named pipeline CRUD and sends expectedRevision on PATCH", async () => {

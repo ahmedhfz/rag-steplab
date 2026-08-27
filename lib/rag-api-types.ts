@@ -354,6 +354,14 @@ export type EvaluationDataset = {
   createdAt: string | null;
 };
 
+export type EvaluationGenerationMetrics = {
+  faithfulness: number | null;
+  answerRelevance: number | null;
+  answerCorrectness: number | null;
+  eligibleCaseCount: number | null;
+  scoredCaseCount: number | null;
+};
+
 export type EvaluationMetrics = {
   hitAtK: number | null;
   recallAtK: number | null;
@@ -366,6 +374,7 @@ export type EvaluationMetrics = {
   retrievalEligibleCaseCount: number | null;
   abstentionEligibleCaseCount: number | null;
   abstentionAccuracy: number | null;
+  generationMetrics?: EvaluationGenerationMetrics | null;
 };
 
 export type EvaluationCaseResult = {
@@ -386,6 +395,7 @@ export type EvaluationCaseResult = {
   citationValidity: number;
   groundedness: number;
   groundednessDetail?: Record<string, unknown>;
+  generationMetrics?: EvaluationGenerationMetrics | null;
   experimentId: string;
 };
 
