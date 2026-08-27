@@ -82,7 +82,9 @@ test.describe("canonical desktop production route inventory", () => {
 });
 
 test.describe("canonical desktop auth route inventory", () => {
-  test.use({ storageState: { cookies: [], origins: [] } });
+  // Auth ekranlarını anonim tutarken korumalı Preview'ın bypass cookie'sini koruyoruz.
+  // Boş storage state kullanmak Vercel'de uygulama yerine Vercel login ekranını açar.
+  test.use({ storageState: "output/playwright/.auth/vercel-bypass.json" });
 
   for (const route of [
     ["auth-login", "/login", "Sign in"],
