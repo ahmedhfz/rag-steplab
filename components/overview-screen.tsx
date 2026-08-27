@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { ChevronDown, Info } from "lucide-react";
+import { ArrowRight, ChevronDown, Info } from "lucide-react";
 import { useState } from "react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
@@ -12,9 +12,10 @@ import { StatusIndicator } from "@/components/status-indicator";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { UI_COPY } from "@/lib/copy";
+import { UI_COPY, type AppLocale } from "@/lib/copy";
 import { blocker, type BlockerCode } from "@/lib/blockers";
 import { buildOverviewViewModel } from "@/lib/figma-view-models";
+import type { OverviewContinuationKind } from "@/lib/figma-view-models";
 import type { PipelineStepDefinition, PipelineStepKey, PipelineStepState } from "@/lib/rag-ui-types";
 import { cn } from "@/lib/utils";
 
@@ -67,6 +68,40 @@ const journeyPositions: Record<string, { left: number; top: number; label: "abov
   generate: { left: 835.865, top: 115.977, label: "below" },
   evaluate: { left: 947.596, top: 55.979, label: "above" },
 };
+
+const continuationCopy: Record<AppLocale, Record<OverviewContinuationKind, { action: string; nextStep: string }>> = {
+  tr: {
+    checking: { action: "Workspace'i aç", nextStep: "Workspace" },
+    document: { action: "Doküman seç", nextStep: "Doküman" },
+    "parse-processing": { action: "Parsing'i izle", nextStep: "Parsing" },
+    "parse-error": { action: "Parsing sorununu incele", nextStep: "Parsing" },
+    parse: { action: "Parsing'e devam et", nextStep: "Parsing" },
+    "chunk-processing": { action: "Chunking'i izle", nextStep: "Chunking" },
+    "chunk-error": { action: "Chunking sorununu incele", nextStep: "Chunking" },
+    chunk: { action: "Chunking'e devam et", nextStep: "Chunking" },
+    "embedding-processing": { action: "Embedding'i izle", nextStep: "Embeddings" },
+    "embedding-error": { action: "Embedding sorununu incele", nextStep: "Embeddings" },
+    embedding: { action: "Embedding'e devam et", nextStep: "Embeddings" },
+    playground: { action: "Playground'a devam et", nextStep: "Playground" },
+  },
+  en: {
+    checking: { action: "Open workspace", nextStep: "Workspace" },
+    document: { action: "Select a document", nextStep: "Document" },
+    "parse-processing": { action: "Monitor parsing", nextStep: "Parsing" },
+    "parse-error": { action: "Review parsing issue", nextStep: "Parsing" },
+    parse: { action: "Continue to Parsing", nextStep: "Parsing" },
+    "chunk-processing": { action: "Monitor chunking", nextStep: "Chunking" },
+    "chunk-error": { action: "Review chunking issue", nextStep: "Chunking" },
+    chunk: { action: "Continue to Chunking", nextStep: "Chunking" },
+    "embedding-processing": { action: "Monitor embeddings", nextStep: "Embeddings" },
+    "embedding-error": { action: "Review embedding issue", nextStep: "Embeddings" },
+    embedding: { action: "Continue to Embeddings", nextStep: "Embeddings" },
+    playground: { action: "Continue to Playground", nextStep: "Playground" },
+  },
+};
+
+const selectorTriggerClass = "h-10 min-w-0 max-w-full overflow-hidden [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]]:truncate [&_[data-slot=select-value]]:whitespace-nowrap";
+const selectorItemClass = "h-auto min-h-8 whitespace-normal break-words";
 
 function JourneyNode({
   href,
@@ -129,6 +164,30 @@ function JourneyNode({
   );
 }
 
+function JourneyCompact({ labels, reasonFor, stateFor }: { labels: Record<PipelineStepKey, string>; reasonFor: (step: PipelineStepKey) => string | null; stateFor: (step: PipelineStepKey) => PipelineStepState }) {
+  return (
+    <ol className="grid gap-2" data-testid="overview-journey-compact">
+      {pipelineSteps.map((step) => {
+        const reason = reasonFor(step.key);
+        const content = (
+          <>
+            <span className="grid size-9 shrink-0 place-items-center rounded-[10px] border border-[#e7e2e4] bg-white">
+              <Image alt="" height={18} priority src={journeyAssets[step.key]} width={18} />
+            </span>
+            <span className="min-w-0 flex-1 truncate text-left text-sm font-medium text-[#171416]">{labels[step.key]}</span>
+            <StatusIndicator state={stateFor(step.key)} />
+          </>
+        );
+        return (
+          <li key={step.key}>
+            {reason ? <div aria-disabled="true" className="flex min-w-0 items-center gap-3 rounded-[10px] border border-[#e7e2e4] bg-white px-3 py-2.5 opacity-75" data-testid={`overview-compact-journey-node-${step.key}`} title={reason}>{content}</div> : <Link className="flex min-w-0 items-center gap-3 rounded-[10px] border border-[#e7e2e4] bg-white px-3 py-2.5 outline-none hover:border-[#d8b5c2] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" data-testid={`overview-compact-journey-node-${step.key}`} href={stageHref[step.key]}>{content}</Link>}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export function OverviewScreen() {
   const { preferences } = usePreferences();
   const copy = UI_COPY[preferences.locale];
@@ -174,13 +233,14 @@ export function OverviewScreen() {
         confirmDelete: "Bu pipeline silinsin mi? Artifact’lar silinmez.",
         noActivePipeline: "Bu doküman için pipeline seçilmedi.",
         selectDocumentForPipeline: "Pipeline yönetmek için önce bir doküman seçin.",
-        lineage: "Current indexing lineage",
+        continueTitle: "Devam et",
+        nextStep: "Sıradaki aşama",
+        clearPipeline: "Pipeline seçimini kaldır",
         journey: "Pipeline journey",
         journeyDescription: "Seçili workspace'in build ve deney aşamalarına geçin.",
         whyMatters: "Bu neden önemli?",
         whyMattersText: "Parse, chunk ve embedding seçimleri aşağı akıştaki retrieval sonucunu değiştirir. Her aşamayı seçili lineage üzerinden inceleyin.",
         empty: "Henüz doküman yok. Başlamak için Documents ekranından bir PDF ekleyin.",
-        documentsCta: "Documents'a git",
         loading: "Doküman workspace’i yükleniyor…",
         unavailable: "Doküman servisi kullanılamıyor.",
       }
@@ -201,13 +261,14 @@ export function OverviewScreen() {
         confirmDelete: "Delete this pipeline? Artifacts will not be deleted.",
         noActivePipeline: "No pipeline is selected for this document.",
         selectDocumentForPipeline: "Select a document before managing pipelines.",
-        lineage: "Current indexing lineage",
+        continueTitle: "Continue where you left off",
+        nextStep: "Next step",
+        clearPipeline: "Clear pipeline selection",
         journey: "Pipeline journey",
         journeyDescription: "Open the build and experiment stages for this workspace.",
         whyMatters: "Why this matters",
         whyMattersText: "Parse, chunk, and embedding choices change downstream retrieval. Inspect each stage through the selected lineage.",
         empty: "No documents yet. Add a PDF from Documents to begin.",
-        documentsCta: "Go to Documents",
         loading: "Loading document workspace…",
         unavailable: "The document service is unavailable.",
       };
@@ -241,6 +302,7 @@ export function OverviewScreen() {
     selectedParseRunId,
   });
   const pipelineState = overviewModel.pipelineState;
+  const continuationText = continuationCopy[preferences.locale][overviewModel.continuation.kind];
 
   const journeyLabels: Record<PipelineStepKey, string> = {
     ...copy.overview.steps,
@@ -287,12 +349,6 @@ export function OverviewScreen() {
     setPipelineName(activePipeline.name);
   }
 
-  const lineageItems: Array<{ key: "parse" | "chunk" | "embed"; href: string; label: string; state: PipelineStepState }> = [
-    { key: "parse", href: "/parse", label: "Parse", state: pipelineState.parse },
-    { key: "chunk", href: "/chunking", label: "Chunk", state: pipelineState.chunk },
-    { key: "embed", href: "/embeddings", label: "Embedding", state: pipelineState.embed },
-  ];
-
   return (
     <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]" data-testid="figma-overview-root">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4" data-testid="figma-overview-main">
@@ -310,15 +366,15 @@ export function OverviewScreen() {
                 <div className="min-w-0">
                   <label className="mb-1.5 block text-xs font-medium text-[#171416]" htmlFor="overview-document">{labels.document}</label>
                   <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
-                    <SelectTrigger aria-label={labels.document} className="h-10 min-w-0" data-testid="overview-document-selector" id="overview-document"><SelectValue placeholder={labels.chooseDocument} /></SelectTrigger>
-                    <SelectContent>{documents.map((document) => <SelectItem key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
+                    <SelectTrigger aria-label={labels.document} className={selectorTriggerClass} data-testid="overview-document-selector" id="overview-document" title={activeDocument?.fileName ?? labels.chooseDocument}><SelectValue placeholder={labels.chooseDocument} /></SelectTrigger>
+                    <SelectContent>{documents.map((document) => <SelectItem className={selectorItemClass} key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="min-w-0">
                   <label className="mb-1.5 block text-xs font-medium text-[#171416]" htmlFor="overview-pipeline">{labels.pipeline}</label>
-                  <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value === "none" ? null : value)} value={activePipelineId ?? "none"}>
-                    <SelectTrigger aria-label={labels.pipeline} className="h-10 min-w-0" data-testid="overview-pipeline-selector" id="overview-pipeline"><SelectValue placeholder={labels.noPipeline} /></SelectTrigger>
-                    <SelectContent><SelectItem value="none">{labels.noPipeline}</SelectItem>{pipelines.map((pipeline) => <SelectItem key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
+                  <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value)} value={activePipelineId ?? ""}>
+                    <SelectTrigger aria-label={labels.pipeline} className={selectorTriggerClass} data-testid="overview-pipeline-selector" id="overview-pipeline" title={activePipeline?.name ?? labels.noPipeline}><SelectValue placeholder={labels.noPipeline} /></SelectTrigger>
+                    <SelectContent>{pipelines.map((pipeline) => <SelectItem className={selectorItemClass} key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
               </div>
@@ -326,9 +382,23 @@ export function OverviewScreen() {
 
             <div className="flex flex-wrap gap-2 lg:justify-end">
               <Button disabled={!activeDocumentId || persistenceStatus !== "available"} onClick={beginCreatePipeline} size="sm" variant="secondary">{labels.newPipeline}</Button>
+              {activePipeline ? <Button onClick={() => void selectPipeline(null)} size="sm" variant="ghost" data-testid="clear-pipeline-selection">{labels.clearPipeline}</Button> : null}
               <Button disabled={!activePipeline} onClick={beginRenamePipeline} size="sm" variant="outline">{labels.rename}</Button>
               <Button disabled={!activePipeline} onClick={() => { setEditing(null); setConfirmDelete(true); }} size="sm" variant="ghost">{labels.remove}</Button>
             </div>
+          </div>
+
+          <div className="mt-5 grid min-w-0 gap-3 border-t border-[#e7e2e4] pt-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" data-testid="continue-surface">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.66px] text-[#969093]">{labels.continueTitle}</p>
+                <StatusIndicator state={overviewModel.continuation.state} />
+              </div>
+              <p className="mt-1 truncate text-xs text-[#6e676a]">{labels.nextStep}: <span className="font-medium text-[#171416]">{continuationText.nextStep}</span></p>
+            </div>
+            <Button asChild className="h-[42px] min-w-0 gap-2 rounded-[10px] px-4 text-sm" data-testid="overview-continue-action">
+              <Link href={overviewModel.continuation.href}>{continuationText.action}<ArrowRight aria-hidden="true" className="size-4" /></Link>
+            </Button>
           </div>
 
           {editing ? (
@@ -355,43 +425,26 @@ export function OverviewScreen() {
           {!activeDocumentId && documents.length > 0 ? <p className="mt-4 border-t border-[#e7e2e4] pt-3 text-xs leading-5 text-[#6e676a]">{labels.selectDocumentForPipeline}</p> : null}
           {persistenceStatus === "checking" ? <p className="mt-4 border-t border-[#e7e2e4] pt-3 text-xs leading-5 text-[#6e676a]">{labels.loading}</p> : null}
           {persistenceStatus === "unavailable" ? <div className="mt-4 border-t border-[#e7e2e4] pt-3"><p className="text-xs leading-5 text-[#a23b3b]">{labels.unavailable}</p><PipelineErrorMessage message={persistenceError?.message} /></div> : null}
-          {persistenceStatus === "available" && documents.length === 0 ? <p className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e7e2e4] pt-3 text-xs leading-5 text-[#6e676a]"><span>{labels.empty}</span><Link className="font-medium text-[#711f3a] underline-offset-2 hover:underline" href="/documents">{labels.documentsCta}</Link></p> : null}
+          {persistenceStatus === "available" && documents.length === 0 ? <p className="mt-4 border-t border-[#e7e2e4] pt-3 text-xs leading-5 text-[#6e676a]">{labels.empty}</p> : null}
         </section>
 
-        <section className="mt-4 rounded-[14px] border-[1.712px] border-[#e7e2e4] bg-white px-4 py-3.5 sm:px-5" data-testid="overview-lineage">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.66px] text-[#969093]">{labels.lineage}</p>
-              <p className="mt-1 max-w-[31rem] truncate text-xs text-[#6e676a]" title={`${activeDocument?.fileName ?? labels.chooseDocument} / ${activePipeline?.name ?? labels.noPipeline}`}>
-                {activeDocument?.fileName ?? labels.chooseDocument} <span className="text-[#d8d2d5]">/</span> {activePipeline?.name ?? labels.noPipeline}
-              </p>
-            </div>
-            <nav aria-label={labels.lineage} className="flex min-w-0 flex-wrap items-center gap-2">
-              {lineageItems.map((item, index) => (
-                <span className="flex items-center gap-2" key={item.key}>
-                  {index > 0 ? <span aria-hidden="true" className="text-[#d8d2d5]">→</span> : null}
-                  <Link className="flex min-w-0 items-center gap-2 rounded-[8px] px-1.5 py-1 outline-none hover:bg-[#fbf4f6] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" data-testid={`overview-lineage-${item.key}`} href={item.href}>
-                    <span className="text-xs font-medium text-[#171416]">{item.label}</span>
-                    <StatusIndicator state={item.state} />
-                  </Link>
-                </span>
-              ))}
-            </nav>
-          </div>
-        </section>
-
-        <section className="mt-6 rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white px-5 pb-4 pt-5 max-lg:overflow-x-auto" data-testid="figma-overview-pipeline">
+        <section className="mt-6 rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white px-5 pb-4 pt-5" data-testid="figma-overview-pipeline">
           <div className="flex min-h-[22px] w-full items-center justify-between gap-4">
             <h2 className="m-0 text-base font-semibold leading-[22px] text-[#171416]">{labels.journey}</h2>
             <p className="m-0 text-[12.5px] leading-[18.75px] text-[#969093] max-sm:hidden">{labels.journeyDescription}</p>
           </div>
-          <div className="relative mt-2 h-[216px] w-full min-w-[780px] overflow-hidden pt-3" data-testid="overview-journey">
-            <div className="relative h-[200px] w-full min-w-[780px]">
-              <div className="absolute left-[25.034px] top-1 h-[192px] w-[441px] rounded-[14px] border-[1.712px] border-[rgba(231,226,228,0.6)] bg-[#fbfafb]" data-testid="figma-overview-prepare"><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.knowledge}</span></div>
-              <div className="absolute left-[476.356px] top-1 h-[192px] w-[428px] rounded-[14px] border-[1.712px] border-[rgba(231,226,228,0.6)] bg-[#fbfafb]" data-testid="figma-overview-test"><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.query}</span></div>
-              <div className="absolute left-[914.809px] top-1 h-[192px] w-[114px] rounded-[14px] border-[1.712px] border-solid border-[rgba(231,226,228,0.6)] bg-[rgba(251,244,246,0.6)]" data-testid="figma-overview-measure"><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.quality}</span></div>
-              <Image alt="" className="pointer-events-none absolute left-[-0.05px] top-px h-[199.975px] w-[1054.1px] max-w-none" height={200} priority src="/assets/figma/overview/icon.svg" width={1054} />
-              {pipelineSteps.map((step) => <JourneyNode href={stageHref[step.key]} key={step.key} labels={journeyLabels} reason={lockedReason(step.key)} state={pipelineState[step.key]} step={step} />)}
+          <div className="relative mt-2 w-full overflow-hidden" data-testid="overview-journey">
+            <div className="relative hidden h-[216px] w-full pt-3 min-[1440px]:block" data-testid="overview-journey-desktop">
+              <div className="relative h-[200px] w-full">
+                <div className="absolute left-[25.034px] top-1 h-[192px] w-[441px] rounded-[14px] border-[1.712px] border-[rgba(231,226,228,0.6)] bg-[#fbfafb]" data-testid="figma-overview-prepare"><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.knowledge}</span></div>
+                <div className="absolute left-[476.356px] top-1 h-[192px] w-[428px] rounded-[14px] border-[1.712px] border-[rgba(231,226,228,0.6)] bg-[#fbfafb]" data-testid="figma-overview-test"><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.query}</span></div>
+                <div className="absolute left-[914.809px] top-1 h-[192px] w-[114px] rounded-[14px] border-[1.712px] border-solid border-[rgba(231,226,228,0.6)] bg-[rgba(251,244,246,0.6)]" data-testid="figma-overview-measure"><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.quality}</span></div>
+                <Image alt="" className="pointer-events-none absolute left-[-0.05px] top-px h-[199.975px] w-[1054.1px] max-w-none" height={200} priority src="/assets/figma/overview/icon.svg" width={1054} />
+                {pipelineSteps.map((step) => <JourneyNode href={stageHref[step.key]} key={step.key} labels={journeyLabels} reason={lockedReason(step.key)} state={pipelineState[step.key]} step={step} />)}
+              </div>
+            </div>
+            <div className="min-[1440px]:hidden">
+              <JourneyCompact labels={journeyLabels} reasonFor={lockedReason} stateFor={(step) => pipelineState[step]} />
             </div>
           </div>
         </section>

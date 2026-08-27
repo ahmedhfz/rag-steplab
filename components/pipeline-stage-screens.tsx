@@ -100,6 +100,25 @@ function StageHeader({ eyebrow, title, description, action }: { eyebrow: string;
   );
 }
 
+export function StageNextAction({ href, label, disabled, reason, testId }: { href: string; label: string; disabled: boolean; reason?: string; testId: string }) {
+  const reasonId = `${testId}-disabled-reason`;
+  if (disabled) {
+    return (
+      <div className="min-w-0">
+        <Button aria-describedby={reason ? reasonId : undefined} className="h-[42px] gap-2 rounded-[10px] px-4 text-sm" data-testid={testId} disabled>
+          {label}<ArrowRight aria-hidden="true" className="size-4" />
+        </Button>
+        {reason ? <DisabledReason id={reasonId}>{reason}</DisabledReason> : null}
+      </div>
+    );
+  }
+  return (
+    <Button asChild className="h-[42px] gap-2 rounded-[10px] px-4 text-sm" data-testid={testId}>
+      <Link href={href}>{label}<ArrowRight aria-hidden="true" className="size-4" /></Link>
+    </Button>
+  );
+}
+
 export function ChunkingScreen() {
   const { preferences } = usePreferences();
   const locale = preferences.locale;
@@ -112,14 +131,10 @@ export function ChunkingScreen() {
   return (
     <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]" data-testid="chunking-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
-        <StageHeader description={labels.description} eyebrow="Build" title="Chunking" />
-        <PipelineContextBar />
+        <StageHeader action={<StageNextAction disabled={!compatibleChunks.some((run) => run.id === selectedChunkRunId)} href="/embeddings" label={labels.next} reason={activeDocumentId ? labels.nextReason : labels.noDocument} testId="chunking-next-action" />} description={labels.description} eyebrow="Build" title="Chunking" />
+        <PipelineContextBar showLineage={false} />
         <ChunkingWorkspace locale={locale} />
-         <ArtifactHistory defaultId={activeDocument?.activeChunkRunId} inspectedId={inspectedChunkRunId} kind="chunk" locale={locale} onSelect={selectChunkRun} onUse={setPipelineChunkRun} runs={activeDocument?.chunkRuns.filter((run) => run.upstream.parseRunId === selectedParseRunId) ?? []} selectedId={selectedChunkRunId} title={labels.history} />
-        <section className="mt-6 flex items-start justify-between gap-4">
-          {compatibleChunks.some((run) => run.id === selectedChunkRunId) ? <Button asChild size="sm" variant="outline"><Link href="/embeddings">{labels.next}<ArrowRight aria-hidden="true" className="ml-2 size-4" /></Link></Button> : <div><Button disabled size="sm" variant="outline">{labels.next}</Button><DisabledReason id="chunking-next-disabled-reason">{labels.nextReason}</DisabledReason></div>}
-          {!activeDocumentId ? <span className="text-xs text-[#969093]">{labels.noDocument}</span> : null}
-        </section>
+        <ArtifactHistory defaultId={activeDocument?.activeChunkRunId} inspectedId={inspectedChunkRunId} kind="chunk" locale={locale} onSelect={selectChunkRun} onUse={setPipelineChunkRun} runs={activeDocument?.chunkRuns.filter((run) => run.upstream.parseRunId === selectedParseRunId) ?? []} selectedId={selectedChunkRunId} title={labels.history} />
       </div>
     </div>
   );
@@ -128,31 +143,24 @@ export function ChunkingScreen() {
 export function EmbeddingsScreen() {
   const { preferences } = usePreferences();
   const locale = preferences.locale;
-  const { activeDocument, activeDocumentId, selectedChunkRunId, selectedEmbeddingRunId, inspectedEmbeddingRunId, embeddingRun, embeddingStatus, capabilities, selectEmbeddingRun, setPipelineEmbeddingRun, runEmbedding } = useDocumentPipeline();
-  const selectedChunk = activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId);
-  const canEmbed = Boolean(activeDocumentId && selectedChunk?.status === "completed" && selectedChunk.isCompatible && selectedChunkRunId && embeddingStatus !== "processing");
+  const { activeDocument, selectedChunkRunId, selectedEmbeddingRunId, inspectedEmbeddingRunId, embeddingRun, selectEmbeddingRun, setPipelineEmbeddingRun } = useDocumentPipeline();
+  const canContinue = embeddingRun?.status === "completed" && embeddingRun.isCompatible && embeddingRun.upstream.chunkRunId === selectedChunkRunId;
   const labels = locale === "tr"
-    ? { description: "Seçili chunk setini semantic search için embedding'lere dönüştürün.", chunks: "chunk", model: "Model", dimensions: "Boyut", noDocument: "Chunk seti seçin", create: "Embedding oluştur", creating: "Embedding oluşturuluyor", history: "Embedding sürüm geçmişi", next: "Playground'a git", nextReason: "Playground için önce tamamlanmış bir chunk run gerekir." }
-    : { description: "Turn the selected chunk set into embeddings for semantic search.", chunks: "chunks", model: "Model", dimensions: "Dimensions", noDocument: "Select a chunk set", create: "Create embeddings", creating: "Creating embeddings", history: "Embedding version history", next: "Go to Playground", nextReason: "A successful, current chunk run is required first." };
+    ? { description: "Seçili chunk setini semantic search için embedding'lere dönüştürün.", chunks: "chunk", model: "Model", dimensions: "Boyut", noDocument: "Chunk seti seçin", create: "Embedding oluştur", creating: "Embedding oluşturuluyor", history: "Embedding sürüm geçmişi", next: "Playground'a git", nextReason: "Playground'a geçmeden önce embedding oluşturun." }
+    : { description: "Turn the selected chunk set into embeddings for semantic search.", chunks: "chunks", model: "Model", dimensions: "Dimensions", noDocument: "Select a chunk set", create: "Create embeddings", creating: "Creating embeddings", history: "Embedding version history", next: "Go to Playground", nextReason: "Create embeddings before continuing to Playground." };
 
   return (
     <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]" data-testid="embeddings-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <StageHeader
-          action={embeddingRun ? <Button asChild className="h-[42px] rounded-[10px] px-4 text-sm"><Link href="/playground">{labels.next}<ArrowRight aria-hidden="true" className="ml-2 size-4" /></Link></Button> : <Button aria-busy={embeddingStatus === "processing"} aria-describedby={!canEmbed ? "embeddings-next-disabled-reason" : undefined} className="h-[42px] rounded-[10px] px-4 text-sm" disabled={!canEmbed} onClick={() => void runEmbedding()}>{embeddingStatus === "processing" ? labels.creating : labels.create}</Button>}
+          action={<StageNextAction disabled={!canContinue} href="/playground" label={labels.next} reason={labels.nextReason} testId="embeddings-next-action" />}
           description={labels.description}
           eyebrow="Build"
           title="Embeddings"
         />
-        <PipelineContextBar />
-        <section className="mt-6 grid gap-4 border-y-[1.712px] border-[#e7e2e4] bg-white px-5 py-4 sm:grid-cols-3" data-testid="embedding-input">
-          <div><p className="text-xs leading-[18px] text-[#969093]">{labels.noDocument}</p><p className="mt-1 text-sm font-medium leading-[21px] text-[#171416]">{selectedChunk?.chunkCount ?? "—"} {selectedChunk ? labels.chunks : ""}</p></div>
-          <div><p className="text-xs leading-[18px] text-[#969093]">{labels.model}</p><p className="mt-1 truncate text-sm font-medium leading-[21px] text-[#171416]">{embeddingRun?.model ?? capabilities?.embeddingModel ?? "Gemini Embedding"}</p></div>
-          <div><p className="text-xs leading-[18px] text-[#969093]">{labels.dimensions}</p><p className="mt-1 text-sm font-medium leading-[21px] text-[#171416]">{embeddingRun?.dimensions ?? capabilities?.embeddingDimensions ?? "—"}</p></div>
-        </section>
-        <EmbeddingWorkspace locale={locale} showAction={false} />
+        <PipelineContextBar showLineage={false} />
+        <EmbeddingWorkspace locale={locale} />
         <ArtifactHistory defaultId={activeDocument?.activeEmbeddingRunId} inspectedId={inspectedEmbeddingRunId} kind="embedding" locale={locale} onSelect={selectEmbeddingRun} onUse={setPipelineEmbeddingRun} runs={activeDocument?.embeddingRuns.filter((run) => run.upstream.chunkRunId === selectedChunkRunId) ?? []} selectedId={selectedEmbeddingRunId} title={labels.history} />
-        {!embeddingRun ? <DisabledReason id="embeddings-next-disabled-reason">{labels.nextReason}</DisabledReason> : null}
       </div>
     </div>
   );

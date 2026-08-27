@@ -30,16 +30,17 @@ describe("Phase 6B document ownership", () => {
 
     expect(screen.getByRole("heading", { name: "Build your RAG, one step at a time." })).toBeInTheDocument();
     expect(screen.getByTestId("workspace-control-plane")).toBeInTheDocument();
-    expect(screen.getByTestId("overview-lineage")).toBeInTheDocument();
+    expect(screen.queryByTestId("overview-lineage")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New pipeline" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Rename" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Delete" })).toBeVisible();
-    expect(screen.queryByTestId("continue-surface")).not.toBeInTheDocument();
+    expect(screen.getByTestId("continue-surface")).toBeInTheDocument();
     expect(screen.queryByTestId("current-setup")).not.toBeInTheDocument();
-    expect(screen.getByTestId("overview-journey")).toContainElement(screen.getByText("Build Context"));
-    expect(screen.getByText("Retrieval")).toBeInTheDocument();
+    expect(screen.getByTestId("overview-journey-compact")).toContainElement(screen.getAllByText("Build Context")[1]);
+    expect(screen.getAllByText("Retrieval").length).toBeGreaterThanOrEqual(1);
     await waitFor(() => expect(screen.getByText(/No documents yet/)).toBeInTheDocument());
-    expect(screen.getByRole("link", { name: "Go to Documents" })).toHaveAttribute("href", "/documents");
+    expect(screen.getByTestId("overview-continue-action")).toHaveAttribute("href", "/documents");
+    expect(screen.getByTestId("overview-continue-action")).toHaveTextContent("Select a document");
     expect(screen.queryByRole("button", { name: /Add PDF|Choose PDF|Parse Document|Reparse/i })).not.toBeInTheDocument();
     expect(screen.queryByTestId("activity-timeline")).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/documents/"))).toBe(false);

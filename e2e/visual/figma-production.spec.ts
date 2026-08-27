@@ -95,10 +95,13 @@ async function assertShellGeometry(page: Page) {
 async function assertOverviewGeometry(page: Page) {
   await assertRect(page.getByTestId("figma-overview-main"), { x: 248, y: 0, width: 1193 }, "overview-main");
   await assertRect(page.getByTestId("figma-overview-header"), { x: 288, y: 40, width: 1113, height: 82 }, "overview-header");
-  await assertRect(page.getByTestId("workspace-control-plane"), { x: 288, y: 150, width: 1113, height: 161.5 }, "overview-control-plane");
-  await assertRect(page.getByTestId("overview-lineage"), { x: 288, y: 327.5, width: 1113, height: 66.5 }, "overview-lineage");
-  await assertRect(page.getByTestId("figma-overview-pipeline"), { x: 288, y: 418, width: 1113, height: 284 }, "overview-pipeline");
-  await assertRect(page.getByTestId("overview-journey"), { x: 309, y: 469, width: 1071, height: 216 }, "overview-journey");
+  const workspace = page.getByTestId("workspace-control-plane");
+  await assertRect(workspace, { x: 288, y: 150, width: 1113 }, "overview-control-plane");
+  expect((await rect(workspace)).height, "overview workspace context height").toBeGreaterThan(220);
+  await expect(page.getByTestId("continue-surface")).toBeVisible();
+  await expect(page.getByTestId("overview-lineage")).toHaveCount(0);
+  await assertRect(page.getByTestId("figma-overview-pipeline"), { x: 288, width: 1113, height: 284 }, "overview-pipeline");
+  await assertRect(page.getByTestId("overview-journey"), { x: 309, width: 1071, height: 216 }, "overview-journey");
   await assertRect(page.getByTestId("figma-overview-prepare"), { width: 441, height: 192 }, "overview-prepare");
   await assertRect(page.getByTestId("figma-overview-test"), { width: 428, height: 192 }, "overview-test");
   await assertRect(page.getByTestId("figma-overview-measure"), { width: 114, height: 192 }, "overview-measure");
@@ -141,8 +144,11 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
   } else if (state.group === "embeddings") {
     await assertRect(page.getByTestId("embeddings-page-header"), { x: 288, y: 40, width: 1113, height: 92 }, "embeddings-header");
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 288, y: 132, width: 1113, height: 53 }, "embeddings-context");
-    await assertRect(page.getByTestId("embedding-input"), { x: 288, y: 209, width: 1113, height: 77 }, "embedding-input");
-    await assertRect(page.getByTestId("embeddings-workspace"), { x: 288, y: 310, width: 1113, height: state.key === "embeddings-ready" ? 118 : 341 }, "embeddings-workspace");
+    await expect(page.getByTestId("embedding-input")).toHaveCount(0);
+    const embeddingWorkspace = page.getByTestId("embeddings-workspace");
+    await assertRect(embeddingWorkspace, { x: 288, y: 209, width: 1113 }, "embeddings-workspace");
+    expect((await rect(embeddingWorkspace)).height, `${state.key}-workspace-height`).toBeGreaterThan(state.key === "embeddings-ready" ? 100 : 180);
+    await expect(page.getByTestId("embedding-lineage")).toBeVisible();
   } else if (state.group === "playground") {
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: 1193, height: 53 }, "playground-context-bar");
     await assertRect(page.getByTestId("playground-page-header"), { x: 288, y: 93, width: 1113, height: 92 }, "playground-header");

@@ -34,7 +34,13 @@ export type SeededScenario =
 
 export type SeededApiOptions = {
   scenario?: SeededScenario;
+  longNames?: boolean;
 };
+
+export const seededStressNames = {
+  document: "Karaman_RAG_StepLab_long_filename_for_single_line_select_geometry_validation.pdf",
+  pipeline: "Karaman production indexing pipeline with structure-aware chunking and Gemini embeddings",
+} as const;
 
 type ScenarioDefinition = {
   chunk: boolean;
@@ -445,7 +451,15 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
     const url = new URL(request.url());
     const pathname = url.pathname;
     const method = request.method();
-    const current = scenarioState(scenario, embeddingAvailable);
+    const seededState = scenarioState(scenario, embeddingAvailable);
+    const current = options.longNames
+      ? {
+          ...seededState,
+          document: { ...seededState.document, fileName: seededStressNames.document },
+          pipeline: { ...seededState.pipeline, name: seededStressNames.pipeline },
+          summary: { ...seededState.summary, fileName: seededStressNames.document },
+        }
+      : seededState;
     const seededExperiment = current.experiment ?? experimentFor("complete") ?? experiment;
 
     // UI rotaları ile aynı path'i kullanan API proxy çağrılarını yalnız request türüyle ayırıyoruz.

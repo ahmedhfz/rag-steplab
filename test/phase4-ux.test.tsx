@@ -45,7 +45,7 @@ describe("Phase 6B pipeline IA", () => {
     cleanup();
     renderWithPipeline(<EmbeddingsScreen />);
     expect(screen.getByRole("button", { name: "Create embeddings" })).toBeDisabled();
-    expect(screen.getByText("A successful, current chunk run is required first.")).toBeInTheDocument();
+    expect(screen.getByText("Create embeddings before continuing to Playground.")).toBeInTheDocument();
   });
 
   it("keeps the Playground route available even when no embedding is selected", () => {

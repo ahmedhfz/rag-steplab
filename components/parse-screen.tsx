@@ -1,11 +1,11 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowRight, FileText, LoaderCircle, RefreshCw } from "lucide-react";
+import { FileText, LoaderCircle, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { DeveloperOutput, ParsedContentTab } from "@/components/documents-screen";
 import { PipelineContextBar } from "@/components/pipeline-context-bar";
+import { StageNextAction } from "@/components/pipeline-stage-screens";
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { EmptyPipelineState } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
@@ -42,8 +42,8 @@ export function ParseScreen() {
   const selectedRun = activeDocument?.parseRuns.find((run) => run.id === selectedParseRunId) ?? null;
   const currentRun = activeDocument?.parseRuns.find((run) => run.status === "queued" || run.status === "running") ?? selectedRun;
   const labels = preferences.locale === "tr" ? {
-    title: "Parse", description: "Seçili dokümanı normalized yapılandırılmış içeriğe dönüştürün.", parse: "Parse", reparse: "Reparse", running: "Çalışıyor", current: "Güncel durum", progress: "İlerleme", elapsed: "Geçen süre", estimated: "tahmini ara gösterim", authoritative: "backend checkpoint", summary: "Parse özeti", content: "Parsed content", continue: "Chunking'e devam et", history: "Parse sürüm geçmişi", selected: "Seçili", active: "Varsayılan", historical: "Geçmiş", compatible: "Uyumlu", incompatible: "Uyumsuz", failed: "Başarısız", noDocument: "Önce Documents ekranından bir doküman seçin.", noRun: "Henüz parse run yok.", noOutput: "Parse tamamlandığında gerçek normalized çıktı burada görünür.", unavailable: "Doküman servisi kullanılamıyor.", processingReason: "Devam eden parse tamamlanmadan yeni parse başlatılamaz.", phases: { queued: "Sırada", worker_started: "Worker başladı", source_loaded: "Kaynak yüklendi", docling_starting: "Docling başlatılıyor", docling_ready: "Docling hazır", docling_converted: "PDF dönüştürüldü", content_normalized: "İçerik normalize edildi", completed: "Tamamlandı" } as Record<string, string>, pages: "Sayfa", headings: "Başlık", paragraphs: "Paragraf", lists: "Liste", tables: "Tablo", elements: "Element" } : {
-    title: "Parse", description: "Turn the selected document into normalized structured content.", parse: "Parse", reparse: "Reparse", running: "Running", current: "Current status", progress: "Progress", elapsed: "Elapsed", estimated: "estimated between checkpoints", authoritative: "backend checkpoint", summary: "Parse summary", content: "Parsed content", continue: "Continue to Chunking", history: "Parse version history", selected: "Selected", active: "Default", historical: "Historical", compatible: "Compatible", incompatible: "Incompatible", failed: "Failed", noDocument: "Select a persisted document before parsing.", noRun: "No parse runs exist yet.", noOutput: "The real normalized output appears here after parsing completes.", unavailable: "The document service is unavailable.", processingReason: "A new parse cannot start until the current run finishes.", phases: { queued: "Queued", worker_started: "Worker started", source_loaded: "Source loaded", docling_starting: "Docling starting", docling_ready: "Docling ready", docling_converted: "PDF converted", content_normalized: "Content normalized", completed: "Completed" } as Record<string, string>, pages: "Pages", headings: "Headings", paragraphs: "Paragraphs", lists: "Lists", tables: "Tables", elements: "Elements" };
+    title: "Parse", description: "Seçili dokümanı normalized yapılandırılmış içeriğe dönüştürün.", parse: "Parse", reparse: "Reparse", running: "Çalışıyor", current: "Güncel durum", progress: "İlerleme", elapsed: "Geçen süre", estimated: "tahmini ara gösterim", authoritative: "backend checkpoint", summary: "Parse özeti", content: "Parsed content", continue: "Chunking'e devam et", nextReason: "Önce parse işlemini tamamlayın.", history: "Parse sürüm geçmişi", selected: "Seçili", active: "Varsayılan", historical: "Geçmiş", compatible: "Uyumlu", incompatible: "Uyumsuz", failed: "Başarısız", noDocument: "Önce Documents ekranından bir doküman seçin.", noRun: "Henüz parse run yok.", noOutput: "Parse tamamlandığında gerçek normalized çıktı burada görünür.", unavailable: "Doküman servisi kullanılamıyor.", processingReason: "Devam eden parse tamamlanmadan yeni parse başlatılamaz.", phases: { queued: "Sırada", worker_started: "Worker başladı", source_loaded: "Kaynak yüklendi", docling_starting: "Docling başlatılıyor", docling_ready: "Docling hazır", docling_converted: "PDF dönüştürüldü", content_normalized: "İçerik normalize edildi", completed: "Tamamlandı" } as Record<string, string>, pages: "Sayfa", headings: "Başlık", paragraphs: "Paragraf", lists: "Liste", tables: "Tablo", elements: "Element" } : {
+    title: "Parse", description: "Turn the selected document into normalized structured content.", parse: "Parse", reparse: "Reparse", running: "Running", current: "Current status", progress: "Progress", elapsed: "Elapsed", estimated: "estimated between checkpoints", authoritative: "backend checkpoint", summary: "Parse summary", content: "Parsed content", continue: "Continue to Chunking", nextReason: "Complete parsing before continuing to Chunking.", history: "Parse version history", selected: "Selected", active: "Default", historical: "Historical", compatible: "Compatible", incompatible: "Incompatible", failed: "Failed", noDocument: "Select a persisted document before parsing.", noRun: "No parse runs exist yet.", noOutput: "The real normalized output appears here after parsing completes.", unavailable: "The document service is unavailable.", processingReason: "A new parse cannot start until the current run finishes.", phases: { queued: "Queued", worker_started: "Worker started", source_loaded: "Source loaded", docling_starting: "Docling starting", docling_ready: "Docling ready", docling_converted: "PDF converted", content_normalized: "Content normalized", completed: "Completed" } as Record<string, string>, pages: "Pages", headings: "Headings", paragraphs: "Paragraphs", lists: "Lists", tables: "Tables", elements: "Elements" };
   const canParse = Boolean(activeDocument?.id && persistenceStatus === "available" && !isProcessing);
   const blocker = isProcessing ? labels.processingReason : persistenceStatus !== "available" ? labels.unavailable : !activeDocument?.id ? labels.noDocument : null;
   const actionLabel = activeDocument?.activeParseRunId ? labels.reparse : labels.parse;
@@ -66,22 +66,22 @@ export function ParseScreen() {
             <h1 className="mt-2 text-[30px] font-semibold leading-9 tracking-[-0.6px] text-[#171416]">{labels.title === "Parse" ? (preferences.locale === "tr" ? "Ayrıştırma" : "Parsing") : labels.title}</h1>
             <p className="mt-2 text-sm leading-[21px] text-[#6e676a]">{labels.description}</p>
           </div>
-          <div className="flex shrink-0 gap-2">
-            <Button aria-busy={isProcessing} aria-describedby={blocker ? "parse-action-disabled-reason" : undefined} className="h-[42px] rounded-[10px] border-[#d8d2d5] bg-white px-4 text-sm text-[#171416] shadow-none hover:bg-[#fbf4f6]" disabled={!canParse} onClick={parseAction} variant="outline">
-              {isProcessing ? <LoaderCircle aria-hidden="true" className="size-4 animate-spin" /> : <RefreshCw aria-hidden="true" className="size-4" />}{isProcessing ? labels.running : actionLabel}
-            </Button>
-            {parseResult ? <Button asChild className="h-[42px] gap-2 rounded-[10px] px-4 text-sm"><Link href="/chunking">{labels.continue}<ArrowRight aria-hidden="true" className="size-4" /></Link></Button> : <Button className="h-[42px] rounded-[10px] px-4 text-sm" disabled>{labels.continue}<ArrowRight aria-hidden="true" className="size-4" /></Button>}
-          </div>
+          <StageNextAction disabled={!parseResult} href="/chunking" label={labels.continue} reason={blocker ?? labels.nextReason} testId="parse-next-action" />
         </header>
 
-        <PipelineContextBar />
+        <PipelineContextBar showLineage={false} />
 
-        <section aria-live="polite" className="flex h-[76px] items-center justify-between rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white px-4" data-testid="parse-document-status">
+        <section aria-live="polite" className="flex min-h-[76px] flex-wrap items-center justify-between gap-4 rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white px-4 py-3" data-testid="parse-document-status">
           <div className="flex min-w-0 items-center gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-[10px] bg-[#fbf4f6] text-[#711f3a]"><FileText aria-hidden="true" className="size-[18px]" /></span>
             <div className="min-w-0"><p className="text-xs leading-[18px] text-[#969093]">{preferences.locale === "tr" ? "Doküman" : "Document"}</p><p className="truncate text-sm font-medium leading-[21px] text-[#171416]">{activeDocument?.fileName ?? labels.noDocument}</p></div>
           </div>
-          <span className={cn("rounded-full border px-3 py-1 text-[11px] font-medium", statusTone)}><span aria-hidden="true" className="mr-1.5 inline-block size-1.5 rounded-full bg-current" />{statusLabel || (parseResult ? (preferences.locale === "tr" ? "Ayrıştırıldı" : "Parsed") : labels.noRun)}</span>
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <span className={cn("rounded-full border px-3 py-1 text-[11px] font-medium", statusTone)}><span aria-hidden="true" className="mr-1.5 inline-block size-1.5 rounded-full bg-current" />{statusLabel || (parseResult ? (preferences.locale === "tr" ? "Ayrıştırıldı" : "Parsed") : labels.noRun)}</span>
+            <Button aria-busy={isProcessing} aria-describedby={blocker ? "parse-action-disabled-reason" : undefined} className="h-[42px] rounded-[10px] border-[#d8d2d5] bg-white px-4 text-sm text-[#171416] shadow-none hover:bg-[#fbf4f6]" data-testid="parse-run-action" disabled={!canParse} onClick={parseAction} variant="outline">
+              {isProcessing ? <LoaderCircle aria-hidden="true" className="size-4 animate-spin" /> : <RefreshCw aria-hidden="true" className="size-4" />}{isProcessing ? labels.running : actionLabel}
+            </Button>
+          </div>
         </section>
         {blocker ? <p className="mt-3 rounded-[10px] border border-[#eadfc9] bg-[#fffaf1] px-3 py-2 text-xs leading-5 text-[#8d651e]" id="parse-action-disabled-reason" role="status">{blocker}</p> : null}
 
