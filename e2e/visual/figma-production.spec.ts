@@ -67,7 +67,7 @@ test.describe("canonical desktop production route inventory", () => {
       if (route[0] === "playground-answer") {
         await expect(page.getByTestId("experiment-stage-trace")).toBeVisible();
         await page.getByTestId("experiment-stage-trace").getByRole("button", { name: "Answer" }).click();
-        await expect(page.getByRole("heading", { name: "Grounded answer", level: 2 })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Answer", level: 2 })).toBeVisible();
       }
       if (route[0] === "evaluation-results" || route[0] === "evaluation-compare") {
         const tab = route[0] === "evaluation-results" ? "Results" : "Compare";

@@ -378,7 +378,7 @@ export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <header className="flex items-start justify-between gap-6" data-testid="documents-page-header">
           <div className="max-w-[640px]">
-            <p className="text-xs font-semibold uppercase leading-[18px] tracking-[0.96px] text-[#711f3a]">{copy.documents.root}</p>
+            <p className="text-xs font-semibold uppercase leading-[18px] tracking-[0.96px] text-[#711f3a]">{copy.nav.pipeline}</p>
             <h1 className="mt-2 text-[30px] font-semibold leading-9 tracking-[-0.6px] text-[#171416]">{isLegacyView ? current.title : copy.documents.root}</h1>
             <p className="mt-2 text-sm leading-[21px] text-[#6e676a]">{isLegacyView ? current.description : preferences.locale === "tr" ? "RAG'ınızda kullanılan kaynak dokümanları ekleyin ve yönetin." : "Add and manage the source documents used by your RAG."}</p>
             {isLegacyView ? <ParseRunSelector locale={preferences.locale} /> : null}
