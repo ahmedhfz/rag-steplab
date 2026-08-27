@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { AppLocale } from "@/lib/copy";
 import type { ChunkRun, ChunkStrategy, EmbeddingRun } from "@/lib/rag-api-types";
-import { firstBlocker } from "@/lib/blockers";
+import { getPipelineAvailability } from "@/lib/blockers";
 
 const strategyNotes: Record<ChunkStrategy, { en: string; tr: string }> = {
   fixed_token: { en: "Simple deterministic chunks with fixed token boundaries.", tr: "Sabit token sınırlarıyla deterministik parçalar." },
@@ -83,7 +83,7 @@ export function EmbeddingWorkspace({ locale, showAction = true }: { locale: AppL
 }
 
 export function ChunksPipeline({ locale, showAction = true, stage = "both" }: { locale: AppLocale; showAction?: boolean; stage?: PipelineStage }) {
-  const { activeDocument, selectedParseRunId, selectedChunkRunId, parseResult, capabilities, persistenceStatus, chunkStatus, chunkRun, chunkError, embeddingStatus, embeddingRun, embeddingError, runChunking, runEmbedding } = useDocumentPipeline();
+  const { activeDocument, activePipeline, selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId, parseResult, capabilities, persistenceStatus, chunkStatus, chunkRun, chunkError, embeddingStatus, embeddingRun, embeddingError, runChunking, runEmbedding } = useDocumentPipeline();
   const [strategy, setStrategy] = useState<ChunkStrategy>("structure_aware");
   const [chunkSize, setChunkSize] = useState(512);
   const [overlap, setOverlap] = useState(64);
@@ -94,10 +94,29 @@ export function ChunksPipeline({ locale, showAction = true, stage = "both" }: { 
     strategy: "Strategy", chunkSize: "Chunk size", overlap: "Overlap", runChunk: "Create chunks", chunkLocked: "A persisted document and parse run are required first.", chunkEmpty: "No real chunk run exists yet.", chunks: "Chunks", chunk: "Chunk", chunkCount: "total", selectedChunk: "Selected chunk", select: "Select", emptyChunk: "Empty chunk", filter: "Filter chunks", filterPlaceholder: "Filter by section or number", noMatches: "No chunks match this search.", pages: "pages", page: "p.", noPage: "No page", elements: "elements", sourceElements: "source elements", heading: "Heading", token: "tokens", viewSource: "View source", why: "Why this matters", whyText: "Larger chunks preserve more context, but may reduce retrieval precision. Smaller chunks can improve precision but may lose surrounding context.", chunkDescription: "Creates independent units your retriever can search.", reuseNotice: "The existing artifact was reused.", embeddingDescription: "Turns each chunk into a vector representation for semantic search.", embeddingEmpty: "No real embedding run exists yet.", embeddingProgress: "chunks are being embedded; progress is indeterminate because the backend does not publish batch counts.", storage: "Searchable storage", model: "Model", dimensions: "Dimensions", count: "Vectors", format: "Format", persistenceUnavailable: "The persistence backend is unavailable.", embeddingLocked: "A successful, current chunk run is required first.", create: "Create embeddings", output: "Output", details: "Embedding details", resultSummary: "RESULT SUMMARY", chunksResult: "CHUNK COUNT", average: "AVG TOKENS", min: "MIN TOKENS", max: "MAX TOKENS", inspector: "Chunk inspector",
   }, { ready: locale === "tr" ? "pgvector'da saklı" : "Stored in pgvector" });
   const compatibleChunkRuns = activeDocument?.chunkRuns.filter((run) => run.status === "completed" && run.isCompatible && run.upstream.parseRunId === selectedParseRunId) ?? [];
-  const canChunk = Boolean(activeDocument?.id && selectedParseRunId && persistenceStatus === "available" && chunkStatus !== "processing");
-  const canEmbed = Boolean(activeDocument?.id && compatibleChunkRuns.some((run) => run.id === selectedChunkRunId) && embeddingStatus !== "processing");
-  const chunkBlocker = firstBlocker(locale, [[chunkStatus === "processing", "processing"], [persistenceStatus === "unavailable", "backend_unavailable"], [!activeDocument?.id, "missing_document"], [!selectedParseRunId, "missing_parse"]]);
-  const embeddingBlocker = firstBlocker(locale, [[embeddingStatus === "processing", "processing"], [!activeDocument?.id, "missing_document"], [!selectedChunkRunId, "missing_chunk"], [Boolean(selectedChunkRunId) && !compatibleChunkRuns.some((run) => run.id === selectedChunkRunId), "incompatible_lineage"]]);
+  const selectedParseSummary = activeDocument?.parseRuns.find((run) => run.id === selectedParseRunId) ?? null;
+  const selectedChunkSummary = activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId) ?? null;
+  const chunkAvailability = getPipelineAvailability(locale, "chunk", {
+    document: activeDocument,
+    pipeline: activePipeline,
+    selection: { selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId },
+    parseRun: selectedParseSummary,
+    processing: chunkStatus === "processing",
+    persistenceStatus,
+  });
+  const embeddingAvailability = getPipelineAvailability(locale, "embedding", {
+    document: activeDocument,
+    pipeline: activePipeline,
+    selection: { selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId },
+    parseRun: selectedParseSummary,
+    chunkRun: selectedChunkSummary,
+    processing: embeddingStatus === "processing",
+    persistenceStatus,
+  });
+  const canChunk = chunkAvailability.allowed;
+  const canEmbed = embeddingAvailability.allowed && compatibleChunkRuns.some((run) => run.id === selectedChunkRunId);
+  const chunkBlocker = chunkAvailability.allowed ? null : chunkAvailability;
+  const embeddingBlocker = embeddingAvailability.allowed ? null : embeddingAvailability;
   const selectedChunkCount = chunkRun?.chunkCount ?? activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId)?.chunkCount ?? null;
   const chunks = chunkRun?.chunks ?? [];
   const averageTokens = chunks.length ? Math.round(chunks.reduce((sum, chunk) => sum + chunk.tokenCount, 0) / chunks.length) : "—";

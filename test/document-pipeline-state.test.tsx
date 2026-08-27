@@ -156,6 +156,9 @@ function Probe() {
     selectedParseRunId,
     selectedChunkRunId,
     selectedEmbeddingRunId,
+    inspectedParseRunId,
+    inspectedChunkRunId,
+    inspectedEmbeddingRunId,
     activePipelineId,
     evaluationDatasets,
     evaluationRun,
@@ -163,6 +166,9 @@ function Probe() {
     selectParseRun,
     selectChunkRun,
     selectEmbeddingRun,
+    setPipelineParseRun,
+    setPipelineChunkRun,
+    setPipelineEmbeddingRun,
     selectPipeline,
     selectPersistedDocument,
     refreshEvaluationRuns,
@@ -176,6 +182,9 @@ function Probe() {
       <output data-testid="selected-parse">{selectedParseRunId ?? "none"}</output>
       <output data-testid="selected-chunk">{selectedChunkRunId ?? "none"}</output>
       <output data-testid="selected-embedding">{selectedEmbeddingRunId ?? "none"}</output>
+      <output data-testid="inspected-parse">{inspectedParseRunId ?? "none"}</output>
+      <output data-testid="inspected-chunk">{inspectedChunkRunId ?? "none"}</output>
+      <output data-testid="inspected-embedding">{inspectedEmbeddingRunId ?? "none"}</output>
       <output data-testid="active-pipeline">{activePipelineId ?? "none"}</output>
       <output data-testid="evaluation-dataset-count">{evaluationDatasets.length}</output>
       <output data-testid="evaluation-run-id">{evaluationRun?.id ?? "none"}</output>
@@ -188,6 +197,9 @@ function Probe() {
       <button onClick={() => void selectParseRun("parse-old")} type="button">Select historical parse</button>
       <button onClick={() => void selectChunkRun("chunk-alt")} type="button">Select alternate chunk</button>
       <button onClick={() => void selectEmbeddingRun("embedding-alt")} type="button">Select alternate embedding</button>
+      <button onClick={() => void setPipelineParseRun("parse-old")} type="button">Use historical parse in pipeline</button>
+      <button onClick={() => void setPipelineChunkRun("chunk-alt")} type="button">Use alternate chunk in pipeline</button>
+      <button onClick={() => void setPipelineEmbeddingRun("embedding-alt")} type="button">Use alternate embedding in pipeline</button>
       <button onClick={() => void selectPipeline("pipeline-1")} type="button">Select pipeline one</button>
       <button onClick={() => void selectPipeline("pipeline-2")} type="button">Select pipeline two</button>
       <button onClick={() => void refreshEvaluationRuns("dataset-1")} type="button">Refresh evaluation runs</button>
@@ -271,6 +283,114 @@ describe("Document pipeline committed state", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/evaluation/datasets?documentId=document-old"))).toBe(true);
   });
 
+  it("inspects a historical parse without changing the saved pipeline lineage", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:document:test-user:document-old", "pipeline-1");
+    const detail = selectableLineageSummary();
+    const pipeline = namedPipeline("pipeline-1");
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.endsWith("/documents/document-old/pipelines")) return respond([pipeline]);
+      if (url.endsWith("/parse-runs/parse-old")) return respond(parseResult("document-old", "parse-old", "lesson.pdf", "Historical parse"));
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("selected-parse")).toHaveTextContent("document-old-parse"));
+    fireEvent.click(screen.getByRole("button", { name: "Select historical parse" }));
+
+    await waitFor(() => expect(screen.getByTestId("inspected-parse")).toHaveTextContent("parse-old"));
+    expect(screen.getByTestId("selected-parse")).toHaveTextContent("document-old-parse");
+    expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1");
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+  });
+
+  it("inspects a historical chunk without changing the saved pipeline lineage", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:document:test-user:document-old", "pipeline-1");
+    const detail = selectableLineageSummary();
+    const pipeline = namedPipeline("pipeline-1");
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.endsWith("/documents/document-old/pipelines")) return respond([pipeline]);
+      if (url.endsWith("/chunk-runs/chunk-alt")) return respond(chunkRun("document-old", "document-old-parse", "chunk-alt"));
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-new"));
+    fireEvent.click(screen.getByRole("button", { name: "Select alternate chunk" }));
+
+    await waitFor(() => expect(screen.getByTestId("inspected-chunk")).toHaveTextContent("chunk-alt"));
+    expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-new");
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("embedding-new");
+    expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1");
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+  });
+
+  it("clears downstream lineage when a parse run is explicitly used by a pipeline", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:document:test-user:document-old", "pipeline-1");
+    const detail = selectableLineageSummary();
+    const pipeline = namedPipeline("pipeline-1");
+    let patchBody: Record<string, unknown> | null = null;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.endsWith("/documents/document-old/pipelines")) return respond([pipeline]);
+      if (url.endsWith("/document-pipelines/pipeline-1") && init?.method === "PATCH") {
+        patchBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return respond({ ...pipeline, revision: 2, parseRunId: "parse-old", chunkRunId: null, embeddingRunId: null });
+      }
+      if (url.endsWith("/parse-runs/parse-old")) return respond(parseResult("document-old", "parse-old", "lesson.pdf", "Historical parse"));
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("selected-embedding")).toHaveTextContent("embedding-new"));
+    fireEvent.click(screen.getByRole("button", { name: "Use historical parse in pipeline" }));
+
+    await waitFor(() => expect(screen.getByTestId("selected-parse")).toHaveTextContent("parse-old"));
+    expect(screen.getByTestId("selected-chunk")).toHaveTextContent("none");
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("none");
+    expect(patchBody).toMatchObject({ parseRunId: "parse-old", chunkRunId: null, embeddingRunId: null, expectedRevision: 1 });
+  });
+
+  it("rejects an embedding that is not a child of the active pipeline chunk", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:document:test-user:document-old", "pipeline-1");
+    const detail = selectableLineageSummary();
+    const pipeline = namedPipeline("pipeline-1");
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.endsWith("/documents/document-old/pipelines")) return respond([pipeline]);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("selected-embedding")).toHaveTextContent("embedding-new"));
+    fireEvent.click(screen.getByRole("button", { name: "Use alternate embedding in pipeline" }));
+
+    await waitFor(() => expect(screen.getByTestId("persistence-error")).toHaveTextContent("incompatible_lineage"));
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("embedding-new");
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+  });
+
   it("hydrates the latest persisted evaluation result after the history summary loads", async () => {
     navigationState.pathname = "/evaluation";
     localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
@@ -344,7 +464,7 @@ describe("Document pipeline committed state", () => {
     renderProbe();
 
     await waitFor(() => expect(screen.getByTestId("selected-parse")).toHaveTextContent("document-old-parse"));
-    fireEvent.click(screen.getByRole("button", { name: "Select historical parse" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use historical parse in pipeline" }));
     await waitFor(() => expect(screen.getByTestId("selected-parse")).toHaveTextContent("parse-old"));
     expect(pipelineListCalls).toBe(2);
     expect(patchBodies.map((body) => body.expectedRevision)).toEqual([1, 2]);
@@ -380,7 +500,7 @@ describe("Document pipeline committed state", () => {
     renderProbe();
 
     await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
-    fireEvent.click(screen.getByRole("button", { name: "Select historical parse" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use historical parse in pipeline" }));
     expect(screen.getByTestId("selected-parse")).toHaveTextContent("parse-old");
     await waitFor(() => expect(pipelineListCalls).toBe(2));
     fireEvent.click(screen.getByRole("button", { name: "Select pipeline two" }));
@@ -421,10 +541,10 @@ describe("Document pipeline committed state", () => {
     renderProbe();
 
     await waitFor(() => expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-new"));
-    fireEvent.click(screen.getByRole("button", { name: "Select alternate chunk" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use alternate chunk in pipeline" }));
     expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-alt");
     expect(screen.getByTestId("selected-embedding")).toHaveTextContent("none");
-    fireEvent.click(screen.getByRole("button", { name: "Select alternate embedding" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use alternate embedding in pipeline" }));
     expect(screen.getByTestId("selected-embedding")).toHaveTextContent("embedding-alt");
     await waitFor(() => expect(patchBodies).toHaveLength(1));
 
@@ -458,7 +578,7 @@ describe("Document pipeline committed state", () => {
     renderProbe();
 
     await waitFor(() => expect(screen.getByTestId("selected-parse")).toHaveTextContent("document-old-parse"));
-    fireEvent.click(screen.getByRole("button", { name: "Select historical parse" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use historical parse in pipeline" }));
     expect(screen.getByTestId("selected-parse")).toHaveTextContent("parse-old");
     expect(screen.getByTestId("selected-chunk")).toHaveTextContent("none");
     expect(screen.getByTestId("selected-embedding")).toHaveTextContent("none");
@@ -493,7 +613,7 @@ describe("Document pipeline committed state", () => {
     renderProbe();
 
     await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
-    fireEvent.click(screen.getByRole("button", { name: "Select historical parse" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use historical parse in pipeline" }));
     expect(screen.getByTestId("selected-parse")).toHaveTextContent("parse-old");
     fireEvent.click(screen.getByRole("button", { name: "Select pipeline two" }));
     expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2");
@@ -532,6 +652,49 @@ describe("Document pipeline committed state", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/documents/document-new"))).toBe(false);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/capabilities"))).toHaveLength(1);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents"))).toHaveLength(1);
+  });
+
+  it("restores each document's saved pipeline after an A to B to A switch", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:document:test-user:document-old", "pipeline-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:document:test-user:document-new", "pipeline-new");
+    const oldDetail = selectableLineageSummary();
+    const newDetail = {
+      ...summaryDocument("document-new", "new.pdf"),
+      parseRuns: [{ ...summaryDocument("document-new", "new.pdf").parseRuns[0], id: "document-new-parse" }],
+    };
+    const oldPipeline = { ...namedPipeline("pipeline-old"), name: "Old pipeline" };
+    const newPipeline = {
+      ...oldPipeline,
+      id: "pipeline-new",
+      documentId: "document-new",
+      name: "New pipeline",
+      parseRunId: "document-new-parse",
+      chunkRunId: null,
+      embeddingRunId: null,
+    };
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument(), { ...persistedDocument(), id: "document-new", fileName: "new.pdf" }] });
+      if (url.endsWith("/documents/document-old/summary")) return respond(oldDetail);
+      if (url.endsWith("/documents/document-new/summary")) return respond(newDetail);
+      if (url.endsWith("/documents/document-old/pipelines")) return respond([oldPipeline]);
+      if (url.endsWith("/documents/document-new/pipelines")) return respond([newPipeline]);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-old"));
+    fireEvent.click(screen.getByRole("button", { name: "Switch to new" }));
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-new"));
+    expect(screen.getByTestId("selected-parse")).toHaveTextContent("document-new-parse");
+    fireEvent.click(screen.getByRole("button", { name: "Switch to old" }));
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-old"));
+    expect(screen.getByTestId("selected-parse")).toHaveTextContent("document-old-parse");
+    expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-new");
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("embedding-new");
   });
 
   it("starts document pipelines and summary requests in parallel", async () => {
@@ -682,14 +845,17 @@ describe("Document pipeline committed state", () => {
     renderProbe();
 
     await waitFor(() => expect(screen.getByTestId("active-document")).toHaveTextContent("document-old"));
+    await waitFor(() => expect(screen.getByTestId("selected-parse")).toHaveTextContent("parse-new"));
     fireEvent.click(screen.getByRole("button", { name: "Switch to new" }));
 
     await waitFor(() => expect(screen.getByTestId("persistence-error")).toHaveTextContent("document_unavailable"));
     expect(screen.getByTestId("active-document")).toHaveTextContent("document-old");
+    expect(screen.getByTestId("selected-parse")).toHaveTextContent("parse-new");
+    expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-new");
   });
 
   it("ignores a late switch response and preserves compatible historical selections per document", async () => {
-    setupFetch({ newDocumentMode: "delayed" });
+    const fetchMock = setupFetch({ newDocumentMode: "delayed" });
     const view = renderProbe();
 
     await waitFor(() => expect(screen.getByTestId("active-document")).toHaveTextContent("document-old"));
@@ -703,6 +869,7 @@ describe("Document pipeline committed state", () => {
     await waitFor(() => expect(screen.getByTestId("selected-parse")).toHaveTextContent("parse-old"));
     expect(screen.getByTestId("selected-chunk")).toHaveTextContent("none");
     expect(screen.getByTestId("artifact-count")).toHaveTextContent("2");
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
 
     view.unmount();
     renderProbe();

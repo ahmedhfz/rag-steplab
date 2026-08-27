@@ -28,18 +28,20 @@ const documentTabs: Array<{ view: DocumentView; href: string }> = [
 ];
 
 export function ParseRunSelector({ locale }: { locale: "en" | "tr" }) {
-  const { activeDocument, selectedParseRunId, selectParseRun } = useDocumentPipeline();
+  const { activeDocument, activePipeline, selectedParseRunId, inspectedParseRunId, selectParseRun, setPipelineParseRun } = useDocumentPipeline();
   const runs = activeDocument?.parseRuns.filter((run) => run.status === "completed" && run.isCompatible) ?? [];
+  const inspectedId = inspectedParseRunId ?? selectedParseRunId;
   if (!selectedParseRunId || runs.length < 2) return null;
   return (
     <div className="mt-4 max-w-sm">
-      <label className="text-xs font-medium" htmlFor="selected-parse-run">{locale === "tr" ? "Seçili parse run" : "Selected parse run"}</label>
-      <Select onValueChange={(value) => void selectParseRun(value)} value={selectedParseRunId}>
+      <label className="text-xs font-medium" htmlFor="selected-parse-run">{locale === "tr" ? "İncelenen parse run" : "Inspected parse run"}</label>
+      <Select onValueChange={(value) => void selectParseRun(value)} value={inspectedId ?? selectedParseRunId}>
         <SelectTrigger className="mt-2" id="selected-parse-run"><SelectValue /></SelectTrigger>
         <SelectContent>
           {runs.map((run, index) => <SelectItem key={run.id} value={run.id}>{locale === "tr" ? "Ayrıştırma" : "Parse"} {run.runNumber ?? index + 1}{run.historicalLineage ? (locale === "tr" ? " · geçmiş" : " · historical") : (locale === "tr" ? " · aktif" : " · active")}</SelectItem>)}
         </SelectContent>
       </Select>
+      {activePipeline && inspectedId && inspectedId !== selectedParseRunId ? <Button className="mt-2" onClick={() => void setPipelineParseRun(inspectedId)} size="sm" variant="outline">{locale === "tr" ? "Pipeline'da kullan" : "Use in pipeline"}</Button> : null}
     </div>
   );
 }

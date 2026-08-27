@@ -15,6 +15,8 @@ import type {
   ContextCandidate,
   DocumentDetail,
   DocumentPipeline,
+  DocumentPipelineCreateInput,
+  DocumentPipelineUpdateInput,
   DocumentUploadResponse,
   DocumentSummary,
   EmbeddingRun,
@@ -856,7 +858,7 @@ export async function listDocumentPipelines(documentId: string, signal?: AbortSi
 
 export async function createDocumentPipeline(
   documentId: string,
-  input: { name: string; parseRunId?: string | null; chunkRunId?: string | null; embeddingRunId?: string | null },
+  input: DocumentPipelineCreateInput,
   signal?: AbortSignal,
 ): Promise<DocumentPipeline> {
   return normalizeDocumentPipeline(await request(`/documents/${encodeURIComponent(documentId)}/pipelines`, {
@@ -868,7 +870,7 @@ export async function createDocumentPipeline(
 
 export async function updateDocumentPipeline(
   pipelineId: string,
-  input: { expectedRevision: number; name?: string; parseRunId?: string | null; chunkRunId?: string | null; embeddingRunId?: string | null },
+  input: DocumentPipelineUpdateInput,
   signal?: AbortSignal,
 ): Promise<DocumentPipeline> {
   return normalizeDocumentPipeline(await request(`/document-pipelines/${encodeURIComponent(pipelineId)}`, {

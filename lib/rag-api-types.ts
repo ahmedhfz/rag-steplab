@@ -105,6 +105,28 @@ export type DocumentPipeline = {
   updatedAt: string | null;
 };
 
+/** The canonical working lineage selected for a document or saved pipeline. */
+export type DocumentLineageSelection = {
+  selectedParseRunId: string | null;
+  selectedChunkRunId: string | null;
+  selectedEmbeddingRunId: string | null;
+};
+
+export type DocumentPipelineCreateInput = {
+  name: string;
+  parseRunId?: string | null;
+  chunkRunId?: string | null;
+  embeddingRunId?: string | null;
+};
+
+export type DocumentPipelineUpdateInput = {
+  expectedRevision: number;
+  name?: string;
+  parseRunId?: string | null;
+  chunkRunId?: string | null;
+  embeddingRunId?: string | null;
+};
+
 export type EvaluationRunSummary = {
   id: string;
   createdAt?: string | null;
