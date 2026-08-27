@@ -1,9 +1,11 @@
 "use client";
 
-import { FileText } from "lucide-react";
+import Link from "next/link";
+import { ArrowUpRight, FileText, MoreHorizontal } from "lucide-react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { EmptyPipelineState, PipelineErrorMessage } from "@/components/pipeline-learning-ui";
+import { Button } from "@/components/ui/button";
 import { type AppLocale } from "@/lib/copy";
 import { formatDocumentFileSize } from "@/lib/document-file";
 import type { ParseRunStatus } from "@/lib/document-parse-types";
@@ -56,6 +58,9 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
         uploaded: "Yüklendi",
         active: "Aktif",
         open: "Dokümanı aç",
+        menu: "Diğer işlemler",
+        openParse: "Parsed içeriği aç",
+        openChunks: "Chunk'ları aç",
         noPages: "—",
       }
     : {
@@ -72,6 +77,9 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
         uploaded: "Uploaded",
         active: "Active",
         open: "Open document",
+        menu: "More actions",
+        openParse: "Open parsed content",
+        openChunks: "Open chunks",
         noPages: "—",
       };
 
@@ -93,7 +101,8 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                 <p className="mx-auto mt-1 max-w-sm text-sm leading-5 text-[#6e676a]">{labels.emptyDescription}</p>
               </div>
             ) : (
-              <div className="min-w-0 max-w-full overflow-x-auto rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white">
+              <>
+                <div className="hidden min-w-0 max-w-full overflow-x-auto rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white md:block" data-testid="document-library-table">
                 <table className="w-full min-w-[720px] text-left text-sm">
                   <caption className="sr-only">{labels.title}</caption>
                   <thead className="h-[43px] border-b-[1.712px] border-[#e7e2e4] bg-white text-xs font-medium uppercase tracking-[0.48px] text-[#969093]">
@@ -126,7 +135,52 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                     })}
                   </tbody>
                 </table>
-              </div>
+                </div>
+
+                <div className="md:hidden" data-testid="document-library-mobile">
+                  <ul className="divide-y divide-[#e7e2e4] overflow-hidden rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white">
+                    {documents.map((document) => {
+                      const isActive = document.id === activeDocumentId;
+                      const status = getDocumentStatus(document.latestParseStatus);
+                      return (
+                        <li className={cn("p-4", isActive && "bg-[#fbf4f6]/70")} data-testid="document-library-mobile-item" key={document.id}>
+                          <article>
+                            <div className="flex items-start gap-3">
+                              <span className="grid size-9 shrink-0 place-items-center rounded-[9px] bg-[#fbf4f6] text-[#711f3a]"><FileText aria-hidden="true" className="size-[17px]" /></span>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-start gap-2">
+                                  <div className="min-w-0 flex-1">
+                                    <p className="break-words text-sm font-medium leading-5 text-[#171416]">{document.fileName}</p>
+                                    <p className="mt-0.5 text-xs leading-[18px] text-[#969093]">PDF</p>
+                                  </div>
+                                  <details className="relative shrink-0">
+                                    <summary aria-label={`${labels.menu}: ${document.fileName}`} className="grid size-10 cursor-pointer list-none place-items-center rounded-[9px] text-[#6e676a] outline-none hover:bg-[#f2eff0] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25 [&::-webkit-details-marker]:hidden">
+                                      <MoreHorizontal aria-hidden="true" className="size-4" />
+                                    </summary>
+                                    <div className="absolute right-0 top-11 z-10 min-w-[184px] rounded-[10px] border border-[#e7e2e4] bg-white p-1.5 shadow-lg">
+                                      <Link className="flex min-h-10 items-center justify-between gap-3 rounded-[7px] px-2.5 text-sm text-[#171416] hover:bg-[#fbf4f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" href="/parse" onClick={() => void selectPersistedDocument(document.id)}>{labels.openParse}<ArrowUpRight aria-hidden="true" className="size-3.5 text-[#711f3a]" /></Link>
+                                      <Link className="flex min-h-10 items-center justify-between gap-3 rounded-[7px] px-2.5 text-sm text-[#171416] hover:bg-[#fbf4f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" href="/chunking" onClick={() => void selectPersistedDocument(document.id)}>{labels.openChunks}<ArrowUpRight aria-hidden="true" className="size-3.5 text-[#711f3a]" /></Link>
+                                    </div>
+                                  </details>
+                                </div>
+                                <div className="mt-3"><DocumentStatusBadge locale={locale} status={status} /></div>
+                                <dl className="mt-4 grid grid-cols-3 gap-2 border-t border-[#eee9eb] pt-3">
+                                  <div className="min-w-0"><dt className="text-[10px] font-medium uppercase tracking-[0.08em] text-[#969093]">{labels.pages}</dt><dd className="mt-1 truncate text-xs text-[#6e676a]">{status === "completed" && document.pageCount > 0 ? document.pageCount : labels.noPages}</dd></div>
+                                  <div className="min-w-0"><dt className="text-[10px] font-medium uppercase tracking-[0.08em] text-[#969093]">{labels.size}</dt><dd className="mt-1 truncate text-xs text-[#6e676a]">{formatDocumentFileSize(document.sizeBytes, locale)}</dd></div>
+                                  <div className="min-w-0"><dt className="text-[10px] font-medium uppercase tracking-[0.08em] text-[#969093]">{labels.uploaded}</dt><dd className="mt-1 truncate text-xs text-[#6e676a]">{formatUpdatedAt(document.createdAt ?? document.updatedAt, locale)}</dd></div>
+                                </dl>
+                                <Button aria-label={`${labels.open}: ${document.fileName}`} aria-pressed={isActive} className="mt-4 w-full justify-between" onClick={() => void selectPersistedDocument(document.id)} size="default" type="button" variant="outline">
+                                  <span>{labels.open}</span><ArrowUpRight aria-hidden="true" className="size-4 text-[#711f3a]" />
+                                </Button>
+                              </div>
+                            </div>
+                          </article>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              </>
             )}
       </div>
     </section>

@@ -26,13 +26,13 @@ function RadioGroupItem({
   return (
     <RadioGroupPrimitive.Item
       className={cn(
-        "grid size-4 shrink-0 place-items-center rounded-full border border-[#bcb5b9] bg-white text-[#711f3a] outline-none transition-[border-color,box-shadow] focus-visible:border-[#711f3a] focus-visible:ring-2 focus-visible:ring-[#711f3a]/15 data-[state=checked]:border-[#711f3a] disabled:cursor-not-allowed disabled:opacity-50",
+        "group relative grid size-10 shrink-0 place-items-center rounded-full border border-transparent bg-transparent text-[#711f3a] outline-none transition-[border-color,box-shadow] before:absolute before:size-4 before:rounded-full before:border before:border-[#bcb5b9] before:bg-white before:content-[''] focus-visible:ring-2 focus-visible:ring-[#711f3a]/15 data-[state=checked]:before:border-[#711f3a] disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}
       data-slot="radio-group-item"
       {...props}
     >
-      <RadioGroupPrimitive.Indicator className="grid place-items-center" data-slot="radio-group-indicator">
+      <RadioGroupPrimitive.Indicator className="relative z-10 grid place-items-center" data-slot="radio-group-indicator">
         <Circle aria-hidden="true" className="size-2 fill-current stroke-none" />
       </RadioGroupPrimitive.Indicator>
     </RadioGroupPrimitive.Item>

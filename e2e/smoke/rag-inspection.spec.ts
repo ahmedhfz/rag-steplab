@@ -30,6 +30,22 @@ test("Playground stage rail, provenance ve Source Inspector contractını göste
   await expect(dialog.locator("iframe")).toHaveAttribute("src", /#page=1$/);
   await page.getByRole("button", { name: "Close" }).click();
 
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Inspect source" }).first().click();
+  const mobileDialog = page.getByRole("dialog", { name: "Source inspector" });
+  await expect(mobileDialog).toBeVisible();
+  const mobileDialogRect = await mobileDialog.evaluate((element) => {
+    const { x, y, width, height } = element.getBoundingClientRect();
+    return { x, y, width, height };
+  });
+  expect(mobileDialogRect).toMatchObject({ x: 0, y: 0, width: 390, height: 844 });
+  await expect(mobileDialog.locator("aside")).toBeVisible();
+  await expect(mobileDialog.locator("details").first()).toBeVisible();
+  await page.screenshot({ path: "output/playwright/responsive-shell/source-inspector-390.png", fullPage: true });
+  await page.keyboard.press("Escape");
+  await expect(mobileDialog).toHaveCount(0);
+  await page.setViewportSize({ width: 1441, height: 1041 });
+
   await page.getByRole("button", { name: /Answer/ }).click();
   await expect(page.getByText("Citation reference valid", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "S1" }).click();

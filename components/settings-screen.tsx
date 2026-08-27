@@ -23,8 +23,7 @@ export function SettingsScreen() {
     <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]" data-testid="settings-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <header data-testid="settings-page-header">
-          <p className="text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.99px] text-[#711f3a]">{copy.settings.workspace}</p>
-          <h1 className="mt-2 text-[30px] font-semibold leading-9 tracking-[-0.6px] text-[#171416]">{copy.settings.title}</h1>
+          <h1 className="mt-0 text-[30px] font-semibold leading-9 tracking-[-0.6px] text-[#171416]">{copy.settings.title}</h1>
           <p className="mt-2 text-sm leading-[21px] text-[#6e676a]">{copy.settings.description}</p>
           <AnimatePresence initial={false} mode="wait">
             <motion.p
@@ -54,11 +53,11 @@ export function SettingsScreen() {
               <p className="mt-0.5 text-[13px] leading-5 text-[#6e676a]">{copy.settings.languageDescription}</p>
             </div>
             <RadioGroup aria-label={copy.settings.languageTitle} className="flex h-[42px] shrink-0 items-center gap-0 rounded-[10px] border border-[#e7e2e4] bg-[#f2eff0] p-1" onValueChange={(value) => setLocale(value as "en" | "tr")} value={preferences.locale}>
-              <label className={cn("flex h-[34px] cursor-pointer items-center rounded-[8px] px-3 text-[13px] text-[#6e676a] transition-colors", preferences.locale === "en" && "bg-white font-medium text-[#171416] shadow-sm")} htmlFor="locale-en">
+              <label className={cn("flex min-h-10 cursor-pointer items-center rounded-[8px] px-3 text-[13px] text-[#6e676a] transition-colors", preferences.locale === "en" && "bg-white font-medium text-[#171416] shadow-sm")} htmlFor="locale-en">
                 <RadioGroupItem aria-label={copy.settings.english} className="sr-only" id="locale-en" value="en" />
                 <span>{copy.settings.english}</span>
               </label>
-              <label className={cn("flex h-[34px] cursor-pointer items-center rounded-[8px] px-3 text-[13px] text-[#6e676a] transition-colors", preferences.locale === "tr" && "bg-white font-medium text-[#171416] shadow-sm")} htmlFor="locale-tr">
+              <label className={cn("flex min-h-10 cursor-pointer items-center rounded-[8px] px-3 text-[13px] text-[#6e676a] transition-colors", preferences.locale === "tr" && "bg-white font-medium text-[#171416] shadow-sm")} htmlFor="locale-tr">
                 <RadioGroupItem aria-label={copy.settings.turkish} className="sr-only" id="locale-tr" value="tr" />
                 <span>{copy.settings.turkish}</span>
               </label>

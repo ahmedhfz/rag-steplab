@@ -395,7 +395,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="min-h-screen bg-[#f8f7f7] text-[#171416]">
+      <div className="min-h-screen w-full min-w-0 bg-[#f8f7f7] text-[#171416]">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] border-r border-[#e7e2e4] xl:block" data-testid="app-shell-sidebar">
         <Sidebar copy={copy} onSignOut={signOut} pathname={pathname} user={authUser} />
       </aside>
@@ -441,7 +441,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </AnimatePresence>
       </div>
 
-      <div className="min-w-0 xl:pl-[248px]">
+      <div className="w-full min-w-0 xl:pl-[248px]">
         <header className="sticky top-0 z-30 flex h-[64px] items-center justify-between border-b border-[#e7e2e4] bg-white px-4 sm:px-7 xl:hidden">
           <div className="flex min-w-0 items-center gap-3">
             <Button aria-controls="mobile-navigation" aria-expanded={mobileOpen} aria-label={copy.common.openNavigation} className="xl:hidden" onClick={() => setMobileOpen(true)} ref={mobileOpenButtonRef} size="icon" variant="ghost">
@@ -451,7 +451,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="min-w-0" data-testid="app-shell-main">
+        <main className="w-full min-w-0" data-testid="app-shell-main">
           <PageTransition>{children}</PageTransition>
         </main>
       </div>
