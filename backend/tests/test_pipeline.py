@@ -802,6 +802,48 @@ def test_generation_citations_and_evaluation_use_real_stage_metadata(monkeypatch
     assert evaluation.json()["results"]["aggregate"]["groundedness"] == 0.9
 
 
+def test_benchmark_evaluation_processes_more_than_interactive_case_limit(monkeypatch):
+    parsed = _queue_and_run(monkeypatch)
+    document_id = parsed["documentId"]
+    chunk = client.post(
+        f"/documents/{document_id}/chunks",
+        json={"strategy": "fixed_token", "config": {"chunkSizeTokens": 64, "overlapTokens": 8}},
+    ).json()
+    dataset = client.post(
+        "/evaluation/datasets",
+        json={
+            "documentId": document_id,
+            "name": "benchmark",
+            "evaluationMode": "benchmark",
+            "cases": [
+                {
+                    "question": f"zzzz-unanswerable-{index}",
+                    "expectedOutcome": "insufficient_context",
+                }
+                for index in range(11)
+            ],
+        },
+    )
+    assert dataset.status_code == 200
+
+    evaluation = client.post(
+        "/evaluation/runs",
+        json={
+            "datasetId": dataset.json()["id"],
+            "chunkRunId": chunk["id"],
+            "retrieval": {"mode": "keyword", "topK": 1},
+        },
+    )
+
+    assert evaluation.status_code == 200
+    payload = evaluation.json()["results"]
+    assert payload["aggregate"]["caseCount"] == 11
+    assert payload["aggregate"]["abstentionEligibleCaseCount"] == 11
+    assert payload["aggregate"]["abstentionAccuracy"] == 1.0
+    assert len(payload["caseResults"]) == 11
+    assert all(item["answer"] == "" and item["insufficientContext"] is True for item in payload["caseResults"])
+
+
 def test_historical_completed_lineage_remains_usable_after_rechunk_and_reparse(monkeypatch):
     class FakeMetadata:
         configured_model = "gemini-flash-lite-latest"

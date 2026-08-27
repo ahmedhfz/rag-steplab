@@ -69,6 +69,8 @@ from .schemas import (
     ParseSummary,
     ParseResponse,
     StructuredContent,
+    MAX_BENCHMARK_EVALUATION_CASES,
+    MAX_INTERACTIVE_EVALUATION_CASES,
 )
 
 
@@ -371,7 +373,11 @@ def capabilities(_: CurrentUser = Depends(get_current_user)) -> CapabilitiesResp
         limits={
             "maxFileSizeBytes": current_settings.max_file_size_bytes,
             "maxTopK": 50,
-            "maxEvaluationCases": 10,
+            # Keep the existing UI-facing key stable while exposing the
+            # bounded backend benchmark admission limit separately.
+            "maxEvaluationCases": MAX_INTERACTIVE_EVALUATION_CASES,
+            "maxInteractiveEvaluationCases": MAX_INTERACTIVE_EVALUATION_CASES,
+            "maxBenchmarkEvaluationCases": MAX_BENCHMARK_EVALUATION_CASES,
             "maxRerankCandidates": 200,
         },
     )

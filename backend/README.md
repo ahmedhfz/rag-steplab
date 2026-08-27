@@ -95,6 +95,23 @@ migration'ları yalnız GitHub Actions Supabase CLI job'ı uygular.
 
 Frontend varsayılan olarak `http://127.0.0.1:8000` adresini kullanır. Farklı bir adres için frontend build/dev işleminden önce `NEXT_PUBLIC_API_BASE_URL` tanımlanabilir. Hosted kurulum için `docs/deployment.md` canonical kaynaktır.
 
+## RAG kalite sözleşmesi
+
+`EvaluationDatasetRequest` interaktif kullanımda en fazla 10 case kabul eder.
+Bounded backend benchmark'ı için `evaluationMode=benchmark` ile üst sınır 200
+case'tir; değerlendirme worker'ı da persisted dataset'leri aynı 200 case sınırı
+ile korur. `EvaluationCase.expectedOutcome=insufficient_context`, relevant
+element ID'si olmayan no-answer case'idir. Bu case'lerin Hit@K, Recall@K,
+Precision@K ve MRR değerleri aggregate retrieval ortalamasına dahil edilmez;
+abstention doğruluğu ayrı raporlanır.
+
+`citationValidity`, üretilen citation ID'lerinin o generation çağrısına verilen
+context içinde bulunup bulunmadığını ölçer (`context_id_membership_v1`). Claim
+entailment veya faithfulness ölçümü değildir; groundedness/faithfulness ayrı
+metriklerdir. Gemini generation, reranking ve judge çağrıları resmi JSON schema
+ile sınırlandırılır, ancak uygulama tarafındaki JSON parse ve semantic
+validation katmanı korunur.
+
 ## Test
 
 ```powershell
