@@ -20,9 +20,9 @@ export function SettingsScreen() {
   const usesDefaults = preferences.locale === "en" && preferences.showLearningHints;
 
   return (
-    <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]">
+    <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]" data-testid="settings-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
-        <header>
+        <header data-testid="settings-page-header">
           <p className="text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.99px] text-[#711f3a]">{copy.settings.workspace}</p>
           <h1 className="mt-2 text-[30px] font-semibold leading-9 tracking-[-0.6px] text-[#171416]">{copy.settings.title}</h1>
           <p className="mt-2 text-sm leading-[21px] text-[#6e676a]">{copy.settings.description}</p>
@@ -44,6 +44,7 @@ export function SettingsScreen() {
         <motion.section
           animate={{ opacity: 1, y: 0 }}
           className="mt-8 max-w-[720px] overflow-hidden rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white"
+          data-testid="settings-card"
           initial={{ opacity: 0, y: 5 }}
           transition={{ duration: 0.16, ease: "easeOut" }}
         >

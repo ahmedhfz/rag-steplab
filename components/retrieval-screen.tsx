@@ -336,16 +336,16 @@ export function RetrievalScreen() {
       };
 
   return (
-    <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]">
+    <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]" data-testid="playground-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
-        <header className="h-[92px]">
+        <header className="h-[92px]" data-testid="playground-page-header">
           <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#711f3a]">TEST</p>
           <h1 className="mt-1 text-[30px] font-semibold leading-9 tracking-[-0.02em] text-[#171416]">{copy.retrieval.title}</h1>
           <p className="mt-1 text-sm leading-5 text-[#6e676a]">{workspaceCopy.description}</p>
           {activeDocument ? <span className="sr-only">{activeDocument.fileName}</span> : null}
         </header>
 
-        <section aria-label={copy.retrieval.title} className="mt-8 rounded-[16px] border border-[#e7e2e4] bg-white p-3">
+        <section aria-label={copy.retrieval.title} className="mt-8 rounded-[16px] border border-[#e7e2e4] bg-white p-3" data-testid="playground-input">
           <form onSubmit={(event) => { event.preventDefault(); submit(); }}>
             <div className="flex items-end gap-3">
               <div className="relative min-w-0 flex-1">
@@ -398,8 +398,8 @@ export function RetrievalScreen() {
             </div>
           </section>
         ) : (
-          <div className="mt-8 grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
-            <aside className="min-w-0">
+          <div className="mt-8 grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)]" data-testid="playground-stage-layout">
+            <aside className="min-w-0" data-testid="playground-stage-rail">
               <p className="text-[13px] font-semibold uppercase tracking-[0.05em] text-[#969093]">{workspaceCopy.stageTrace}</p>
               <div className="mt-3 rounded-[16px] border border-[#e7e2e4] bg-white p-4"><ExperimentStageTrace activeStage={activeStage} locale={preferences.locale} onSelect={setActiveStage} rerankerEnabled={rerankerEnabled} run={experimentRun} /></div>
               {experimentHistory.length ? <>
@@ -408,7 +408,7 @@ export function RetrievalScreen() {
               </> : null}
             </aside>
 
-            <section className="min-w-0">
+            <section className="min-w-0" data-testid="playground-stage-content">
               {activeStage === "retrieval" ? <>
                 <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-[18px] font-semibold text-[#171416]">{workspaceCopy.retrievedTitle}</h2><p className="mt-1 max-w-[560px] text-[13.5px] leading-5 text-[#6e676a]">{workspaceCopy.retrievedDescription}</p></div>{results?.retrieval ? <span className="rounded-full bg-[#eef4ef] px-3 py-1 text-[12px] font-medium text-[#3f7a55]">{mode} · {results.retrieval.candidates.length} {labels.candidates.toLowerCase()}</span> : null}</div>
                 <div className="mt-5 space-y-3"><StageReuseBadge executedLabel={labels.executed} reusedLabel={labels.reused} sourceLabel={labels.source} stage="retrieval" reuse={results?.retrieval?.reuse} />{results?.retrieval?.candidates.length ? results.retrieval.candidates.map((candidate) => <article className="rounded-[16px] border border-[#e7e2e4] bg-white p-4" key={candidate.chunkId}><div className="flex items-start gap-3"><span className="grid size-7 shrink-0 place-items-center rounded-[8px] bg-[#f2eff0] font-mono text-[12px] text-[#171416]">{candidate.rank}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[13px] font-medium text-[#711f3a]">{candidate.headingPath?.join(" › ") || copy.retrieval.sourceDocument}</p><span className="font-mono text-[12px] text-[#6e676a]">{formatScore(candidate.score)} · p.{candidate.pageNumbers.join(", ") || "—"}</span></div><p className="mt-2 text-sm leading-5 text-[#6e676a]">{candidate.text}</p><div className="mt-3"><SourceInspector documentId={activeDocument?.id ?? null} headingPath={candidate.headingPath} pageNumbers={candidate.pageNumbers} parseResult={parseResult} sourceElementIds={candidate.sourceElementIds} triggerAriaLabel={preferences.locale === "tr" ? "Kaynağı incele" : "Inspect source"} triggerLabel={workspaceCopy.viewSource} /></div><details className="mt-2 rounded-[10px] border border-[#e7e2e4]"><summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-[13px] font-medium text-[#171416]"><span>{workspaceCopy.retrievalDetails}</span><ChevronDown aria-hidden="true" className="size-4 text-[#969093]" /></summary><div className="border-t border-[#e7e2e4] px-4 py-3 text-[11px] text-[#6e676a]"><p>{labels.provenance}: {candidate.sourceElementIds.join(", ") || "—"}</p>{mode === "hybrid" ? <p className="mt-1 font-mono">Dense {formatScore(candidate.denseScore)} · Keyword {formatScore(candidate.keywordScore)} · RRF {formatScore(candidate.rrfScore)}</p> : null}</div></details></div></div></article>) : <div className="rounded-[16px] border border-[#e7e2e4] bg-white p-6 text-sm text-[#6e676a]">{labels.noRun}</div>}</div>
@@ -432,7 +432,7 @@ export function RetrievalScreen() {
             </section>
           </div>
         )}
-        {experimentRun ? <div className="mt-6 flex flex-wrap items-center gap-2 rounded-[12px] border border-[#e7e2e4] bg-white px-4 py-3"><span className="mr-1 text-[13px] font-medium text-[#171416]">{labels.currentActions}</span>{canContinue ? <Button className="gap-2" onClick={() => void continueExperiment()} size="sm" variant="outline">{labels.continue}</Button> : null}{results?.generation ? <Button className="gap-2" disabled={!canRerunGeneration} onClick={() => void rerunGeneration()} size="sm" variant="outline">{labels.runAgain}</Button> : null}<Button className="gap-2" onClick={() => void navigator.clipboard.writeText(JSON.stringify(experimentRun, null, 2))} size="sm" variant="outline"><Copy aria-hidden="true" className="size-4" />{copy.retrieval.copyTrace}</Button></div> : <p className="mt-6 text-xs text-[#969093]">{copy.retrieval.noTrace}</p>}
+        {experimentRun ? <div className="mt-6 flex flex-wrap items-center gap-2 rounded-[12px] border border-[#e7e2e4] bg-white px-4 py-3" data-testid="playground-current-actions"><span className="mr-1 text-[13px] font-medium text-[#171416]">{labels.currentActions}</span>{canContinue ? <Button className="gap-2" onClick={() => void continueExperiment()} size="sm" variant="outline">{labels.continue}</Button> : null}{results?.generation ? <Button className="gap-2" disabled={!canRerunGeneration} onClick={() => void rerunGeneration()} size="sm" variant="outline">{labels.runAgain}</Button> : null}<Button className="gap-2" onClick={() => void navigator.clipboard.writeText(JSON.stringify(experimentRun, null, 2))} size="sm" variant="outline"><Copy aria-hidden="true" className="size-4" />{copy.retrieval.copyTrace}</Button></div> : <p className="mt-6 text-xs text-[#969093]">{copy.retrieval.noTrace}</p>}
         {experimentHistory.length ? <details className="mt-6 rounded-[12px] border border-[#e7e2e4] bg-white"><summary className="cursor-pointer px-4 py-3 text-[13px] font-medium text-[#171416]">{labels.history} · {labels.selectedRuns}: {compareIds.length}/2</summary><div className="overflow-x-auto border-t border-[#e7e2e4]"><Table><TableHeader><TableRow><TableHead>{labels.compare}</TableHead><TableHead>{labels.run}</TableHead><TableHead>{copy.retrieval.mode}</TableHead><TableHead>{copy.retrieval.question}</TableHead><TableHead>{labels.candidates}</TableHead><TableHead>{labels.duration}</TableHead><TableHead>{labels.load}</TableHead></TableRow></TableHeader><TableBody>{experimentHistory.map((run, index) => <TableRow key={run.id}><TableCell><input aria-label={`${labels.compare} ${run.id}`} checked={compareIds.includes(run.id)} disabled={!compareIds.includes(run.id) && compareIds.length >= 2} onChange={() => toggleCompare(run.id)} type="checkbox" /></TableCell><TableCell className="max-w-44 truncate text-xs font-medium text-[#501329]" title={run.id}>Experiment {index + 1}</TableCell><TableCell>{experimentRetrievalMode(run.config)}</TableCell><TableCell className="max-w-72 whitespace-normal">{run.query}</TableCell><TableCell>{isExperimentDetail(run) ? run.stageResults.retrieval?.candidates.length ?? 0 : run.candidateCount ?? 0}</TableCell><TableCell>{run.timing.durationMs === null ? "—" : `${run.timing.durationMs} ms`}</TableCell><TableCell><Button aria-label={`${labels.load} ${run.id}`} onClick={() => void loadExperiment(run.id)} size="sm" variant="ghost">{labels.load}</Button></TableCell></TableRow>)}</TableBody></Table>{selectedComparisonRuns.length ? <div className="grid gap-3 p-4 md:grid-cols-2">{selectedComparisonRuns.map((run, index) => <div className="border border-[#e7e2e4] bg-white p-4" key={run.id}><div className="text-xs font-semibold text-[#501329]">Experiment {index + 1}</div><dl className="mt-3 grid grid-cols-2 gap-2 text-xs"><div><dt className="text-[#969093]">{copy.retrieval.mode}</dt><dd className="mt-1">{experimentRetrievalMode(run.config)}</dd></div><div><dt className="text-[#969093]">{labels.duration}</dt><dd className="mt-1">{run.timing.durationMs ?? "—"} ms</dd></div><div><dt className="text-[#969093]">{labels.candidates}</dt><dd className="mt-1">{run.stageResults.retrieval?.candidates.length ?? 0}</dd></div><div><dt className="text-[#969093]">{labels.citations}</dt><dd className="mt-1">{run.stageResults.generation?.citations.filter((citation) => citation.valid).length ?? 0}</dd></div></dl></div>)}</div> : null}</div></details> : null}
       </div>
     </div>

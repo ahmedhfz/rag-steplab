@@ -58,7 +58,7 @@ export function ParseScreen() {
   const statusTone = currentRun?.status === "failed" ? "border-[#edcfcf] bg-[#fbefef] text-[#a23b3b]" : currentRun?.status === "queued" || currentRun?.status === "running" ? "border-[#eadfc9] bg-[#fbf5e9] text-[#8d651e]" : "border-[#d6e5da] bg-[#eef4ef] text-[#3f7a55]";
 
   return (
-    <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]">
+    <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]" data-testid="parse-screen">
       <div className={activeDocumentId ? "sr-only" : undefined}><PipelineContextBar /></div>
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <header className="flex h-[92px] items-start justify-between gap-6" data-testid="parse-page-header">

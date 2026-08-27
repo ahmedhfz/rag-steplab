@@ -374,7 +374,7 @@ export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
   const isLegacyView = view !== undefined;
 
   return (
-    <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]">
+    <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]" data-testid="documents-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <header className="flex items-start justify-between gap-6" data-testid="documents-page-header">
           <div className="max-w-[640px]">

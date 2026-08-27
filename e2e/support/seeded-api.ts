@@ -11,7 +11,57 @@ const embeddingRunId = "e2e-seeded-embedding";
 const experimentId = "e2e-seeded-experiment";
 const datasetId = "e2e-seeded-dataset";
 const evaluationRunId = "e2e-seeded-evaluation";
+const evaluationRunIdB = "e2e-seeded-evaluation-b";
 const pipelineId = "e2e-seeded-pipeline";
+
+export type SeededScenario =
+  | "complete"
+  | "documents-populated"
+  | "parsing-result"
+  | "chunking-config"
+  | "chunking-result"
+  | "embeddings-ready"
+  | "embeddings-result"
+  | "playground-empty"
+  | "playground-retrieval"
+  | "playground-reranking"
+  | "playground-context"
+  | "playground-answer"
+  | "evaluation-dataset"
+  | "evaluation-results"
+  | "evaluation-compare"
+  | "settings";
+
+export type SeededApiOptions = {
+  scenario?: SeededScenario;
+};
+
+type ScenarioDefinition = {
+  chunk: boolean;
+  embedding: boolean;
+  experiment: "retrieval" | "reranking" | "context" | "generation" | null;
+  dataset: boolean;
+  evaluationCount: 0 | 1 | 2;
+};
+
+const scenarioDefinitions: Record<SeededScenario, ScenarioDefinition> = {
+  complete: { chunk: true, embedding: true, experiment: "generation", dataset: true, evaluationCount: 1 },
+  "documents-populated": { chunk: true, embedding: true, experiment: "generation", dataset: true, evaluationCount: 1 },
+  "parsing-result": { chunk: false, embedding: false, experiment: null, dataset: false, evaluationCount: 0 },
+  "chunking-config": { chunk: false, embedding: false, experiment: null, dataset: false, evaluationCount: 0 },
+  "chunking-result": { chunk: true, embedding: false, experiment: null, dataset: false, evaluationCount: 0 },
+  "embeddings-ready": { chunk: true, embedding: false, experiment: null, dataset: false, evaluationCount: 0 },
+  "embeddings-result": { chunk: true, embedding: true, experiment: null, dataset: false, evaluationCount: 0 },
+  "playground-empty": { chunk: true, embedding: true, experiment: null, dataset: false, evaluationCount: 0 },
+  "playground-retrieval": { chunk: true, embedding: true, experiment: "retrieval", dataset: false, evaluationCount: 0 },
+  "playground-reranking": { chunk: true, embedding: true, experiment: "reranking", dataset: false, evaluationCount: 0 },
+  "playground-context": { chunk: true, embedding: true, experiment: "context", dataset: false, evaluationCount: 0 },
+  "playground-answer": { chunk: true, embedding: true, experiment: "generation", dataset: false, evaluationCount: 0 },
+  "evaluation-dataset": { chunk: true, embedding: true, experiment: "generation", dataset: true, evaluationCount: 0 },
+  "evaluation-results": { chunk: true, embedding: true, experiment: "generation", dataset: true, evaluationCount: 1 },
+  "evaluation-compare": { chunk: true, embedding: true, experiment: "generation", dataset: true, evaluationCount: 2 },
+  settings: { chunk: true, embedding: true, experiment: "generation", dataset: true, evaluationCount: 1 },
+};
 
 const elements = [
   { id: "element-heading", type: "heading", pageNumbers: [1], text: "RAG StepLab Golden Fixture", level: 1, table: null },
@@ -117,7 +167,7 @@ const candidate = {
   headingPath: ["RAG StepLab Golden Fixture"],
 };
 
-const stageResults = {
+const fullStageResults = {
   retrieval: { candidates: [candidate], durationMs: 12, reuse: { reused: true, executed: false, sourceExperimentId: experimentId, sourceDurationMs: 12 } },
   reranking: { status: "skipped", candidates: [{ ...candidate, originalRank: 1, rerankScore: null }], durationMs: 0, method: null, reuse: { reused: false, executed: false, sourceExperimentId: null, sourceDurationMs: null } },
   context: {
@@ -140,6 +190,27 @@ const stageResults = {
   },
 };
 
+const rerankingStageResults = {
+  retrieval: fullStageResults.retrieval,
+  reranking: { status: "completed", candidates: [{ ...candidate, originalRank: 1, rank: 1, rerankScore: 0.98 }], durationMs: 18, method: "gemini-flash-lite-latest", reuse: { reused: false, executed: true, sourceExperimentId: null, sourceDurationMs: null } },
+  context: null,
+  generation: null,
+};
+
+const retrievalStageResults = {
+  retrieval: fullStageResults.retrieval,
+  reranking: null,
+  context: null,
+  generation: null,
+};
+
+const contextStageResults = {
+  retrieval: fullStageResults.retrieval,
+  reranking: fullStageResults.reranking,
+  context: fullStageResults.context,
+  generation: null,
+};
+
 const experiment = {
   ...runBase,
   id: experimentId,
@@ -150,8 +221,8 @@ const experiment = {
   query: "What is the laboratory beacon code?",
   targetStage: "generation",
   upstream: { documentId, parseRunId, chunkRunId, embeddingRunId },
-  config: { retrieval: { mode: "hybrid", topK: 3 }, reranking: { enabled: false }, context: { tokenBudget: 512 }, generation: { temperature: 0, maxOutputTokens: 96 } },
-  stageResults,
+  config: { retrieval: { mode: "hybrid", topK: 3 }, reranking: { enabled: false, candidateCount: 10 }, context: { tokenBudget: 512 }, generation: { temperature: 0, maxOutputTokens: 96 } },
+  stageResults: fullStageResults,
   experimentFingerprint: "e2e-seeded-fingerprint",
   reusedExperiment: true,
   continuedFromExperimentId: null,
@@ -179,14 +250,14 @@ const evaluation = {
   embeddingRunId,
   upstream: { documentId, parseRunId, chunkRunId, embeddingRunId },
   results: {
-    aggregate: { hitAtK: 1, recallAtK: 1, precisionAtK: 1, mrr: 1, citationValidity: 1, groundedness: 1, judgeModel: null, caseCount: 1 },
+    aggregate: { hitAtK: 1, recallAtK: 1, precisionAtK: 1, mrr: 1, citationValidity: 1, groundedness: 1, judgeModel: "gemini-flash-lite-latest", caseCount: 1 },
     caseResults: [{
       question: "What is the laboratory beacon code?",
       expectedElementIds: ["element-fact"],
       retrievedElementIds: ["element-fact"],
       referenceAnswer: "ORBIT-731",
       answer: "The laboratory beacon code is ORBIT-731 [S1].",
-      citations: stageResults.generation.citations,
+      citations: fullStageResults.generation.citations,
       hitAtK: 1,
       precisionAtK: 1,
       recallAtK: 1,
@@ -199,16 +270,102 @@ const evaluation = {
   },
 };
 
-function summary(includeEmbedding = true) {
+const evaluationB = {
+  ...evaluation,
+  id: evaluationRunIdB,
+  timing: { startedAt: "2026-08-24T00:01:00Z", completedAt: "2026-08-24T00:01:02Z", durationMs: 1200 },
+  results: {
+    aggregate: { hitAtK: 0.9, recallAtK: 0.8, precisionAtK: 0.9, mrr: 0.8, citationValidity: 0.95, groundedness: 0.9, judgeModel: "gemini-2.5-flash", caseCount: 1 },
+    caseResults: [{
+      ...evaluation.results.caseResults[0],
+      hitAtK: 0.9,
+      precisionAtK: 0.9,
+      recallAtK: 0.8,
+      mrr: 0.8,
+      citationValidity: 0.95,
+      groundedness: 0.9,
+    }],
+  },
+};
+
+function definitionFor(scenario: SeededScenario) {
+  return scenarioDefinitions[scenario] ?? scenarioDefinitions.complete;
+}
+
+function experimentFor(scenario: SeededScenario) {
+  const targetStage = definitionFor(scenario).experiment;
+  if (!targetStage) return null;
+  const stageResults = targetStage === "retrieval"
+    ? retrievalStageResults
+    : targetStage === "reranking"
+      ? rerankingStageResults
+      : targetStage === "context"
+        ? contextStageResults
+        : fullStageResults;
+  const rerankerEnabled = targetStage === "reranking";
   return {
+    ...experiment,
+    targetStage,
+    config: { ...experiment.config, reranking: { ...experiment.config.reranking, enabled: rerankerEnabled } },
+    stageResults,
+  };
+}
+
+function stageStatuses(targetStage: ScenarioDefinition["experiment"]) {
+  if (!targetStage) return {};
+  const statuses: Record<string, string> = { retrieval: "completed" };
+  if (targetStage === "reranking") statuses.reranking = "completed";
+  if (targetStage === "context") {
+    statuses.reranking = "skipped";
+    statuses.context = "completed";
+  }
+  if (targetStage === "generation") {
+    statuses.reranking = "skipped";
+    statuses.context = "completed";
+    statuses.generation = "completed";
+  }
+  return statuses;
+}
+
+function scenarioState(scenario: SeededScenario, includeEmbedding = true) {
+  const definition = definitionFor(scenario);
+  const hasEmbedding = definition.embedding && includeEmbedding;
+  const stateDocument = {
     ...document,
-    activeEmbeddingRunId: includeEmbedding ? document.activeEmbeddingRunId : null,
-    parseRuns: [{ ...runBase, id: parseRunId, runNumber: 1, phase: "completed", progress: 100, upstream: { documentId, parseRunId: null, chunkRunId: null, embeddingRunId: null } }],
-    chunkRuns: [{ ...runBase, id: chunkRunId, runNumber: 1, strategy: "structure_aware", chunkCount: 1, upstream: { documentId, parseRunId, chunkRunId: null, embeddingRunId: null } }],
-    embeddingRuns: includeEmbedding ? [{ ...runBase, id: embeddingRunId, runNumber: 1, model: embedding.model, dimensions: 768, embeddingCount: 1, embeddingFormatVersion: embedding.embeddingFormatVersion, upstream: { documentId, parseRunId, chunkRunId, embeddingRunId: null } }] : [],
-    experiments: [{ ...runBase, id: experimentId, runNumber: 1, documentId, chunkRunId, embeddingRunId, query: experiment.query, targetStage: "generation", candidateCount: 1, experimentFingerprint: experiment.experimentFingerprint, stageStatuses: { retrieval: "completed", reranking: "skipped", context: "completed", generation: "completed" }, upstream: { documentId, parseRunId, chunkRunId, embeddingRunId } }],
-    evaluationDatasets: [{ ...dataset, cases: undefined }],
-    evaluationRuns: [{ id: evaluationRunId, datasetId, parseRunId, chunkRunId, embeddingRunId, status: "completed", timing: runBase.timing, error: null }],
+    activeChunkRunId: definition.chunk ? chunkRunId : null,
+    activeEmbeddingRunId: hasEmbedding ? embeddingRunId : null,
+  };
+  const selectedExperiment = experimentFor(scenario);
+  const evaluationRuns = definition.evaluationCount === 2
+    ? [evaluationB, evaluation]
+    : definition.evaluationCount === 1
+      ? [evaluation]
+      : [];
+  return {
+    document: stateDocument,
+    pipeline: {
+      id: pipelineId,
+      documentId,
+      name: "Seeded indexing pipeline",
+      parseRunId,
+      chunkRunId: definition.chunk ? chunkRunId : null,
+      embeddingRunId: hasEmbedding ? embeddingRunId : null,
+      revision: 1,
+      isDefault: true,
+      createdAt: null,
+      updatedAt: null,
+    },
+    summary: {
+      ...stateDocument,
+      parseRuns: [{ ...runBase, id: parseRunId, runNumber: 1, phase: "completed", progress: 100, upstream: { documentId, parseRunId: null, chunkRunId: null, embeddingRunId: null } }],
+      chunkRuns: definition.chunk ? [{ ...runBase, id: chunkRunId, runNumber: 1, strategy: "structure_aware", chunkCount: 1, upstream: { documentId, parseRunId, chunkRunId: null, embeddingRunId: null } }] : [],
+      embeddingRuns: hasEmbedding ? [{ ...runBase, id: embeddingRunId, runNumber: 1, model: embedding.model, dimensions: 768, embeddingCount: 1, embeddingFormatVersion: embedding.embeddingFormatVersion, upstream: { documentId, parseRunId, chunkRunId, embeddingRunId: null } }] : [],
+      experiments: selectedExperiment ? [{ ...runBase, id: experimentId, runNumber: 1, documentId, chunkRunId, embeddingRunId, query: experiment.query, targetStage: selectedExperiment.targetStage, candidateCount: 1, experimentFingerprint: experiment.experimentFingerprint, stageStatuses: stageStatuses(selectedExperiment.targetStage), upstream: { documentId, parseRunId, chunkRunId, embeddingRunId } }] : [],
+      evaluationDatasets: definition.dataset ? [{ ...dataset, cases: undefined }] : [],
+      evaluationRuns: evaluationRuns.map((run) => ({ id: run.id, datasetId, parseRunId, chunkRunId, embeddingRunId, status: "completed", timing: run.timing, error: null })),
+    },
+    experiment: selectedExperiment,
+    evaluations: evaluationRuns,
   };
 }
 
@@ -216,7 +373,8 @@ async function json(route: Route, value: unknown, status = 200) {
   await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
 }
 
-export async function installSeededApi(page: Page) {
+export async function installSeededApi(page: Page, options: SeededApiOptions = {}) {
+  const scenario = options.scenario ?? "complete";
   const pdf = await readFile(generatedFixturePath);
   let parsePoll = 0;
   let experimentPoll = 0;
@@ -224,11 +382,27 @@ export async function installSeededApi(page: Page) {
   let pipelineRevision = 1;
   let embeddingAvailable = true;
 
+  await page.addInitScript(() => {
+    // İlk navigation'da temizle; sonraki route navigation'larında seçili lineage korunmalıdır.
+    if (!window.sessionStorage.getItem("rag-steplab-e2e-seeded-reset-v1")) {
+      window.localStorage.setItem("rag-steplab.preferences.v2", JSON.stringify({ locale: "en", showLearningHints: true }));
+      window.localStorage.removeItem("rag-steplab.preferences.v1");
+      for (const key of Object.keys(window.localStorage)) {
+        if (key.startsWith("rag-steplab-active-document-id") || key.startsWith("rag-steplab-active-pipeline-id") || key.startsWith("rag-steplab-lineage-selections-v1")) {
+          window.localStorage.removeItem(key);
+        }
+      }
+      window.sessionStorage.setItem("rag-steplab-e2e-seeded-reset-v1", "1");
+    }
+  });
+
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const pathname = url.pathname;
     const method = request.method();
+    const current = scenarioState(scenario, embeddingAvailable);
+    const seededExperiment = current.experiment ?? experimentFor("complete") ?? experiment;
 
     // UI rotaları ile aynı path'i kullanan API proxy çağrılarını yalnız request türüyle ayırıyoruz.
     // Böylece /documents sayfa navigasyonu JSON fixture tarafından ele geçirilmez.
@@ -238,24 +412,19 @@ export async function installSeededApi(page: Page) {
     }
 
     if (pathname === "/capabilities") return json(route, { embeddingModel: embedding.model, embeddingDimensions: 768, generationModel: experiment.stageResults.generation.model, rerankModel: "gemini-flash-lite-latest", judgeModel: "gemini-flash-lite-latest", embeddingFormatVersion: embedding.embeddingFormatVersion, limits: { maxTopK: 20 } });
-    if (pathname === "/documents" && method === "GET") return json(route, { items: [document] });
-    if (pathname === "/documents" && method === "POST") return json(route, { document, reusedDocument: true }, 200);
-    if (pathname === `/documents/${documentId}/summary`) return json(route, summary(embeddingAvailable));
-    if (pathname === `/documents/${documentId}/pipelines`) return json(route, [{ id: pipelineId, documentId, name: "Seeded indexing pipeline", parseRunId, chunkRunId, embeddingRunId, revision: 1, isDefault: true, createdAt: null, updatedAt: null }]);
+    if (pathname === "/documents" && method === "GET") return json(route, { items: [current.document] });
+    if (pathname === "/documents" && method === "POST") return json(route, { document: current.document, reusedDocument: true }, 200);
+    if (pathname === `/documents/${documentId}/summary`) return json(route, current.summary);
+    if (pathname === `/documents/${documentId}/pipelines`) return json(route, [current.pipeline]);
     if (pathname === `/document-pipelines/${pipelineId}` && method === "PATCH") {
       const input = request.postDataJSON() as { parseRunId?: string | null; chunkRunId?: string | null; embeddingRunId?: string | null };
       pipelineRevision += 1;
       return json(route, {
-        id: pipelineId,
-        documentId,
-        name: "Seeded indexing pipeline",
+        ...current.pipeline,
         parseRunId: input.parseRunId ?? parseRunId,
         chunkRunId: input.chunkRunId ?? null,
         embeddingRunId: input.embeddingRunId ?? null,
         revision: pipelineRevision,
-        isDefault: true,
-        createdAt: null,
-        updatedAt: null,
       });
     }
     if (pathname === `/parse-runs/${parseRunId}`) return json(route, { id: parseRunId, documentId, status: "completed", progress: 100, phase: "completed", result: parseResult });
@@ -276,20 +445,21 @@ export async function installSeededApi(page: Page) {
       embeddingAvailable = true;
       return json(route, embedding);
     }
-    if (pathname === `/experiments/${experimentId}`) return json(route, experiment);
+    if (pathname === `/experiments/${experimentId}`) return json(route, seededExperiment);
     if (pathname === "/experiments" && method === "POST") {
       experimentPoll = 0;
-      return json(route, { ...experiment, id: "e2e-seeded-new-experiment", status: "queued", stageResults: {}, reusedExperiment: false });
+      return json(route, { ...experimentFor("complete"), id: "e2e-seeded-new-experiment", status: "queued", stageResults: {}, reusedExperiment: false });
     }
     if (pathname === "/experiments/e2e-seeded-new-experiment") {
       experimentPoll += 1;
       return json(route, experimentPoll === 1
-        ? { ...experiment, id: "e2e-seeded-new-experiment", status: "running", stageResults: { retrieval: stageResults.retrieval }, reusedExperiment: false }
-        : { ...experiment, id: "e2e-seeded-new-experiment", reusedExperiment: false });
+        ? { ...experimentFor("complete"), id: "e2e-seeded-new-experiment", status: "running", stageResults: { retrieval: fullStageResults.retrieval }, reusedExperiment: false }
+        : { ...experimentFor("complete"), id: "e2e-seeded-new-experiment", reusedExperiment: false });
     }
     if (pathname === `/evaluation/datasets/${datasetId}`) return json(route, dataset);
-    if (pathname === "/evaluation/runs" && method === "GET") return json(route, { items: [evaluation] });
+    if (pathname === "/evaluation/runs" && method === "GET") return json(route, { items: current.evaluations });
     if (pathname === `/evaluation/runs/${evaluationRunId}`) return json(route, evaluation);
+    if (pathname === `/evaluation/runs/${evaluationRunIdB}`) return json(route, evaluationB);
     if (pathname === "/evaluation/runs" && method === "POST") {
       evaluationPoll = 0;
       return json(route, { ...evaluation, id: "e2e-seeded-evaluation-new", status: "queued", results: { aggregate: { caseCount: 1 }, caseResults: [] } });
@@ -307,4 +477,4 @@ export async function installSeededApi(page: Page) {
   });
 }
 
-export const seededIds = { documentId, parseRunId, chunkRunId, embeddingRunId, experimentId, datasetId, evaluationRunId };
+export const seededIds = { documentId, parseRunId, chunkRunId, embeddingRunId, experimentId, datasetId, evaluationRunId, evaluationRunIdB };

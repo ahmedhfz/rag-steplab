@@ -32,6 +32,31 @@ const screens = [
   ["auth-forgot", "auth-forgot-4-6216.png"],
 ] as const;
 
+type CanonicalScreen = (typeof screens)[number][0];
+type VisualContract = { maxMae: number; maxChangedPixelPercentage: number };
+
+// Statik Figma kopyalarında ekranın içerik yoğunluğuna göre ayrı tolerans kullanılır.
+// Overview bu dosyadan ayrıdır ve kendi 3.7 / 5 sözleşmesini korur.
+const visualContracts: Record<CanonicalScreen, VisualContract> = {
+  "documents-populated": { maxMae: 4.5, maxChangedPixelPercentage: 8 },
+  "parsing-result": { maxMae: 6, maxChangedPixelPercentage: 8 },
+  "chunking-config": { maxMae: 4, maxChangedPixelPercentage: 6 },
+  "chunking-result": { maxMae: 8.5, maxChangedPixelPercentage: 9 },
+  "embeddings-ready": { maxMae: 4, maxChangedPixelPercentage: 6 },
+  "embeddings-result": { maxMae: 6, maxChangedPixelPercentage: 8 },
+  "playground-empty": { maxMae: 4, maxChangedPixelPercentage: 6 },
+  "playground-retrieval": { maxMae: 8, maxChangedPixelPercentage: 8 },
+  "playground-context": { maxMae: 8, maxChangedPixelPercentage: 9 },
+  "playground-answer": { maxMae: 7, maxChangedPixelPercentage: 8 },
+  "evaluation-dataset": { maxMae: 6, maxChangedPixelPercentage: 8 },
+  "evaluation-results": { maxMae: 6, maxChangedPixelPercentage: 8 },
+  "evaluation-compare": { maxMae: 12, maxChangedPixelPercentage: 10 },
+  settings: { maxMae: 3, maxChangedPixelPercentage: 5 },
+  "auth-login": { maxMae: 10, maxChangedPixelPercentage: 8 },
+  "auth-signup": { maxMae: 12, maxChangedPixelPercentage: 9 },
+  "auth-forgot": { maxMae: 10, maxChangedPixelPercentage: 8 },
+};
+
 async function settle(page: Page) {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.evaluate(async () => {
@@ -97,15 +122,16 @@ test.describe("Figma canonical static golden clones", () => {
       const actualPath = path.join(artifactDirectory, `${screen}-actual.png`);
       const diffPath = path.join(artifactDirectory, `${screen}-diff.png`);
       const metricsPath = path.join(artifactDirectory, `${screen}-metrics.json`);
+      const contract = visualContracts[screen];
       const screenshot = await page.screenshot({ animations: "disabled", caret: "hide", fullPage: false, path: actualPath });
       expect(screenshot.subarray(1, 4).toString("ascii")).toBe("PNG");
       expect(screenshot.readUInt32BE(16)).toBe(viewport.width);
       expect(screenshot.readUInt32BE(20)).toBe(viewport.height);
 
-      execFileSync(process.execPath, [visualDiff, path.resolve("e2e/visual/reference", referenceName), actualPath, diffPath, metricsPath, "12", "20"], { stdio: "inherit" });
+      execFileSync(process.execPath, [visualDiff, path.resolve("e2e/visual/reference", referenceName), actualPath, diffPath, metricsPath, String(contract.maxMae), "20", String(contract.maxChangedPixelPercentage)], { stdio: "inherit" });
       const metrics = JSON.parse(await readFile(metricsPath, "utf8")) as { changedPixelPercentage: number; mae: number };
-      expect(metrics.mae, `${screen} MAE`).toBeLessThanOrEqual(12);
-      expect(metrics.changedPixelPercentage, `${screen} changed pixels`).toBeLessThanOrEqual(30);
+      expect(metrics.mae, `${screen} MAE`).toBeLessThanOrEqual(contract.maxMae);
+      expect(metrics.changedPixelPercentage, `${screen} changed pixels`).toBeLessThanOrEqual(contract.maxChangedPixelPercentage);
     });
   }
 });
