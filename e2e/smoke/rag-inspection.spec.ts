@@ -54,12 +54,41 @@ test("Evaluation source picker, aggregate metrics, case diagnostics ve reload pe
   await expect(page.getByTestId("evaluation-results-config")).toContainText("Hybrid");
   await expect(page.getByTestId("evaluation-retrieval-metrics")).toBeVisible();
   await expect(page.getByTestId("evaluation-answer-metrics")).toBeVisible();
+  await expect(page.getByTestId("evaluation-answer-metrics")).toContainText("Abstention accuracy");
   await expect(page.getByText("Hit@K", { exact: true }).first()).toBeVisible();
   await expect(page.getByText(/What is the laboratory beacon code\?/).first()).toBeVisible();
+  await expect(page.getByText(/What is the launch code\?/).first()).toBeVisible();
+  await expect(page.getByText("correct abstention", { exact: true })).toBeVisible();
   await expect(page.getByText("ORBIT-731", { exact: false }).first()).toBeVisible();
   await page.reload();
   await page.getByRole("tab", { name: "Results" }).click();
   await expect(page.getByText(/What is the laboratory beacon code\?/).first()).toBeVisible();
+  await expect(page.getByText("correct abstention", { exact: true })).toBeVisible();
+
+  quality.assertClean();
+});
+
+test("Evaluation dataset normal cevap ve yetersiz bağlam case'lerini ayrı kontratlarla gönderir", async ({ page }) => {
+  const quality = installBrowserQualityGuards(page);
+
+  await page.goto("/evaluation");
+  await selectSeededDocument(page);
+  await page.getByLabel("Dataset name").fill("Mixed outcome dataset");
+  await page.getByLabel("Golden question").fill("What is the laboratory beacon code?");
+  await page.getByTestId("source-picker-relevant-elements").getByRole("button").first().click();
+  await page.getByRole("button", { name: "Add case" }).click();
+  await page.getByLabel("Golden question").nth(1).fill("What is the launch code?");
+  await page.getByRole("combobox", { name: "Expected outcome" }).nth(1).click();
+  await page.getByRole("option", { name: "Insufficient context / no answer" }).click();
+  await expect(page.getByText("Source evidence is not required.", { exact: true })).toBeVisible();
+
+  const requestPromise = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/evaluation/datasets");
+  await page.getByRole("button", { name: "Create dataset" }).click();
+  const request = await requestPromise;
+  const payload = request.postDataJSON() as { cases: Array<{ expectedOutcome: string; relevantElementIds: string[] }> };
+  expect(payload.cases).toHaveLength(2);
+  expect(payload.cases[0]).toMatchObject({ expectedOutcome: "answer", relevantElementIds: ["element-fact"] });
+  expect(payload.cases[1]).toMatchObject({ expectedOutcome: "insufficient_context", relevantElementIds: [] });
 
   quality.assertClean();
 });

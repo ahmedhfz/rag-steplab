@@ -169,7 +169,7 @@ const candidate = {
 
 const fullStageResults = {
   retrieval: { candidates: [candidate], durationMs: 12, reuse: { reused: true, executed: false, sourceExperimentId: experimentId, sourceDurationMs: 12 } },
-  reranking: { status: "skipped", candidates: [{ ...candidate, originalRank: 1, rerankScore: null }], durationMs: 0, method: null, reuse: { reused: false, executed: false, sourceExperimentId: null, sourceDurationMs: null } },
+  reranking: { status: "skipped", candidates: [{ ...candidate, originalRank: 1, rerankRank: null, rerankScore: null }], durationMs: 0, method: null, reuse: { reused: false, executed: false, sourceExperimentId: null, sourceDurationMs: null } },
   context: {
     candidates: [{ chunkId: candidate.chunkId, selected: true, reason: "highest hybrid score", tokenCount: 11, text: candidate.text, pageNumbers: [1], sourceElementIds: ["element-fact"] }],
     finalContext: "[Source 1, page 1] Golden fact: The laboratory beacon code is ORBIT-731.",
@@ -192,7 +192,7 @@ const fullStageResults = {
 
 const rerankingStageResults = {
   retrieval: fullStageResults.retrieval,
-  reranking: { status: "completed", candidates: [{ ...candidate, originalRank: 1, rank: 1, rerankScore: 0.98 }], durationMs: 18, method: "gemini-flash-lite-latest", reuse: { reused: false, executed: true, sourceExperimentId: null, sourceDurationMs: null } },
+  reranking: { status: "completed", candidates: [{ ...candidate, originalRank: 1, rank: 1, rerankRank: 1, rerankScore: 1 }], durationMs: 18, method: "gemini-flash-lite-latest", rerankScoreSemantics: "deprecated_ordinal_not_confidence", reuse: { reused: false, executed: true, sourceExperimentId: null, sourceDurationMs: null } },
   context: null,
   generation: null,
 };
@@ -236,8 +236,11 @@ const dataset = {
   name: "e2e-seeded-golden-dataset",
   version: 1,
   seriesId: "e2e-seeded-series",
-  caseCount: 1,
-  cases: [{ question: "What is the laboratory beacon code?", relevantElementIds: ["element-fact"], referenceAnswer: "ORBIT-731" }],
+  caseCount: 2,
+  cases: [
+    { question: "What is the laboratory beacon code?", relevantElementIds: ["element-fact"], referenceAnswer: "ORBIT-731", expectedOutcome: "answer" },
+    { question: "What is the launch code?", relevantElementIds: [], referenceAnswer: null, expectedOutcome: "insufficient_context" },
+  ],
   createdAt: "2026-08-24T00:00:00Z",
 };
 
@@ -260,7 +263,7 @@ const evaluation = {
     judge: false,
   },
   results: {
-    aggregate: { hitAtK: 1, recallAtK: 1, precisionAtK: 1, mrr: 1, citationValidity: 1, groundedness: 1, judgeModel: "gemini-flash-lite-latest", caseCount: 1 },
+    aggregate: { hitAtK: 1, recallAtK: 1, precisionAtK: 1, mrr: 1, citationValidity: 1, groundedness: 1, judgeModel: "gemini-flash-lite-latest", caseCount: 2, retrievalEligibleCaseCount: 1, abstentionEligibleCaseCount: 1, abstentionAccuracy: 1 },
     caseResults: [{
       question: "What is the laboratory beacon code?",
       expectedElementIds: ["element-fact"],
@@ -276,6 +279,29 @@ const evaluation = {
       groundedness: 1,
       groundednessDetail: {},
       experimentId,
+      expectedOutcome: "answer",
+      insufficientContext: false,
+      retrievalEligible: true,
+      abstentionCorrect: null,
+    }, {
+      question: "What is the launch code?",
+      expectedElementIds: [],
+      retrievedElementIds: [],
+      referenceAnswer: null,
+      answer: "",
+      citations: [],
+      hitAtK: null,
+      precisionAtK: null,
+      recallAtK: null,
+      mrr: null,
+      citationValidity: 1,
+      groundedness: 1,
+      groundednessDetail: {},
+      experimentId: "e2e-seeded-no-answer-experiment",
+      expectedOutcome: "insufficient_context",
+      insufficientContext: true,
+      retrievalEligible: false,
+      abstentionCorrect: true,
     }],
   },
 };
@@ -293,7 +319,7 @@ const evaluationB = {
     judge: true,
   },
   results: {
-    aggregate: { hitAtK: 0.9, recallAtK: 0.8, precisionAtK: 0.9, mrr: 0.8, citationValidity: 0.95, groundedness: 0.9, judgeModel: "gemini-2.5-flash", caseCount: 1 },
+    aggregate: { hitAtK: 0.9, recallAtK: 0.8, precisionAtK: 0.9, mrr: 0.8, citationValidity: 0.95, groundedness: 0.9, judgeModel: "gemini-2.5-flash", caseCount: 2, retrievalEligibleCaseCount: 1, abstentionEligibleCaseCount: 1, abstentionAccuracy: 1 },
     caseResults: [{
       ...evaluation.results.caseResults[0],
       hitAtK: 0.9,
@@ -302,7 +328,7 @@ const evaluationB = {
       mrr: 0.8,
       citationValidity: 0.95,
       groundedness: 0.9,
-    }],
+    }, evaluation.results.caseResults[1]],
   },
 };
 
@@ -474,6 +500,7 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
         ? { ...experimentFor("complete"), id: "e2e-seeded-new-experiment", status: "running", stageResults: { retrieval: fullStageResults.retrieval }, reusedExperiment: false }
         : { ...experimentFor("complete"), id: "e2e-seeded-new-experiment", reusedExperiment: false });
     }
+    if (pathname === "/evaluation/datasets" && method === "POST") return json(route, { ...dataset, id: "e2e-seeded-created-dataset" }, 201);
     if (pathname === `/evaluation/datasets/${datasetId}`) return json(route, dataset);
     if (pathname === "/evaluation/runs" && method === "GET") return json(route, { items: current.evaluations });
     if (pathname === `/evaluation/runs/${evaluationRunId}`) return json(route, evaluation);
