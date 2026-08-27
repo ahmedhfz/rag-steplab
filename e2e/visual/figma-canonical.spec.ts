@@ -34,7 +34,7 @@ async function settle(page: Page) {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.evaluate(async () => {
     await document.fonts.ready;
-    await Promise.all(Array.from(document.images, (image) => image.complete && image.naturalWidth > 0
+    await Promise.all(Array.from(document.images, (image) => image.complete
       ? Promise.resolve()
       : new Promise<void>((resolve, reject) => {
           image.addEventListener("load", () => resolve(), { once: true });
