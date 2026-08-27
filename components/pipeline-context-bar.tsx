@@ -74,7 +74,7 @@ export function PipelineContextBar({ showLineage = true }: { showLineage?: boole
 
   return (
     <section className="border-b border-[#e7e2e4] bg-white px-4 py-2.5 sm:px-8" data-testid="pipeline-context-bar">
-      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 sm:flex-nowrap">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 min-[1360px]:flex-nowrap">
         <div className="flex min-w-0 max-w-full items-center gap-1.5 sm:w-[14rem] sm:max-w-[14rem] sm:shrink-0">
           <FileText aria-hidden="true" className="size-4 shrink-0 text-[#969093]" />
           <span className="sr-only">{labels.document}</span>
@@ -93,7 +93,7 @@ export function PipelineContextBar({ showLineage = true }: { showLineage?: boole
           <SelectContent>{pipelines.map((pipeline) => <SelectItem className="h-auto min-h-8 whitespace-normal break-words" key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
         </Select>
 
-        {showLineage ? <nav aria-label={labels.lineage} className="flex min-w-0 flex-wrap items-center gap-1 sm:ml-auto sm:shrink-0 sm:flex-nowrap">
+        {showLineage ? <nav aria-label={labels.lineage} className="flex min-w-0 flex-wrap items-center gap-1 min-[1360px]:ml-auto min-[1360px]:shrink-0 min-[1360px]:flex-nowrap">
             <span className="sr-only">{labels.lineage}</span>
             <LineageLink href="/parse" label={labels.parse} locale={locale} status={parseStageStatus} />
             <span aria-hidden="true" className="text-[#d8d2d5]">→</span>

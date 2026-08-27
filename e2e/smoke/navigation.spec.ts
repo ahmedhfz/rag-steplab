@@ -57,6 +57,15 @@ test("seeded state reload sonrası korunur ve responsive gezinme çalışır", a
   await mobileDocument.locator("summary").click();
   await page.screenshot({ path: "output/playwright/responsive-shell/documents-390.png", fullPage: true });
 
+  await page.goto("/settings");
+  const languageDescription = page.getByText("Choose the language used across the interface.");
+  const languageControl = page.getByRole("radiogroup", { name: "Language" });
+  const descriptionBox = await languageDescription.boundingBox();
+  const languageControlBox = await languageControl.boundingBox();
+  expect(descriptionBox).not.toBeNull();
+  expect(languageControlBox).not.toBeNull();
+  expect(languageControlBox!.y).toBeGreaterThanOrEqual(descriptionBox!.y + descriptionBox!.height);
+
   for (const width of [390, 768, 1024]) {
     await page.setViewportSize({ width, height: 844 });
     await expect(page.locator("html")).toHaveJSProperty("scrollWidth", width);

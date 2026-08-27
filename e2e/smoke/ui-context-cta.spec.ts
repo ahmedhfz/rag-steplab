@@ -81,6 +81,12 @@ test("UI context and CTA remain reachable without horizontal overflow at support
       await assertStageContext(page);
       await assertNoHorizontalOverflow(page);
     }
+
+    for (const route of ["/playground", "/evaluation"]) {
+      await page.goto(route, { waitUntil: "networkidle" });
+      await assertStageContext(page);
+      await assertNoHorizontalOverflow(page);
+    }
   }
 
   quality.assertClean();
