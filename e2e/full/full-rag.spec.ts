@@ -44,6 +44,7 @@ test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğ
   const createEmbeddingsButton = page.getByRole("button", { name: "Create embeddings" });
   await expect(createEmbeddingsButton).toBeEnabled({ timeout: 60_000 });
   await createEmbeddingsButton.click();
+  await page.getByTestId("embedding-details").locator("summary").click();
   await expect(page.getByText("gemini-embedding-2", { exact: false }).first()).toBeVisible({ timeout: 2 * 60_000 });
 
   await page.goto("/playground");
