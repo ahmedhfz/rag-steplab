@@ -38,7 +38,7 @@ test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğ
   await expect(page.getByText("ORBIT-731", { exact: false }).first()).toBeVisible();
   await page.getByRole("link", { name: "Continue to Chunking" }).click();
 
-  await page.getByRole("button", { name: "Create chunks" }).click();
+  await page.getByRole("button", { name: "Run chunking", exact: true }).click();
   await expect(page.getByText("ORBIT-731", { exact: false }).first()).toBeVisible({ timeout: 60_000 });
   await page.goto("/embeddings");
   const createEmbeddingsButton = page.getByRole("button", { name: "Create embeddings" });
