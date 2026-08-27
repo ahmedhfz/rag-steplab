@@ -20,8 +20,7 @@ afterEach(() => {
 });
 
 describe("Phase 6B document ownership", () => {
-  it("shows the Figma-first journey and continuation CTA without upload or parse actions", async () => {
-    const user = userEvent.setup();
+  it("shows workspace controls and the Figma-first journey without upload or parse actions", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       const payload = url.endsWith("/capabilities") ? capabilities : { items: [] };
       return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }));
@@ -30,8 +29,13 @@ describe("Phase 6B document ownership", () => {
     renderWithPipeline(<OverviewScreen />);
 
     expect(screen.getByRole("heading", { name: "Build your RAG, one step at a time." })).toBeInTheDocument();
-    expect(screen.getByTestId("continue-surface")).toBeInTheDocument();
-    expect(screen.getByTestId("current-setup")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-control-plane")).toBeInTheDocument();
+    expect(screen.getByTestId("overview-lineage")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New pipeline" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Rename" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeVisible();
+    expect(screen.queryByTestId("continue-surface")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("current-setup")).not.toBeInTheDocument();
     expect(screen.getByTestId("overview-journey")).toContainElement(screen.getByText("Build Context"));
     expect(screen.getByText("Retrieval")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText(/No documents yet/)).toBeInTheDocument());
@@ -39,8 +43,6 @@ describe("Phase 6B document ownership", () => {
     expect(screen.queryByRole("button", { name: /Add PDF|Choose PDF|Parse Document|Reparse/i })).not.toBeInTheDocument();
     expect(screen.queryByTestId("activity-timeline")).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/documents/"))).toBe(false);
-    await user.click(screen.getByText("Manage document and pipeline"));
-    expect(screen.getByRole("button", { name: "New" })).toBeVisible();
   });
 
   it("uploads from the clickable drop zone without parsing", async () => {

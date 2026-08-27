@@ -62,7 +62,7 @@ test("chunk ve embedding UI yalnız ilgili katmanın seeded contractını kullan
   await selectSeededDocument(page);
   await expect(page.getByRole("heading", { name: "Chunking", level: 1, exact: true })).toBeVisible();
   await expect(page.getByText("ORBIT-731", { exact: false })).toBeVisible();
-  await page.getByRole("button", { name: "Create chunks" }).click();
+  await page.getByRole("button", { name: "Run chunking" }).click();
   await expect(page.getByTestId("chunk-reuse-notice")).toBeVisible();
 
   await page.goto("/embeddings");

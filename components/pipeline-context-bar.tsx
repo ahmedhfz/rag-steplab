@@ -3,60 +3,110 @@
 import Link from "next/link";
 import { FileText } from "lucide-react";
 
-import { useDocumentPipeline } from "@/components/document-pipeline-provider";
+import { useDocumentPipeline, type PipelineOperationStatus } from "@/components/document-pipeline-provider";
+import { OperationStatusBadge } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import type { RunSummary } from "@/lib/rag-api-types";
+import type { AppLocale } from "@/lib/copy";
 
-function runNumber(runs: Array<{ id: string; runNumber?: number | null; createdAt?: string | null }>, id: string | null) {
-  const persisted = id ? runs.find((run) => run.id === id)?.runNumber : null;
-  if (persisted) return persisted;
-  const ordered = [...runs].sort((left, right) => {
-    const byDate = String(left.createdAt ?? "").localeCompare(String(right.createdAt ?? ""));
-    return byDate || left.id.localeCompare(right.id);
-  });
-  const index = id ? ordered.findIndex((run) => run.id === id) : -1;
-  return index >= 0 ? index + 1 : null;
+function runToOperationStatus(run: RunSummary | undefined, fallback: PipelineOperationStatus): PipelineOperationStatus {
+  if (!run) return fallback;
+  if (run.status === "queued" || run.status === "running") return "processing";
+  if (run.status === "failed") return "error";
+  if (run.status === "completed" && run.isCompatible) return "completed";
+  return "stale";
+}
+
+function LineageLink({
+  href,
+  label,
+  locale,
+  status,
+}: {
+  href: string;
+  label: string;
+  locale: AppLocale;
+  status: PipelineOperationStatus;
+}) {
+  return (
+    <Link className="flex min-w-0 items-center gap-1.5 rounded-[8px] px-1.5 py-1 outline-none hover:bg-[#fbf4f6] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" href={href}>
+      <span className="text-xs font-medium text-[#171416]">{label}</span>
+      <OperationStatusBadge locale={locale} status={status} />
+    </Link>
+  );
 }
 
 export function PipelineContextBar() {
   const { preferences } = usePreferences();
-  const { documents, activeDocumentId, activeDocumentMetadata, activeDocument, selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId, activePipelineId, pipelines, persistenceStatus, selectPersistedDocument, selectPipeline } = useDocumentPipeline();
+  const {
+    documents,
+    activeDocumentId,
+    activeDocumentMetadata,
+    activeDocument,
+    selectedParseRunId,
+    selectedChunkRunId,
+    selectedEmbeddingRunId,
+    activePipelineId,
+    pipelines,
+    persistenceStatus,
+    chunkStatus,
+    embeddingStatus,
+    selectPersistedDocument,
+    selectPipeline,
+  } = useDocumentPipeline();
+  const locale = preferences.locale;
   const documentName = activeDocument?.fileName ?? activeDocumentMetadata?.fileName;
-  const parseNumber = runNumber(activeDocument?.parseRuns ?? [], selectedParseRunId);
-  const chunkNumber = runNumber(activeDocument?.chunkRuns ?? [], selectedChunkRunId);
-  const embeddingNumber = runNumber(activeDocument?.embeddingRuns ?? [], selectedEmbeddingRunId);
-  const labels = preferences.locale === "tr"
-    ? { document: "Doküman bağlamı", placeholder: "Doküman seçin", noDocument: "Aktif doküman yok", noPipeline: "Pipeline seçin", historical: "geçmiş lineage", pipeline: "Indexing pipeline", parse: "Son Ayrıştırma", chunk: "Güncel Parçalama", embedding: "Embedding" }
-    : { document: "Document context", placeholder: "Select a document", noDocument: "No active document", noPipeline: "Select a pipeline", historical: "historical lineage", pipeline: "Indexing pipeline", parse: "Latest Parse", chunk: "Current Chunking", embedding: "Embedding" };
-  const selectedParse = activeDocument?.parseRuns.find((run) => run.id === selectedParseRunId);
+  const selectedParse = activeDocument?.parseRuns.find((run) => run.id === selectedParseRunId) ?? activeDocument?.parseRuns[0];
   const selectedChunk = activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId);
   const selectedEmbedding = activeDocument?.embeddingRuns.find((run) => run.id === selectedEmbeddingRunId);
+  const hasDocument = Boolean(activeDocumentId || documentName);
+  const hasParse = Boolean(selectedParseRunId || selectedParse);
+  const hasChunk = Boolean(selectedChunkRunId || selectedChunk);
+  const parseStageStatus = runToOperationStatus(selectedParse, hasDocument ? "ready" : "locked");
+  const chunkStageStatus = runToOperationStatus(selectedChunk, hasParse ? chunkStatus : "locked");
+  const embeddingStageStatus = runToOperationStatus(selectedEmbedding, hasChunk ? embeddingStatus : "locked");
   const isHistorical = Boolean(selectedParse?.historicalLineage || selectedChunk?.historicalLineage || selectedEmbedding?.historicalLineage);
-  const embeddingLabel = selectedEmbedding?.model?.toLowerCase().includes("gemini") ? (preferences.locale === "tr" ? "Gemini Embedding" : "Gemini Embedding") : labels.embedding;
-  const technicalSuffix = preferences.locale === "tr" ? " teknik kimlik" : " technical identity";
+  const labels = locale === "tr"
+    ? { document: "Doküman bağlamı", pipeline: "Indexing pipeline", placeholder: "Doküman seçin", noDocument: "Aktif doküman yok", noPipeline: "Pipeline seçin", lineage: "Indexing lineage", historical: "geçmiş lineage", parse: "Parse", chunk: "Chunk", embedding: "Embedding" }
+    : { document: "Document context", pipeline: "Indexing pipeline", placeholder: "Select a document", noDocument: "No active document", noPipeline: "Select a pipeline", lineage: "Indexing lineage", historical: "historical lineage", parse: "Parse", chunk: "Chunk", embedding: "Embedding" };
 
   return (
     <section className="border-b border-[#e7e2e4] bg-white px-4 py-2.5 sm:px-8" data-testid="pipeline-context-bar">
-      <div className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-3">
-        <FileText aria-hidden="true" className="size-4 shrink-0 text-[#969093]" />
-        <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
-          <SelectTrigger aria-label={labels.document} className="h-8 min-w-0 max-w-[17rem] border-0 px-1 text-xs font-medium text-[#171416] shadow-none"><SelectValue placeholder={documentName ?? (documents.length ? labels.placeholder : labels.noDocument)} /></SelectTrigger>
-          <SelectContent>{documents.map((document) => <SelectItem key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
+      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+        <div className="flex min-w-0 max-w-full items-center gap-1.5">
+          <FileText aria-hidden="true" className="size-4 shrink-0 text-[#969093]" />
+          <span className="sr-only">{labels.document}</span>
+          <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
+            <SelectTrigger aria-label={labels.document} className="h-8 min-w-0 max-w-[min(22rem,55vw)] border-0 px-1 text-xs font-medium text-[#171416] shadow-none [&_[data-slot=select-value]]:truncate" data-testid="pipeline-context-document-selector">
+              <SelectValue placeholder={documentName ?? (documents.length ? labels.placeholder : labels.noDocument)} />
+            </SelectTrigger>
+            <SelectContent>{documents.map((document) => <SelectItem key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+        <span aria-hidden="true" className="text-[#d8d2d5]">/</span>
+        <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value === "none" ? null : value)} value={activePipelineId ?? "none"}>
+          <SelectTrigger aria-label={labels.pipeline} className="h-8 min-w-0 max-w-[min(18rem,55vw)] border-0 px-1 text-xs font-semibold text-[#501329] shadow-none [&_[data-slot=select-value]]:truncate" data-testid="pipeline-context-pipeline-selector">
+            <SelectValue placeholder={pipelines.length ? labels.pipeline : labels.noPipeline} />
+          </SelectTrigger>
+          <SelectContent><SelectItem value="none">{labels.noPipeline}</SelectItem>{pipelines.map((pipeline) => <SelectItem key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
         </Select>
-        <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value)} value={activePipelineId ?? ""}>
-          <SelectTrigger aria-label={labels.pipeline} className="h-8 min-w-[10rem] max-w-[16rem] border-0 px-1 text-xs font-semibold text-[#501329] shadow-none"><SelectValue placeholder={pipelines.length ? labels.pipeline : labels.noPipeline} /></SelectTrigger>
-          <SelectContent>{pipelines.map((pipeline) => <SelectItem key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
-        </Select>
-        <span aria-label={preferences.locale === "tr" ? "Seçili lineage" : "Selected lineage"} className="shrink-0 text-xs font-semibold tracking-wide text-[#501329]">
-          <Link className="hover:underline" href="/parse" title={selectedParse ? `${labels.parse} ${parseNumber ?? "—"}${technicalSuffix}` : labels.parse}>{labels.parse}</Link><span className="px-1 text-[#d8d2d5]">→</span><Link className="hover:underline" href="/chunking" title={selectedChunk ? `${labels.chunk} ${chunkNumber ?? "—"}${technicalSuffix}` : labels.chunk}>{labels.chunk}</Link><span className="px-1 text-[#d8d2d5]">→</span><Link className="hover:underline" href="/embeddings" title={selectedEmbedding ? `${embeddingLabel} ${embeddingNumber ?? "—"}${technicalSuffix}` : embeddingLabel}>{embeddingLabel}</Link>
-        </span>
-        {isHistorical ? <span className="truncate text-[10px] text-[#8d651e]">({labels.historical})</span> : null}
+
+        <nav aria-label={labels.lineage} className="flex min-w-0 flex-wrap items-center gap-1 sm:ml-auto">
+          <span className="sr-only">{labels.lineage}</span>
+          <LineageLink href="/parse" label={labels.parse} locale={locale} status={parseStageStatus} />
+          <span aria-hidden="true" className="text-[#d8d2d5]">→</span>
+          <LineageLink href="/chunking" label={labels.chunk} locale={locale} status={chunkStageStatus} />
+          <span aria-hidden="true" className="text-[#d8d2d5]">→</span>
+          <LineageLink href="/embeddings" label={labels.embedding} locale={locale} status={embeddingStageStatus} />
+          {isHistorical ? <span className="truncate text-[10px] text-[#8d651e]">({labels.historical})</span> : null}
+        </nav>
       </div>
     </section>
   );
 }
 
-/** Keep the selector available for an unselected workspace without adding a visual band to canonical active-state pages. */
+/** Other surfaces keep their existing compact empty-state behavior; build pages render PipelineContextBar directly. */
 export function ConditionalPipelineContextBar() {
   const { activeDocumentId } = useDocumentPipeline();
   return <div className={activeDocumentId ? "sr-only" : undefined}><PipelineContextBar /></div>;

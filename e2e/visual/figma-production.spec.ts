@@ -95,16 +95,14 @@ async function assertShellGeometry(page: Page) {
 async function assertOverviewGeometry(page: Page) {
   await assertRect(page.getByTestId("figma-overview-main"), { x: 248, y: 0, width: 1193 }, "overview-main");
   await assertRect(page.getByTestId("figma-overview-header"), { x: 288, y: 40, width: 1113, height: 82 }, "overview-header");
-  await assertRect(page.getByTestId("continue-surface"), { x: 288, y: 150, width: 1113, height: 77.424 }, "overview-continue");
-  await assertRect(page.getByTestId("figma-overview-pipeline"), { x: 288, y: 263, width: 1113, height: 277.424 }, "overview-pipeline");
-  await assertRect(page.getByTestId("overview-journey"), { x: 318, width: 1054, height: 216 }, "overview-journey");
+  await assertRect(page.getByTestId("workspace-control-plane"), { x: 288, y: 150, width: 1113, height: 161.5 }, "overview-control-plane");
+  await assertRect(page.getByTestId("overview-lineage"), { x: 288, y: 327.5, width: 1113, height: 66.5 }, "overview-lineage");
+  await assertRect(page.getByTestId("figma-overview-pipeline"), { x: 288, y: 418, width: 1113, height: 284 }, "overview-pipeline");
+  await assertRect(page.getByTestId("overview-journey"), { x: 309, y: 469, width: 1071, height: 216 }, "overview-journey");
   await assertRect(page.getByTestId("figma-overview-prepare"), { width: 441, height: 192 }, "overview-prepare");
   await assertRect(page.getByTestId("figma-overview-test"), { width: 428, height: 192 }, "overview-test");
   await assertRect(page.getByTestId("figma-overview-measure"), { width: 114, height: 192 }, "overview-measure");
-  await assertRect(page.getByTestId("figma-overview-lower"), { x: 288, width: 1113, height: 277.761 }, "overview-lower");
-  await assertRect(page.getByTestId("current-setup"), { x: 288, width: 615.788, height: 277.761 }, "overview-current-setup");
-  await assertRect(page.getByTestId("figma-overview-recent-activity"), { width: 473.671, height: 277.761 }, "overview-recent-activity");
-  await assertRect(page.getByTestId("figma-overview-learning-note"), { x: 288, width: 1113, height: 97 }, "overview-learning-note");
+  await assertRect(page.getByTestId("figma-overview-learning-note"), { x: 288, width: 1113 }, "overview-learning-note");
   expect(await page.locator('[data-testid^="overview-journey-node-"]').count()).toBe(9);
 }
 
@@ -134,16 +132,17 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     await assertRect(page.getByTestId("documents-page-header"), { x: 288, y: 40, width: 1113 }, "documents-header");
   } else if (state.group === "parsing") {
     await assertRect(page.getByTestId("parse-page-header"), { x: 288, y: 40, width: 1113, height: 92 }, "parse-header");
-    await assertRect(page.getByTestId("parse-document-status"), { x: 288, y: 132, width: 1113, height: 76 }, "parse-status");
-    await assertRect(page.getByTestId("parse-result-summary"), { x: 288, width: 1113 }, "parse-result");
+    await assertRect(page.getByTestId("parse-document-status"), { x: 288, y: 185, width: 1113, height: 76 }, "parse-status");
+    await assertRect(page.getByTestId("parse-result-summary"), { x: 288, y: 285, width: 1113, height: 87 }, "parse-result");
   } else if (state.group === "chunking") {
     await assertRect(page.getByTestId("chunking-page-header"), { x: 288, y: 40, width: 1113, height: 92 }, "chunking-header");
-    await assertRect(page.getByTestId("chunking-source-summary"), { x: 288, y: 164, width: 1113, height: 74 }, "chunking-source");
-    await assertRect(page.getByTestId("chunking-workspace"), { x: 288, width: 1113 }, "chunking-workspace");
+    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 288, y: 132, width: 1113, height: 53 }, "chunking-context");
+    await assertRect(page.getByTestId("chunking-workspace"), { x: 288, y: 209, width: 1113, height: state.key === "chunking-config" ? 431 : 954 }, "chunking-workspace");
   } else if (state.group === "embeddings") {
     await assertRect(page.getByTestId("embeddings-page-header"), { x: 288, y: 40, width: 1113, height: 92 }, "embeddings-header");
-    await assertRect(page.getByTestId("embedding-input"), { x: 288, y: 164, width: 1113, height: 74 }, "embedding-input");
-    await assertRect(page.getByTestId("embeddings-workspace"), { x: 288, width: 1113 }, "embeddings-workspace");
+    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 288, y: 132, width: 1113, height: 53 }, "embeddings-context");
+    await assertRect(page.getByTestId("embedding-input"), { x: 288, y: 209, width: 1113, height: 77 }, "embedding-input");
+    await assertRect(page.getByTestId("embeddings-workspace"), { x: 288, y: 310, width: 1113, height: state.key === "embeddings-ready" ? 118 : 341 }, "embeddings-workspace");
   } else if (state.group === "playground") {
     await assertRect(page.getByTestId("playground-page-header"), { x: 288, y: 40, width: 1113, height: 92 }, "playground-header");
     await assertRect(page.getByTestId("playground-input"), { x: 288, y: 164, width: 1113 }, "playground-input");
@@ -221,7 +220,7 @@ async function prepareState(page: Page, state: VisualState) {
   } else if (state.key === "chunking-config") {
     await expect(page.getByTestId("chunking-workspace")).toBeVisible();
     await expect(page.getByTestId("chunk-results")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Create chunks", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Run chunking", exact: true })).toBeEnabled();
   } else if (state.key === "chunking-result") {
     await expect(page.getByTestId("chunk-results")).toBeVisible();
   } else if (state.key === "embeddings-ready") {
