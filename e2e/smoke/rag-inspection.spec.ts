@@ -75,7 +75,7 @@ test("Evaluation dataset normal cevap ve yetersiz bağlam case'lerini ayrı kont
   await selectSeededDocument(page);
   await page.getByLabel("Dataset name").fill("Mixed outcome dataset");
   await page.getByLabel("Golden question").fill("What is the laboratory beacon code?");
-  await page.getByTestId("source-picker-relevant-elements").getByRole("button").first().click();
+  await page.getByTestId("source-picker-relevant-elements").getByRole("button", { name: /Golden fact: The laboratory/ }).click();
   await page.getByRole("button", { name: "Add case" }).click();
   await page.getByLabel("Golden question").nth(1).fill("What is the launch code?");
   await page.getByRole("combobox", { name: "Expected outcome" }).nth(1).click();
