@@ -396,7 +396,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <MotionConfig reducedMotion="user">
       <div className="min-h-screen bg-[#f8f7f7] text-[#171416]">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] border-r border-[#e7e2e4] xl:block">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] border-r border-[#e7e2e4] xl:block" data-testid="app-shell-sidebar">
         <Sidebar copy={copy} onSignOut={signOut} pathname={pathname} user={authUser} />
       </aside>
 
@@ -451,7 +451,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="min-w-0">
+        <main className="min-w-0" data-testid="app-shell-main">
           <PageTransition>{children}</PageTransition>
         </main>
       </div>

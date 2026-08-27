@@ -11,6 +11,8 @@
     "e2e:visual": "playwright test --config=e2e/visual/playwright.config.ts",
     "e2e:auth": "playwright test --project=auth",
     "e2e:full": "playwright test --project=full-rag --workers=1",
+    "e2e:visual:production": "playwright test --project=figma-production",
+    "e2e:visual:canonical": "playwright test --project=figma-canonical",
     "e2e:headed": "playwright test --project=chromium-seeded --headed",
     "e2e:report": "playwright show-report output/playwright/report",
     "e2e:fixture": "node scripts/e2e.mjs fixture",

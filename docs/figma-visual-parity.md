@@ -1,6 +1,23 @@
 # Figma golden visual parity akışı
 
-Bu PoC, canonical Figma `Go1p5jJ4CrtVfhoOa7pSic / 4:147` Overview frame'ini tek bir sabit masaüstü kontratı olarak doğrular. Golden fixture üretim arayüzü değildir; Figma'dan tarayıcıya aktarımın yapısal olarak kaymadığını kanıtlayan test altyapısıdır.
+Bu akış, canonical Figma `Go1p5jJ4CrtVfhoOa7pSic` dosyasındaki 18 masaüstü state'i iki ayrı kontratla doğrular: provider'sız statik golden clone, ardından gerçek seeded production route smoke/geometry gate'i. Golden fixture üretim arayüzü değildir; Figma'dan tarayıcıya aktarımın yapısal olarak kaymadığını kanıtlayan test altyapısıdır.
+
+## Canonical state kapsamı
+
+`4:147` Overview için mevcut PR #66 kontratı korunur. Diğer 17 node için `public/__visual__/figma-canonical.html?screen=...` altında provider/API kullanmayan statik clone bulunur:
+
+```text
+documents-populated
+parsing-result
+chunking-config / chunking-result
+embeddings-ready / embeddings-result
+playground-empty / playground-retrieval / playground-context / playground-answer
+evaluation-dataset / evaluation-results / evaluation-compare
+settings
+auth-login / auth-signup / auth-forgot
+```
+
+Üretim state gate'i `e2e/visual/figma-production.spec.ts` ile gerçek seeded data üzerinde `/`, `/documents`, `/parse`, `/chunking`, `/embeddings`, `/playground` Answer ve Evaluation Dataset/Results/Compare sekmelerini dolaşır. Seed fixture yalnız davranış ve lifecycle doğrulaması içindir; Figma mock verisi production UI'a aktarılmaz.
 
 ## Canonical kontrat
 
@@ -34,6 +51,8 @@ Dokuz journey node'u `40 × 40px` boyutunda ve Figma'nın sabit koordinatlarınd
 
 ```bash
 npm run e2e:visual
+npm run e2e:visual:canonical
+npm run e2e:visual:production
 ```
 
 Test şu sırayı uygular:
@@ -48,9 +67,9 @@ Test şu sırayı uygular:
 
 Cross-platform `3.7` limiti yapısal toleransı gevşetmez. CI artifact incelemesinde `1441 × 1041` boyut ve bütün geometri assertion'ları geçti; fark görüntüsü yalnız metin glyph kenarlarında yoğunlaştı. Alan konumu veya boyutu değişirse `±1px` geometri kapısı, görsel dağılım değişirse Playwright snapshot kapısı bağımsız olarak testi kırar.
 
-`npm run e2e:smoke`, bu testi seeded smoke suite'inden sonra çalıştırdığı için kontrat CI merge gate'inin parçasıdır. Fixture üretim navigasyonuna bağlı değildir; Supabase, Modal, auth veya `DocumentPipelineProvider` çağırmaz.
+`npm run e2e:smoke`, mevcut seeded smoke suite'inden sonra Overview kontratını çalıştırır. CI ayrıca `e2e:visual:canonical` ve `e2e:visual:production` komutlarını çalıştırır. Statik gate fixture navigasyonuna bağlı değildir; Supabase, Modal veya `DocumentPipelineProvider` çağırmaz. Production gate gerçek seeded API route interception'ı ile state erişimini ve desktop shell/page geometry'sini doğrular.
 
-## Gelecek ekranlar için zorunlu sıra
+## Her ekran için zorunlu sıra
 
 ```text
 Figma canonical node
@@ -65,11 +84,11 @@ Figma canonical node
 → responsive pass LAST
 ```
 
-Golden fixture görsel kontrattır. Üretim UI'sı değildir ve gerçek veriyi taklit etmek için genişletilmemelidir.
+Golden fixture görsel kontrattır. Üretim UI'sı değildir ve gerçek veriyi taklit etmek için genişletilmemelidir. State adapter'lar domain değerlerini bu hierarchy içindeki presentation slotlarına taşır; provider davranışının yerini almaz.
 
-## Gelecek Overview üretim mimarisi
+## Overview üretim mimarisi
 
-Bu PoC state entegrasyonunu bilinçli olarak yapmaz. Sonraki ayrı görevde önerilen sınır:
+Overview için gerçek entegrasyon sınırı:
 
 ```text
 DocumentPipelineProvider
