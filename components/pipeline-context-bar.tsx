@@ -73,12 +73,12 @@ export function PipelineContextBar() {
 
   return (
     <section className="border-b border-[#e7e2e4] bg-white px-4 py-2.5 sm:px-8" data-testid="pipeline-context-bar">
-      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
-        <div className="flex min-w-0 max-w-full items-center gap-1.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 sm:flex-nowrap">
+        <div className="flex min-w-0 max-w-full items-center gap-1.5 sm:w-[14rem] sm:max-w-[14rem] sm:shrink-0">
           <FileText aria-hidden="true" className="size-4 shrink-0 text-[#969093]" />
           <span className="sr-only">{labels.document}</span>
           <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
-            <SelectTrigger aria-label={labels.document} className="h-8 min-w-0 max-w-[min(22rem,55vw)] border-0 px-1 text-xs font-medium text-[#171416] shadow-none [&_[data-slot=select-value]]:truncate" data-testid="pipeline-context-document-selector">
+            <SelectTrigger aria-label={labels.document} className="h-8 min-w-0 max-w-[min(22rem,55vw)] border-0 px-1 text-xs font-medium text-[#171416] shadow-none sm:w-[12rem] sm:max-w-[12rem] [&_[data-slot=select-value]]:truncate" data-testid="pipeline-context-document-selector">
               <SelectValue placeholder={documentName ?? (documents.length ? labels.placeholder : labels.noDocument)} />
             </SelectTrigger>
             <SelectContent>{documents.map((document) => <SelectItem key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
@@ -86,13 +86,13 @@ export function PipelineContextBar() {
         </div>
         <span aria-hidden="true" className="text-[#d8d2d5]">/</span>
         <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value === "none" ? null : value)} value={activePipelineId ?? "none"}>
-          <SelectTrigger aria-label={labels.pipeline} className="h-8 min-w-0 max-w-[min(18rem,55vw)] border-0 px-1 text-xs font-semibold text-[#501329] shadow-none [&_[data-slot=select-value]]:truncate" data-testid="pipeline-context-pipeline-selector">
+          <SelectTrigger aria-label={labels.pipeline} className="h-8 min-w-0 max-w-[min(18rem,55vw)] border-0 px-1 text-xs font-semibold text-[#501329] shadow-none sm:w-[16rem] sm:max-w-[16rem] sm:shrink-0 [&_[data-slot=select-value]]:truncate" data-testid="pipeline-context-pipeline-selector">
             <SelectValue placeholder={pipelines.length ? labels.pipeline : labels.noPipeline} />
           </SelectTrigger>
           <SelectContent><SelectItem value="none">{labels.noPipeline}</SelectItem>{pipelines.map((pipeline) => <SelectItem key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
         </Select>
 
-        <nav aria-label={labels.lineage} className="flex min-w-0 flex-wrap items-center gap-1 sm:ml-auto">
+        <nav aria-label={labels.lineage} className="flex min-w-0 flex-wrap items-center gap-1 sm:ml-auto sm:shrink-0 sm:flex-nowrap">
           <span className="sr-only">{labels.lineage}</span>
           <LineageLink href="/parse" label={labels.parse} locale={locale} status={parseStageStatus} />
           <span aria-hidden="true" className="text-[#d8d2d5]">→</span>
