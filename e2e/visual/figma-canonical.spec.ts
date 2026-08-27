@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
@@ -9,6 +10,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 const viewport = { width: 1442, height: 1041 } as const;
 const artifactDirectory = path.resolve("output/playwright/figma-canonical");
 const visualDiff = path.resolve("e2e/visual/figma-visual-diff.mjs");
+const fixtureUrl = pathToFileURL(path.resolve("e2e/visual/fixtures/figma-canonical.html")).href;
 
 const screens = [
   ["documents-populated", "documents-4-544.png"],
@@ -66,8 +68,8 @@ test.describe("Figma canonical static golden clones", () => {
       await page.setViewportSize(viewport);
       // Preview ortamında kalıcı analytics/transport bağlantıları networkidle'ı bloke edebilir.
       // Statik fixture için DOM + aşağıdaki font/görsel beklemesi yeterlidir.
-      const response = await page.goto(`/__visual__/figma-canonical.html?screen=${screen}`, { waitUntil: "domcontentloaded" });
-      expect(response?.ok()).toBe(true);
+      await page.goto(`${fixtureUrl}?screen=${screen}`, { waitUntil: "load" });
+      expect(page.url()).toContain("figma-canonical.html");
       await settle(page);
 
       const browserViewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));

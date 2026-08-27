@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=1441, initial-scale=1" />
     <title>RAG StepLab canonical Figma fixture</title>
     <style>
-      @font-face { font-family: Geist; src: url("/__visual__/figma/overview/fonts/geist-sans-latin.woff2") format("woff2"); font-style: normal; font-weight: 100 900; font-display: block; }
-      @font-face { font-family: "Geist Mono"; src: url("/__visual__/figma/overview/fonts/geist-mono-latin.woff2") format("woff2"); font-style: normal; font-weight: 100 900; font-display: block; }
+      @font-face { font-family: Geist; src: url("figma/overview/fonts/geist-sans-latin.woff2") format("woff2"); font-style: normal; font-weight: 100 900; font-display: block; }
+      @font-face { font-family: "Geist Mono"; src: url("figma/overview/fonts/geist-mono-latin.woff2") format("woff2"); font-style: normal; font-weight: 100 900; font-display: block; }
       :root { --canvas:#f8f7f7; --surface:#fff; --surface-soft:#fbfafa; --text:#171416; --muted:#6e676a; --quiet:#969093; --border:#e7e2e4; --input:#d8d2d5; --cherry:#711f3a; --cherry-dark:#501329; --cherry-soft:#fbf4f6; --success:#3f7a55; --success-soft:#eef4ef; --warning:#8d651e; --warning-soft:#fffaf1; --danger:#a23b3b; }
       * { box-sizing: border-box; }
       html, body { margin: 0; width: 1441px; height: 1041px; overflow: hidden; }
@@ -289,7 +289,7 @@
   <body>
     <div id="fixture" class="screen-root" data-testid="figma-canonical-root"></div>
     <script>
-      const asset = (name) => `/assets/figma/overview/${name}.svg`;
+      const asset = (name) => `figma/overview/assets/${name}.svg`;
       const icon = (name, alt = "") => `<img alt="${alt}" src="${asset(name)}" />`;
       const sidebar = (active) => `
         <aside class="fixture-sidebar" data-testid="figma-canonical-sidebar">

@@ -268,8 +268,7 @@ describe("Parse ownership and lifecycle", () => {
     expect(fetchMock.mock.calls.some(([url, request]) => String(url).endsWith("/documents/document-1/parse") && (request as RequestInit | undefined)?.method === "POST")).toBe(false);
   });
 
-  it("rejects a non-PDF in the Add PDF dialog before upload", async () => {
-    const user = userEvent.setup();
+  it("rejects a non-PDF from the direct upload surface before upload", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.endsWith("/capabilities")) return jsonResponse(capabilities);
       if (url.endsWith("/documents") && init?.method !== "POST") return jsonResponse({ items: [] });
@@ -278,10 +277,9 @@ describe("Parse ownership and lifecycle", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderScreen(<DocumentsScreen />);
 
-    await user.click(screen.getByRole("button", { name: "Add PDF" }));
     fireEvent.change(screen.getByLabelText("Choose PDF"), { target: { files: [new File(["plain text"], "notes.txt", { type: "text/plain" })] } });
     expect(screen.getByRole("alert")).toHaveTextContent("Only PDF files are supported.");
-    expect(screen.getByRole("button", { name: "Save document" })).toBeDisabled();
+    expect(screen.getByText("notes.txt", { exact: false })).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url, request]) => String(url).endsWith("/documents") && (request as RequestInit | undefined)?.method === "POST")).toBe(false);
   });
 });

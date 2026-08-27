@@ -3,14 +3,15 @@ import path from "node:path";
 
 import { PNG } from "pngjs";
 
-const [referencePath, actualPath, diffPath, metricsPath, maxMaeArg = "3.5", channelThresholdArg = "20"] = process.argv.slice(2);
+const [referencePath, actualPath, diffPath, metricsPath, maxMaeArg = "3.5", channelThresholdArg = "20", maxChangedPixelPercentageArg = "100"] = process.argv.slice(2);
 
 if (!referencePath || !actualPath || !diffPath || !metricsPath) {
-  throw new Error("Usage: node scripts/figma-visual-diff.mjs <reference> <actual> <diff> <metrics> [max-mae] [channel-threshold]");
+  throw new Error("Usage: node scripts/figma-visual-diff.mjs <reference> <actual> <diff> <metrics> [max-mae] [channel-threshold] [max-changed-pixel-percentage]");
 }
 
 const maxMae = Number(maxMaeArg);
 const channelThreshold = Number(channelThresholdArg);
+const maxChangedPixelPercentage = Number(maxChangedPixelPercentageArg);
 const [referenceBuffer, actualBuffer] = await Promise.all([readFile(referencePath), readFile(actualPath)]);
 const reference = PNG.sync.read(referenceBuffer);
 const actual = PNG.sync.read(actualBuffer);
@@ -22,6 +23,7 @@ const metrics = {
   changedPixelPercentage: null,
   channelThreshold,
   maxMae,
+  maxChangedPixelPercentage,
 };
 
 if (reference.width !== actual.width || reference.height !== actual.height) {
@@ -67,4 +69,8 @@ process.stdout.write(`${JSON.stringify(metrics, null, 2)}\n`);
 
 if (metrics.mae > maxMae) {
   throw new Error(`MAE ${metrics.mae.toFixed(4)} exceeds the visual contract limit ${maxMae.toFixed(4)}`);
+}
+
+if (metrics.changedPixelPercentage > maxChangedPixelPercentage) {
+  throw new Error(`Changed pixels ${metrics.changedPixelPercentage.toFixed(4)}% exceed the visual contract limit ${maxChangedPixelPercentage.toFixed(4)}%`);
 }

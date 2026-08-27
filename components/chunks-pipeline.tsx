@@ -116,7 +116,7 @@ export function ChunksPipeline({ locale, showAction = true, stage = "both" }: { 
   if (stage === "embeddings") {
     return (
       <div className="mt-8" data-testid="embeddings-workspace">
-        {showAction ? <div className="sr-only"><Button disabled={!canEmbed} onClick={() => void handleEmbedding()}>{labels.create}</Button></div> : null}
+        {showAction ? <div className="mt-4"><Button disabled={!canEmbed} onClick={() => void handleEmbedding()}>{labels.create}</Button></div> : null}
         <section>
           <p className="text-xs font-semibold uppercase leading-[18px] tracking-[0.96px] text-[#969093]">WHAT HAPPENS HERE</p>
           <p className="mt-3 max-w-[700px] text-sm leading-[21px] text-[#6e676a]">{locale === "tr" ? "Her chunk bir embedding vektörüne dönüşür. Bu vektörler sistemin tam anahtar kelimeler yerine anlam üzerinden chunk bulabilmesi için saklanır." : "Each chunk becomes one embedding vector. Those vectors are stored so the system can find chunks by meaning rather than exact keywords."}</p>
@@ -149,7 +149,7 @@ export function ChunksPipeline({ locale, showAction = true, stage = "both" }: { 
         </div>
       </section>
       {chunkRun ? <section className="mt-10" data-testid="chunk-results"><p className="text-xs font-semibold uppercase leading-[18px] tracking-[0.96px] text-[#969093]">RESULTS</p><dl className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4"><div><dt className="text-xs uppercase tracking-[0.48px] text-[#969093]">{labels.chunksResult}</dt><dd className="mt-1 text-[26px] font-semibold leading-[31px] text-[#171416]">{chunkRun.chunkCount}</dd></div><div><dt className="text-xs uppercase tracking-[0.48px] text-[#969093]">{labels.average}</dt><dd className="mt-1 text-[26px] font-semibold leading-[31px] text-[#171416]">{averageTokens}</dd></div><div><dt className="text-xs uppercase tracking-[0.48px] text-[#969093]">{labels.min}</dt><dd className="mt-1 text-[26px] font-semibold leading-[31px] text-[#171416]">{minTokens}</dd></div><div><dt className="text-xs uppercase tracking-[0.48px] text-[#969093]">{labels.max}</dt><dd className="mt-1 text-[26px] font-semibold leading-[31px] text-[#171416]">{maxTokens}</dd></div></dl><div className="mt-8"><h2 className="text-base font-semibold leading-[22px]">{labels.inspector}</h2><div className="mt-4"><ChunkInspector documentId={activeDocument?.id ?? null} labels={labels} parseResult={parseResult} run={chunkRun} /></div></div></section> : null}
-      {stage === "both" && <div className="sr-only"><Button disabled={!canEmbed} onClick={() => void handleEmbedding()}>{locale === "tr" ? "Embedding oluştur" : "Create embeddings"}</Button></div>}
+      {stage === "both" && <div className="mt-4"><Button disabled={!canEmbed} onClick={() => void handleEmbedding()}>{locale === "tr" ? "Embedding oluştur" : "Create embeddings"}</Button></div>}
     </div>
   );
 }

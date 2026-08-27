@@ -19,12 +19,14 @@ afterEach(() => {
 });
 
 describe("Phase 6B pipeline IA", () => {
-  it("renders Documents as the document library with one Add PDF owner", () => {
+  it("renders Documents with one clickable PDF drop surface", () => {
     renderWithPipeline(<DocumentsScreen />);
 
     expect(screen.getByRole("heading", { name: "Documents", level: 1 })).toBeInTheDocument();
     expect(screen.getByTestId("document-upload-panel")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add PDF" })).toBeInTheDocument();
+    expect(screen.getByTestId("pdf-drop-zone")).toHaveAttribute("type", "button");
+    expect(screen.getByLabelText("Choose PDF")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add PDF" })).not.toBeInTheDocument();
     expect(screen.queryByTestId("pipeline-context-bar")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Parse|Reparse/i })).not.toBeInTheDocument();
   });

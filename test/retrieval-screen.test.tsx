@@ -29,9 +29,7 @@ describe("RetrievalScreen", () => {
     expect(run).toHaveAccessibleDescription("Select a persisted document and complete chunking first.");
     expect(screen.getByText("Advanced settings")).toBeInTheDocument();
 
-    const copyTrace = screen.getByRole("button", { name: "Copy trace" });
-    expect(copyTrace).toBeDisabled();
-    expect(copyTrace).toHaveAccessibleDescription("Trace data will be available after a real retrieval run.");
+    expect(screen.queryByRole("button", { name: "Copy trace" })).not.toBeInTheDocument();
 
     const reset = screen.getByRole("button", { name: "Reset" });
     expect(reset).toBeDisabled();

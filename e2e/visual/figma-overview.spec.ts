@@ -1,11 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { expect, test } from "@playwright/test";
 
 const viewport = { width: 1441, height: 1041 } as const;
 const tolerance = 1;
+const fixtureUrl = pathToFileURL(path.resolve("e2e/visual/fixtures/figma-overview.html")).href;
 
 type Geometry = { x: number; y: number; width: number; height: number };
 
@@ -16,6 +18,7 @@ const expectedGeometry: Record<string, Geometry> = {
   "figma-overview-header": { x: 288.219, y: 40, width: 1113, height: 82 },
   "figma-overview-continue": { x: 288.219, y: 150, width: 1113, height: 77.424 },
   "figma-overview-journey": { x: 317.931, y: 307.136, width: 1054, height: 216 },
+  "figma-overview-curve": { x: 317.881, y: 319.149, width: 1054.1, height: 199.975 },
   "figma-overview-prepare": { x: 342.965, y: 323.136, width: 441, height: 192 },
   "figma-overview-test": { x: 794.287, y: 323.136, width: 428, height: 192 },
   "figma-overview-measure": { x: 1232.74, y: 323.136, width: 114, height: 192 },
@@ -39,9 +42,14 @@ function pngDimensions(buffer: Buffer) {
 }
 
 test("Figma Overview 4:147 golden visual contract", async ({ page }) => {
+  const unexpectedNetworkRequests: string[] = [];
+  page.on("request", (request) => {
+    if (/^https?:/i.test(request.url())) unexpectedNetworkRequests.push(request.url());
+  });
+
   await page.setViewportSize(viewport);
-  const response = await page.goto("/__visual__/figma-overview.html", { waitUntil: "networkidle" });
-  expect(response?.ok()).toBe(true);
+  await page.goto(fixtureUrl, { waitUntil: "load" });
+  expect(page.url()).toContain("figma-overview.html");
 
   await page.evaluate(async () => {
     await document.fonts.ready;
@@ -56,6 +64,18 @@ test("Figma Overview 4:147 golden visual contract", async ({ page }) => {
       ),
     );
   });
+
+  const readiness = await page.evaluate(() => ({
+    fonts: document.fonts.status,
+    geistSans: document.fonts.check("14px Geist"),
+    geistMono: document.fonts.check('10px "Geist Mono"'),
+    brokenImages: Array.from(document.images).filter((image) => !image.complete || image.naturalWidth === 0).map((image) => image.src),
+  }));
+  expect(readiness.fonts).toBe("loaded");
+  expect(readiness.geistSans).toBe(true);
+  expect(readiness.geistMono).toBe(true);
+  expect(readiness.brokenImages).toEqual([]);
+  expect(unexpectedNetworkRequests).toEqual([]);
 
   const browserViewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
   expect(browserViewport).toEqual(viewport);
@@ -91,6 +111,7 @@ test("Figma Overview 4:147 golden visual contract", async ({ page }) => {
       metricsPath,
       "3.7",
       "20",
+      "5",
     ],
     { stdio: "inherit" },
   );
