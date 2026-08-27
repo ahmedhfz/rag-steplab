@@ -23,18 +23,21 @@ test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğ
   // Upload sonrası document detail hydration kısa süre sonra parse aksiyonunu
   // enable eder; retry'da backend checkpoint'i zaten tamamlanmış olabilir.
   const parseButton = page.getByRole("button", { name: /^Parse$/ });
+  const reparsedDocumentButton = page.getByRole("button", { name: "Reparse", exact: true });
   const completedProgress = page.getByRole("progressbar", { name: /Progress 100%/ });
   await expect.poll(async () => {
     if ((await completedProgress.count()) > 0) return "completed";
+    if ((await reparsedDocumentButton.count()) > 0) return "completed";
     if ((await parseButton.count()) === 0) return "hydrating";
     return (await parseButton.isEnabled()) ? "parse-ready" : "parse-disabled";
   }, { timeout: 60_000, message: "Parse action did not become ready after document hydration." }).toMatch(/^(completed|parse-ready)$/);
-  if ((await completedProgress.count()) === 0) {
+  const parseAlreadyCompleted = (await completedProgress.count()) > 0 || (await reparsedDocumentButton.count()) > 0;
+  if (!parseAlreadyCompleted) {
     await parseButton.click();
+    await expect(page.getByRole("progressbar")).toBeVisible();
+    await expect(page.getByText(/Queued|Worker started|Docling starting|Source loaded/).first()).toBeVisible();
+    await expect(page.getByRole("progressbar", { name: /Progress 100%/ })).toBeVisible({ timeout: 15 * 60 * 1_000 });
   }
-  await expect(page.getByRole("progressbar")).toBeVisible();
-  await expect(page.getByText(/Queued|Worker started|Docling starting|Source loaded/).first()).toBeVisible();
-  await expect(page.getByRole("progressbar", { name: /Progress 100%/ })).toBeVisible({ timeout: 15 * 60 * 1_000 });
   await expect(page.getByText("ORBIT-731", { exact: false }).first()).toBeVisible();
   await page.getByRole("link", { name: "Continue to Chunking" }).click();
 
@@ -51,6 +54,7 @@ test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğ
   await page.getByLabel("Question").fill("What is the laboratory beacon code? Answer briefly.");
   await page.getByRole("button", { name: "Run experiment" }).click();
   await expect(page.getByRole("heading", { name: "Answer" })).toBeVisible({ timeout: 3 * 60_000 });
+  await expect(page.getByTestId("playground-answer")).toBeVisible({ timeout: 3 * 60_000 });
   await expect(page.getByText("C1", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "C1", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Source inspector" })).toContainText("ORBIT-731");
