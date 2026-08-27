@@ -411,6 +411,16 @@ jobs:
           echo "E2E mode: FAST SEEDED E2E"
           npm run e2e:smoke
 
+      - name: Run canonical Figma static visual gate
+        env:
+          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
+        run: npm run e2e:visual:canonical
+
+      - name: Run canonical Figma production desktop state gate
+        env:
+          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
+        run: npm run e2e:visual:production
+
       - name: Run real auth E2E when auth paths changed
         if: ${{ needs.detect-changes.outputs.auth_e2e == 'true' || github.ref == 'refs/heads/main' }}
         env:

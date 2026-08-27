@@ -142,14 +142,14 @@ export function EvaluationScreen() {
   return (
     <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
-        <header className="h-[92px]">
+        <header className="h-[92px]" data-testid="evaluation-page-header">
           <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#711f3a]">TEST</p>
           <h1 className="mt-1 text-[30px] font-semibold leading-9 tracking-[-0.02em] text-[#171416]">{copy.evaluation.title}</h1>
           <p className="mt-1 max-w-[680px] text-sm leading-5 text-[#6e676a]">{preferences.locale === "tr" ? "RAG sisteminizin kanıtı ne kadar güvenilir getirdiğini ve grounded cevaplar ürettiğini ölçün." : "Measure how reliably your RAG retrieves evidence and produces grounded answers."}</p>
         </header>
 
-        <nav aria-label={preferences.locale === "tr" ? "Evaluation görünümleri" : "Evaluation views"} className="mt-8 border-b border-[#e7e2e4]" role="tablist">
-          <div className="flex gap-2">{tabs.map(([tab, label]) => <button aria-controls={`evaluation-panel-${tab}`} aria-selected={activeTab === tab} className={activeTab === tab ? "border-b-2 border-[#711f3a] px-1 py-2.5 text-[13px] font-medium text-[#171416]" : "border-b-2 border-transparent px-1 py-2.5 text-[13px] font-medium text-[#6e676a] hover:text-[#501329]"} id={`evaluation-tab-${tab}`} key={tab} onClick={() => setActiveTab(tab)} role="tab" type="button">{label}</button>)}</div>
+        <nav aria-label={preferences.locale === "tr" ? "Evaluation görünümleri" : "Evaluation views"} className="mt-8 border-b border-[#e7e2e4]" data-testid="evaluation-tabs" role="tablist">
+          <div className="flex gap-2">{tabs.map(([tab, label]) => <button aria-controls={`evaluation-panel-${tab}`} aria-selected={activeTab === tab} className={activeTab === tab ? "border-b-2 border-[#711f3a] px-1 py-2.5 text-[13px] font-medium text-[#171416]" : "border-b-2 border-transparent px-1 py-2.5 text-[13px] font-medium text-[#6e676a] hover:text-[#501329]"} data-testid={`evaluation-tab-${tab}`} id={`evaluation-tab-${tab}`} key={tab} onClick={() => setActiveTab(tab)} role="tab" type="button">{label}</button>)}</div>
         </nav>
 
         {activeTab === "dataset" ? (

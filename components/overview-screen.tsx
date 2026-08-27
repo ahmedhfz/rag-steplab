@@ -7,7 +7,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 
-import { useDocumentPipeline, type PipelineOperationStatus } from "@/components/document-pipeline-provider";
+import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { EmptyPipelineState, PipelineErrorMessage } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { UI_COPY } from "@/lib/copy";
 import { blocker, type BlockerCode } from "@/lib/blockers";
-import type { ExperimentSummary, RunStatus } from "@/lib/rag-api-types";
+import { buildOverviewViewModel, runToStepState } from "@/lib/figma-view-models";
 import type { PipelineStepDefinition, PipelineStepKey, PipelineStepState } from "@/lib/rag-ui-types";
 import { cn } from "@/lib/utils";
 
@@ -68,38 +68,6 @@ const journeyPositions: Record<string, { left: number; top: number; label: "abov
   generate: { left: 835.865, top: 115.977, label: "below" },
   evaluate: { left: 947.596, top: 55.979, label: "above" },
 };
-
-function operationState(status: PipelineOperationStatus): PipelineStepState {
-  if (status === "processing") return "Processing";
-  if (status === "error") return "Error";
-  if (status === "completed") return "Completed";
-  if (status === "ready") return "Ready";
-  if (status === "stale") return "Stale";
-  return "Locked";
-}
-
-function runState(status: RunStatus): PipelineStepState {
-  if (status === "queued" || status === "running") return "Processing";
-  if (status === "completed") return "Completed";
-  return "Error";
-}
-
-function experimentStageState(
-  experiment: ExperimentSummary | undefined,
-  stage: "retrieval" | "reranking" | "context" | "generation",
-  enabled: boolean,
-): PipelineStepState {
-  if (!enabled) return "Locked";
-  const status = experiment?.stageStatuses[stage];
-  if (status === "skipped") return "Skipped";
-  if (status === "completed") return "Completed";
-  if (!experiment) return stage === "retrieval" ? "Ready" : "Locked";
-  const order = ["retrieval", "reranking", "context", "generation"] as const;
-  if (order.find((key) => !experiment.stageStatuses[key]) !== stage) return "Locked";
-  if (experiment.status === "running" || experiment.status === "queued") return "Processing";
-  if (experiment.status === "failed") return "Error";
-  return "Ready";
-}
 
 function JourneyNode({
   href,
@@ -331,62 +299,38 @@ export function OverviewScreen() {
   const chunkSummary = activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId);
   const embeddingSummary = activeDocument?.embeddingRuns.find((run) => run.id === selectedEmbeddingRunId);
   const hasDocument = Boolean(activeDocumentId);
-  const parseState: PipelineStepState = !hasDocument
-    ? "Locked"
-    : parseSummary?.status === "completed" && parseSummary.isCompatible
-      ? "Completed"
-      : activeDocument?.parseRuns.some((run) => run.status === "queued" || run.status === "running")
-        ? "Processing"
-        : activeDocument?.parseRuns[0]?.status === "failed"
-          ? "Error"
-          : "Ready";
-  const chunkState = chunkSummary?.status === "completed" && chunkSummary.isCompatible ? "Completed" : operationState(chunkStatus);
-  const embeddingState = embeddingSummary?.status === "completed" && embeddingSummary.isCompatible ? "Completed" : operationState(embeddingStatus);
-  const evaluationState: PipelineStepState = matchingEvaluation
-    ? matchingEvaluation.status === "completed"
-      ? "Completed"
-      : matchingEvaluation.status === "running" || matchingEvaluation.status === "queued"
-        ? "Processing"
-        : "Error"
-    : selectedChunkRunId && selectedEmbeddingRunId && matchingDatasetIds.size > 0
-      ? "Ready"
-      : "Locked";
-  const pipelineState: Record<PipelineStepKey, PipelineStepState> = {
-    document: hasDocument ? "Completed" : "Not started",
-    parse: parseState,
-    chunk: chunkState,
-    embed: embeddingState,
-    index: embeddingState,
-    retrieve: experimentStageState(matchingExperiment, "retrieval", Boolean(selectedChunkRunId)),
-    rerank: experimentStageState(matchingExperiment, "reranking", Boolean(selectedChunkRunId)),
-    context: experimentStageState(matchingExperiment, "context", Boolean(selectedChunkRunId)),
-    generate: experimentStageState(matchingExperiment, "generation", Boolean(selectedChunkRunId)),
-    evaluate: evaluationState,
-  };
-  const continueHref = !selectedParseRunId ? "/parse" : !selectedChunkRunId ? "/chunking" : !selectedEmbeddingRunId ? "/embeddings" : "/playground";
-  const continuation: Continuation = persistenceStatus === "checking"
-    ? { action: labels.continueAction, description: labels.processingDescription, href: "/documents", state: "Processing", title: labels.processingTitle }
-    : !activeDocument
-      ? { action: labels.documentsCta, description: labels.startDescription, href: "/documents", state: "Ready", title: labels.startTitle }
-      : parseState === "Processing"
-        ? { action: labels.continueAction, description: labels.processingDescription, href: "/parse", state: "Processing", title: labels.processingTitle }
-        : parseState === "Error"
-          ? { action: labels.continueAction, description: labels.reviewDescription, href: "/parse", state: "Error", title: labels.reviewTitle }
-          : !selectedParseRunId || parseState === "Ready"
-            ? { action: labels.continueAction, description: labels.parseDescription, href: "/parse", state: "Ready", title: labels.parseTitle }
-            : chunkState === "Processing"
-              ? { action: labels.continueAction, description: labels.processingDescription, href: "/chunking", state: "Processing", title: labels.processingTitle }
-              : chunkState === "Error" || chunkState === "Stale"
-                ? { action: labels.continueAction, description: labels.reviewDescription, href: "/chunking", state: chunkState, title: labels.reviewTitle }
-                : !selectedChunkRunId || chunkState === "Ready"
-                  ? { action: labels.continueAction, description: labels.chunkDescription, href: "/chunking", state: "Ready", title: labels.chunkTitle }
-                  : embeddingState === "Processing"
-                    ? { action: labels.continueAction, description: labels.processingDescription, href: "/embeddings", state: "Processing", title: labels.processingTitle }
-                    : embeddingState === "Error" || embeddingState === "Stale"
-                      ? { action: labels.continueAction, description: labels.reviewDescription, href: "/embeddings", state: embeddingState, title: labels.reviewTitle }
-                      : !selectedEmbeddingRunId || embeddingState === "Ready"
-                        ? { action: labels.continueAction, description: labels.embedDescription, href: "/embeddings", state: "Ready", title: labels.embedTitle }
-                        : { action: labels.continueAction, description: labels.playgroundDescription, href: continueHref, state: "Ready", title: labels.playgroundTitle };
+  const overviewModel = buildOverviewViewModel({
+    activeDocument: activeDocument ? { parseRuns: activeDocument.parseRuns } : undefined,
+    activeDocumentId,
+    chunk: chunkSummary,
+    chunkStatus,
+    embedding: embeddingSummary,
+    embeddingStatus,
+    evaluation: matchingEvaluation,
+    experiment: matchingExperiment,
+    hasEvaluationDataset: matchingDatasetIds.size > 0,
+    parse: parseSummary,
+    persistenceStatus,
+    selectedChunkRunId,
+    selectedEmbeddingRunId,
+    selectedParseRunId,
+  });
+  const pipelineState = overviewModel.pipelineState;
+  const parseState = pipelineState.parse;
+  const chunkState = pipelineState.chunk;
+  const embeddingState = pipelineState.embed;
+  const continueHref = overviewModel.continuation.href;
+  const continuation: Continuation = (() => {
+    switch (overviewModel.continuation.kind) {
+      case "checking": return { action: labels.continueAction, description: labels.processingDescription, href: continueHref, state: overviewModel.continuation.state, title: labels.processingTitle };
+      case "document": return { action: labels.documentsCta, description: labels.startDescription, href: continueHref, state: overviewModel.continuation.state, title: labels.startTitle };
+      case "parse": return { action: labels.continueAction, description: labels.parseDescription, href: continueHref, state: overviewModel.continuation.state, title: labels.parseTitle };
+      case "chunk": return { action: labels.continueAction, description: labels.chunkDescription, href: continueHref, state: overviewModel.continuation.state, title: labels.chunkTitle };
+      case "embedding": return { action: labels.continueAction, description: labels.embedDescription, href: continueHref, state: overviewModel.continuation.state, title: labels.embedTitle };
+      case "playground": return { action: labels.continueAction, description: labels.playgroundDescription, href: continueHref, state: overviewModel.continuation.state, title: labels.playgroundTitle };
+      default: return { action: labels.continueAction, description: overviewModel.continuation.kind.endsWith("error") ? labels.reviewDescription : labels.processingDescription, href: continueHref, state: overviewModel.continuation.state, title: overviewModel.continuation.kind.endsWith("error") ? labels.reviewTitle : labels.processingTitle };
+    }
+  })();
 
   const journeyLabels: Record<PipelineStepKey, string> = {
     ...copy.overview.steps,
@@ -412,11 +356,11 @@ export function OverviewScreen() {
   }
 
   const recentActivity = [
-    ...(activeDocument?.parseRuns ?? []).map((run) => ({ createdAt: run.createdAt, detail: run.status === "completed" ? labels.current : run.status, href: "/parse", id: `parse-${run.id}`, label: labels.activityParse, state: runState(run.status) })),
-    ...(activeDocument?.chunkRuns ?? []).map((run) => ({ createdAt: run.createdAt, detail: run.strategy === "structure_aware" ? labels.strategyStructure : run.strategy === "recursive_token" ? labels.strategyRecursive : labels.strategyFixed, href: "/chunking", id: `chunk-${run.id}`, label: labels.activityChunk, state: runState(run.status) })),
-    ...(activeDocument?.embeddingRuns ?? []).map((run) => ({ createdAt: run.createdAt, detail: run.model ?? labels.currentEmbedding, href: "/embeddings", id: `embedding-${run.id}`, label: labels.activityEmbedding, state: runState(run.status) })),
-    ...(activeDocument?.experiments ?? []).map((run) => ({ createdAt: run.createdAt, detail: run.query, href: "/playground", id: `experiment-${run.id}`, label: labels.activityExperiment, state: runState(run.status) })),
-    ...(activeDocument?.evaluationRuns ?? []).map((run) => ({ createdAt: run.createdAt, detail: run.status === "completed" ? labels.current : run.status, href: "/evaluation", id: `evaluation-${run.id}`, label: labels.activityEvaluation, state: runState(run.status) })),
+    ...(activeDocument?.parseRuns ?? []).map((run) => ({ createdAt: run.createdAt, detail: run.status === "completed" ? labels.current : run.status, href: "/parse", id: `parse-${run.id}`, label: labels.activityParse, state: runToStepState(run.status) })),
+    ...(activeDocument?.chunkRuns ?? []).map((run) => ({ createdAt: run.createdAt, detail: run.strategy === "structure_aware" ? labels.strategyStructure : run.strategy === "recursive_token" ? labels.strategyRecursive : labels.strategyFixed, href: "/chunking", id: `chunk-${run.id}`, label: labels.activityChunk, state: runToStepState(run.status) })),
+    ...(activeDocument?.embeddingRuns ?? []).map((run) => ({ createdAt: run.createdAt, detail: run.model ?? labels.currentEmbedding, href: "/embeddings", id: `embedding-${run.id}`, label: labels.activityEmbedding, state: runToStepState(run.status) })),
+    ...(activeDocument?.experiments ?? []).map((run) => ({ createdAt: run.createdAt, detail: run.query, href: "/playground", id: `experiment-${run.id}`, label: labels.activityExperiment, state: runToStepState(run.status) })),
+    ...(activeDocument?.evaluationRuns ?? []).map((run) => ({ createdAt: run.createdAt, detail: run.status === "completed" ? labels.current : run.status, href: "/evaluation", id: `evaluation-${run.id}`, label: labels.activityEvaluation, state: runToStepState(run.status) })),
   ]
     .sort((left, right) => String(right.createdAt ?? "").localeCompare(String(left.createdAt ?? "")))
     .slice(0, 4);
