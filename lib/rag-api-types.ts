@@ -254,6 +254,8 @@ export type RetrievedCandidate = {
 
 export type RerankedCandidate = RetrievedCandidate & {
   originalRank: number;
+  rerankRank: number | null;
+  /** @deprecated This is an ordinal compatibility value, not model confidence. */
   rerankScore: number | null;
 };
 
@@ -300,6 +302,7 @@ export type ExperimentStageResults = {
     candidates: RerankedCandidate[];
     durationMs: number | null;
     method: string | null;
+    rerankScoreSemantics?: string | null;
     executed: boolean;
   } & Partial<StageIdentityMetadata> | null;
   context: {
@@ -337,6 +340,7 @@ export type EvaluationCase = {
   question: string;
   relevantElementIds: string[];
   referenceAnswer: string | null;
+  expectedOutcome?: "answer" | "insufficient_context";
 };
 
 export type EvaluationDataset = {
@@ -359,6 +363,9 @@ export type EvaluationMetrics = {
   groundedness: number | null;
   judgeModel: string | null;
   caseCount: number | null;
+  retrievalEligibleCaseCount: number | null;
+  abstentionEligibleCaseCount: number | null;
+  abstentionAccuracy: number | null;
 };
 
 export type EvaluationCaseResult = {
@@ -368,10 +375,14 @@ export type EvaluationCaseResult = {
   referenceAnswer: string | null;
   answer: string | null;
   citations: ValidatedCitation[];
-  hitAtK: number;
-  precisionAtK: number;
-  recallAtK: number;
-  mrr: number;
+  expectedOutcome?: "answer" | "insufficient_context";
+  insufficientContext?: boolean;
+  retrievalEligible?: boolean;
+  abstentionCorrect?: boolean | null;
+  hitAtK: number | null;
+  precisionAtK: number | null;
+  recallAtK: number | null;
+  mrr: number | null;
   citationValidity: number;
   groundedness: number;
   groundednessDetail?: Record<string, unknown>;

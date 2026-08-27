@@ -249,6 +249,16 @@ const evaluation = {
   chunkRunId,
   embeddingRunId,
   upstream: { documentId, parseRunId, chunkRunId, embeddingRunId },
+  config: {
+    pipelineId,
+    chunkRunId,
+    embeddingRunId,
+    retrieval: { mode: "hybrid", topK: 5 },
+    reranking: { enabled: false, candidateCount: 10 },
+    context: { tokenBudget: 3000 },
+    generation: { temperature: 0.1, maxOutputTokens: 1024 },
+    judge: false,
+  },
   results: {
     aggregate: { hitAtK: 1, recallAtK: 1, precisionAtK: 1, mrr: 1, citationValidity: 1, groundedness: 1, judgeModel: "gemini-flash-lite-latest", caseCount: 1 },
     caseResults: [{
@@ -274,6 +284,14 @@ const evaluationB = {
   ...evaluation,
   id: evaluationRunIdB,
   timing: { startedAt: "2026-08-24T00:01:00Z", completedAt: "2026-08-24T00:01:02Z", durationMs: 1200 },
+  config: {
+    ...evaluation.config,
+    retrieval: { mode: "dense", topK: 10 },
+    reranking: { enabled: true, candidateCount: 20 },
+    context: { tokenBudget: 2048 },
+    generation: { temperature: 0.2, maxOutputTokens: 1024 },
+    judge: true,
+  },
   results: {
     aggregate: { hitAtK: 0.9, recallAtK: 0.8, precisionAtK: 0.9, mrr: 0.8, citationValidity: 0.95, groundedness: 0.9, judgeModel: "gemini-2.5-flash", caseCount: 1 },
     caseResults: [{

@@ -144,15 +144,18 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     await assertRect(page.getByTestId("embedding-input"), { x: 288, y: 209, width: 1113, height: 77 }, "embedding-input");
     await assertRect(page.getByTestId("embeddings-workspace"), { x: 288, y: 310, width: 1113, height: state.key === "embeddings-ready" ? 118 : 341 }, "embeddings-workspace");
   } else if (state.group === "playground") {
-    await assertRect(page.getByTestId("playground-page-header"), { x: 288, y: 40, width: 1113, height: 92 }, "playground-header");
-    await assertRect(page.getByTestId("playground-input"), { x: 288, y: 164, width: 1113 }, "playground-input");
+    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: 1193, height: 53 }, "playground-context-bar");
+    await assertRect(page.getByTestId("playground-page-header"), { x: 288, y: 93, width: 1113, height: 92 }, "playground-header");
+    await assertRect(page.getByTestId("playground-input"), { x: 288, y: 217, width: 1113 }, "playground-input");
     if (state.key !== "playground-empty") {
       await assertRect(page.getByTestId("playground-stage-layout"), { x: 288, width: 1113 }, "playground-stage-layout");
       await assertRect(page.getByTestId("playground-stage-rail"), { width: 300 }, "playground-stage-rail");
       await assertRect(page.getByTestId("playground-stage-content"), { x: 612, width: 789 }, "playground-stage-content");
     }
   } else if (state.group === "evaluation") {
-    await assertRect(page.getByTestId("evaluation-page-header"), { x: 288, y: 40, width: 1113 }, "evaluation-header");
+    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: 1193, height: 53 }, "evaluation-context-bar");
+    await assertRect(page.getByTestId("evaluation-page-header"), { x: 288, y: 93, width: 1113 }, "evaluation-header");
+    await assertRect(page.getByTestId("evaluation-workspace-context"), { x: 288, width: 1113 }, "evaluation-workspace-context");
     const panel = page.getByTestId(`evaluation-panel-${state.key.replace("evaluation-", "")}`);
     await assertRect(panel, { x: 288, width: 1113 }, `${state.key}-panel`);
     if (state.key === "evaluation-compare") {
@@ -178,7 +181,10 @@ async function prepareState(page: Page, state: VisualState) {
   if (state.key === "playground-reranking") {
     await expect(page.getByTestId("experiment-stage-trace")).toBeVisible();
     await page.getByTestId("experiment-stage-trace").getByRole("button", { name: /^Reranking\b/ }).click();
-    await expect(page.getByTestId("playground-stage-content").getByRole("heading", { name: "Reranking", level: 2 })).toBeVisible();
+    const rerankingContent = page.getByTestId("playground-stage-content");
+    await expect(rerankingContent.getByRole("heading", { name: "Reranking", level: 2 })).toBeVisible();
+    await expect(rerankingContent).toContainText("Reranked position");
+    await expect(rerankingContent).not.toContainText("Rerank score");
   } else if (state.key === "playground-context") {
     await expect(page.getByTestId("experiment-stage-trace")).toBeVisible();
     await page.getByTestId("experiment-stage-trace").getByRole("button", { name: /^Context\b/ }).click();
@@ -205,6 +211,7 @@ async function prepareState(page: Page, state: VisualState) {
     await expect(page.getByTestId("evaluation-compare-content")).toBeVisible();
     await expect(page.getByTestId("evaluation-compare-content")).toContainText("RUN A");
     await expect(page.getByTestId("evaluation-compare-content")).toContainText("RUN B");
+    await expect(page.getByTestId("evaluation-compare-context")).toContainText("Changed settings");
   }
 
   if (state.key === "playground-empty") {

@@ -1,4 +1,5 @@
 import type { AppLocale } from "@/lib/copy";
+import type { DocumentLineageSelection, DocumentPipeline, RetrievalMode, RunSummary } from "@/lib/rag-api-types";
 
 export type BlockerCode =
   | "processing"
@@ -16,6 +17,32 @@ export type BlockerCode =
   | "incompatible_lineage";
 
 export type Blocker = { code: BlockerCode; message: string };
+
+export type PipelineAvailabilityStage = "parse" | "chunk" | "embedding" | "retrieval" | "evaluation" | "dataset" | "pipeline";
+
+export type PipelineAvailabilityInput = {
+  document?: { id?: string | null } | null;
+  pipeline?: Pick<DocumentPipeline, "id" | "parseRunId" | "chunkRunId" | "embeddingRunId"> | null;
+  selection?: Partial<DocumentLineageSelection> | null;
+  parseRun?: Pick<RunSummary, "id" | "status" | "isCompatible"> | null;
+  chunkRun?: (Pick<RunSummary, "id" | "status" | "isCompatible" | "upstream"> & { parseRunId?: string | null }) | null;
+  embeddingRun?: (Pick<RunSummary, "id" | "status" | "isCompatible" | "upstream"> & { chunkRunId?: string | null }) | null;
+  hasExperiment?: boolean;
+  hasDataset?: boolean;
+  hasQuestion?: boolean;
+  hasSources?: boolean;
+  retrievalMode?: RetrievalMode;
+  persistenceStatus?: "checking" | "available" | "unavailable";
+  processing?: boolean;
+};
+
+export type PipelineAvailability = {
+  allowed: boolean;
+  code: BlockerCode | null;
+  message: string;
+  requiredAction: string | null;
+  href: string | null;
+};
 
 const copy = {
   en: {
@@ -49,6 +76,119 @@ const copy = {
     incompatibleLineage: "Bu sonuç farklı bir upstream lineage'a ait. Uyumlu bir run seçin.",
   },
 } as const;
+
+const actionCopy = {
+  en: {
+    processing: "Wait for the current operation to finish.",
+    missingDocument: "Select a document.",
+    missingPipeline: "Select or create a pipeline.",
+    missingParse: "Parse the document.",
+    missingChunk: "Create or select a compatible chunk run.",
+    missingEmbedding: "Create or select a compatible embedding run.",
+    missingExperiment: "Run a retrieval experiment.",
+    missingQuestion: "Enter a question.",
+    missingDataset: "Create or select an evaluation dataset.",
+    missingSources: "Add a parsed source element.",
+    invalidConfig: "Correct the configuration.",
+    backendUnavailable: "Retry the persistence backend.",
+    incompatibleLineage: "Select a run from the current upstream lineage.",
+  },
+  tr: {
+    processing: "Mevcut işlemin tamamlanmasını bekleyin.",
+    missingDocument: "Bir doküman seçin.",
+    missingPipeline: "Bir pipeline seçin veya oluşturun.",
+    missingParse: "Dokümanı ayrıştırın.",
+    missingChunk: "Uyumlu bir chunk run oluşturun veya seçin.",
+    missingEmbedding: "Uyumlu bir embedding run oluşturun veya seçin.",
+    missingExperiment: "Bir retrieval deneyi çalıştırın.",
+    missingQuestion: "Bir soru girin.",
+    missingDataset: "Bir evaluation dataset'i oluşturun veya seçin.",
+    missingSources: "Parse edilmiş bir kaynak elementi ekleyin.",
+    invalidConfig: "Ayarları düzeltin.",
+    backendUnavailable: "Kalıcı backend'i tekrar deneyin.",
+    incompatibleLineage: "Mevcut upstream lineage içinden bir run seçin.",
+  },
+} as const;
+
+const blockerHref: Record<BlockerCode, string | null> = {
+  processing: null,
+  missing_document: "/documents",
+  missing_pipeline: "/",
+  missing_parse: "/parse",
+  missing_chunk: "/chunking",
+  missing_embedding: "/embeddings",
+  missing_experiment: "/retrieval",
+  missing_question: "/retrieval",
+  missing_dataset: "/evaluation",
+  missing_sources: "/evaluation",
+  invalid_config: null,
+  backend_unavailable: null,
+  incompatible_lineage: null,
+};
+
+function availabilityBlocker(locale: AppLocale, code: BlockerCode): PipelineAvailability {
+  const item = blocker(locale, code);
+  const key = code.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase()) as keyof typeof actionCopy.en;
+  return {
+    allowed: false,
+    code,
+    message: item.message,
+    requiredAction: actionCopy[locale][key],
+    href: blockerHref[code],
+  };
+}
+
+function allowedAvailability(): PipelineAvailability {
+  return { allowed: true, code: null, message: "", requiredAction: null, href: null };
+}
+
+/**
+ * Resolves stage prerequisites from explicit state instead of letting each
+ * screen invent a slightly different definition of "ready".
+ */
+export function getPipelineAvailability(
+  locale: AppLocale,
+  stage: PipelineAvailabilityStage,
+  input: PipelineAvailabilityInput,
+): PipelineAvailability {
+  const selection = input.selection ?? {};
+  if (input.processing || input.persistenceStatus === "checking") return availabilityBlocker(locale, "processing");
+  if (input.persistenceStatus === "unavailable") return availabilityBlocker(locale, "backend_unavailable");
+  if (!input.document?.id) return availabilityBlocker(locale, "missing_document");
+  if (stage === "pipeline" && !input.pipeline) return availabilityBlocker(locale, "missing_pipeline");
+
+  const parseId = selection.selectedParseRunId ?? null;
+  const chunkId = selection.selectedChunkRunId ?? null;
+  const embeddingId = selection.selectedEmbeddingRunId ?? null;
+  if (input.pipeline && stage !== "pipeline"
+    && (input.pipeline.parseRunId !== parseId
+      || input.pipeline.chunkRunId !== chunkId
+      || input.pipeline.embeddingRunId !== embeddingId)) {
+    return availabilityBlocker(locale, "incompatible_lineage");
+  }
+  if (stage !== "parse" && stage !== "pipeline" && !parseId) return availabilityBlocker(locale, "missing_parse");
+  if (stage !== "parse" && stage !== "pipeline" && parseId && !input.parseRun) return availabilityBlocker(locale, "incompatible_lineage");
+  if (input.parseRun && parseId && input.parseRun.id !== parseId) return availabilityBlocker(locale, "incompatible_lineage");
+  if (input.parseRun && (!input.parseRun.isCompatible || input.parseRun.status !== "completed")) return availabilityBlocker(locale, "incompatible_lineage");
+  if (["embedding", "retrieval", "evaluation"].includes(stage) && !chunkId) return availabilityBlocker(locale, "missing_chunk");
+  if (["embedding", "retrieval", "evaluation"].includes(stage) && chunkId && !input.chunkRun) return availabilityBlocker(locale, "incompatible_lineage");
+  if (input.chunkRun && chunkId && input.chunkRun.id !== chunkId) return availabilityBlocker(locale, "incompatible_lineage");
+  if (input.chunkRun && (!input.chunkRun.isCompatible || input.chunkRun.status !== "completed")) return availabilityBlocker(locale, "incompatible_lineage");
+  if (input.chunkRun && parseId && input.chunkRun.upstream.parseRunId !== parseId) return availabilityBlocker(locale, "incompatible_lineage");
+  if (stage === "retrieval" || stage === "evaluation") {
+    const modeNeedsEmbedding = input.retrievalMode !== "keyword";
+    if (modeNeedsEmbedding && !embeddingId) return availabilityBlocker(locale, "missing_embedding");
+    if (input.embeddingRun && (!input.embeddingRun.isCompatible || input.embeddingRun.status !== "completed")) return availabilityBlocker(locale, "incompatible_lineage");
+    if (input.embeddingRun && embeddingId && input.embeddingRun.id !== embeddingId) return availabilityBlocker(locale, "incompatible_lineage");
+    if (input.embeddingRun && chunkId && input.embeddingRun.upstream.chunkRunId !== chunkId) return availabilityBlocker(locale, "incompatible_lineage");
+  }
+  if (stage === "retrieval" && !input.hasQuestion) return availabilityBlocker(locale, "missing_question");
+  if (stage === "retrieval" && input.hasExperiment === false) return availabilityBlocker(locale, "missing_experiment");
+  if (stage === "evaluation" && !input.hasDataset) return availabilityBlocker(locale, "missing_dataset");
+  if (stage === "evaluation" && input.hasSources === false) return availabilityBlocker(locale, "missing_sources");
+  if (stage === "dataset" && !parseId) return availabilityBlocker(locale, "missing_parse");
+  return allowedAvailability();
+}
 
 export function blocker(locale: AppLocale, code: BlockerCode): Blocker {
   const labels = copy[locale];
