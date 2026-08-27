@@ -63,7 +63,7 @@ export function ParseScreen() {
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <header className="flex h-[92px] items-start justify-between gap-6" data-testid="parse-page-header">
           <div className="max-w-[720px]">
-            <p className="text-xs font-semibold uppercase leading-[18px] tracking-[0.96px] text-[#711f3a]">{copy.nav.parse}</p>
+            <p className="text-xs font-semibold uppercase leading-[18px] tracking-[0.96px] text-[#711f3a]">{copy.nav.pipeline}</p>
             <h1 className="mt-2 text-[30px] font-semibold leading-9 tracking-[-0.6px] text-[#171416]">{labels.title === "Parse" ? (preferences.locale === "tr" ? "Ayrıştırma" : "Parsing") : labels.title}</h1>
             <p className="mt-2 text-sm leading-[21px] text-[#6e676a]">{preferences.locale === "tr" ? "PDF'yi RAG pipeline'ının kullanabileceği yapılandırılmış içeriğe dönüştürün." : "Turn a PDF into structured content the rest of your RAG pipeline can use."}</p>
           </div>
