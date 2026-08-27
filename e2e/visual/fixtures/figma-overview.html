@@ -7,7 +7,7 @@
     <style>
       @font-face {
         font-family: "Geist";
-        src: url("/__visual__/figma/overview/fonts/geist-sans-latin.woff2") format("woff2");
+        src: url("figma/overview/fonts/geist-sans-latin.woff2") format("woff2");
         font-style: normal;
         font-weight: 100 900;
         font-display: block;
@@ -15,7 +15,7 @@
 
       @font-face {
         font-family: "Geist Mono";
-        src: url("/__visual__/figma/overview/fonts/geist-mono-latin.woff2") format("woff2");
+        src: url("figma/overview/fonts/geist-mono-latin.woff2") format("woff2");
         font-style: normal;
         font-weight: 100 900;
         font-display: block;
@@ -163,20 +163,20 @@
   <body>
     <div class="shell" data-testid="figma-overview-root">
       <aside class="sidebar" data-testid="figma-overview-sidebar">
-        <div class="brand"><img alt="" src="/__visual__/figma/overview/assets/brand-mark.svg" /><span>RAG StepLab</span></div>
+        <div class="brand"><img alt="" src="figma/overview/assets/brand-mark.svg" /><span>RAG StepLab</span></div>
         <nav class="nav" aria-label="Golden fixture navigation">
-          <div class="nav-item active"><img alt="" src="/__visual__/figma/overview/assets/overview.svg" />Overview</div>
+          <div class="nav-item active"><img alt="" src="figma/overview/assets/overview.svg" />Overview</div>
           <div class="nav-label">Build</div>
-          <div class="nav-item"><img alt="" src="/__visual__/figma/overview/assets/documents.svg" />Documents</div>
-          <div class="nav-item"><img alt="" src="/__visual__/figma/overview/assets/parsing.svg" />Parsing</div>
-          <div class="nav-item"><img alt="" src="/__visual__/figma/overview/assets/chunking.svg" />Chunking</div>
-          <div class="nav-item"><img alt="" src="/__visual__/figma/overview/assets/embeddings.svg" />Embeddings</div>
+          <div class="nav-item"><img alt="" src="figma/overview/assets/documents.svg" />Documents</div>
+          <div class="nav-item"><img alt="" src="figma/overview/assets/parsing.svg" />Parsing</div>
+          <div class="nav-item"><img alt="" src="figma/overview/assets/chunking.svg" />Chunking</div>
+          <div class="nav-item"><img alt="" src="figma/overview/assets/embeddings.svg" />Embeddings</div>
           <div class="nav-label">Test</div>
-          <div class="nav-item"><img alt="" src="/__visual__/figma/overview/assets/playground.svg" />Playground</div>
-          <div class="nav-item"><img alt="" src="/__visual__/figma/overview/assets/evaluation.svg" />Evaluation</div>
+          <div class="nav-item"><img alt="" src="figma/overview/assets/playground.svg" />Playground</div>
+          <div class="nav-item"><img alt="" src="figma/overview/assets/evaluation.svg" />Evaluation</div>
         </nav>
         <div class="sidebar-footer">
-          <div class="nav-item"><img alt="" src="/__visual__/figma/overview/assets/settings.svg" />Settings</div>
+          <div class="nav-item"><img alt="" src="figma/overview/assets/settings.svg" />Settings</div>
           <div class="user-row">
             <div class="user"><div class="avatar">AY</div><span>Ayşe Y.</span></div>
             <div class="lang"><span class="selected">EN</span><span>TR</span></div>
@@ -199,7 +199,7 @@
                 <div class="data-col next"><div class="data-label">Next step</div><div class="data-value">Chunking <span class="ready">Ready</span></div></div>
               </div>
             </div>
-            <button class="cta" type="button">Continue to Chunking <img alt="" src="/__visual__/figma/overview/assets/arrow-right.svg" /></button>
+            <button class="cta" type="button">Continue to Chunking <img alt="" src="figma/overview/assets/arrow-right.svg" /></button>
           </section>
 
           <section class="pipeline-card">
@@ -209,17 +209,17 @@
                 <div class="plane prepare" data-testid="figma-overview-prepare"><span class="plane-label">Prepare</span></div>
                 <div class="plane test" data-testid="figma-overview-test"><span class="plane-label">Test</span></div>
                 <div class="plane measure" data-testid="figma-overview-measure"><span class="plane-label">Measure</span></div>
-                <img class="curve" alt="" src="/__visual__/figma/overview/assets/icon.svg" />
+                <img class="curve" data-testid="figma-overview-curve" alt="" src="figma/overview/assets/icon.svg" />
 
-                <div class="jnode done" data-testid="figma-overview-node-documents" style="left:62.151199px;top:55.979401px"><div class="jbox"><img alt="" src="/__visual__/figma/overview/assets/documents1.svg" /></div><div class="check"><img alt="" src="/__visual__/figma/overview/assets/check.svg" /></div><div class="jlabel above">Documents</div></div>
-                <div class="jnode done" data-testid="figma-overview-node-parsing" style="left:173.881668px;top:115.977356px"><div class="jbox"><img alt="" src="/__visual__/figma/overview/assets/parsing1.svg" /></div><div class="check"><img alt="" src="/__visual__/figma/overview/assets/check.svg" /></div><div class="jlabel below">Parsing</div></div>
-                <div class="jnode active" data-testid="figma-overview-node-chunking" style="left:283.525757px;top:55.979401px"><div class="jbox"><img alt="" src="/__visual__/figma/overview/assets/chunking1.svg" /></div><div class="jlabel above">Chunking</div></div>
-                <div class="jnode" data-testid="figma-overview-node-embeddings" style="left:395.256226px;top:115.977356px"><div class="jbox"><img alt="" src="/__visual__/figma/overview/assets/embeddings1.svg" /></div><div class="jlabel below">Embeddings</div></div>
-                <div class="jnode" data-testid="figma-overview-node-retrieval" style="left:506.986725px;top:55.979401px"><div class="jbox"><img alt="" src="/__visual__/figma/overview/assets/playground1.svg" /></div><div class="jlabel above">Retrieval</div></div>
-                <div class="jnode" data-testid="figma-overview-node-reranking" style="left:614.517578px;top:115.977356px"><div class="jbox"><img alt="" src="/__visual__/figma/overview/assets/evaluation1.svg" /></div><div class="jlabel below">Reranking</div></div>
-                <div class="jnode" data-testid="figma-overview-node-context" style="left:726.248047px;top:55.979401px"><div class="jbox"><img alt="" src="/__visual__/figma/overview/assets/source.svg" /></div><div class="jlabel above">Build Context</div></div>
-                <div class="jnode" data-testid="figma-overview-node-answer" style="left:835.865356px;top:115.977356px"><div class="jbox"><img alt="" src="/__visual__/figma/overview/assets/sparkle.svg" /></div><div class="jlabel below">Answer</div></div>
-                <div class="jnode" data-testid="figma-overview-node-evaluation" style="left:947.595703px;top:55.979401px"><div class="jbox"><img alt="" src="/__visual__/figma/overview/assets/evaluation1.svg" /></div><div class="jlabel above">Evaluation</div></div>
+                <div class="jnode done" data-testid="figma-overview-node-documents" style="left:62.151199px;top:55.979401px"><div class="jbox"><img alt="" src="figma/overview/assets/documents1.svg" /></div><div class="check"><img alt="" src="figma/overview/assets/check.svg" /></div><div class="jlabel above">Documents</div></div>
+                <div class="jnode done" data-testid="figma-overview-node-parsing" style="left:173.881668px;top:115.977356px"><div class="jbox"><img alt="" src="figma/overview/assets/parsing1.svg" /></div><div class="check"><img alt="" src="figma/overview/assets/check.svg" /></div><div class="jlabel below">Parsing</div></div>
+                <div class="jnode active" data-testid="figma-overview-node-chunking" style="left:283.525757px;top:55.979401px"><div class="jbox"><img alt="" src="figma/overview/assets/chunking1.svg" /></div><div class="jlabel above">Chunking</div></div>
+                <div class="jnode" data-testid="figma-overview-node-embeddings" style="left:395.256226px;top:115.977356px"><div class="jbox"><img alt="" src="figma/overview/assets/embeddings1.svg" /></div><div class="jlabel below">Embeddings</div></div>
+                <div class="jnode" data-testid="figma-overview-node-retrieval" style="left:506.986725px;top:55.979401px"><div class="jbox"><img alt="" src="figma/overview/assets/playground1.svg" /></div><div class="jlabel above">Retrieval</div></div>
+                <div class="jnode" data-testid="figma-overview-node-reranking" style="left:614.517578px;top:115.977356px"><div class="jbox"><img alt="" src="figma/overview/assets/evaluation1.svg" /></div><div class="jlabel below">Reranking</div></div>
+                <div class="jnode" data-testid="figma-overview-node-context" style="left:726.248047px;top:55.979401px"><div class="jbox"><img alt="" src="figma/overview/assets/source.svg" /></div><div class="jlabel above">Build Context</div></div>
+                <div class="jnode" data-testid="figma-overview-node-answer" style="left:835.865356px;top:115.977356px"><div class="jbox"><img alt="" src="figma/overview/assets/sparkle.svg" /></div><div class="jlabel below">Answer</div></div>
+                <div class="jnode" data-testid="figma-overview-node-evaluation" style="left:947.595703px;top:55.979401px"><div class="jbox"><img alt="" src="figma/overview/assets/evaluation1.svg" /></div><div class="jlabel above">Evaluation</div></div>
               </div>
             </div>
           </section>
@@ -237,16 +237,16 @@
             <div class="card" data-testid="figma-overview-recent-activity">
               <div class="section-label">Recent activity</div>
               <div class="activity">
-                <div class="activity-row"><div class="activity-check"><img alt="" src="/__visual__/figma/overview/assets/check1.svg" /></div><div><div class="activity-title">Parsing completed</div><div class="activity-time"><img alt="" src="/__visual__/figma/overview/assets/clock.svg" />12 minutes ago</div></div></div>
-                <div class="activity-row"><div class="activity-check"><img alt="" src="/__visual__/figma/overview/assets/check1.svg" /></div><div><div class="activity-title">Chunks created</div><div class="activity-time"><img alt="" src="/__visual__/figma/overview/assets/clock.svg" />8 minutes ago</div></div></div>
-                <div class="activity-row"><div class="activity-check"><img alt="" src="/__visual__/figma/overview/assets/check1.svg" /></div><div><div class="activity-title">Embeddings ready</div><div class="activity-time"><img alt="" src="/__visual__/figma/overview/assets/clock.svg" />6 minutes ago</div></div></div>
-                <div class="activity-row"><div class="activity-check"><img alt="" src="/__visual__/figma/overview/assets/check1.svg" /></div><div><div class="activity-title">Evaluation completed</div><div class="activity-time"><img alt="" src="/__visual__/figma/overview/assets/clock.svg" />Yesterday</div></div></div>
+                <div class="activity-row"><div class="activity-check"><img alt="" src="figma/overview/assets/check1.svg" /></div><div><div class="activity-title">Parsing completed</div><div class="activity-time"><img alt="" src="figma/overview/assets/clock.svg" />12 minutes ago</div></div></div>
+                <div class="activity-row"><div class="activity-check"><img alt="" src="figma/overview/assets/check1.svg" /></div><div><div class="activity-title">Chunks created</div><div class="activity-time"><img alt="" src="figma/overview/assets/clock.svg" />8 minutes ago</div></div></div>
+                <div class="activity-row"><div class="activity-check"><img alt="" src="figma/overview/assets/check1.svg" /></div><div><div class="activity-title">Embeddings ready</div><div class="activity-time"><img alt="" src="figma/overview/assets/clock.svg" />6 minutes ago</div></div></div>
+                <div class="activity-row"><div class="activity-check"><img alt="" src="figma/overview/assets/check1.svg" /></div><div><div class="activity-title">Evaluation completed</div><div class="activity-time"><img alt="" src="figma/overview/assets/clock.svg" />Yesterday</div></div></div>
               </div>
             </div>
           </section>
 
           <section class="note" data-testid="figma-overview-learning-note">
-            <img alt="" src="/__visual__/figma/overview/assets/info.svg" />
+            <img alt="" src="figma/overview/assets/info.svg" />
             <div><strong>Why this matters</strong><p>Each stage changes what happens downstream. Understanding the flow helps you diagnose retrieval quality, context selection, and answer quality instead of treating RAG as a black box.</p></div>
           </section>
         </div>

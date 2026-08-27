@@ -1,13 +1,4 @@
-import path from "node:path";
-
 import { defineConfig } from "@playwright/test";
-
-try {
-  process.loadEnvFile?.(".env.e2e.local");
-} catch {}
-
-const baseURL = process.env.E2E_BASE_URL ?? "http://localhost:3000";
-const isLocal = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(baseURL);
 
 export default defineConfig({
   testDir: ".",
@@ -22,9 +13,7 @@ export default defineConfig({
   reporter: process.env.CI ? "line" : "list",
   expect: { timeout: 10_000 },
   use: {
-    baseURL,
     browserName: "chromium",
-    storageState: isLocal ? undefined : path.resolve("output/playwright/.auth/vercel-bypass.json"),
     headless: true,
     viewport: { width: 1441, height: 1041 },
     deviceScaleFactor: 1,
@@ -35,12 +24,4 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "off",
   },
-  webServer: isLocal
-    ? {
-        command: "npm run dev:frontend",
-        url: baseURL,
-        reuseExistingServer: !process.env.CI,
-        timeout: 120_000,
-      }
-    : undefined,
 });
