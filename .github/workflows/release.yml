@@ -1,0 +1,156 @@
+name: Production release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/app/**"
+      - "backend/modal_app.py"
+      - "backend/requirements.txt"
+      - "backend/requirements-worker.txt"
+      - "supabase/migrations/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Production release
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      MODAL_ENVIRONMENT: main
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      MODAL_API_URL: https://ahmedhfz-dev--rag-steplab-api-api-eu.eu-west.modal.run
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify production changes
+        id: classify
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          base_sha="$BEFORE_SHA"
+          if [[ -z "$base_sha" || "$base_sha" =~ ^0+$ ]]; then
+            base_sha="$(git rev-parse "$GITHUB_SHA^")"
+          fi
+          git diff --name-only "$base_sha" "$GITHUB_SHA" | node .github/scripts/classify-changes.mjs | tee classification.txt
+          cat classification.txt >> "$GITHUB_OUTPUT"
+
+      - name: Reject secret-shaped tracked values
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -nE 'AIza[0-9A-Za-z_-]{20,}|(ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{10,}|postgres(ql)?://[^[:space:]]+:[^@[:space:]]+@' -- .; then
+            echo "A secret-shaped value was found in tracked files."
+            exit 1
+          fi
+
+      - name: Set up Python
+        if: steps.classify.outputs.modal_deploy == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install lightweight backend dependencies
+        if: steps.classify.outputs.modal_deploy == 'true'
+        run: python -m pip install --disable-pip-version-check -r backend/requirements-ci.txt
+
+      - name: Verify backend contracts
+        if: steps.classify.outputs.modal_deploy == 'true'
+        run: python -m pytest backend/tests
+
+      - name: Install Supabase CLI
+        if: steps.classify.outputs.migration == 'true'
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.116.0
+
+      - name: Validate migration locally
+        if: steps.classify.outputs.migration == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/check-migration-authority.mjs
+          supabase db start
+          supabase db reset --local --no-seed
+          supabase test db --local
+          supabase db lint --local --schema rag_lab --fail-on error
+
+      - name: Stop local Supabase
+        if: always() && steps.classify.outputs.migration == 'true'
+        continue-on-error: true
+        run: supabase stop --project-id rag-steplab --no-backup
+
+      - name: Dry-run and apply production migration
+        if: steps.classify.outputs.migration == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_ACCESS_TOKEN"
+          test -n "$SUPABASE_PROJECT_REF"
+          supabase link --project-ref "$SUPABASE_PROJECT_REF"
+          supabase db push --linked --dry-run --yes --skip-vault
+          supabase db push --linked --yes --skip-vault
+
+      - name: Verify production migration alignment
+        if: steps.classify.outputs.migration == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase migration list --linked
+          status="$(supabase db push --linked --dry-run --yes --skip-vault --output-format json)"
+          printf '%s\n' "$status"
+          jq -e '.upToDate == true' <<<"$status" >/dev/null
+
+      - name: Verify Modal credentials
+        if: steps.classify.outputs.modal_deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$MODAL_TOKEN_ID"
+          test -n "$MODAL_TOKEN_SECRET"
+          modal token info
+
+      - name: Deploy tested Git SHA to Modal
+        if: steps.classify.outputs.modal_deploy == 'true'
+        run: modal deploy --env "$MODAL_ENVIRONMENT" --tag "$GITHUB_SHA" --strategy rolling backend/modal_app.py
+
+      - name: Verify Modal deployment tag
+        if: steps.classify.outputs.modal_deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          modal app history rag-steplab-api --env "$MODAL_ENVIRONMENT" --json | python -c 'import json, os, sys; history=json.load(sys.stdin); actual=history[0].get("tag") if history else None; expected=os.environ["GITHUB_SHA"]; assert actual == expected, f"Expected Modal tag {expected}, got {actual}"'
+
+      - name: Verify deployed worker imports
+        if: steps.classify.outputs.worker_provider == 'true'
+        run: python -c "import modal; result=modal.Function.from_name('rag-steplab-api', 'remote_import_smoke', environment_name='main').remote(); assert result['appImported'] and result['parserImported'] and result['doclingVersion']"
+
+      - name: Verify deployed API health and protection
+        if: steps.classify.outputs.modal_deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..12}; do
+            docs_status="$(curl --silent --output /dev/null --write-out '%{http_code}' "$MODAL_API_URL/openapi.json")"
+            protected_status="$(curl --silent --output /dev/null --write-out '%{http_code}' "$MODAL_API_URL/capabilities")"
+            if curl --fail --silent --show-error "$MODAL_API_URL/health" >/dev/null && curl --fail --silent --show-error "$MODAL_API_URL/ready" >/dev/null && [ "$docs_status" = "404" ] && [ "$protected_status" = "401" ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Modal API did not become healthy after deployment."
+          exit 1

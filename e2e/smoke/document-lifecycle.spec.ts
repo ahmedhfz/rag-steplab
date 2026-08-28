@@ -23,7 +23,7 @@ test.beforeEach(async ({ page }) => {
   await installSeededApi(page);
 });
 
-test("click upload, drag/drop ve duplicate reuse notice birlikte çalışır", async ({ page }) => {
+test("@critical click upload, drag/drop ve duplicate reuse notice birlikte çalışır", async ({ page }) => {
   const quality = installBrowserQualityGuards(page);
   const pdf = await readFile(generatedFixturePath);
 
@@ -40,7 +40,7 @@ test("click upload, drag/drop ve duplicate reuse notice birlikte çalışır", a
   quality.assertClean();
 });
 
-test("parse lifecycle gerçek UI progress, phase ve elapsed durumlarını gösterir", async ({ page }) => {
+test("@critical parse lifecycle gerçek UI progress, phase ve elapsed durumlarını gösterir", async ({ page }) => {
   const quality = installBrowserQualityGuards(page);
 
   await page.goto("/parse");
@@ -55,7 +55,7 @@ test("parse lifecycle gerçek UI progress, phase ve elapsed durumlarını göste
   quality.assertClean();
 });
 
-test("chunk ve embedding UI yalnız ilgili katmanın seeded contractını kullanır", async ({ page }) => {
+test("@critical chunk ve embedding UI yalnız ilgili katmanın seeded contractını kullanır", async ({ page }) => {
   const quality = installBrowserQualityGuards(page);
 
   await page.goto("/chunking");

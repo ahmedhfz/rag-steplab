@@ -1,21 +1,30 @@
-name: Full RAG E2E
+name: Heavy validation
 
 on:
-  schedule:
-    - cron: "17 2 * * *"
   workflow_dispatch:
+    inputs:
+      suite:
+        description: Heavy suite to run against the selected Git ref
+        required: true
+        type: choice
+        default: critical-smoke
+        options:
+          - critical-smoke
+          - auth
+          - production-visual
+          - full-rag
 
 permissions:
   contents: read
   deployments: read
 
 concurrency:
-  group: full-rag-e2e-main
+  group: heavy-validation-${{ github.ref }}-${{ inputs.suite }}
   cancel-in-progress: false
 
 jobs:
-  full-rag:
-    name: Real Docling + Gemini golden path
+  validate:
+    name: ${{ inputs.suite }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -29,7 +38,7 @@ jobs:
       E2E_ALLOW_PRODUCTION_CLEANUP: "true"
       E2E_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - name: Checkout main
+      - name: Checkout selected ref
         uses: actions/checkout@v4
 
       - name: Set up Node.js
@@ -41,7 +50,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Cache Playwright Chromium
+      - name: Restore Playwright Chromium
         id: playwright-cache
         uses: actions/cache@v4
         with:
@@ -59,37 +68,53 @@ jobs:
       - name: Ensure dedicated E2E user
         run: npm run e2e:user
 
-      - name: Clean stale namespaced E2E data
+      - name: Clean stale namespaced full-RAG data
+        if: inputs.suite == 'full-rag'
         run: npm run e2e:cleanup
 
-      - name: Find current production deployment
+      - name: Find exact Vercel deployment
         id: deployment
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DEPLOYMENT_SHA: ${{ github.sha }}
-          DEPLOYMENT_ENVIRONMENT: Production
+          DEPLOYMENT_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Preview' }}
         run: node scripts/e2e.mjs wait-deployment
 
-      - name: Run FULL RAG E2E with one worker
+      - name: Run four-test critical smoke
+        if: inputs.suite == 'critical-smoke'
         env:
-          # Deployment SHA'sı yukarıdaki adımda doğrulanır; browser canonical alias
-          # üzerinden çalışır çünkü Modal CORS yalnızca production origin'i kabul eder.
-          E2E_BASE_URL: https://rag-steplab.vercel.app
-        run: |
-          echo "E2E mode: FULL RAG E2E"
-          npm run e2e:full
+          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
+        run: npm run e2e:critical
 
-      - name: Cleanup namespaced E2E data
-        if: always()
+      - name: Run real auth E2E
+        if: inputs.suite == 'auth'
+        env:
+          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
+        run: npm run e2e:auth
+
+      - name: Run production React visual suite
+        if: inputs.suite == 'production-visual'
+        env:
+          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
+        run: npm run e2e:visual:production
+
+      - name: Run real provider full-RAG E2E
+        if: inputs.suite == 'full-rag'
+        env:
+          E2E_BASE_URL: https://rag-steplab.vercel.app
+        run: npm run e2e:full
+
+      - name: Cleanup namespaced full-RAG data
+        if: always() && inputs.suite == 'full-rag'
         run: npm run e2e:cleanup
 
-      - name: Upload Playwright artifacts
-        if: always()
+      - name: Upload Playwright failure artifacts
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-full-rag-${{ github.run_id }}-${{ github.run_attempt }}
+          name: playwright-heavy-${{ inputs.suite }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             output/playwright
             !output/playwright/.auth/**
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 3
