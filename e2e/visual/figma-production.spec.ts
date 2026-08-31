@@ -192,6 +192,19 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: 1193, height: 53 }, "playground-context-bar");
     await assertRect(page.getByTestId("playground-page-header"), { x: 288, y: 93, width: 1113, height: 92 }, "playground-header");
     await assertRect(page.getByTestId("playground-input"), { x: 288, y: 217, width: 1113 }, "playground-input");
+    const primaryControls = [
+      page.getByTestId("playground-mode-control"),
+      page.getByTestId("playground-top-k-control").locator(":scope > div"),
+      page.getByTestId("playground-reranker-control"),
+    ];
+    const controlRects = await Promise.all(primaryControls.map((control) => rect(control)));
+    expect(controlRects.every((control) => Math.abs(control.height - 36) <= 1), `${state.key}-primary-control-heights`).toBe(true);
+    expect(Math.max(...controlRects.map((control) => control.y)) - Math.min(...controlRects.map((control) => control.y)), `${state.key}-primary-control-alignment`).toBeLessThanOrEqual(1);
+    const rerankerSwitch = page.getByTestId("playground-reranker-control").locator('[data-slot="switch"]');
+    const switchRect = await rect(rerankerSwitch);
+    const thumbRect = await rect(rerankerSwitch.locator('[data-slot="switch-thumb"]'));
+    const expectedThumbOffset = await rerankerSwitch.getAttribute("data-state") === "checked" ? 18 : 2;
+    expect(Math.abs(thumbRect.x - switchRect.x - expectedThumbOffset), `${state.key}-reranker-thumb-offset`).toBeLessThanOrEqual(1);
     if (state.key !== "playground-empty") {
       await assertRect(page.getByTestId("playground-stage-layout"), { x: 288, width: 1113 }, "playground-stage-layout");
       await assertRect(page.getByTestId("playground-stage-rail"), { width: 300 }, "playground-stage-rail");

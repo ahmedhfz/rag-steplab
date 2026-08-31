@@ -454,15 +454,24 @@ export function RetrievalScreen() {
             {!canAsk ? <span className="sr-only" id="ask-disabled-reason">{blockerMessage}</span> : null}
           </form>
 
-          <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-[#e7e2e4] px-3 pt-3">
-            <fieldset className="flex min-w-0 items-center gap-2 max-sm:w-full">
-              <legend className="shrink-0 text-[12.5px] font-medium text-[#6e676a]">{labels.retrievalControl}</legend>
-              <div aria-label={copy.retrieval.mode} className="flex h-10 min-w-0 items-center rounded-[9px] border border-[#e7e2e4] bg-[#f2eff0] p-1 max-sm:flex-1" role="group">
-                {(["dense", "hybrid", "keyword"] as const).map((value) => <button aria-pressed={mode === value} className={mode === value ? "h-full rounded-[7px] bg-white px-3 text-[12.5px] font-medium text-[#171416] shadow-sm max-sm:flex-1" : "h-full rounded-[7px] px-2.5 text-[12.5px] font-medium text-[#6e676a] hover:bg-white/70 max-sm:flex-1"} key={value} onClick={() => setMode(value)} type="button">{copy.retrieval.modes[value]}</button>)}
+          <div className="mt-3 grid grid-cols-[max-content_max-content_max-content] items-end gap-3 border-t border-[#e7e2e4] px-3 pt-3 max-sm:grid-cols-2" data-testid="playground-primary-controls">
+            <fieldset className="min-w-0 max-sm:col-span-2">
+              <legend className="mb-1.5 block text-[12px] font-medium leading-4 text-[#6e676a]">{labels.retrievalControl}</legend>
+              <div aria-label={copy.retrieval.mode} className="flex h-9 min-w-0 items-center rounded-[9px] border border-[#e7e2e4] bg-[#f2eff0] p-1 max-sm:w-full" data-testid="playground-mode-control" role="group">
+                {(["dense", "hybrid", "keyword"] as const).map((value) => <button aria-pressed={mode === value} className={mode === value ? "h-full rounded-[7px] bg-white px-3 text-[12px] font-medium text-[#171416] shadow-sm max-sm:flex-1" : "h-full rounded-[7px] px-2.5 text-[12px] font-medium text-[#6e676a] hover:bg-white/70 max-sm:flex-1"} key={value} onClick={() => setMode(value)} type="button">{copy.retrieval.modes[value]}</button>)}
               </div>
             </fieldset>
-            <div className="flex items-center gap-2"><span className="text-[12.5px] font-medium text-[#6e676a]">{copy.retrieval.topK}</span><TopKControl locale={preferences.locale} onChange={setTopK} value={topK} /></div>
-            <label className="flex items-center gap-2 text-[12.5px] font-medium text-[#6e676a]" htmlFor="reranker-enabled">{copy.retrieval.reranker}<Switch aria-label={copy.retrieval.reranker} checked={rerankerEnabled} id="reranker-enabled" onCheckedChange={setRerankerEnabled} /></label>
+            <div>
+              <span className="mb-1.5 block text-[12px] font-medium leading-4 text-[#6e676a]">{copy.retrieval.topK}</span>
+              <div data-testid="playground-top-k-control"><TopKControl locale={preferences.locale} onChange={setTopK} value={topK} /></div>
+            </div>
+            <div>
+              <span className="mb-1.5 block text-[12px] font-medium leading-4 text-[#6e676a]">{copy.retrieval.reranker}</span>
+              <label className="flex h-9 min-w-[108px] items-center justify-between gap-3 rounded-[9px] border border-[#d8d2d5] bg-white pl-3 pr-1 text-[12px] font-medium text-[#6e676a]" data-testid="playground-reranker-control" htmlFor="reranker-enabled">
+                <span>{rerankerEnabled ? (preferences.locale === "tr" ? "Açık" : "On") : (preferences.locale === "tr" ? "Kapalı" : "Off")}</span>
+                <Switch aria-label={copy.retrieval.reranker} checked={rerankerEnabled} className="h-9" id="reranker-enabled" onCheckedChange={setRerankerEnabled} />
+              </label>
+            </div>
           </div>
 
           <div className="mx-3 mt-3" data-testid="playground-question-help"><LearningHint locale={preferences.locale}>{workspaceCopy.questionHelp}</LearningHint></div>
