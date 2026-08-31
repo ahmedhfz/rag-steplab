@@ -49,6 +49,8 @@ Görsel toleranslar ekran grubuna göre ayrıdır:
 
 Chunking grubundaki küçük MAE farkı, Windows'ta üretilen tracked referans ile CI/Linux Chromium arasındaki metin rasterization ve satır kayması farkını karşılar; geometri kontratı yine `±1px` olarak kalır.
 
+Overview journey için desktop connector ve node X koordinatları Figma'nın `1054.1 × 199.975` logical canvas'ına normalize edilir; canvas gerçek kullanılabilir genişliği doldurur, node/icon boyutları ile yaklaşık `200px` dikey geometri sabit kalır. `1440px` ve üzeri desktop varyantında Measure sağ kenara yaklaşır; daha dar viewport'larda mevcut compact journey korunur.
+
 ## Çalıştırma
 
 ```bash

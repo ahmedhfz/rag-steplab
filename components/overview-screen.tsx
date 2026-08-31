@@ -16,10 +16,21 @@ import { UI_COPY, type AppLocale } from "@/lib/copy";
 import { blocker, type BlockerCode } from "@/lib/blockers";
 import { buildOverviewViewModel } from "@/lib/figma-view-models";
 import type { OverviewContinuationKind } from "@/lib/figma-view-models";
+import {
+  buildJourneyConnectorPath,
+  deriveJourneyConnectorState,
+  JOURNEY_CANVAS,
+  JOURNEY_CONNECTOR_PAIRS,
+  journeyConnectorVisualForState,
+  journeyGroupPosition,
+  journeyNodePosition,
+  journeyNodeVisualForState,
+  type JourneyStepKey,
+} from "@/lib/overview-journey";
 import type { PipelineStepDefinition, PipelineStepKey, PipelineStepState } from "@/lib/rag-ui-types";
 import { cn } from "@/lib/utils";
 
-const pipelineSteps: PipelineStepDefinition[] = [
+const pipelineSteps = [
   { key: "document", icon: "document" },
   { key: "parse", icon: "parse" },
   { key: "chunk", icon: "chunk" },
@@ -29,7 +40,9 @@ const pipelineSteps: PipelineStepDefinition[] = [
   { key: "context", icon: "context" },
   { key: "generate", icon: "generate" },
   { key: "evaluate", icon: "evaluate" },
-];
+] as const satisfies readonly PipelineStepDefinition[];
+
+type JourneyPipelineStep = (typeof pipelineSteps)[number];
 
 const stageHref: Record<PipelineStepKey, string> = {
   document: "/documents",
@@ -55,18 +68,6 @@ const journeyAssets: Record<PipelineStepKey, string> = {
   context: "/assets/figma/overview/source.svg",
   generate: "/assets/figma/overview/sparkle.svg",
   evaluate: "/assets/figma/overview/evaluation1.svg",
-};
-
-const journeyPositions: Record<string, { left: number; top: number; label: "above" | "below" }> = {
-  document: { left: 62.151, top: 55.979, label: "above" },
-  parse: { left: 173.882, top: 115.977, label: "below" },
-  chunk: { left: 283.526, top: 55.979, label: "above" },
-  embed: { left: 395.256, top: 115.977, label: "below" },
-  retrieve: { left: 506.987, top: 55.979, label: "above" },
-  rerank: { left: 614.518, top: 115.977, label: "below" },
-  context: { left: 726.248, top: 55.979, label: "above" },
-  generate: { left: 835.865, top: 115.977, label: "below" },
-  evaluate: { left: 947.596, top: 55.979, label: "above" },
 };
 
 const continuationCopy: Record<AppLocale, Record<OverviewContinuationKind, { action: string; nextStep: string }>> = {
@@ -103,6 +104,64 @@ const continuationCopy: Record<AppLocale, Record<OverviewContinuationKind, { act
 const selectorTriggerClass = "h-10 min-w-0 max-w-full overflow-hidden [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]]:truncate [&_[data-slot=select-value]]:whitespace-nowrap";
 const selectorItemClass = "h-auto min-h-8 whitespace-normal break-words";
 
+function JourneyGlyph({ stepKey, state }: { stepKey: JourneyStepKey; state: PipelineStepState }) {
+  const visual = journeyNodeVisualForState(state);
+  const maskImage = `url("${journeyAssets[stepKey]}")`;
+  return (
+    <span
+      aria-hidden="true"
+      className="block size-[19px] bg-current"
+      data-state={state}
+      data-testid={`overview-journey-glyph-${stepKey}`}
+      style={{
+        backgroundColor: visual.iconColor,
+        color: visual.iconColor,
+        maskImage,
+        maskPosition: "center",
+        maskRepeat: "no-repeat",
+        maskSize: "contain",
+        WebkitMaskImage: maskImage,
+        WebkitMaskPosition: "center",
+        WebkitMaskRepeat: "no-repeat",
+        WebkitMaskSize: "contain",
+      }}
+    />
+  );
+}
+
+function JourneyConnectors({ stateFor }: { stateFor: (step: JourneyStepKey) => PipelineStepState }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className="pointer-events-none absolute left-0 top-px z-[1] h-[199.975px] w-full overflow-visible"
+      data-testid="overview-journey-connectors"
+      height={JOURNEY_CANVAS.height}
+      preserveAspectRatio="none"
+      viewBox={`0 0 ${JOURNEY_CANVAS.width} ${JOURNEY_CANVAS.height}`}
+      width="100%"
+    >
+      {JOURNEY_CONNECTOR_PAIRS.map(({ destination, source }) => {
+        const state = deriveJourneyConnectorState(stateFor(source), stateFor(destination));
+        const visual = journeyConnectorVisualForState(state);
+        return (
+          <path
+            d={buildJourneyConnectorPath(source, destination)}
+            data-state={state}
+            data-testid={`overview-journey-connector-${source}-${destination}`}
+            fill="none"
+            key={`${source}-${destination}`}
+            stroke={visual.color}
+            strokeLinecap="round"
+            strokeOpacity={visual.opacity}
+            strokeWidth={visual.width}
+            vectorEffect="non-scaling-stroke"
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
 function JourneyNode({
   href,
   labels,
@@ -114,22 +173,24 @@ function JourneyNode({
   labels: Record<PipelineStepKey, string>;
   reason: string | null;
   state: PipelineStepState;
-  step: PipelineStepDefinition;
+  step: JourneyPipelineStep;
 }) {
-  const position = journeyPositions[step.key];
+  const position = journeyNodePosition(step.key);
+  const visual = journeyNodeVisualForState(state);
   const completed = state === "Completed";
-  const active = state === "Ready" || state === "Processing" || state === "Error";
   const content = (
     <>
       <span
-        className={cn(
-          "relative grid size-10 place-items-center rounded-[10px] border bg-white transition-colors",
-          completed && "border-transparent bg-[#eef4ef]",
-          active && "border-[#e3a9b9] bg-[#f3d9e0]",
-          state === "Locked" && "opacity-65",
-        )}
+        className="relative grid size-10 place-items-center rounded-[10px] border transition-colors"
+        data-state={state}
+        style={{
+          backgroundColor: visual.backgroundColor,
+          borderColor: visual.borderColor,
+          color: visual.iconColor,
+          opacity: visual.opacity,
+        }}
       >
-        <Image alt="" height={19} src={journeyAssets[step.key]} width={19} />
+        <JourneyGlyph state={state} stepKey={step.key} />
         {completed ? (
           <span className="absolute -right-1 -top-1 grid size-3.5 place-items-center rounded-full bg-[#3f7a55]">
             <Image alt="" height={9} src="/assets/figma/overview/check.svg" width={9} />
@@ -154,11 +215,11 @@ function JourneyNode({
   );
   const style = { left: position.left, top: position.top };
   return reason ? (
-    <div aria-disabled="true" className={className} data-testid={`overview-journey-node-${step.key}`} style={style}>
+    <div aria-disabled="true" className={className} data-state={state} data-testid={`overview-journey-node-${step.key}`} style={style}>
       {content}
     </div>
   ) : (
-    <Link className={className} data-testid={`overview-journey-node-${step.key}`} href={href} style={style}>
+    <Link className={className} data-state={state} data-testid={`overview-journey-node-${step.key}`} href={href} style={style}>
       {content}
     </Link>
   );
@@ -436,10 +497,10 @@ export function OverviewScreen() {
           <div className="relative mt-2 w-full overflow-hidden" data-testid="overview-journey">
             <div className="relative hidden h-[216px] w-full pt-3 min-[1440px]:block" data-testid="overview-journey-desktop">
               <div className="relative h-[200px] w-full">
-                <div className="absolute left-[25.034px] top-1 h-[192px] w-[441px] rounded-[14px] border-[1.712px] border-[rgba(231,226,228,0.6)] bg-[#fbfafb]" data-testid="figma-overview-prepare"><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.knowledge}</span></div>
-                <div className="absolute left-[476.356px] top-1 h-[192px] w-[428px] rounded-[14px] border-[1.712px] border-[rgba(231,226,228,0.6)] bg-[#fbfafb]" data-testid="figma-overview-test"><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.query}</span></div>
-                <div className="absolute left-[914.809px] top-1 h-[192px] w-[114px] rounded-[14px] border-[1.712px] border-solid border-[rgba(231,226,228,0.6)] bg-[rgba(251,244,246,0.6)]" data-testid="figma-overview-measure"><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.quality}</span></div>
-                <Image alt="" className="pointer-events-none absolute left-[-0.05px] top-px h-[199.975px] w-[1054.1px] max-w-none" height={200} priority src="/assets/figma/overview/icon.svg" width={1054} />
+                <div className="absolute top-1 h-[192px] rounded-[14px] border-[1.712px] border-[rgba(231,226,228,0.6)] bg-[#fbfafb]" data-testid="figma-overview-prepare" style={journeyGroupPosition("prepare")}><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.knowledge}</span></div>
+                <div className="absolute top-1 h-[192px] rounded-[14px] border-[1.712px] border-[rgba(231,226,228,0.6)] bg-[#fbfafb]" data-testid="figma-overview-test" style={journeyGroupPosition("test")}><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.query}</span></div>
+                <div className="absolute top-1 h-[192px] rounded-[14px] border-[1.712px] border-solid border-[rgba(231,226,228,0.6)] bg-[rgba(251,244,246,0.6)]" data-testid="figma-overview-measure" style={journeyGroupPosition("measure")}><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.quality}</span></div>
+                <JourneyConnectors stateFor={(step) => pipelineState[step]} />
                 {pipelineSteps.map((step) => <JourneyNode href={stageHref[step.key]} key={step.key} labels={journeyLabels} reason={lockedReason(step.key)} state={pipelineState[step.key]} step={step} />)}
               </div>
             </div>

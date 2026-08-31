@@ -35,7 +35,7 @@ MAE ve changed-pixel değerleri mutlak bir “parity yüzdesi” değildir; rast
 | Recent Activity | 928.007 | 576.848 | 473.671 | 277.761 |
 | Why this matters | 288.219 | 878.848 | 1113 | 97 |
 
-Dokuz journey node'u `40 × 40px` boyutunda, Figma'nın sabit koordinatlarında ve gerçek SVG asset'leriyle tutulur. Curve için exported `icon.svg`, ikonlar için aynı asset seti kullanılır; koordinatlar generic grid'e veya yuvarlanmış Tailwind aralıklarına dönüştürülmez.
+Dokuz journey node'u `40 × 40px` boyutunda, Figma'nın sabit koordinatlarında ve gerçek SVG asset'leriyle tutulur. Bu static fixture curve için kendi `figma/overview/assets/icon.svg` kopyasını kullanır; production React journey ise state-aware connector'ları normalized canvas üzerinde dinamik üretir. Fixture koordinatları generic grid'e veya yuvarlanmış Tailwind aralıklarına dönüştürülmez.
 
 ## Fixture sınırı
 

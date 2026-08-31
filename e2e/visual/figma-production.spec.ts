@@ -102,11 +102,50 @@ async function assertOverviewGeometry(page: Page) {
   await expect(page.getByTestId("overview-lineage")).toHaveCount(0);
   await assertRect(page.getByTestId("figma-overview-pipeline"), { x: 288, width: 1113, height: 284 }, "overview-pipeline");
   await assertRect(page.getByTestId("overview-journey"), { x: 309, width: 1071, height: 216 }, "overview-journey");
-  await assertRect(page.getByTestId("figma-overview-prepare"), { width: 441, height: 192 }, "overview-prepare");
-  await assertRect(page.getByTestId("figma-overview-test"), { width: 428, height: 192 }, "overview-test");
-  await assertRect(page.getByTestId("figma-overview-measure"), { width: 114, height: 192 }, "overview-measure");
+  const journey = await rect(page.getByTestId("overview-journey"));
+  const canvas = page.getByTestId("overview-journey-connectors");
+  await expect(canvas).toHaveAttribute("viewBox", "0 0 1054.1 199.975");
+  await expect(canvas).toHaveAttribute("preserveAspectRatio", "none");
+  await expect(canvas.locator("path")).toHaveCount(8);
+
+  const prepare = await rect(page.getByTestId("figma-overview-prepare"));
+  const testGroup = await rect(page.getByTestId("figma-overview-test"));
+  const measure = await rect(page.getByTestId("figma-overview-measure"));
+  const expectedGroupRatios = {
+    prepare: { left: 25.034 / 1054.1, width: 441 / 1054.1 },
+    test: { left: 476.356 / 1054.1, width: 428 / 1054.1 },
+    measure: { left: 914.809 / 1054.1, width: 114 / 1054.1 },
+  };
+  for (const [name, group, expected] of [
+    ["prepare", prepare, expectedGroupRatios.prepare],
+    ["test", testGroup, expectedGroupRatios.test],
+    ["measure", measure, expectedGroupRatios.measure],
+  ] as const) {
+    expect(Math.abs((group.x - journey.x) / journey.width - expected.left), `${name}.left ratio`).toBeLessThanOrEqual(0.002);
+    expect(Math.abs(group.width / journey.width - expected.width), `${name}.width ratio`).toBeLessThanOrEqual(0.002);
+    expect(group.height, `${name}.height`).toBeCloseTo(192, 0);
+  }
+  expect(prepare.x + prepare.width).toBeLessThanOrEqual(testGroup.x + 1);
+  expect(testGroup.x + testGroup.width).toBeLessThanOrEqual(measure.x + 1);
+  expect(journey.x + journey.width - (measure.x + measure.width), "right-side journey remainder").toBeLessThanOrEqual(journey.width * 0.03 + 1);
+
+  const nodes = page.locator('[data-testid^="overview-journey-node-"]');
+  await expect(nodes).toHaveCount(9);
+  const nodeGeometry = await nodes.evaluateAll((elements) => elements.map((element) => {
+    const value = element.getBoundingClientRect();
+    return { x: value.x, y: value.y, width: value.width, height: value.height, state: element.getAttribute("data-state") };
+  }));
+  expect(nodeGeometry.every((node) => Math.abs(node.width - 40) <= 1 && Math.abs(node.height - 40) <= 1), "journey node dimensions").toBe(true);
+  expect(nodeGeometry.slice(1).every(({ x }, index) => x > nodeGeometry[index].x), "journey node order").toBe(true);
+  expect(nodeGeometry.map(({ state }) => state)).toEqual(["Completed", "Completed", "Completed", "Completed", "Completed", "Skipped", "Completed", "Completed", "Completed"]);
+  await expect(page.getByTestId("overview-journey-connector-parse-chunk")).toHaveAttribute("data-state", "Completed");
+  await expect(page.getByTestId("overview-journey-glyph-chunk")).toHaveAttribute("data-state", "Completed");
+  expect(await page.getByTestId("overview-journey-glyph-chunk").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(63, 122, 85)");
+  const evaluation = nodeGeometry.at(-1);
+  expect(evaluation).toBeDefined();
+  expect(evaluation!.x + evaluation!.width / 2).toBeGreaterThanOrEqual(measure.x);
+  expect(evaluation!.x + evaluation!.width / 2).toBeLessThanOrEqual(measure.x + measure.width);
   await assertRect(page.getByTestId("figma-overview-learning-note"), { x: 288, width: 1113 }, "overview-learning-note");
-  expect(await page.locator('[data-testid^="overview-journey-node-"]').count()).toBe(9);
 }
 
 async function assertRouteGeometry(page: Page, state: VisualState) {
