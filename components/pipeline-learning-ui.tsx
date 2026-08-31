@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, CheckCircle2, Clock3, History, LoaderCircle, LockKeyhole, Play } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronDown, Clock3, History, LoaderCircle, LockKeyhole, Play } from "lucide-react";
 import { motion } from "motion/react";
 
 import { Badge } from "@/components/ui/badge";
@@ -98,7 +98,15 @@ export function RunMetadata({ run, locale }: { run: RunSummary; locale: AppLocal
 export function LearningHint({ locale, children }: { locale: AppLocale; children: React.ReactNode }) {
   const { preferences } = usePreferences();
   if (!preferences.showLearningHints) return null;
-  return <aside className="border-l-2 border-[#711f3a] bg-[#fbf4f6] px-3 py-2 text-xs leading-5 text-[#501329]" role="note"><span className="font-semibold">{locale === "tr" ? "Öğrenme ipucu: " : "Learning hint: "}</span>{children}</aside>;
+  return (
+    <details className="rounded-[10px] border border-[#f3d9e0] bg-[#fbf4f6]">
+      <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-[#501329] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#711f3a]/25">
+        <span>{locale === "tr" ? "Bu neden önemli?" : "Why this matters"}</span>
+        <ChevronDown aria-hidden="true" className="size-3.5 shrink-0 text-[#969093]" />
+      </summary>
+      <div className="border-t border-[#f3d9e0] px-3 py-2 text-xs leading-5 text-[rgba(59,13,29,0.75)]" role="note">{children}</div>
+    </details>
+  );
 }
 
 export function PipelineErrorMessage({ message }: { message: string | null | undefined }) {

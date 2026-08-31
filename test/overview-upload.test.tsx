@@ -31,6 +31,8 @@ describe("Phase 6B document ownership", () => {
     expect(screen.getByRole("heading", { name: "Build your RAG, one step at a time." })).toBeInTheDocument();
     expect(screen.getByTestId("workspace-control-plane")).toBeInTheDocument();
     expect(screen.queryByTestId("overview-lineage")).not.toBeInTheDocument();
+    expect(screen.getByTestId("pipeline-management")).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText("Manage pipeline"));
     expect(screen.getByRole("button", { name: "New pipeline" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Rename" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Delete" })).toBeVisible();

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { PreferencesProvider } from "@/components/preferences-provider";
+import { LearningHint } from "@/components/pipeline-learning-ui";
 import { SettingsScreen } from "@/components/settings-screen";
 
 const STORAGE_KEY = "rag-steplab.preferences.v2";
@@ -26,6 +27,36 @@ afterEach(() => {
 });
 
 describe("PreferencesProvider and SettingsScreen", () => {
+  it("keeps learning notes closed by default and reveals their content on demand", async () => {
+    const user = userEvent.setup();
+    render(
+      <PreferencesProvider>
+        <LearningHint locale="en">Chunk size changes retrieval precision.</LearningHint>
+      </PreferencesProvider>,
+    );
+
+    const disclosure = screen.getByText("Why this matters").closest("details");
+    expect(disclosure).not.toHaveAttribute("open");
+    expect(screen.getByRole("note")).not.toBeVisible();
+
+    await user.click(screen.getByText("Why this matters"));
+
+    expect(disclosure).toHaveAttribute("open");
+    expect(screen.getByRole("note")).toBeVisible();
+  });
+
+  it("removes learning notes when the preference is disabled", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ locale: "en", showLearningHints: false }));
+    render(
+      <PreferencesProvider>
+        <LearningHint locale="en">Hidden learning note.</LearningHint>
+      </PreferencesProvider>,
+    );
+
+    await waitFor(() => expect(screen.queryByText("Why this matters")).not.toBeInTheDocument());
+    expect(screen.queryByText("Hidden learning note.")).not.toBeInTheDocument();
+  });
+
   it("persists the selected language, updates document language, and restores it on a new route render", async () => {
     const user = userEvent.setup();
     const { unmount } = renderSettings();

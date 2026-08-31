@@ -97,7 +97,7 @@ async function assertOverviewGeometry(page: Page) {
   await assertRect(page.getByTestId("figma-overview-header"), { x: 288, y: 40, width: 1113, height: 82 }, "overview-header");
   const workspace = page.getByTestId("workspace-control-plane");
   await assertRect(workspace, { x: 288, y: 150, width: 1113 }, "overview-control-plane");
-  expect((await rect(workspace)).height, "overview workspace context height").toBeGreaterThan(220);
+  await assertRect(workspace, { height: 240.5 }, "overview-control-plane-height");
   await expect(page.getByTestId("continue-surface")).toBeVisible();
   await expect(page.getByTestId("overview-lineage")).toHaveCount(0);
   await assertRect(page.getByTestId("figma-overview-pipeline"), { x: 288, width: 1113, height: 284 }, "overview-pipeline");
@@ -174,12 +174,12 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     await assertRect(page.getByTestId("documents-page-header"), { x: 288, y: 40, width: 1113 }, "documents-header");
   } else if (state.group === "parsing") {
     await assertRect(page.getByTestId("parse-page-header"), { x: 288, y: 40, width: 1113, height: 92 }, "parse-header");
-    await assertRect(page.getByTestId("parse-document-status"), { x: 288, y: 185, width: 1113, height: 76 }, "parse-status");
-    await assertRect(page.getByTestId("parse-result-summary"), { x: 288, y: 285, width: 1113, height: 87 }, "parse-result");
+    await assertRect(page.getByTestId("parse-document-status"), { x: 288, y: 185, width: 1113, height: 64 }, "parse-status");
+    await assertRect(page.getByTestId("parse-result-summary"), { x: 288, y: 273, width: 1113, height: 103 }, "parse-result");
   } else if (state.group === "chunking") {
     await assertRect(page.getByTestId("chunking-page-header"), { x: 288, y: 40, width: 1113, height: 92 }, "chunking-header");
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 288, y: 132, width: 1113, height: 53 }, "chunking-context");
-    await assertRect(page.getByTestId("chunking-workspace"), { x: 288, y: 209, width: 1113, height: state.key === "chunking-config" ? 431 : 954 }, "chunking-workspace");
+    await assertRect(page.getByTestId("chunking-workspace"), { x: 288, y: 209, width: 1113, height: state.key === "chunking-config" ? 411 : 910 }, "chunking-workspace");
   } else if (state.group === "embeddings") {
     await assertRect(page.getByTestId("embeddings-page-header"), { x: 288, y: 40, width: 1113, height: 92 }, "embeddings-header");
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 288, y: 132, width: 1113, height: 53 }, "embeddings-context");

@@ -2,11 +2,11 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, ChevronDown, Info } from "lucide-react";
+import { ArrowRight, ChevronDown } from "lucide-react";
 import { useState } from "react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
-import { PipelineErrorMessage } from "@/components/pipeline-learning-ui";
+import { LearningHint, PipelineErrorMessage } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
 import { StatusIndicator } from "@/components/status-indicator";
 import { Button } from "@/components/ui/button";
@@ -297,6 +297,7 @@ export function OverviewScreen() {
         continueTitle: "Devam et",
         nextStep: "Sıradaki aşama",
         clearPipeline: "Pipeline seçimini kaldır",
+        managePipeline: "Pipeline'ı yönet",
         journey: "Pipeline journey",
         journeyDescription: "Seçili workspace'in build ve deney aşamalarına geçin.",
         whyMatters: "Bu neden önemli?",
@@ -325,6 +326,7 @@ export function OverviewScreen() {
         continueTitle: "Continue where you left off",
         nextStep: "Next step",
         clearPipeline: "Clear pipeline selection",
+        managePipeline: "Manage pipeline",
         journey: "Pipeline journey",
         journeyDescription: "Open the build and experiment stages for this workspace.",
         whyMatters: "Why this matters",
@@ -418,12 +420,12 @@ export function OverviewScreen() {
           <p className="mt-[6px] w-full max-w-[640px] text-sm leading-[21px] text-[#6e676a]">{labels.description}</p>
         </header>
 
-        <section className="mt-7 rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white p-5" data-testid="workspace-control-plane">
-          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-            <div className="min-w-0">
-              <p className="text-[13px] font-semibold uppercase leading-[19.5px] tracking-[0.78px] text-[#969093]">{labels.workspace}</p>
-              <p className="mt-1 text-xs leading-[18px] text-[#6e676a]">{labels.workspaceHint}</p>
-              <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2">
+        <section className="mt-7 rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white p-5 sm:min-h-[240.5px]" data-testid="workspace-control-plane">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p className="text-[13px] font-semibold uppercase leading-[19.5px] tracking-[0.78px] text-[#969093]">{labels.workspace}</p>
+            <p className="text-xs leading-[18px] text-[#6e676a]">{labels.workspaceHint}</p>
+          </div>
+          <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
                 <div className="min-w-0">
                   <label className="mb-1.5 block text-xs font-medium text-[#171416]" htmlFor="overview-document">{labels.document}</label>
                   <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
@@ -438,15 +440,18 @@ export function OverviewScreen() {
                     <SelectContent>{pipelines.map((pipeline) => <SelectItem className={selectorItemClass} key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
+            <details className="relative self-end" data-testid="pipeline-management">
+              <summary className="flex h-[42px] cursor-pointer list-none items-center justify-between gap-3 rounded-[10px] border border-[#d8d2d5] bg-white px-3 text-xs font-medium text-[#6e676a] outline-none hover:border-[#bcb5b9] hover:text-[#501329] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25">
+                <span>{labels.managePipeline}</span>
+                <ChevronDown aria-hidden="true" className="size-3.5 text-[#969093]" />
+              </summary>
+              <div className="absolute right-0 z-20 mt-2 flex w-[min(28rem,calc(100vw-4rem))] flex-wrap gap-2 rounded-[10px] border border-[#e7e2e4] bg-white p-3 shadow-lg">
+                <Button disabled={!activeDocumentId || persistenceStatus !== "available"} onClick={beginCreatePipeline} size="sm" variant="secondary">{labels.newPipeline}</Button>
+                {activePipeline ? <Button onClick={() => void selectPipeline(null)} size="sm" variant="ghost" data-testid="clear-pipeline-selection">{labels.clearPipeline}</Button> : null}
+                <Button disabled={!activePipeline} onClick={beginRenamePipeline} size="sm" variant="outline">{labels.rename}</Button>
+                <Button disabled={!activePipeline} onClick={() => { setEditing(null); setConfirmDelete(true); }} size="sm" variant="ghost">{labels.remove}</Button>
               </div>
-            </div>
-
-            <div className="flex flex-wrap gap-2 lg:justify-end">
-              <Button disabled={!activeDocumentId || persistenceStatus !== "available"} onClick={beginCreatePipeline} size="sm" variant="secondary">{labels.newPipeline}</Button>
-              {activePipeline ? <Button onClick={() => void selectPipeline(null)} size="sm" variant="ghost" data-testid="clear-pipeline-selection">{labels.clearPipeline}</Button> : null}
-              <Button disabled={!activePipeline} onClick={beginRenamePipeline} size="sm" variant="outline">{labels.rename}</Button>
-              <Button disabled={!activePipeline} onClick={() => { setEditing(null); setConfirmDelete(true); }} size="sm" variant="ghost">{labels.remove}</Button>
-            </div>
+            </details>
           </div>
 
           <div className="mt-5 grid min-w-0 gap-3 border-t border-[#e7e2e4] pt-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" data-testid="continue-surface">
@@ -510,13 +515,7 @@ export function OverviewScreen() {
           </div>
         </section>
 
-        <details className="mt-5 rounded-[12px] border-[1.712px] border-[#f3d9e0] bg-[#fbf4f6]" data-testid="figma-overview-learning-note">
-          <summary className="flex min-h-[46px] cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-[13px] font-medium text-[#501329] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#711f3a]/25">
-            <span className="flex items-center gap-2"><Info aria-hidden="true" className="size-4" />{labels.whyMatters}</span>
-            <ChevronDown aria-hidden="true" className="size-4 text-[#969093]" />
-          </summary>
-          <p className="border-t border-[#f3d9e0] px-4 py-3 text-xs leading-5 text-[rgba(59,13,29,0.75)]">{labels.whyMattersText}</p>
-        </details>
+        <div className="mt-5" data-testid="figma-overview-learning-note"><LearningHint locale={preferences.locale}>{labels.whyMattersText}</LearningHint></div>
       </div>
     </div>
   );
