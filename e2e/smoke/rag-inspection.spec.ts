@@ -104,7 +104,10 @@ test("Evaluation dataset normal cevap ve yetersiz bağlam case'lerini ayrı kont
   await page.getByRole("option", { name: "Insufficient context" }).click();
   await expect(page.getByText("Source evidence is not required.", { exact: true })).toBeVisible();
 
-  const requestPromise = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/evaluation/datasets");
+  const requestPromise = page.waitForRequest((request) => {
+    const pathname = new URL(request.url()).pathname;
+    return request.method() === "POST" && pathname.endsWith("/evaluation/datasets");
+  });
   await page.getByRole("button", { name: "Create dataset" }).click();
   const request = await requestPromise;
   const payload = request.postDataJSON() as { cases: Array<{ expectedOutcome: string; relevantElementIds: string[] }> };

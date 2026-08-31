@@ -5,8 +5,7 @@ import type {
   ParsedElementType,
 } from "@/lib/document-parse-types";
 import { getSupabaseAccessToken } from "@/lib/supabase/browser";
-
-const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
+import { resolveApiBaseUrl } from "@/lib/api-base-url";
 
 export type DocumentApiErrorCode =
   | "backend_unavailable"
@@ -42,9 +41,8 @@ type ApiErrorPayload = { error?: { code?: unknown; message?: unknown } };
 export type ParseDocumentResponse = DocumentParseResponse | ParseJobAcceptedResponse | ParseJobFailedResponse;
 
 function getApiBaseUrl() {
-  const configuredUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
-  if (configuredUrl) return configuredUrl.replace(/\/$/, "");
-  if (process.env.NODE_ENV !== "production") return DEFAULT_API_BASE_URL;
+  const apiBaseUrl = resolveApiBaseUrl(process.env.NEXT_PUBLIC_API_BASE_URL, process.env.NODE_ENV);
+  if (apiBaseUrl) return apiBaseUrl;
   throw new DocumentApiError("configuration_error", "NEXT_PUBLIC_API_BASE_URL is required in production.");
 }
 

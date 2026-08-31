@@ -44,7 +44,11 @@ RAG smoke kapıları [docs/deployment.md](../docs/deployment.md) içinde tanıml
 
 ## Çalıştırma
 
-Virtual environment ve dependency'ler bir kez kurulduktan sonra proje kökündeki `npm run dev`, frontend ile backend'i birlikte başlatır.
+Proje kökündeki `npm run dev` tek giriş noktasıdır. `.env` içindeki
+`NEXT_PUBLIC_API_BASE_URL` hosted bir API gösteriyorsa frontend'i aynı-origin
+local proxy ile bu API'ye bağlar; böylece browser CORS ayarı değiştirilmeden
+kalıcı Supabase dokümanlarına erişilir. API URL'si local ise frontend ile
+FastAPI birlikte başlatılır ve backend virtual environment gerekir.
 Local development'ta `DATABASE_URL` yoksa `LOCAL_PARSE_WORKER_ENABLED` varsayılan
 olarak açıktır ve aynı gerçek Docling worker path'i FastAPI sürecinde arka planda
 çalışır. Böylece local memory Storage/Repository ile `202 → queued → running →

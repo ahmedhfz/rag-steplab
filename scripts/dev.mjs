@@ -1,9 +1,29 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import process from "node:process";
 import { resolve } from "node:path";
 
 const projectRoot = process.cwd();
+const dotenvPath = resolve(projectRoot, ".env");
+
+function readDotenvValue(key) {
+  if (!existsSync(dotenvPath)) return "";
+
+  try {
+    const line = readFileSync(dotenvPath, "utf8")
+      .split(/\r?\n/)
+      .find((entry) => new RegExp(`^\\s*${key}\\s*=`).test(entry));
+    if (!line) return "";
+
+    const value = line.slice(line.indexOf("=") + 1).trim();
+    return value.length >= 2 && value[0] === value.at(-1) && (value[0] === "'" || value[0] === '"')
+      ? value.slice(1, -1)
+      : value;
+  } catch {
+    return "";
+  }
+}
+
 const nextCli = resolve(projectRoot, "node_modules", "next", "dist", "bin", "next");
 const backendPython = resolve(
   projectRoot,
@@ -17,7 +37,21 @@ if (!existsSync(nextCli)) {
   process.exit(1);
 }
 
-if (!existsSync(backendPython)) {
+function isRemoteApi(value) {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    const isLoopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1";
+    return (url.protocol === "http:" || url.protocol === "https:") && !isLoopback;
+  } catch {
+    return false;
+  }
+}
+
+const configuredApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || readDotenvValue("NEXT_PUBLIC_API_BASE_URL");
+const useHostedApi = isRemoteApi(configuredApiBaseUrl);
+
+if (!useHostedApi && !existsSync(backendPython)) {
   console.error("[dev] Backend virtual environment is missing. Follow backend/README.md first.");
   process.exit(1);
 }
@@ -79,16 +113,20 @@ process.on("exit", () => {
 });
 
 console.log("[dev] Starting Next.js on http://localhost:3000");
-console.log("[dev] Starting FastAPI on http://127.0.0.1:8000");
-
 startService("frontend", process.execPath, [nextCli, "dev"]);
-startService("backend", backendPython, [
-  "-m",
-  "uvicorn",
-  "app.main:app",
-  "--app-dir",
-  "backend",
-  "--reload",
-  "--port",
-  "8000",
-]);
+
+if (useHostedApi) {
+  console.log("[dev] Using the configured hosted RAG API through the local same-origin proxy.");
+} else {
+  console.log("[dev] Starting FastAPI on http://127.0.0.1:8000");
+  startService("backend", backendPython, [
+    "-m",
+    "uvicorn",
+    "app.main:app",
+    "--app-dir",
+    "backend",
+    "--reload",
+    "--port",
+    "8000",
+  ]);
+}
