@@ -230,6 +230,9 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(context).not.toHaveClass("sr-only");
     expect(screen.getByTestId("pipeline-context-document-selector")).toHaveTextContent("annual-report.pdf");
     expect(screen.getByTestId("pipeline-context-pipeline-selector")).toHaveTextContent("Structure Aware");
+    expect(screen.getByTestId("parse-workspace-controls")).toContainElement(screen.getByTestId("parse-document-status"));
+    expect(screen.getByTestId("parse-document-status")).toHaveTextContent("Parse Completed");
+    expect(screen.getByTestId("parse-reports-action")).toBeDisabled();
     expect(screen.queryByRole("navigation", { name: "Indexing lineage" })).not.toBeInTheDocument();
     expect(screen.getByTestId("parse-page-header")).toContainElement(screen.getByTestId("parse-next-action"));
     expect(screen.getByTestId("parse-next-action")).toBeDisabled();

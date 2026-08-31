@@ -174,8 +174,9 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     await assertRect(page.getByTestId("documents-page-header"), { x: 288, y: 40, width: 1113 }, "documents-header");
   } else if (state.group === "parsing") {
     await assertRect(page.getByTestId("parse-page-header"), { x: 288, y: 40, width: 1113, height: 92 }, "parse-header");
-    await assertRect(page.getByTestId("parse-document-status"), { x: 288, y: 185, width: 1113, height: 64 }, "parse-status");
-    await assertRect(page.getByTestId("parse-result-summary"), { x: 288, y: 273, width: 1113, height: 103 }, "parse-result");
+    await assertRect(page.getByTestId("parse-workspace-controls"), { x: 288, y: 144, width: 1113, height: 58 }, "parse-workspace-controls");
+    await assertRect(page.getByTestId("parse-document-status"), { x: 921, y: 144, width: 480, height: 58 }, "parse-status");
+    await assertRect(page.getByTestId("parse-result-summary"), { x: 288, y: 226, width: 1113, height: 103 }, "parse-result");
   } else if (state.group === "chunking") {
     await assertRect(page.getByTestId("chunking-page-header"), { x: 288, y: 40, width: 1113, height: 92 }, "chunking-header");
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 288, y: 132, width: 1113, height: 53 }, "chunking-context");
