@@ -56,6 +56,8 @@ async function assertStageContext(page: Page) {
 }
 
 test("UI context and CTA remain reachable without horizontal overflow at supported widths", async ({ page }) => {
+  // Production Vercel navigations can exceed the shared 20s default during a cold start.
+  page.setDefaultNavigationTimeout(60_000);
   const quality = installBrowserQualityGuards(page);
   await installSeededApi(page, { longNames: true, scenario: "complete" });
 
