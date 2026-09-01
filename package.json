@@ -8,7 +8,7 @@
     "build": "next build",
     "e2e": "playwright test --project=chromium-seeded",
     "e2e:smoke": "playwright test --project=chromium-seeded",
-    "e2e:critical": "playwright test --project=chromium-seeded --grep @critical",
+    "e2e:critical": "playwright test --project=chromium-seeded --grep \"@critical|resets its lineage and Journey state\"",
     "e2e:auth": "playwright test --project=auth",
     "e2e:full": "playwright test --project=full-rag --workers=1",
     "e2e:visual:production": "playwright test --project=figma-production",
