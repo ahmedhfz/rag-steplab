@@ -50,7 +50,7 @@ function ArtifactHistory({
   if (!runs.length) return null;
 
   return (
-    <section className="mt-10" data-testid={`${kind}-history`}>
+    <section className="mt-8" data-testid={`${kind}-history`}>
       <details className="rounded-[12px] border-[1.712px] border-[#e7e2e4] bg-white">
         <summary className="flex h-[46px] cursor-pointer list-none items-center justify-between px-4 text-[13px] font-medium text-[#171416] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#711f3a]/25 sm:px-5">
           <span>{title} ({runs.length})</span><span aria-hidden="true" className="text-[#969093]">⌄</span>
@@ -132,7 +132,9 @@ export function ChunkingScreen() {
     <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]" data-testid="chunking-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <StageHeader action={<StageNextAction disabled={!compatibleChunks.some((run) => run.id === selectedChunkRunId)} href="/embeddings" label={labels.next} reason={activeDocumentId ? labels.nextReason : labels.noDocument} testId="chunking-next-action" />} description={labels.description} eyebrow="Build" title="Chunking" />
-        <PipelineContextBar showLineage={false} />
+        <div className="mt-3 w-fit max-w-full overflow-hidden rounded-[14px] border border-[#e7e2e4] bg-white [&>[data-testid=pipeline-context-bar]]:border-b-0">
+          <PipelineContextBar showLineage={false} />
+        </div>
         <ChunkingWorkspace locale={locale} />
         <ArtifactHistory defaultId={activeDocument?.activeChunkRunId} inspectedId={inspectedChunkRunId} kind="chunk" locale={locale} onSelect={selectChunkRun} onUse={setPipelineChunkRun} runs={activeDocument?.chunkRuns.filter((run) => run.upstream.parseRunId === selectedParseRunId) ?? []} selectedId={selectedChunkRunId} title={labels.history} />
       </div>
@@ -158,7 +160,9 @@ export function EmbeddingsScreen() {
           eyebrow="Build"
           title="Embeddings"
         />
-        <PipelineContextBar showLineage={false} />
+        <div className="mt-3 w-fit max-w-full overflow-hidden rounded-[14px] border border-[#e7e2e4] bg-white [&>[data-testid=pipeline-context-bar]]:border-b-0">
+          <PipelineContextBar showLineage={false} />
+        </div>
         <EmbeddingWorkspace locale={locale} />
         <ArtifactHistory defaultId={activeDocument?.activeEmbeddingRunId} inspectedId={inspectedEmbeddingRunId} kind="embedding" locale={locale} onSelect={selectEmbeddingRun} onUse={setPipelineEmbeddingRun} runs={activeDocument?.embeddingRuns.filter((run) => run.upstream.chunkRunId === selectedChunkRunId) ?? []} selectedId={selectedEmbeddingRunId} title={labels.history} />
       </div>

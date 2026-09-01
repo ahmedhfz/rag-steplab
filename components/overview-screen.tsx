@@ -420,12 +420,12 @@ export function OverviewScreen() {
           <p className="mt-[6px] w-full max-w-[640px] text-sm leading-[21px] text-[#6e676a]">{labels.description}</p>
         </header>
 
-        <section className="mt-7 rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white p-5 sm:min-h-[240.5px]" data-testid="workspace-control-plane">
+        <section className="mt-5 rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white p-4" data-testid="workspace-control-plane">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <p className="text-[13px] font-semibold uppercase leading-[19.5px] tracking-[0.78px] text-[#969093]">{labels.workspace}</p>
             <p className="text-xs leading-[18px] text-[#6e676a]">{labels.workspaceHint}</p>
           </div>
-          <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+          <div className="mt-2.5 grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
                 <div className="min-w-0">
                   <label className="mb-1.5 block text-xs font-medium text-[#171416]" htmlFor="overview-document">{labels.document}</label>
                   <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
@@ -454,7 +454,7 @@ export function OverviewScreen() {
             </details>
           </div>
 
-          <div className="mt-5 grid min-w-0 gap-3 border-t border-[#e7e2e4] pt-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" data-testid="continue-surface">
+          <div className="mt-3.5 grid min-w-0 gap-3 border-t border-[#e7e2e4] pt-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" data-testid="continue-surface">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.66px] text-[#969093]">{labels.continueTitle}</p>

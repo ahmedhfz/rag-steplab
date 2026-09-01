@@ -283,6 +283,8 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(screen.getByTestId("chunking-next-action")).toHaveAttribute("href", "/embeddings");
     expect(screen.getAllByRole("link", { name: /Go to Embeddings/ })).toHaveLength(1);
     expect(screen.getByTestId("chunking-workspace")).toContainElement(screen.getByTestId("chunking-run-action"));
+    expect(screen.getByTestId("chunking-config-card")).toContainElement(screen.getByTestId("chunk-compact-controls"));
+    expect(screen.getByTestId("chunking-config-card")).toContainElement(screen.getByTestId("chunking-run-action"));
   });
 
   it("keeps the pipeline placeholder out of selectable domain items", () => {
