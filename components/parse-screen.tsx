@@ -70,7 +70,7 @@ export function ParseScreen() {
           <StageNextAction disabled={!parseResult} href="/chunking" label={labels.continue} reason={blocker ?? labels.nextReason} testId="parse-next-action" />
         </header>
 
-        <div className="mt-3 grid min-w-0 gap-3 lg:grid-cols-[1.294fr_1fr]" data-testid="parse-workspace-controls">
+        <div className="mt-3 grid min-w-0 gap-3 lg:grid-cols-[max-content_minmax(0,1fr)]" data-testid="parse-workspace-controls">
           <div className="min-w-0 overflow-hidden rounded-[14px] border border-[#e7e2e4] bg-white [&>[data-testid=pipeline-context-bar]]:border-b-0">
             <PipelineContextBar showLineage={false} />
           </div>
