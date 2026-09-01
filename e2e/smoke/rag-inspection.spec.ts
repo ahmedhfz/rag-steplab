@@ -8,7 +8,7 @@ test.beforeEach(async ({ page }) => {
   await installSeededApi(page);
 });
 
-test("Playground stage rail, provenance ve Source Inspector contractını gösterir", async ({ page }) => {
+test("@critical Playground stage rail, provenance ve Source Inspector contractını gösterir", async ({ page }) => {
   const quality = installBrowserQualityGuards(page);
 
   await page.goto("/playground");

@@ -45,7 +45,7 @@ Görsel toleranslar ekran grubuna göre ayrıdır:
 | Documents, Parsing, Embeddings, Playground, Evaluation, Settings | `≤4.5` | `≤8%` |
 | Chunking | `≤5.0` | `≤8%` |
 
-Önceki ortak production eşiği `MAE ≤12`, changed pixel `≤30%` idi. Figma static canonical clone gate'i de ekran bazlı sözleşmeye sahiptir; mevcut clone farkı yüksek kalan Evaluation Compare için `MAE ≤12`, changed pixel `≤10%` sınırı bilinçli olarak ayrı tutulur.
+Önceki ortak production eşiği `MAE ≤12`, changed pixel `≤30%` idi. Güncel eşikler doğrudan gerçek React route'larında uygulanır.
 
 Chunking grubundaki küçük MAE farkı, Windows'ta üretilen tracked referans ile CI/Linux Chromium arasındaki metin rasterization ve satır kayması farkını karşılar; geometri kontratı yine `±1px` olarak kalır.
 
@@ -55,8 +55,9 @@ Overview journey için desktop connector ve node X koordinatları Figma'nın `10
 
 ```bash
 npm run e2e:visual:production
-npm run e2e:visual:canonical
 ```
+
+Bu ağır suite default PR CI'a dahil değildir; GitHub Actions'ta manual `Heavy validation` → `production-visual` seçimiyle çalıştırılır.
 
 Production referanslarını yalnızca bilinçli bir baseline değişikliğinde güncelleyin:
 

@@ -222,3 +222,14 @@ Implementasyon, UI ve dokümantasyon bu yanıtları görünür kılmalıdır.
 | Docs-only (`AGENTS.md`, `README.md`, `docs/`) | Test yok; gerekirse `git diff --check` | Frontend/backend/database/modal/E2E gate'lerini çalıştırma; CI'nin docs-only classification ve always-on `secret-hygiene` kontrolü yeterlidir |
 
 Migration production apply (`supabase db push --linked --yes --skip-vault`) ve Modal/hosted E2E yalnız ilgili CI/release yetkisi ve final gate kapsamında çalıştırılır.
+
+## CI engineering policy
+
+- CI, değişikliğin blast radius'una göre yalnız ilgili doğrulamaları çalıştırır.
+- Feature branch push'ları GitHub Actions tetiklemez; PR'da tek required `CI result` context'i kullanılır.
+- Yeni test suite'i ölçülmüş gerekçe olmadan default CI'a eklenmez.
+- Heavy ML/provider/visual testler manual veya doğrudan ilgili production path'inde conditional çalışır.
+- Docling, Torch, CUDA/NVIDIA ve diğer worker ML bağımlılıkları unit/contract CI ortamına alınmaz.
+- Yeni workflow/job eklenmeden önce billable-minute etkisi ve mevcut gate ile aynı failure class'ını tekrarlayıp tekrarlamadığı değerlendirilir.
+- Native Vercel deploy'u ve mevcut Modal/Supabase release sorumlulukları GitHub Actions içinde gereksiz yere duplicate edilmez.
+- Scheduled workflow yalnız açık, ölçülebilir ve dokümante edilmiş bir gerekçeyle eklenir.

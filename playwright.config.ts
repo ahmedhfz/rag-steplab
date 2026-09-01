@@ -62,12 +62,6 @@ export default defineConfig({
       fullyParallel: false,
       use: { ...devices["Desktop Chrome"], storageState: authState, viewport: { width: 1441, height: 1041 } },
     },
-    {
-      name: "figma-canonical",
-      testMatch: /visual\/figma-canonical\.spec\.ts/,
-      fullyParallel: false,
-      use: { ...devices["Desktop Chrome"], viewport: { width: 1442, height: 1041 } },
-    },
   ],
   webServer: isLocal
     ? {

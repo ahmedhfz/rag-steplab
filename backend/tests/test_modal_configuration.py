@@ -21,15 +21,26 @@ def test_interactive_api_is_warm_in_europe_without_warming_docling_worker():
 def test_api_requirements_do_not_initialize_docling_runtime():
     backend_root = Path(modal_app.__file__).resolve().parent
     api_requirements = (backend_root / "requirements.txt").read_text(encoding="utf-8").lower()
+    ci_requirements = (backend_root / "requirements-ci.txt").read_text(encoding="utf-8").lower()
     worker_requirements = (backend_root / "requirements-worker.txt").read_text(encoding="utf-8").lower()
 
     assert "docling" not in api_requirements
     assert "torch" not in api_requirements
+    assert "requirements-worker.txt" not in ci_requirements
+    assert "docling" not in ci_requirements
+    assert "torch" not in ci_requirements
+    assert "nvidia" not in ci_requirements
     assert "docling==2.117.0" in worker_requirements
 
 
 def test_production_health_check_uses_the_routing_region_endpoint():
     repository_root = Path(__file__).resolve().parents[2]
-    workflow = (repository_root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = (repository_root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    workflow = (repository_root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 
     assert "https://ahmedhfz-dev--rag-steplab-api-api-eu.eu-west.modal.run" in workflow
+    assert 'branches: [main]' in ci_workflow
+    assert "feature/**" not in ci_workflow
+    assert "  push:" not in ci_workflow
+    assert '      - "backend/app/**"' in workflow
+    assert "backend/tests/**" not in workflow
