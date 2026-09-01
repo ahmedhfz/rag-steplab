@@ -170,6 +170,7 @@ function Probe() {
     setPipelineChunkRun,
     setPipelineEmbeddingRun,
     selectPipeline,
+    createPipeline,
     selectPersistedDocument,
     refreshEvaluationRuns,
   } = useDocumentPipeline();
@@ -202,6 +203,7 @@ function Probe() {
       <button onClick={() => void setPipelineEmbeddingRun("embedding-alt")} type="button">Use alternate embedding in pipeline</button>
       <button onClick={() => void selectPipeline("pipeline-1")} type="button">Select pipeline one</button>
       <button onClick={() => void selectPipeline("pipeline-2")} type="button">Select pipeline two</button>
+      <button onClick={() => void createPipeline("Blank pipeline")} type="button">Create blank pipeline</button>
       <button onClick={() => void refreshEvaluationRuns("dataset-1")} type="button">Refresh evaluation runs</button>
     </div>
   );
@@ -757,6 +759,48 @@ describe("Document pipeline committed state", () => {
     fireEvent.click(screen.getByRole("button", { name: "Select pipeline two" }));
     await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2"));
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents/document-old/summary"))).toHaveLength(1);
+  });
+
+  it("creates a new pipeline with empty lineage and resets the selected journey state", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
+    const detail = selectableLineageSummary();
+    const currentPipeline = namedPipeline("pipeline-1");
+    const blankPipeline = namedPipeline("pipeline-new", {
+      parseRunId: null,
+      chunkRunId: null,
+      embeddingRunId: null,
+    });
+    let createBody: Record<string, unknown> | null = null;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const respond = (payload: unknown) => Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/pipelines") && init?.method === "POST") {
+        createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return respond(blankPipeline);
+      }
+      if (url.endsWith("/documents/document-old/pipelines")) return respond([currentPipeline]);
+      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("embedding-new");
+    fireEvent.click(screen.getByRole("button", { name: "Create blank pipeline" }));
+
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-new"));
+    expect(screen.getByTestId("selected-parse")).toHaveTextContent("none");
+    expect(screen.getByTestId("selected-chunk")).toHaveTextContent("none");
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("none");
+    expect(createBody).toEqual({
+      name: "Blank pipeline",
+      parseRunId: null,
+      chunkRunId: null,
+      embeddingRunId: null,
+    });
   });
 
   it("does not extend summary freshness on cached switches and refetches after 60 seconds", async () => {

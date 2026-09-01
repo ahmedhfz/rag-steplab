@@ -1456,9 +1456,9 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     try {
       const pipeline = await createDocumentPipeline(document.id, {
         name,
-        parseRunId: selectedParseRunId,
-        chunkRunId: selectedChunkRunId,
-        embeddingRunId: selectedEmbeddingRunId,
+        parseRunId: null,
+        chunkRunId: null,
+        embeddingRunId: null,
       }, controller.signal);
       if (pipeline.documentId !== document.id) {
         throw new DocumentApiError("incompatible_lineage", "The created pipeline belongs to a different document.");
@@ -1477,7 +1477,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     } finally {
       removeControllerIfCurrent(controllersRef.current, "pipeline-create", controller);
     }
-  }, [authUserId, buildDocumentSnapshot, commitDocumentSnapshot, replaceController, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId]);
+  }, [authUserId, buildDocumentSnapshot, commitDocumentSnapshot, replaceController]);
 
   const renamePipeline = useCallback(async (pipelineId: string, name: string) => {
     const current = pipelines.find((item) => item.id === pipelineId);
