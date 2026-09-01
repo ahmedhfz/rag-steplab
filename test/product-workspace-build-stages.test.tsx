@@ -201,7 +201,7 @@ describe("Product workspace and build-stage semantic contract", () => {
     vi.clearAllMocks();
   });
 
-  it("keeps document and pipeline management in the Overview primary surface", () => {
+  it("keeps document and pipeline management available in the compact Overview disclosure", () => {
     renderScreen(<OverviewScreen />);
 
     expect(screen.getByTestId("workspace-control-plane")).toBeVisible();
@@ -211,6 +211,12 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(screen.getByTestId("continue-surface")).toBeVisible();
     expect(screen.getByTestId("overview-continue-action")).toHaveAttribute("href", "/playground");
     expect(screen.getByTestId("overview-continue-action")).toHaveTextContent("Continue to Playground");
+    const management = screen.getByTestId("pipeline-management");
+    expect(management).not.toHaveAttribute("open");
+
+    fireEvent.click(screen.getByText("Manage pipeline"));
+
+    expect(management).toHaveAttribute("open");
     expect(screen.getByRole("button", { name: "New pipeline" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Rename" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Delete" })).toBeVisible();
@@ -224,6 +230,9 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(context).not.toHaveClass("sr-only");
     expect(screen.getByTestId("pipeline-context-document-selector")).toHaveTextContent("annual-report.pdf");
     expect(screen.getByTestId("pipeline-context-pipeline-selector")).toHaveTextContent("Structure Aware");
+    expect(screen.getByTestId("parse-workspace-controls")).toContainElement(screen.getByTestId("parse-document-status"));
+    expect(screen.getByTestId("parse-document-status")).toHaveTextContent("Parse Completed");
+    expect(screen.getByTestId("parse-reports-action")).toBeDisabled();
     expect(screen.queryByRole("navigation", { name: "Indexing lineage" })).not.toBeInTheDocument();
     expect(screen.getByTestId("parse-page-header")).toContainElement(screen.getByTestId("parse-next-action"));
     expect(screen.getByTestId("parse-next-action")).toBeDisabled();
@@ -239,7 +248,9 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(screen.getByTestId("embedding-primary-result")).toHaveTextContent("12 chunks");
     expect(screen.getByTestId("embedding-primary-result")).toHaveTextContent("Selected chunk set");
     expect(screen.getByTestId("embedding-output-result")).toHaveTextContent("12 embeddings");
-    expect(screen.getByTestId("embedding-details")).toHaveTextContent("gemini");
+    expect(screen.getByTestId("embedding-result-details")).toHaveTextContent("gemini");
+    expect(screen.getByTestId("embedding-details")).not.toHaveAttribute("open");
+    expect(screen.getByTestId("embedding-details")).toHaveTextContent("Stored in pgvector");
     expect(screen.getAllByRole("link", { name: /Go to Playground/ })).toHaveLength(1);
     expect(screen.queryAllByRole("button", { name: /Go to Playground/ })).toHaveLength(0);
     expect(screen.getByTestId("embeddings-page-header")).toContainElement(screen.getByTestId("embeddings-next-action"));
@@ -272,6 +283,8 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(screen.getByTestId("chunking-next-action")).toHaveAttribute("href", "/embeddings");
     expect(screen.getAllByRole("link", { name: /Go to Embeddings/ })).toHaveLength(1);
     expect(screen.getByTestId("chunking-workspace")).toContainElement(screen.getByTestId("chunking-run-action"));
+    expect(screen.getByTestId("chunking-config-card")).toContainElement(screen.getByTestId("chunk-compact-controls"));
+    expect(screen.getByTestId("chunking-config-card")).toContainElement(screen.getByTestId("chunking-run-action"));
   });
 
   it("keeps the pipeline placeholder out of selectable domain items", () => {

@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ChunkingScreen, EmbeddingsScreen } from "@/components/pipeline-stage-screens";
@@ -7,6 +7,8 @@ import { DocumentsScreen } from "@/components/documents-screen";
 import { ParseScreen } from "@/components/parse-screen";
 import { PipelineContextBar } from "@/components/pipeline-context-bar";
 import { PreferencesProvider } from "@/components/preferences-provider";
+
+const capabilities = { embeddingModel: "gemini", embeddingDimensions: 768, generationModel: "gemini", rerankModel: "gemini", judgeModel: "gemini", embeddingFormatVersion: "v1", limits: {} };
 
 function renderWithPipeline(node: React.ReactNode) {
   return render(<PreferencesProvider><DocumentPipelineProvider>{node}</DocumentPipelineProvider></PreferencesProvider>);
@@ -31,11 +33,15 @@ describe("Phase 6B pipeline IA", () => {
     expect(screen.queryByRole("button", { name: /Parse|Reparse/i })).not.toBeInTheDocument();
   });
 
-  it("keeps Parse, Chunking, and Embeddings actions disabled with explicit upstream reasons", () => {
+  it("keeps Parse, Chunking, and Embeddings actions disabled with explicit upstream reasons", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      const payload = url.endsWith("/capabilities") ? capabilities : { items: [] };
+      return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }));
+    }));
     renderWithPipeline(<ParseScreen />);
     expect(screen.getByRole("heading", { name: "Parsing", level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Parse" })).toBeDisabled();
-    expect(screen.getByText("Select a persisted document before parsing.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText("Select a persisted document before parsing.").length).toBeGreaterThan(0));
 
     cleanup();
     renderWithPipeline(<ChunkingScreen />);

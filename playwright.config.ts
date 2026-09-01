@@ -16,7 +16,8 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
-  workers: process.env.CI ? 2 : undefined,
+  // Local Next dev server, çok sayıda paralel route transition altında gereksiz timeout üretebiliyor.
+  workers: 2,
   timeout: 45_000,
   expect: { timeout: 10_000 },
   reporter: process.env.CI

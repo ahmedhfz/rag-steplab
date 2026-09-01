@@ -62,15 +62,18 @@ test("Evaluation source picker, aggregate metrics, case diagnostics ve reload pe
 
   await page.goto("/evaluation");
   await selectSeededDocument(page);
+  const pipelineContext = page.getByTestId("pipeline-context-bar");
   const workspaceContext = page.getByTestId("evaluation-workspace-context");
-  await expect(workspaceContext).toContainText("e2e-seeded-golden.pdf");
-  await expect(workspaceContext).toContainText("Seeded indexing pipeline");
+  await expect(pipelineContext).toContainText("e2e-seeded-golden.pdf");
+  await expect(pipelineContext).toContainText("Seeded indexing pipeline");
+  await expect(workspaceContext).not.toContainText("e2e-seeded-golden.pdf");
+  await expect(workspaceContext).not.toContainText("Seeded indexing pipeline");
   await expect(workspaceContext).toContainText("e2e-seeded-golden-dataset");
   await expect(page.getByTestId("evaluation-config-summary")).toContainText("Hybrid");
   await expect(page.getByLabel("Select from parsed source elements")).toBeVisible();
   await expect(page.getByText("element-fact", { exact: true })).toHaveCount(0);
   await page.getByRole("tab", { name: "Results" }).click();
-  await expect(page.getByTestId("evaluation-results-config")).toContainText("Hybrid");
+  await expect(page.getByTestId("evaluation-config-summary")).toContainText("Hybrid");
   await expect(page.getByTestId("evaluation-retrieval-metrics")).toBeVisible();
   await expect(page.getByTestId("evaluation-answer-metrics")).toBeVisible();
   await expect(page.getByTestId("evaluation-answer-metrics")).toContainText("Abstention accuracy");
@@ -101,7 +104,10 @@ test("Evaluation dataset normal cevap ve yetersiz bağlam case'lerini ayrı kont
   await page.getByRole("option", { name: "Insufficient context" }).click();
   await expect(page.getByText("Source evidence is not required.", { exact: true })).toBeVisible();
 
-  const requestPromise = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/evaluation/datasets");
+  const requestPromise = page.waitForRequest((request) => {
+    const pathname = new URL(request.url()).pathname;
+    return request.method() === "POST" && pathname.endsWith("/evaluation/datasets");
+  });
   await page.getByRole("button", { name: "Create dataset" }).click();
   const request = await requestPromise;
   const payload = request.postDataJSON() as { cases: Array<{ expectedOutcome: string; relevantElementIds: string[] }> };

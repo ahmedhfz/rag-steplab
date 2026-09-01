@@ -52,7 +52,11 @@ Backend virtual environment ve `.env` hazırlandıktan sonra proje kökünde tek
 npm run dev
 ```
 
-Bu komut Next.js'i `http://localhost:3000`, FastAPI'yi `http://127.0.0.1:8000` üzerinde birlikte başlatır. Yalnız frontend gerektiğinde `npm run dev:frontend` kullanılabilir.
+Bu komut Next.js'i `http://localhost:3000` üzerinde başlatır. `.env` hosted bir
+`NEXT_PUBLIC_API_BASE_URL` içeriyorsa istekler local same-origin proxy üzerinden
+kalıcı API'ye gider; local API seçilmişse FastAPI de `http://127.0.0.1:8000`
+üzerinde birlikte başlatılır. Yalnız frontend gerektiğinde `npm run dev:frontend`
+kullanılabilir.
 
 Supabase → Modal → Vercel production mimarisi, async parse sözleşmesi, kaynak
 profili ve full RAG smoke adımları için

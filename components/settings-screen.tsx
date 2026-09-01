@@ -47,7 +47,7 @@ export function SettingsScreen() {
           initial={{ opacity: 0, y: 5 }}
           transition={{ duration: 0.16, ease: "easeOut" }}
         >
-          <div className="flex min-h-[84px] flex-col items-stretch justify-center gap-3 border-b-[1.712px] border-[#e7e2e4] px-6 py-4 sm:h-[84px] sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:py-0">
+          <div className="flex min-h-[72px] flex-col items-stretch justify-center gap-3 border-b border-[#e7e2e4] px-5 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
             <div className="min-w-0">
               <h2 className="text-sm font-medium leading-[21px] text-[#171416]">{copy.settings.languageTitle}</h2>
               <p className="mt-0.5 text-[13px] leading-5 text-[#6e676a]">{copy.settings.languageDescription}</p>
@@ -64,7 +64,7 @@ export function SettingsScreen() {
             </RadioGroup>
           </div>
 
-          <div className="flex h-[84px] items-center justify-between gap-6 border-b-[1.712px] border-[#e7e2e4] px-6">
+          <div className="flex min-h-[72px] items-center justify-between gap-6 border-b border-[#e7e2e4] px-5 py-3">
             <div className="min-w-0">
               <h2 className="text-sm font-medium leading-[21px] text-[#171416]">{copy.settings.hintsTitle}</h2>
               <p className="mt-0.5 text-[13px] leading-5 text-[#6e676a]">{copy.settings.hintsDescription}</p>
@@ -72,7 +72,7 @@ export function SettingsScreen() {
             <Switch aria-label={copy.settings.hintsEnabled} checked={preferences.showLearningHints} id="show-learning-hints" onCheckedChange={setShowLearningHints} />
           </div>
 
-          <div className="flex h-[84px] items-center justify-between gap-6 px-6">
+          <div className="flex min-h-[72px] items-center justify-between gap-6 px-5 py-3">
             <div className="min-w-0">
               <h2 className="text-sm font-medium leading-[21px] text-[#171416]">{copy.settings.resetTitle}</h2>
               <p className="mt-0.5 text-[13px] leading-5 text-[#6e676a]">{copy.settings.resetDescription}</p>

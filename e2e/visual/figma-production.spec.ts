@@ -96,17 +96,56 @@ async function assertOverviewGeometry(page: Page) {
   await assertRect(page.getByTestId("figma-overview-main"), { x: 248, y: 0, width: 1193 }, "overview-main");
   await assertRect(page.getByTestId("figma-overview-header"), { x: 288, y: 40, width: 1113, height: 82 }, "overview-header");
   const workspace = page.getByTestId("workspace-control-plane");
-  await assertRect(workspace, { x: 288, y: 150, width: 1113 }, "overview-control-plane");
-  expect((await rect(workspace)).height, "overview workspace context height").toBeGreaterThan(220);
+  await assertRect(workspace, { x: 288, y: 142, width: 1113 }, "overview-control-plane");
+  await assertRect(workspace, { height: 194.5 }, "overview-control-plane-height");
   await expect(page.getByTestId("continue-surface")).toBeVisible();
   await expect(page.getByTestId("overview-lineage")).toHaveCount(0);
   await assertRect(page.getByTestId("figma-overview-pipeline"), { x: 288, width: 1113, height: 284 }, "overview-pipeline");
   await assertRect(page.getByTestId("overview-journey"), { x: 309, width: 1071, height: 216 }, "overview-journey");
-  await assertRect(page.getByTestId("figma-overview-prepare"), { width: 441, height: 192 }, "overview-prepare");
-  await assertRect(page.getByTestId("figma-overview-test"), { width: 428, height: 192 }, "overview-test");
-  await assertRect(page.getByTestId("figma-overview-measure"), { width: 114, height: 192 }, "overview-measure");
+  const journey = await rect(page.getByTestId("overview-journey"));
+  const canvas = page.getByTestId("overview-journey-connectors");
+  await expect(canvas).toHaveAttribute("viewBox", "0 0 1054.1 199.975");
+  await expect(canvas).toHaveAttribute("preserveAspectRatio", "none");
+  await expect(canvas.locator("path")).toHaveCount(8);
+
+  const prepare = await rect(page.getByTestId("figma-overview-prepare"));
+  const testGroup = await rect(page.getByTestId("figma-overview-test"));
+  const measure = await rect(page.getByTestId("figma-overview-measure"));
+  const expectedGroupRatios = {
+    prepare: { left: 25.034 / 1054.1, width: 441 / 1054.1 },
+    test: { left: 476.356 / 1054.1, width: 428 / 1054.1 },
+    measure: { left: 914.809 / 1054.1, width: 114 / 1054.1 },
+  };
+  for (const [name, group, expected] of [
+    ["prepare", prepare, expectedGroupRatios.prepare],
+    ["test", testGroup, expectedGroupRatios.test],
+    ["measure", measure, expectedGroupRatios.measure],
+  ] as const) {
+    expect(Math.abs((group.x - journey.x) / journey.width - expected.left), `${name}.left ratio`).toBeLessThanOrEqual(0.002);
+    expect(Math.abs(group.width / journey.width - expected.width), `${name}.width ratio`).toBeLessThanOrEqual(0.002);
+    expect(group.height, `${name}.height`).toBeCloseTo(192, 0);
+  }
+  expect(prepare.x + prepare.width).toBeLessThanOrEqual(testGroup.x + 1);
+  expect(testGroup.x + testGroup.width).toBeLessThanOrEqual(measure.x + 1);
+  expect(journey.x + journey.width - (measure.x + measure.width), "right-side journey remainder").toBeLessThanOrEqual(journey.width * 0.03 + 1);
+
+  const nodes = page.locator('[data-testid^="overview-journey-node-"]');
+  await expect(nodes).toHaveCount(9);
+  const nodeGeometry = await nodes.evaluateAll((elements) => elements.map((element) => {
+    const value = element.getBoundingClientRect();
+    return { x: value.x, y: value.y, width: value.width, height: value.height, state: element.getAttribute("data-state") };
+  }));
+  expect(nodeGeometry.every((node) => Math.abs(node.width - 40) <= 1 && Math.abs(node.height - 40) <= 1), "journey node dimensions").toBe(true);
+  expect(nodeGeometry.slice(1).every(({ x }, index) => x > nodeGeometry[index].x), "journey node order").toBe(true);
+  expect(nodeGeometry.map(({ state }) => state)).toEqual(["Completed", "Completed", "Completed", "Completed", "Completed", "Skipped", "Completed", "Completed", "Completed"]);
+  await expect(page.getByTestId("overview-journey-connector-parse-chunk")).toHaveAttribute("data-state", "Completed");
+  await expect(page.getByTestId("overview-journey-glyph-chunk")).toHaveAttribute("data-state", "Completed");
+  expect(await page.getByTestId("overview-journey-glyph-chunk").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(63, 122, 85)");
+  const evaluation = nodeGeometry.at(-1);
+  expect(evaluation).toBeDefined();
+  expect(evaluation!.x + evaluation!.width / 2).toBeGreaterThanOrEqual(measure.x);
+  expect(evaluation!.x + evaluation!.width / 2).toBeLessThanOrEqual(measure.x + measure.width);
   await assertRect(page.getByTestId("figma-overview-learning-note"), { x: 288, width: 1113 }, "overview-learning-note");
-  expect(await page.locator('[data-testid^="overview-journey-node-"]').count()).toBe(9);
 }
 
 async function assertRouteGeometry(page: Page, state: VisualState) {
@@ -135,28 +174,42 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     await assertRect(page.getByTestId("documents-page-header"), { x: 288, y: 40, width: 1113 }, "documents-header");
   } else if (state.group === "parsing") {
     await assertRect(page.getByTestId("parse-page-header"), { x: 288, y: 40, width: 1113, height: 92 }, "parse-header");
-    await assertRect(page.getByTestId("parse-document-status"), { x: 288, y: 185, width: 1113, height: 76 }, "parse-status");
-    await assertRect(page.getByTestId("parse-result-summary"), { x: 288, y: 285, width: 1113, height: 87 }, "parse-result");
+    await assertRect(page.getByTestId("parse-workspace-controls"), { x: 288, y: 144, width: 1113, height: 58 }, "parse-workspace-controls");
+    await assertRect(page.getByTestId("parse-document-status"), { x: 858, y: 144, width: 543, height: 58 }, "parse-status");
+    await assertRect(page.getByTestId("parse-result-summary"), { x: 288, y: 226, width: 1113, height: 103 }, "parse-result");
   } else if (state.group === "chunking") {
     await assertRect(page.getByTestId("chunking-page-header"), { x: 288, y: 40, width: 1113, height: 92 }, "chunking-header");
-    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 288, y: 132, width: 1113, height: 53 }, "chunking-context");
-    await assertRect(page.getByTestId("chunking-workspace"), { x: 288, y: 209, width: 1113, height: state.key === "chunking-config" ? 431 : 954 }, "chunking-workspace");
+    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 289, y: 145, width: 556, height: 53 }, "chunking-context");
+    await assertRect(page.getByTestId("chunking-workspace"), { x: 288, y: 223, width: 1113, height: state.key === "chunking-config" ? 240 : 739 }, "chunking-workspace");
   } else if (state.group === "embeddings") {
     await assertRect(page.getByTestId("embeddings-page-header"), { x: 288, y: 40, width: 1113, height: 92 }, "embeddings-header");
-    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 288, y: 132, width: 1113, height: 53 }, "embeddings-context");
+    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 289, y: 145, width: 556, height: 53 }, "embeddings-context");
     await expect(page.getByTestId("embedding-input")).toHaveCount(0);
     const embeddingWorkspace = page.getByTestId("embeddings-workspace");
-    await assertRect(embeddingWorkspace, { x: 288, y: 209, width: 1113 }, "embeddings-workspace");
-    expect((await rect(embeddingWorkspace)).height, `${state.key}-workspace-height`).toBeGreaterThan(state.key === "embeddings-ready" ? 100 : 180);
+    await assertRect(embeddingWorkspace, { x: 288, y: 223, width: 1113 }, "embeddings-workspace");
+    expect((await rect(embeddingWorkspace)).height, `${state.key}-workspace-height`).toBeGreaterThan(state.key === "embeddings-ready" ? 60 : 150);
     await expect(page.getByTestId("embedding-lineage")).toBeVisible();
   } else if (state.group === "playground") {
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: 1193, height: 53 }, "playground-context-bar");
     await assertRect(page.getByTestId("playground-page-header"), { x: 288, y: 93, width: 1113, height: 92 }, "playground-header");
     await assertRect(page.getByTestId("playground-input"), { x: 288, y: 217, width: 1113 }, "playground-input");
+    const primaryControls = [
+      page.getByTestId("playground-mode-control"),
+      page.getByTestId("playground-top-k-control").locator(":scope > div"),
+      page.getByTestId("playground-reranker-control"),
+    ];
+    const controlRects = await Promise.all(primaryControls.map((control) => rect(control)));
+    expect(controlRects.every((control) => Math.abs(control.height - 36) <= 1), `${state.key}-primary-control-heights`).toBe(true);
+    expect(Math.max(...controlRects.map((control) => control.y)) - Math.min(...controlRects.map((control) => control.y)), `${state.key}-primary-control-alignment`).toBeLessThanOrEqual(1);
+    const rerankerSwitch = page.getByTestId("playground-reranker-control").locator('[data-slot="switch"]');
+    const switchRect = await rect(rerankerSwitch);
+    const thumbRect = await rect(rerankerSwitch.locator('[data-slot="switch-thumb"]'));
+    const expectedThumbOffset = await rerankerSwitch.getAttribute("data-state") === "checked" ? 18 : 2;
+    expect(Math.abs(thumbRect.x - switchRect.x - expectedThumbOffset), `${state.key}-reranker-thumb-offset`).toBeLessThanOrEqual(1);
     if (state.key !== "playground-empty") {
       await assertRect(page.getByTestId("playground-stage-layout"), { x: 288, width: 1113 }, "playground-stage-layout");
-      await assertRect(page.getByTestId("playground-stage-rail"), { width: 300 }, "playground-stage-rail");
-      await assertRect(page.getByTestId("playground-stage-content"), { x: 612, width: 789 }, "playground-stage-content");
+      await assertRect(page.getByTestId("playground-stage-rail"), { width: 260 }, "playground-stage-rail");
+      await assertRect(page.getByTestId("playground-stage-content"), { x: 568, width: 833 }, "playground-stage-content");
     }
   } else if (state.group === "evaluation") {
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: 1193, height: 53 }, "evaluation-context-bar");

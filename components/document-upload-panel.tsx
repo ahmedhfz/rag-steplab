@@ -55,7 +55,7 @@ export function DocumentUploadPanel() {
         aria-busy={isSubmitting}
         aria-describedby={validationError || submitError ? "document-upload-feedback" : undefined}
         className={cn(
-          "mt-[33px] flex h-[210px] w-full flex-col items-center justify-center rounded-[16px] border-[1.712px] border-dashed border-[#d8d2d5] bg-[#fbfafa] px-6 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25 focus-visible:ring-offset-2",
+          "mt-7 flex min-h-[148px] w-full flex-col items-center justify-center rounded-[16px] border-[1.712px] border-dashed border-[#d8d2d5] bg-[#fbfafa] px-6 py-6 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25 focus-visible:ring-offset-2",
           dragActive && "border-[#711f3a] bg-[#fbf4f6]",
           !isSubmitting && "cursor-pointer hover:border-[#b67b8e] hover:bg-[#fbf4f6]",
           isSubmitting && "cursor-wait",
@@ -68,10 +68,10 @@ export function DocumentUploadPanel() {
         onDrop={(event) => { event.preventDefault(); setDragActive(false); void addFile(event.dataTransfer.files?.[0]); }}
         type="button"
       >
-        <span className="grid size-12 place-items-center rounded-[14px] bg-white text-[#711f3a] shadow-[0_1px_1.5px_rgba(0,0,0,0.1),0_1px_1px_rgba(0,0,0,0.1)]">
+        <span className="grid size-10 place-items-center rounded-[12px] bg-white text-[#711f3a] shadow-[0_1px_1.5px_rgba(0,0,0,0.08)]">
           {isSubmitting ? <LoaderCircle aria-hidden="true" className="size-[22px] animate-spin" /> : <Upload aria-hidden="true" className="size-[22px]" />}
         </span>
-        <span className="mt-4 text-[15px] font-medium leading-[22.5px] text-[#171416]">
+        <span className="mt-3 text-[15px] font-medium leading-[22.5px] text-[#171416]">
           {isSubmitting
             ? `${labels.saving}${selectedFile ? ` ${selectedFile.name}` : ""}`
             : dragActive
@@ -85,7 +85,7 @@ export function DocumentUploadPanel() {
           <span className="font-medium text-[#711f3a] underline-offset-4">
             {preferences.locale === "tr" ? "dosyalarınıza göz atın" : "browse your files"}
           </span>
-          {preferences.locale === "tr" ? ". Yalnızca PDF, en fazla 50 MB." : ". PDF only, up to 50 MB."}
+          {preferences.locale === "tr" ? " · PDF · en fazla 50 MB" : " · PDF · up to 50 MB"}
         </span>
         {selectedFile && !isSubmitting ? <span className="mt-3 max-w-full truncate text-xs text-[#6e676a]">{selectedFile.name} · {formatDocumentFileSize(selectedFile.size, preferences.locale)}</span> : null}
       </button>

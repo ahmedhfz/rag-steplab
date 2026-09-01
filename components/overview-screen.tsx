@@ -2,11 +2,11 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, ChevronDown, Info } from "lucide-react";
+import { ArrowRight, ChevronDown } from "lucide-react";
 import { useState } from "react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
-import { PipelineErrorMessage } from "@/components/pipeline-learning-ui";
+import { LearningHint, PipelineErrorMessage } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
 import { StatusIndicator } from "@/components/status-indicator";
 import { Button } from "@/components/ui/button";
@@ -16,10 +16,21 @@ import { UI_COPY, type AppLocale } from "@/lib/copy";
 import { blocker, type BlockerCode } from "@/lib/blockers";
 import { buildOverviewViewModel } from "@/lib/figma-view-models";
 import type { OverviewContinuationKind } from "@/lib/figma-view-models";
+import {
+  buildJourneyConnectorPath,
+  deriveJourneyConnectorState,
+  JOURNEY_CANVAS,
+  JOURNEY_CONNECTOR_PAIRS,
+  journeyConnectorVisualForState,
+  journeyGroupPosition,
+  journeyNodePosition,
+  journeyNodeVisualForState,
+  type JourneyStepKey,
+} from "@/lib/overview-journey";
 import type { PipelineStepDefinition, PipelineStepKey, PipelineStepState } from "@/lib/rag-ui-types";
 import { cn } from "@/lib/utils";
 
-const pipelineSteps: PipelineStepDefinition[] = [
+const pipelineSteps = [
   { key: "document", icon: "document" },
   { key: "parse", icon: "parse" },
   { key: "chunk", icon: "chunk" },
@@ -29,7 +40,9 @@ const pipelineSteps: PipelineStepDefinition[] = [
   { key: "context", icon: "context" },
   { key: "generate", icon: "generate" },
   { key: "evaluate", icon: "evaluate" },
-];
+] as const satisfies readonly PipelineStepDefinition[];
+
+type JourneyPipelineStep = (typeof pipelineSteps)[number];
 
 const stageHref: Record<PipelineStepKey, string> = {
   document: "/documents",
@@ -55,18 +68,6 @@ const journeyAssets: Record<PipelineStepKey, string> = {
   context: "/assets/figma/overview/source.svg",
   generate: "/assets/figma/overview/sparkle.svg",
   evaluate: "/assets/figma/overview/evaluation1.svg",
-};
-
-const journeyPositions: Record<string, { left: number; top: number; label: "above" | "below" }> = {
-  document: { left: 62.151, top: 55.979, label: "above" },
-  parse: { left: 173.882, top: 115.977, label: "below" },
-  chunk: { left: 283.526, top: 55.979, label: "above" },
-  embed: { left: 395.256, top: 115.977, label: "below" },
-  retrieve: { left: 506.987, top: 55.979, label: "above" },
-  rerank: { left: 614.518, top: 115.977, label: "below" },
-  context: { left: 726.248, top: 55.979, label: "above" },
-  generate: { left: 835.865, top: 115.977, label: "below" },
-  evaluate: { left: 947.596, top: 55.979, label: "above" },
 };
 
 const continuationCopy: Record<AppLocale, Record<OverviewContinuationKind, { action: string; nextStep: string }>> = {
@@ -103,6 +104,64 @@ const continuationCopy: Record<AppLocale, Record<OverviewContinuationKind, { act
 const selectorTriggerClass = "h-10 min-w-0 max-w-full overflow-hidden [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]]:truncate [&_[data-slot=select-value]]:whitespace-nowrap";
 const selectorItemClass = "h-auto min-h-8 whitespace-normal break-words";
 
+function JourneyGlyph({ stepKey, state }: { stepKey: JourneyStepKey; state: PipelineStepState }) {
+  const visual = journeyNodeVisualForState(state);
+  const maskImage = `url("${journeyAssets[stepKey]}")`;
+  return (
+    <span
+      aria-hidden="true"
+      className="block size-[19px] bg-current"
+      data-state={state}
+      data-testid={`overview-journey-glyph-${stepKey}`}
+      style={{
+        backgroundColor: visual.iconColor,
+        color: visual.iconColor,
+        maskImage,
+        maskPosition: "center",
+        maskRepeat: "no-repeat",
+        maskSize: "contain",
+        WebkitMaskImage: maskImage,
+        WebkitMaskPosition: "center",
+        WebkitMaskRepeat: "no-repeat",
+        WebkitMaskSize: "contain",
+      }}
+    />
+  );
+}
+
+function JourneyConnectors({ stateFor }: { stateFor: (step: JourneyStepKey) => PipelineStepState }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className="pointer-events-none absolute left-0 top-px z-[1] h-[199.975px] w-full overflow-visible"
+      data-testid="overview-journey-connectors"
+      height={JOURNEY_CANVAS.height}
+      preserveAspectRatio="none"
+      viewBox={`0 0 ${JOURNEY_CANVAS.width} ${JOURNEY_CANVAS.height}`}
+      width="100%"
+    >
+      {JOURNEY_CONNECTOR_PAIRS.map(({ destination, source }) => {
+        const state = deriveJourneyConnectorState(stateFor(source), stateFor(destination));
+        const visual = journeyConnectorVisualForState(state);
+        return (
+          <path
+            d={buildJourneyConnectorPath(source, destination)}
+            data-state={state}
+            data-testid={`overview-journey-connector-${source}-${destination}`}
+            fill="none"
+            key={`${source}-${destination}`}
+            stroke={visual.color}
+            strokeLinecap="round"
+            strokeOpacity={visual.opacity}
+            strokeWidth={visual.width}
+            vectorEffect="non-scaling-stroke"
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
 function JourneyNode({
   href,
   labels,
@@ -114,22 +173,24 @@ function JourneyNode({
   labels: Record<PipelineStepKey, string>;
   reason: string | null;
   state: PipelineStepState;
-  step: PipelineStepDefinition;
+  step: JourneyPipelineStep;
 }) {
-  const position = journeyPositions[step.key];
+  const position = journeyNodePosition(step.key);
+  const visual = journeyNodeVisualForState(state);
   const completed = state === "Completed";
-  const active = state === "Ready" || state === "Processing" || state === "Error";
   const content = (
     <>
       <span
-        className={cn(
-          "relative grid size-10 place-items-center rounded-[10px] border bg-white transition-colors",
-          completed && "border-transparent bg-[#eef4ef]",
-          active && "border-[#e3a9b9] bg-[#f3d9e0]",
-          state === "Locked" && "opacity-65",
-        )}
+        className="relative grid size-10 place-items-center rounded-[10px] border transition-colors"
+        data-state={state}
+        style={{
+          backgroundColor: visual.backgroundColor,
+          borderColor: visual.borderColor,
+          color: visual.iconColor,
+          opacity: visual.opacity,
+        }}
       >
-        <Image alt="" height={19} src={journeyAssets[step.key]} width={19} />
+        <JourneyGlyph state={state} stepKey={step.key} />
         {completed ? (
           <span className="absolute -right-1 -top-1 grid size-3.5 place-items-center rounded-full bg-[#3f7a55]">
             <Image alt="" height={9} src="/assets/figma/overview/check.svg" width={9} />
@@ -154,11 +215,11 @@ function JourneyNode({
   );
   const style = { left: position.left, top: position.top };
   return reason ? (
-    <div aria-disabled="true" className={className} data-testid={`overview-journey-node-${step.key}`} style={style}>
+    <div aria-disabled="true" className={className} data-state={state} data-testid={`overview-journey-node-${step.key}`} style={style}>
       {content}
     </div>
   ) : (
-    <Link className={className} data-testid={`overview-journey-node-${step.key}`} href={href} style={style}>
+    <Link className={className} data-state={state} data-testid={`overview-journey-node-${step.key}`} href={href} style={style}>
       {content}
     </Link>
   );
@@ -236,6 +297,7 @@ export function OverviewScreen() {
         continueTitle: "Devam et",
         nextStep: "Sıradaki aşama",
         clearPipeline: "Pipeline seçimini kaldır",
+        managePipeline: "Pipeline'ı yönet",
         journey: "Pipeline journey",
         journeyDescription: "Seçili workspace'in build ve deney aşamalarına geçin.",
         whyMatters: "Bu neden önemli?",
@@ -264,6 +326,7 @@ export function OverviewScreen() {
         continueTitle: "Continue where you left off",
         nextStep: "Next step",
         clearPipeline: "Clear pipeline selection",
+        managePipeline: "Manage pipeline",
         journey: "Pipeline journey",
         journeyDescription: "Open the build and experiment stages for this workspace.",
         whyMatters: "Why this matters",
@@ -357,12 +420,12 @@ export function OverviewScreen() {
           <p className="mt-[6px] w-full max-w-[640px] text-sm leading-[21px] text-[#6e676a]">{labels.description}</p>
         </header>
 
-        <section className="mt-7 rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white p-5" data-testid="workspace-control-plane">
-          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-            <div className="min-w-0">
-              <p className="text-[13px] font-semibold uppercase leading-[19.5px] tracking-[0.78px] text-[#969093]">{labels.workspace}</p>
-              <p className="mt-1 text-xs leading-[18px] text-[#6e676a]">{labels.workspaceHint}</p>
-              <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2">
+        <section className="mt-5 rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white p-4" data-testid="workspace-control-plane">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p className="text-[13px] font-semibold uppercase leading-[19.5px] tracking-[0.78px] text-[#969093]">{labels.workspace}</p>
+            <p className="text-xs leading-[18px] text-[#6e676a]">{labels.workspaceHint}</p>
+          </div>
+          <div className="mt-2.5 grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
                 <div className="min-w-0">
                   <label className="mb-1.5 block text-xs font-medium text-[#171416]" htmlFor="overview-document">{labels.document}</label>
                   <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
@@ -377,18 +440,21 @@ export function OverviewScreen() {
                     <SelectContent>{pipelines.map((pipeline) => <SelectItem className={selectorItemClass} key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
+            <details className="relative self-end" data-testid="pipeline-management">
+              <summary className="flex h-[42px] cursor-pointer list-none items-center justify-between gap-3 rounded-[10px] border border-[#d8d2d5] bg-white px-3 text-xs font-medium text-[#6e676a] outline-none hover:border-[#bcb5b9] hover:text-[#501329] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25">
+                <span>{labels.managePipeline}</span>
+                <ChevronDown aria-hidden="true" className="size-3.5 text-[#969093]" />
+              </summary>
+              <div className="absolute right-0 z-20 mt-2 flex w-[min(28rem,calc(100vw-4rem))] flex-wrap gap-2 rounded-[10px] border border-[#e7e2e4] bg-white p-3 shadow-lg">
+                <Button disabled={!activeDocumentId || persistenceStatus !== "available"} onClick={beginCreatePipeline} size="sm" variant="secondary">{labels.newPipeline}</Button>
+                {activePipeline ? <Button onClick={() => void selectPipeline(null)} size="sm" variant="ghost" data-testid="clear-pipeline-selection">{labels.clearPipeline}</Button> : null}
+                <Button disabled={!activePipeline} onClick={beginRenamePipeline} size="sm" variant="outline">{labels.rename}</Button>
+                <Button disabled={!activePipeline} onClick={() => { setEditing(null); setConfirmDelete(true); }} size="sm" variant="ghost">{labels.remove}</Button>
               </div>
-            </div>
-
-            <div className="flex flex-wrap gap-2 lg:justify-end">
-              <Button disabled={!activeDocumentId || persistenceStatus !== "available"} onClick={beginCreatePipeline} size="sm" variant="secondary">{labels.newPipeline}</Button>
-              {activePipeline ? <Button onClick={() => void selectPipeline(null)} size="sm" variant="ghost" data-testid="clear-pipeline-selection">{labels.clearPipeline}</Button> : null}
-              <Button disabled={!activePipeline} onClick={beginRenamePipeline} size="sm" variant="outline">{labels.rename}</Button>
-              <Button disabled={!activePipeline} onClick={() => { setEditing(null); setConfirmDelete(true); }} size="sm" variant="ghost">{labels.remove}</Button>
-            </div>
+            </details>
           </div>
 
-          <div className="mt-5 grid min-w-0 gap-3 border-t border-[#e7e2e4] pt-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" data-testid="continue-surface">
+          <div className="mt-3.5 grid min-w-0 gap-3 border-t border-[#e7e2e4] pt-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" data-testid="continue-surface">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.66px] text-[#969093]">{labels.continueTitle}</p>
@@ -436,10 +502,10 @@ export function OverviewScreen() {
           <div className="relative mt-2 w-full overflow-hidden" data-testid="overview-journey">
             <div className="relative hidden h-[216px] w-full pt-3 min-[1440px]:block" data-testid="overview-journey-desktop">
               <div className="relative h-[200px] w-full">
-                <div className="absolute left-[25.034px] top-1 h-[192px] w-[441px] rounded-[14px] border-[1.712px] border-[rgba(231,226,228,0.6)] bg-[#fbfafb]" data-testid="figma-overview-prepare"><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.knowledge}</span></div>
-                <div className="absolute left-[476.356px] top-1 h-[192px] w-[428px] rounded-[14px] border-[1.712px] border-[rgba(231,226,228,0.6)] bg-[#fbfafb]" data-testid="figma-overview-test"><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.query}</span></div>
-                <div className="absolute left-[914.809px] top-1 h-[192px] w-[114px] rounded-[14px] border-[1.712px] border-solid border-[rgba(231,226,228,0.6)] bg-[rgba(251,244,246,0.6)]" data-testid="figma-overview-measure"><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.quality}</span></div>
-                <Image alt="" className="pointer-events-none absolute left-[-0.05px] top-px h-[199.975px] w-[1054.1px] max-w-none" height={200} priority src="/assets/figma/overview/icon.svg" width={1054} />
+                <div className="absolute top-1 h-[192px] rounded-[14px] border-[1.712px] border-[rgba(231,226,228,0.6)] bg-[#fbfafb]" data-testid="figma-overview-prepare" style={journeyGroupPosition("prepare")}><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.knowledge}</span></div>
+                <div className="absolute top-1 h-[192px] rounded-[14px] border-[1.712px] border-[rgba(231,226,228,0.6)] bg-[#fbfafb]" data-testid="figma-overview-test" style={journeyGroupPosition("test")}><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.query}</span></div>
+                <div className="absolute top-1 h-[192px] rounded-[14px] border-[1.712px] border-solid border-[rgba(231,226,228,0.6)] bg-[rgba(251,244,246,0.6)]" data-testid="figma-overview-measure" style={journeyGroupPosition("measure")}><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.quality}</span></div>
+                <JourneyConnectors stateFor={(step) => pipelineState[step]} />
                 {pipelineSteps.map((step) => <JourneyNode href={stageHref[step.key]} key={step.key} labels={journeyLabels} reason={lockedReason(step.key)} state={pipelineState[step.key]} step={step} />)}
               </div>
             </div>
@@ -449,13 +515,7 @@ export function OverviewScreen() {
           </div>
         </section>
 
-        <details className="mt-5 rounded-[12px] border-[1.712px] border-[#f3d9e0] bg-[#fbf4f6]" data-testid="figma-overview-learning-note">
-          <summary className="flex min-h-[46px] cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-[13px] font-medium text-[#501329] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#711f3a]/25">
-            <span className="flex items-center gap-2"><Info aria-hidden="true" className="size-4" />{labels.whyMatters}</span>
-            <ChevronDown aria-hidden="true" className="size-4 text-[#969093]" />
-          </summary>
-          <p className="border-t border-[#f3d9e0] px-4 py-3 text-xs leading-5 text-[rgba(59,13,29,0.75)]">{labels.whyMattersText}</p>
-        </details>
+        <div className="mt-5" data-testid="figma-overview-learning-note"><LearningHint locale={preferences.locale}>{labels.whyMattersText}</LearningHint></div>
       </div>
     </div>
   );

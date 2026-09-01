@@ -61,6 +61,7 @@ describe("EvaluationScreen", () => {
     return user.click(screen.getByRole("tab", { name: "Results" })).then(() => {
       expect(screen.getByRole("tab", { name: "Results" })).toHaveAttribute("aria-selected", "true");
       expect(screen.getByRole("heading", { name: "No evaluation data yet" })).toBeInTheDocument();
+      expect(screen.getByTestId("evaluation-reranker-control")).toHaveTextContent("Off");
       expect(screen.getByRole("button", { name: "Run evaluation" })).toBeDisabled();
     });
   });

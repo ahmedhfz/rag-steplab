@@ -42,8 +42,7 @@ import type {
   ValidatedCitation,
 } from "@/lib/rag-api-types";
 import { getSupabaseAccessToken } from "@/lib/supabase/browser";
-
-const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
+import { resolveApiBaseUrl } from "@/lib/api-base-url";
 
 type DocumentParseResponseWithPersistence = DocumentParseResponse & {
   documentId?: string | null;
@@ -56,9 +55,8 @@ type DocumentParseResponseWithPersistence = DocumentParseResponse & {
 type JsonObject = Record<string, unknown>;
 
 function getApiBaseUrl() {
-  const configuredUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
-  if (configuredUrl) return configuredUrl.replace(/\/$/, "");
-  if (process.env.NODE_ENV !== "production") return DEFAULT_API_BASE_URL;
+  const apiBaseUrl = resolveApiBaseUrl(process.env.NEXT_PUBLIC_API_BASE_URL, process.env.NODE_ENV);
+  if (apiBaseUrl) return apiBaseUrl;
   throw new DocumentApiError("configuration_error", "NEXT_PUBLIC_API_BASE_URL is required in production.");
 }
 

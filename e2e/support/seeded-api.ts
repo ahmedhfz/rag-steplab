@@ -452,7 +452,9 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    const pathname = url.pathname;
+    const pathname = url.pathname.startsWith("/api/rag/")
+      ? url.pathname.slice("/api/rag".length)
+      : url.pathname;
     const method = request.method();
     const seededState = scenarioState(scenario, embeddingAvailable);
     const current = options.longNames

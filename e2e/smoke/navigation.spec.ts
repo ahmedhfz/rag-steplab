@@ -58,7 +58,7 @@ test("seeded state reload sonrası korunur ve responsive gezinme çalışır", a
   await page.screenshot({ path: "output/playwright/responsive-shell/documents-390.png", fullPage: true });
 
   await page.goto("/settings");
-  const languageDescription = page.getByText("Choose the language used across the interface.");
+  const languageDescription = page.getByText("Interface language.");
   const languageControl = page.getByRole("radiogroup", { name: "Language" });
   const descriptionBox = await languageDescription.boundingBox();
   const languageControlBox = await languageControl.boundingBox();
