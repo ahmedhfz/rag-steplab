@@ -178,3 +178,27 @@ test("Overview journey keeps state semantics and responsive desktop geometry", a
 
   quality.assertClean();
 });
+
+test("Creating a pipeline resets its lineage and Journey state", async ({ page }) => {
+  const quality = installBrowserQualityGuards(page);
+  await installSeededApi(page, { scenario: "complete" });
+  await page.setViewportSize({ width: 1441, height: 900 });
+  await page.goto("/parse", { waitUntil: "domcontentloaded" });
+  await selectSeededDocument(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("overview-journey-desktop")).toBeVisible();
+  await expect(page.getByTestId("overview-pipeline-selector")).toContainText("Seeded indexing pipeline");
+
+  await page.getByTestId("pipeline-management").locator("summary").click();
+  await page.getByRole("button", { name: "New pipeline" }).click();
+  await page.getByPlaceholder("Pipeline name").fill("Fresh pipeline");
+  await page.getByRole("button", { name: "Save" }).click();
+
+  await expect(page.getByTestId("overview-pipeline-selector")).toContainText("Fresh pipeline");
+  const states = await page.locator('[data-testid^="overview-journey-node-"]').evaluateAll(
+    (elements) => elements.map((element) => element.getAttribute("data-state")),
+  );
+  expect(states).toEqual(["Completed", "Ready", "Locked", "Locked", "Locked", "Locked", "Locked", "Locked", "Locked"]);
+  await expect(page.getByTestId("overview-continue-action")).toHaveAttribute("href", "/parse");
+  quality.assertClean();
+});

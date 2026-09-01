@@ -478,7 +478,23 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
     if (pathname === "/documents" && method === "GET") return json(route, { items: [current.document] });
     if (pathname === "/documents" && method === "POST") return json(route, { document: current.document, reusedDocument: true }, 200);
     if (pathname === `/documents/${documentId}/summary`) return json(route, current.summary);
-    if (pathname === `/documents/${documentId}/pipelines`) return json(route, [current.pipeline]);
+    if (pathname === `/documents/${documentId}/pipelines` && method === "POST") {
+      const input = request.postDataJSON() as { name: string; parseRunId?: string | null; chunkRunId?: string | null; embeddingRunId?: string | null };
+      if (input.parseRunId !== null || input.chunkRunId !== null || input.embeddingRunId !== null) {
+        return json(route, { error: { code: "lineage_not_reset", message: "A new pipeline must start with empty lineage." } }, 422);
+      }
+      return json(route, {
+        ...current.pipeline,
+        id: "e2e-seeded-new-pipeline",
+        name: input.name,
+        parseRunId: null,
+        chunkRunId: null,
+        embeddingRunId: null,
+        revision: 1,
+        isDefault: false,
+      }, 201);
+    }
+    if (pathname === `/documents/${documentId}/pipelines` && method === "GET") return json(route, [current.pipeline]);
     if (pathname === `/document-pipelines/${pipelineId}` && method === "PATCH") {
       const input = request.postDataJSON() as { parseRunId?: string | null; chunkRunId?: string | null; embeddingRunId?: string | null };
       pipelineRevision += 1;
