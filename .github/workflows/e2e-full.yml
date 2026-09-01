@@ -73,6 +73,7 @@ jobs:
         run: npm run e2e:cleanup
 
       - name: Find exact Vercel deployment
+        if: inputs.suite != 'full-rag'
         id: deployment
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -80,7 +81,7 @@ jobs:
           DEPLOYMENT_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Preview' }}
         run: node scripts/e2e.mjs wait-deployment
 
-      - name: Run four-test critical smoke
+      - name: Run critical smoke suite
         if: inputs.suite == 'critical-smoke'
         env:
           E2E_BASE_URL: ${{ steps.deployment.outputs.url }}

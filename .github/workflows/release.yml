@@ -53,8 +53,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git grep -nE 'AIza[0-9A-Za-z_-]{20,}|(ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{10,}|postgres(ql)?://[^[:space:]]+:[^@[:space:]]+@' -- .; then
-            echo "A secret-shaped value was found in tracked files."
+          if secret_files="$(git grep -lE 'AIza[0-9A-Za-z_-]{20,}|(ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{10,}|postgres(ql)?://[^[:space:]]+:[^@[:space:]]+@' -- .)"; then
+            echo "::error::A secret-shaped value was found in tracked files (content is intentionally not printed)."
+            printf '%s\n' "$secret_files"
             exit 1
           fi
 
@@ -145,6 +146,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in {1..12}; do
+            echo "Checking Modal API health (attempt $attempt/12)."
             docs_status="$(curl --silent --output /dev/null --write-out '%{http_code}' "$MODAL_API_URL/openapi.json")"
             protected_status="$(curl --silent --output /dev/null --write-out '%{http_code}' "$MODAL_API_URL/capabilities")"
             if curl --fail --silent --show-error "$MODAL_API_URL/health" >/dev/null && curl --fail --silent --show-error "$MODAL_API_URL/ready" >/dev/null && [ "$docs_status" = "404" ] && [ "$protected_status" = "401" ]; then

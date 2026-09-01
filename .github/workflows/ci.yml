@@ -44,10 +44,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git grep -nE 'AIza[0-9A-Za-z_-]{20,}|(ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{10,}|postgres(ql)?://[^[:space:]]+:[^@[:space:]]+@' -- .; then
-            echo "A secret-shaped value was found in tracked files."
+          if secret_files="$(git grep -lE 'AIza[0-9A-Za-z_-]{20,}|(ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{10,}|postgres(ql)?://[^[:space:]]+:[^@[:space:]]+@' -- .)"; then
+            echo "::error::A secret-shaped value was found in tracked files (content is intentionally not printed)."
+            printf '%s\n' "$secret_files"
             exit 1
           fi
+
+      - name: Validate GitHub Actions workflows
+        if: steps.classify.outputs.workflow_config == 'true'
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color
 
       - name: Set up Node.js
         if: steps.classify.outputs.node == 'true'
@@ -130,7 +137,7 @@ jobs:
         run: supabase stop --project-id rag-steplab --no-backup
 
       - name: Restore Playwright Chromium
-        if: steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true'
+        if: steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true' || steps.classify.outputs.production_visual == 'true'
         id: playwright-cache
         uses: actions/cache@v4
         with:
@@ -138,15 +145,15 @@ jobs:
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install Chromium system dependencies
-        if: (steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true') && steps.playwright-cache.outputs.cache-hit == 'true'
+        if: (steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true' || steps.classify.outputs.production_visual == 'true') && steps.playwright-cache.outputs.cache-hit == 'true'
         run: npx playwright install-deps chromium
 
       - name: Install Chromium and system dependencies
-        if: (steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true') && steps.playwright-cache.outputs.cache-hit != 'true'
+        if: (steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true' || steps.classify.outputs.production_visual == 'true') && steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
 
       - name: Wait for exact Vercel Preview deployment
-        if: steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true'
+        if: steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true' || steps.classify.outputs.production_visual == 'true'
         id: deployment
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -160,14 +167,20 @@ jobs:
           E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
         run: npm run e2e:auth
 
-      - name: Run four-test critical smoke
+      - name: Run critical smoke suite
         if: steps.classify.outputs.critical_e2e == 'true'
         env:
           E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
         run: npm run e2e:critical
 
+      - name: Run production visual suite
+        if: steps.classify.outputs.production_visual == 'true'
+        env:
+          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
+        run: npm run e2e:visual:production
+
       - name: Upload Playwright failure artifacts
-        if: failure() && (steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true')
+        if: failure() && (steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true' || steps.classify.outputs.production_visual == 'true')
         uses: actions/upload-artifact@v4
         with:
           name: playwright-pr-${{ github.run_id }}-${{ github.run_attempt }}
