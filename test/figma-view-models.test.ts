@@ -83,7 +83,7 @@ describe("Figma presentation state adapters", () => {
       selectedParseRunId: null,
     });
 
-    expect(empty.pipelineState.document).toBe("Not started");
+    expect(empty.pipelineState.document).toBe("Ready");
     expect(empty.pipelineState.parse).toBe("Locked");
     expect(empty.continuation).toEqual({ href: "/documents", kind: "document", state: "Ready" });
 
@@ -119,5 +119,30 @@ describe("Figma presentation state adapters", () => {
     });
     expect(staleChunk.pipelineState.chunk).toBe("Stale");
     expect(staleChunk.continuation).toEqual({ href: "/chunking", kind: "chunk-error", state: "Stale" });
+  });
+
+  it("keeps only Embeddings Ready when retrieval is technically available downstream", () => {
+    const embeddingsReady = buildOverviewViewModel({
+      ...overviewInput(),
+      embedding: undefined,
+      embeddingStatus: "ready",
+      evaluation: undefined,
+      experiment: undefined,
+      hasEvaluationDataset: false,
+      selectedEmbeddingRunId: null,
+    });
+
+    expect(embeddingsReady.pipelineState).toMatchObject({
+      document: "Completed",
+      parse: "Completed",
+      chunk: "Completed",
+      embed: "Ready",
+      retrieve: "Locked",
+      rerank: "Locked",
+      context: "Locked",
+      generate: "Locked",
+      evaluate: "Locked",
+    });
+    expect(embeddingsReady.continuation).toEqual({ href: "/embeddings", kind: "embedding", state: "Ready" });
   });
 });

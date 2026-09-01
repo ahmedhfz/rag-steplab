@@ -202,3 +202,21 @@ test("Creating a pipeline resets its lineage and Journey state", async ({ page }
   await expect(page.getByTestId("overview-continue-action")).toHaveAttribute("href", "/parse");
   quality.assertClean();
 });
+
+test("@critical Journey highlights only the next actionable incomplete step", async ({ page }) => {
+  const quality = installBrowserQualityGuards(page);
+  await installSeededApi(page, { scenario: "embeddings-ready" });
+  await page.setViewportSize({ width: 1441, height: 900 });
+  await page.goto("/parse", { waitUntil: "domcontentloaded" });
+  await selectSeededDocument(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  await expect(page.getByTestId("overview-continue-action")).toHaveAttribute("href", "/embeddings");
+  const states = await page.locator('[data-testid^="overview-journey-node-"]').evaluateAll(
+    (elements) => elements.map((element) => element.getAttribute("data-state")),
+  );
+  expect(states).toEqual(["Completed", "Completed", "Completed", "Ready", "Locked", "Locked", "Locked", "Locked", "Locked"]);
+  await expect(page.getByTestId("overview-journey-connector-chunk-embed")).toHaveAttribute("data-state", "Ready");
+  await expect(page.getByTestId("overview-journey-connector-embed-retrieve")).toHaveAttribute("data-state", "Locked");
+  quality.assertClean();
+});
