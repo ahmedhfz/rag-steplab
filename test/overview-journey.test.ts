@@ -11,6 +11,7 @@ import {
   JOURNEY_STAGE_KEYS,
   journeyNodeVisualForState,
   mapJourneyX,
+  normalizeJourneyPipelineState,
   normalizeJourneyX,
 } from "@/lib/overview-journey";
 import type { PipelineStepState } from "@/lib/rag-ui-types";
@@ -27,6 +28,51 @@ const allStates: PipelineStepState[] = [
 ];
 
 describe("Overview journey presentation", () => {
+  it("highlights only the first actionable Ready step while preserving completed work", () => {
+    const normalized = normalizeJourneyPipelineState({
+      document: "Completed",
+      parse: "Completed",
+      chunk: "Completed",
+      embed: "Ready",
+      index: "Ready",
+      retrieve: "Ready",
+      rerank: "Locked",
+      context: "Locked",
+      generate: "Locked",
+      evaluate: "Ready",
+    });
+
+    expect(normalized).toMatchObject({
+      document: "Completed",
+      parse: "Completed",
+      chunk: "Completed",
+      embed: "Ready",
+      index: "Ready",
+      retrieve: "Locked",
+      evaluate: "Locked",
+    });
+  });
+
+  it("keeps real downstream processing and error signals visible", () => {
+    const normalized = normalizeJourneyPipelineState({
+      document: "Completed",
+      parse: "Stale",
+      chunk: "Ready",
+      embed: "Locked",
+      index: "Locked",
+      retrieve: "Locked",
+      rerank: "Locked",
+      context: "Locked",
+      generate: "Error",
+      evaluate: "Processing",
+    });
+
+    expect(normalized.parse).toBe("Stale");
+    expect(normalized.chunk).toBe("Locked");
+    expect(normalized.generate).toBe("Error");
+    expect(normalized.evaluate).toBe("Processing");
+  });
+
   it.each([
     ["Completed", "Completed", "Completed"],
     ["Completed", "Ready", "Ready"],

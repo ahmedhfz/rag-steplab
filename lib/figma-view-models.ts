@@ -1,4 +1,5 @@
 import type { ExperimentSummary, RunStatus, RunSummary } from "@/lib/rag-api-types";
+import { normalizeJourneyPipelineState } from "@/lib/overview-journey";
 import type { PipelineStepKey, PipelineStepState } from "@/lib/rag-ui-types";
 
 export type PipelineOperationStatusLike = "locked" | "ready" | "processing" | "completed" | "skipped" | "error" | "stale";
@@ -128,19 +129,18 @@ export function buildOverviewViewModel({
   else if (!selectedEmbeddingRunId || embeddingState === "Ready") continuation = { href: "/embeddings", kind: "embedding", state: "Ready" };
   else continuation = { href: "/playground", kind: "playground", state: "Ready" };
 
-  return {
-    continuation,
-    pipelineState: {
-      document: hasDocument ? "Completed" : "Not started",
-      parse: parseState,
-      chunk: chunkState,
-      embed: embeddingState,
-      index: embeddingState,
-      retrieve: experimentStageToStepState(experiment, "retrieval", Boolean(selectedChunkRunId)),
-      rerank: experimentStageToStepState(experiment, "reranking", Boolean(selectedChunkRunId)),
-      context: experimentStageToStepState(experiment, "context", Boolean(selectedChunkRunId)),
-      generate: experimentStageToStepState(experiment, "generation", Boolean(selectedChunkRunId)),
-      evaluate: evaluationState,
-    },
-  };
+  const pipelineState = normalizeJourneyPipelineState({
+    document: hasDocument ? "Completed" : "Not started",
+    parse: parseState,
+    chunk: chunkState,
+    embed: embeddingState,
+    index: embeddingState,
+    retrieve: experimentStageToStepState(experiment, "retrieval", Boolean(selectedChunkRunId)),
+    rerank: experimentStageToStepState(experiment, "reranking", Boolean(selectedChunkRunId)),
+    context: experimentStageToStepState(experiment, "context", Boolean(selectedChunkRunId)),
+    generate: experimentStageToStepState(experiment, "generation", Boolean(selectedChunkRunId)),
+    evaluate: evaluationState,
+  });
+
+  return { continuation, pipelineState };
 }

@@ -24,6 +24,33 @@ export const JOURNEY_STAGE_KEYS = [
   "evaluate",
 ] as const satisfies readonly JourneyStepKey[];
 
+const ACTIVE_JOURNEY_STATES = new Set<PipelineStepState>(["Ready", "Processing", "Error", "Stale", "Not started"]);
+
+export function normalizeJourneyPipelineState(
+  pipelineState: Record<PipelineStepKey, PipelineStepState>,
+): Record<PipelineStepKey, PipelineStepState> {
+  const normalized = { ...pipelineState };
+  let activeStepFound = false;
+
+  for (const step of JOURNEY_STAGE_KEYS) {
+    const state = pipelineState[step];
+    if (!ACTIVE_JOURNEY_STATES.has(state)) continue;
+
+    if (!activeStepFound) {
+      activeStepFound = true;
+      if (state === "Not started") normalized[step] = "Ready";
+      continue;
+    }
+
+    // Aşağı akıştaki Ready durumları teknik erişilebilirliği gösterir.
+    // Journey ise öğrenme sırasındaki yalnız ilk eyleme açık adımı vurgular.
+    if (state === "Ready" || state === "Not started") normalized[step] = "Locked";
+  }
+
+  normalized.index = normalized.embed;
+  return normalized;
+}
+
 export type JourneyAnchor = {
   x: number;
   y: number;
