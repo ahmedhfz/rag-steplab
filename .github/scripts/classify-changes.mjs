@@ -1,142 +1,189 @@
 import assert from "node:assert/strict";
 
-const categories = ["frontend", "backend", "database", "modal", "e2e", "auth_e2e", "docs_only", "full_ci"];
+const categories = [
+  "node",
+  "frontend",
+  "frontend_full_tests",
+  "backend",
+  "database",
+  "migration",
+  "auth_e2e",
+  "critical_e2e",
+  "playwright_list",
+  "modal_deploy",
+  "worker_provider",
+  "docs_only",
+];
 
-function classify(paths, forceFullCi = false) {
-  const result = {
-    frontend: false,
-    backend: false,
-    database: false,
-    modal: false,
-    e2e: false,
-    auth_e2e: false,
-    docs_only: false,
-    full_ci: forceFullCi,
-  };
-  let docs = paths.length > 0;
+const frontendRoots = ["app/", "components/", "lib/", "test/", "public/"];
+const frontendConfig = new Set([
+  "package.json",
+  "package-lock.json",
+  "proxy.ts",
+  "next.config.ts",
+  "postcss.config.mjs",
+  "eslint.config.mjs",
+  "tsconfig.json",
+  "vitest.config.mts",
+  "components.json",
+  "next-env.d.ts",
+]);
+const fullVitestFallback = new Set([
+  "package.json",
+  "package-lock.json",
+  "tsconfig.json",
+  "vitest.config.mts",
+  "test/setup.ts",
+]);
+const authPaths = [
+  "app/auth/",
+  "app/login/",
+  "components/auth-provider.tsx",
+  "components/auth-shell.tsx",
+  "components/login-screen.tsx",
+  "components/reset-password-screen.tsx",
+  "lib/supabase/",
+  "proxy.ts",
+  "e2e/auth/",
+  "e2e/setup/",
+];
+const criticalContractPaths = [
+  "backend/app/main.py",
+  "backend/app/schemas.py",
+  "backend/app/document_pipelines.py",
+  "backend/app/pipeline.py",
+  "components/document-pipeline-provider.tsx",
+  "components/document-upload-panel.tsx",
+  "components/parse-screen.tsx",
+  "components/chunks-pipeline.tsx",
+  "components/pipeline-stage-screens.tsx",
+  "components/retrieval-screen.tsx",
+  "components/source-inspector.tsx",
+  "lib/document-api.ts",
+  "lib/document-parse-types.ts",
+  "lib/rag-api.ts",
+  "lib/rag-api-types.ts",
+  "e2e/smoke/document-lifecycle.spec.ts",
+  "e2e/smoke/rag-inspection.spec.ts",
+  "e2e/support/seeded-api.ts",
+  "e2e/support/seeded-workspace.ts",
+  "scripts/e2e.mjs",
+];
+const workerProviderPaths = [
+  "backend/modal_app.py",
+  "backend/requirements-worker.txt",
+  "backend/app/gemini.py",
+  "backend/app/parser.py",
+  "backend/app/pipeline.py",
+];
+
+function matches(file, candidates) {
+  return candidates.some((candidate) => candidate.endsWith("/") ? file.startsWith(candidate) : file === candidate);
+}
+
+function classify(paths) {
+  const result = Object.fromEntries(categories.map((category) => [category, false]));
+  let hasFile = false;
+  let docsOnly = true;
 
   for (const rawPath of paths) {
     const file = rawPath.trim().replaceAll("\\", "/");
     if (!file) continue;
+    hasFile = true;
 
-    if (file.startsWith(".github/")) {
-      result.full_ci = true;
-      result.e2e = true;
-      continue;
-    }
+    if (file === "AGENTS.md" || file === "README.md" || file.startsWith("docs/") || file.endsWith(".md")) continue;
+    docsOnly = false;
+
+    if (file.startsWith(".github/")) continue;
 
     if (file === "supabase/config.toml" || file.startsWith("supabase/")) {
       result.database = true;
-      result.e2e = true;
-      docs = false;
+      result.migration ||= file.startsWith("supabase/migrations/");
+      result.critical_e2e ||= result.migration;
       continue;
     }
 
     if (file === "scripts/check-migration-authority.mjs") {
+      result.node = true;
       result.database = true;
-      docs = false;
       continue;
     }
 
-    if (file === "scripts/e2e.mjs") {
-      result.e2e = true;
-      docs = false;
-      continue;
-    }
-
-    if (file === "scripts/dev.mjs" || file === "scripts/smoke.mjs") {
-      result.full_ci = true;
-      docs = false;
-      continue;
-    }
-
-    if (file === "backend/modal_app.py" || file.startsWith("backend/app/") || /^backend\/requirements[^/]*\.txt$/.test(file)) {
+    if (file.startsWith("backend/")) {
       result.backend = true;
-      result.modal = true;
-      result.e2e = true;
-      if (file === "backend/app/main.py" || file === "backend/app/schemas.py") result.frontend = true;
-      docs = false;
+      result.modal_deploy ||= file === "backend/modal_app.py" || file === "backend/requirements.txt" || file === "backend/requirements-worker.txt" || file.startsWith("backend/app/");
+      result.worker_provider ||= matches(file, workerProviderPaths);
+      result.critical_e2e ||= matches(file, criticalContractPaths);
       continue;
     }
 
-    if (file.startsWith("backend/tests/") || file === "backend/pyproject.toml") {
-      result.backend = true;
-      docs = false;
+    if (file.startsWith("e2e/") || file === "playwright.config.ts" || file === "scripts/e2e.mjs") {
+      result.node = true;
+      result.playwright_list = true;
+      result.auth_e2e ||= matches(file, authPaths);
+      result.critical_e2e ||= matches(file, criticalContractPaths);
       continue;
     }
 
-    if (
-      file.startsWith("app/") ||
-      file.startsWith("components/") ||
-      file.startsWith("lib/") ||
-      file.startsWith("test/") ||
-      file.startsWith("e2e/") ||
-      file.startsWith("public/") ||
-      [
-        "package.json",
-        "package-lock.json",
-        "proxy.ts",
-        "next.config.ts",
-        "postcss.config.mjs",
-        "eslint.config.mjs",
-        "tsconfig.json",
-        "vitest.config.mts",
-        "components.json",
-        "next-env.d.ts",
-        "playwright.config.ts",
-      ].includes(file)
-    ) {
+    if (frontendRoots.some((root) => file.startsWith(root)) || frontendConfig.has(file)) {
+      result.node = true;
       result.frontend = true;
-      result.e2e = true;
-      if (
-        file === "proxy.ts" ||
-        file.startsWith("app/auth/") ||
-        file === "app/login/page.tsx" ||
-        file === "components/auth-provider.tsx" ||
-        file === "components/login-screen.tsx" ||
-        file.startsWith("lib/supabase/") ||
-        file.startsWith("e2e/auth/") ||
-        file.startsWith("e2e/setup/")
-      ) result.auth_e2e = true;
-      docs = false;
+      result.frontend_full_tests ||= fullVitestFallback.has(file);
+      result.auth_e2e ||= matches(file, authPaths);
+      result.critical_e2e ||= matches(file, criticalContractPaths);
       continue;
     }
 
-    if (file === "AGENTS.md" || file === "README.md" || file.startsWith("docs/") || file.endsWith(".md")) {
+    if (file === "scripts/smoke.mjs" || file === "scripts/dev.mjs") {
+      result.node = true;
+      result.frontend = true;
+      result.frontend_full_tests = true;
       continue;
     }
 
-    result.full_ci = true;
-    docs = false;
+    // Bilinmeyen source/config dosyalarında güvenli ama browser'sız fallback.
+    result.node = true;
+    result.frontend = true;
+    result.frontend_full_tests = true;
   }
 
-  result.docs_only = docs && !result.frontend && !result.backend && !result.database && !result.modal && !result.full_ci;
+  if (result.auth_e2e || result.critical_e2e || result.playwright_list) result.node = true;
+  result.docs_only = hasFile && docsOnly;
   return result;
 }
 
-function assertClassification(paths, expected) {
-  const actual = classify(paths);
-  for (const category of categories) assert.equal(actual[category], expected[category], `${paths.join(", ")} → ${category}`);
+function expected(overrides) {
+  return { ...Object.fromEntries(categories.map((category) => [category, false])), ...overrides };
+}
+
+function assertClassification(paths, overrides) {
+  assert.deepEqual(classify(paths), expected(overrides), paths.join(", "));
 }
 
 if (process.argv.includes("--self-test")) {
-  assertClassification(["components/login-screen.tsx"], { frontend: true, backend: false, database: false, modal: false, e2e: true, auth_e2e: true, docs_only: false, full_ci: false });
-  assertClassification(["backend/app/auth.py"], { frontend: false, backend: true, database: false, modal: true, e2e: true, auth_e2e: false, docs_only: false, full_ci: false });
-  assertClassification(["backend/app/schemas.py"], { frontend: true, backend: true, database: false, modal: true, e2e: true, auth_e2e: false, docs_only: false, full_ci: false });
-  assertClassification(["supabase/migrations/20260821083157_auth_owner_strict.sql"], { frontend: false, backend: false, database: true, modal: false, e2e: true, auth_e2e: false, docs_only: false, full_ci: false });
-  assertClassification(["README.md"], { frontend: false, backend: false, database: false, modal: false, e2e: false, auth_e2e: false, docs_only: true, full_ci: false });
-  assertClassification([".github/workflows/ci.yml"], { frontend: false, backend: false, database: false, modal: false, e2e: true, auth_e2e: false, docs_only: false, full_ci: true });
-  assertClassification(["components/login-screen.tsx", "README.md"], { frontend: true, backend: false, database: false, modal: false, e2e: true, auth_e2e: true, docs_only: false, full_ci: false });
+  assertClassification(["README.md"], { docs_only: true });
+  assertClassification(["components/status-indicator.tsx"], { node: true, frontend: true });
+  assertClassification(["package-lock.json"], { node: true, frontend: true, frontend_full_tests: true });
+  assertClassification(["components/login-screen.tsx"], { node: true, frontend: true, auth_e2e: true });
+  assertClassification(["backend/tests/test_main.py"], { backend: true });
+  assertClassification(["backend/app/auth.py"], { backend: true, modal_deploy: true });
+  assertClassification(["backend/app/schemas.py"], { node: true, backend: true, critical_e2e: true, modal_deploy: true });
+  assertClassification(["backend/app/parser.py"], { backend: true, modal_deploy: true, worker_provider: true });
+  assertClassification(["supabase/migrations/20260821083157_auth_owner_strict.sql"], { node: true, database: true, migration: true, critical_e2e: true });
+  assertClassification(["e2e/visual/figma-production.spec.ts"], { node: true, playwright_list: true });
+  assertClassification(["e2e/smoke/rag-inspection.spec.ts"], { node: true, critical_e2e: true, playwright_list: true });
+  assertClassification(
+    ["components/retrieval-screen.tsx", "backend/app/schemas.py", "supabase/migrations/20260821083157_auth_owner_strict.sql"],
+    { node: true, frontend: true, backend: true, database: true, migration: true, critical_e2e: true, modal_deploy: true },
+  );
+  assertClassification([".github/workflows/ci.yml"], {});
   process.stdout.write("classification self-test passed\n");
 } else {
-  const forceFullCi = process.argv.includes("--full-ci");
-  const result = classify((await new Promise((resolve) => {
-    let input = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => { input += chunk; });
-    process.stdin.on("end", () => resolve(input.split(/\r?\n/)));
-  })), forceFullCi);
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  for await (const chunk of process.stdin) input += chunk;
+  const result = classify(input.split(/\r?\n/));
   for (const category of categories) process.stdout.write(`${category}=${result[category]}\n`);
 }
 
-export { classify };
+export { categories, classify };
