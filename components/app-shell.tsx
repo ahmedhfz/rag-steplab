@@ -68,6 +68,26 @@ const navIconAssets: Partial<Record<AppNavKey, string>> = {
   settings: "/assets/figma/overview/settings.svg",
 };
 
+function ThemedAssetIcon({ src }: { src: string }) {
+  const maskImage = `url("${src}")`;
+  return (
+    <span
+      aria-hidden="true"
+      className="block size-[17.975px] shrink-0 bg-current"
+      style={{
+        maskImage,
+        maskPosition: "center",
+        maskRepeat: "no-repeat",
+        maskSize: "contain",
+        WebkitMaskImage: maskImage,
+        WebkitMaskPosition: "center",
+        WebkitMaskRepeat: "no-repeat",
+        WebkitMaskSize: "contain",
+      }}
+    />
+  );
+}
+
 function isNavItemActive(key: AppNavKey, pathname: string) {
   if (key === "overview") return pathname === "/";
   if (key === "documents") return pathname === "/documents";
@@ -112,13 +132,13 @@ type UserMenuItemProps = {
 };
 
 function UserMenuItem({ icon: Icon, label, onClick, href }: UserMenuItemProps) {
-  const className = "flex h-9 w-full items-center gap-2.5 rounded-[8px] px-2.5 text-left text-sm text-[#6e676a] transition-colors hover:bg-[#fbf4f6] hover:text-[#501329] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/20";
+  const className = "flex h-9 w-full items-center gap-2.5 rounded-[8px] px-2.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20";
 
   if (href) {
-    return <Link className={className} href={href} onClick={onClick}><Icon aria-hidden="true" className="size-4 text-[#969093]" />{label}</Link>;
+    return <Link className={className} href={href} onClick={onClick}><Icon aria-hidden="true" className="size-4 text-subtle-foreground" />{label}</Link>;
   }
 
-  return <button className={className} onClick={onClick} type="button"><Icon aria-hidden="true" className="size-4 text-[#969093]" />{label}</button>;
+  return <button className={className} onClick={onClick} type="button"><Icon aria-hidden="true" className="size-4 text-subtle-foreground" />{label}</button>;
 }
 
 type UserMenuProps = {
@@ -179,14 +199,14 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
         aria-expanded={isOpen}
         aria-haspopup="dialog"
         aria-label={`${displayName} — ${copy.common.accountMenu}`}
-        className="flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left outline-none transition-colors hover:bg-[#fbf4f6] focus-visible:ring-2 focus-visible:ring-[#711f3a]/20"
+        className="flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/20"
         onClick={() => setOpenView(isOpen ? null : "menu")}
         ref={triggerRef}
         type="button"
       >
-        <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-full bg-[#f3d9e0] text-[11px] font-semibold text-[#501329]">{initials}</span>
+        <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-full bg-brand-subtle text-[11px] font-semibold text-accent-foreground">{initials}</span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[12.5px] leading-[18.75px] text-[#6e676a]">{displayName}</span>
+          <span className="block truncate text-[12.5px] leading-[18.75px] text-muted-foreground">{displayName}</span>
           <span className="sr-only">{user.email ?? copy.common.frontendFoundation}</span>
         </span>
       </button>
@@ -196,7 +216,7 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
           <motion.div
             animate={{ opacity: 1, y: 0 }}
             aria-label={copy.common.accountMenu}
-            className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-50 overflow-hidden rounded-[12px] border border-[#e7e2e4] bg-white p-1.5 shadow-lg shadow-[#171416]/8"
+            className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-50 overflow-hidden rounded-[12px] border border-border bg-card p-1.5 shadow-lg shadow-foreground/8"
             exit={{ opacity: 0, y: 4 }}
             initial={{ opacity: 0, y: 4 }}
             role="dialog"
@@ -204,9 +224,9 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
           >
             {openView === "menu" && (
               <>
-                <div className="mb-1 border-b border-[#e7e2e4] px-2.5 pb-2.5 pt-1">
-                  <p className="truncate text-sm font-semibold text-[#171416]">{displayName}</p>
-                  <p className="truncate text-xs text-[#969093]">{user.email ?? copy.common.frontendFoundation}</p>
+                <div className="mb-1 border-b border-border px-2.5 pb-2.5 pt-1">
+                  <p className="truncate text-sm font-semibold text-foreground">{displayName}</p>
+                  <p className="truncate text-xs text-subtle-foreground">{user.email ?? copy.common.frontendFoundation}</p>
                 </div>
                 <UserMenuItem icon={BookOpen} label={copy.guides} onClick={() => setOpenView("guides")} />
                 <UserMenuItem icon={CircleHelp} label={copy.help} onClick={() => setOpenView("help")} />
@@ -218,29 +238,29 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
 
             {openView === "guides" && (
               <div className="p-1">
-                <button className="mb-2 flex items-center gap-1.5 rounded px-1.5 py-1 text-xs font-medium text-[#6e676a] hover:bg-[#fbf4f6] hover:text-[#501329]" onClick={() => setOpenView("menu")} type="button">
+                <button className="mb-2 flex items-center gap-1.5 rounded px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground" onClick={() => setOpenView("menu")} type="button">
                   <ArrowLeft aria-hidden="true" className="size-3.5" />
                   {copy.common.back}
                 </button>
-                <h2 className="px-1.5 text-sm font-semibold text-[#171416]">{copy.guidePanel.title}</h2>
-                <p className="px-1.5 pt-1.5 text-xs leading-5 text-[#6e676a]">{copy.guidePanel.description}</p>
+                <h2 className="px-1.5 text-sm font-semibold text-foreground">{copy.guidePanel.title}</h2>
+                <p className="px-1.5 pt-1.5 text-xs leading-5 text-muted-foreground">{copy.guidePanel.description}</p>
                 <nav aria-label={copy.guides} className="mt-3 grid gap-1 border-t pt-2 text-sm">
-                  <Link className="rounded px-2 py-1.5 hover:bg-[#fbf4f6] hover:text-[#501329]" href="/" onClick={closeAfterNavigation}>{copy.nav.overview}</Link>
-                  <Link className="rounded px-2 py-1.5 hover:bg-[#fbf4f6] hover:text-[#501329]" href="/documents" onClick={closeAfterNavigation}>{copy.nav.documents}</Link>
-                  <Link className="rounded px-2 py-1.5 hover:bg-[#fbf4f6] hover:text-[#501329]" href="/playground" onClick={closeAfterNavigation}>{copy.nav.playground}</Link>
+                  <Link className="rounded px-2 py-1.5 hover:bg-accent hover:text-accent-foreground" href="/" onClick={closeAfterNavigation}>{copy.nav.overview}</Link>
+                  <Link className="rounded px-2 py-1.5 hover:bg-accent hover:text-accent-foreground" href="/documents" onClick={closeAfterNavigation}>{copy.nav.documents}</Link>
+                  <Link className="rounded px-2 py-1.5 hover:bg-accent hover:text-accent-foreground" href="/playground" onClick={closeAfterNavigation}>{copy.nav.playground}</Link>
                 </nav>
               </div>
             )}
 
             {openView === "help" && (
               <div className="p-1">
-                <button className="mb-2 flex items-center gap-1.5 rounded px-1.5 py-1 text-xs font-medium text-[#6e676a] hover:bg-[#fbf4f6] hover:text-[#501329]" onClick={() => setOpenView("menu")} type="button">
+                <button className="mb-2 flex items-center gap-1.5 rounded px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground" onClick={() => setOpenView("menu")} type="button">
                   <ArrowLeft aria-hidden="true" className="size-3.5" />
                   {copy.common.back}
                 </button>
-                <h2 className="px-1.5 text-sm font-semibold text-[#171416]">{copy.helpPanel.title}</h2>
-                <p className="px-1.5 pt-1.5 text-xs leading-5 text-[#6e676a]">{copy.helpPanel.description}</p>
-                <Link className="mt-3 inline-flex border-t px-1.5 pt-2 text-sm font-medium text-[#171416] underline-offset-4 hover:text-[#501329] hover:underline" href="/settings" onClick={closeAfterNavigation}>
+                <h2 className="px-1.5 text-sm font-semibold text-foreground">{copy.helpPanel.title}</h2>
+                <p className="px-1.5 pt-1.5 text-xs leading-5 text-muted-foreground">{copy.helpPanel.description}</p>
+                <Link className="mt-3 inline-flex border-t px-1.5 pt-2 text-sm font-medium text-foreground underline-offset-4 hover:text-accent-foreground hover:underline" href="/settings" onClick={closeAfterNavigation}>
                   {copy.helpPanel.settingsLink}
                 </Link>
               </div>
@@ -254,16 +274,16 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
 
 function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: string; onNavigate?: () => void; copy: AppCopy; user: AuthUserSummary; onSignOut: () => Promise<void> }) {
   return (
-    <div className="flex h-full flex-col bg-white">
+    <div className="flex h-full flex-col bg-card">
       <div className="flex h-[72px] items-center gap-2.5 px-5 pb-5 pt-6">
         <Image alt="" height={28} priority src={UI_ASSETS.brand.mark} width={28} />
-        <span className="text-[15px] font-semibold leading-[22.5px] tracking-[-0.15px] text-[#171416]">{copy.productName}</span>
+        <span className="text-[15px] font-semibold leading-[22.5px] tracking-[-0.15px] text-foreground">{copy.productName}</span>
       </div>
 
       <nav aria-label={copy.common.primaryNavigation} className="flex flex-1 flex-col overflow-hidden px-3 pb-4 pt-0">
         {navGroups.map((group) => (
           <div className={cn("space-y-0", group.label && "pt-6")} key={group.label ?? group.items[0].key}>
-            {group.label ? <p className="px-3 text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.99px] text-[#969093]">{copy.nav[group.label]}</p> : null}
+            {group.label ? <p className="px-3 text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.99px] text-subtle-foreground">{copy.nav[group.label]}</p> : null}
             <div className={cn(group.label && "pt-1.5")}>
               {group.items.map((item) => {
                 const isActive = isNavItemActive(item.key, pathname);
@@ -271,15 +291,15 @@ function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: st
                   <Link
                     aria-current={isActive ? "page" : undefined}
                     className={cn(
-                      "flex h-[36.967px] items-center gap-3 rounded-[10px] px-3 py-2 text-sm leading-[21px] text-[#6e676a] transition-colors hover:bg-[#fbf4f6] hover:text-[#501329]",
-                      isActive && "bg-[#fbf4f6] font-medium text-[#501329]",
+                      "flex h-[36.967px] items-center gap-3 rounded-[10px] px-3 py-2 text-sm leading-[21px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground",
+                      isActive && "bg-accent font-medium text-accent-foreground",
                     )}
                     href={item.href}
                     key={item.key}
                     onClick={onNavigate}
                     prefetch={false}
                   >
-                    {isActive ? <item.icon aria-hidden="true" className="size-[17.975px] stroke-[1.65]" /> : navIconAssets[item.key] ? <Image alt="" height={18} src={navIconAssets[item.key] as string} width={18} /> : <item.icon aria-hidden="true" className="size-[17.975px] stroke-[1.65]" />}
+                    {isActive ? <item.icon aria-hidden="true" className="size-[17.975px] stroke-[1.65]" /> : navIconAssets[item.key] ? <ThemedAssetIcon src={navIconAssets[item.key] as string} /> : <item.icon aria-hidden="true" className="size-[17.975px] stroke-[1.65]" />}
                     {copy.nav[item.key]}
                   </Link>
                 );
@@ -287,18 +307,18 @@ function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: st
             </div>
           </div>
         ))}
-        <div className="mt-auto -mx-3 border-t-[1.712px] border-[#e7e2e4] px-3 pb-1 pt-4">
+        <div className="mt-auto -mx-3 border-t-[1.712px] border-border px-3 pb-1 pt-4">
           <Link
             aria-current={isNavItemActive(settingsNavItem.key, pathname) ? "page" : undefined}
             className={cn(
-              "flex h-[36.967px] items-center gap-3 rounded-[10px] px-3 py-2 text-sm leading-[21px] text-[#6e676a] transition-colors hover:bg-[#fbf4f6] hover:text-[#501329]",
-              isNavItemActive(settingsNavItem.key, pathname) && "bg-[#fbf4f6] font-medium text-[#501329]",
+              "flex h-[36.967px] items-center gap-3 rounded-[10px] px-3 py-2 text-sm leading-[21px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground",
+              isNavItemActive(settingsNavItem.key, pathname) && "bg-accent font-medium text-accent-foreground",
             )}
             href={settingsNavItem.href}
             onClick={onNavigate}
             prefetch={false}
           >
-            {isNavItemActive(settingsNavItem.key, pathname) ? <settingsNavItem.icon aria-hidden="true" className="size-[17.975px] stroke-[1.65]" /> : <Image alt="" height={18} src={navIconAssets.settings as string} width={18} />}
+            {isNavItemActive(settingsNavItem.key, pathname) ? <settingsNavItem.icon aria-hidden="true" className="size-[17.975px] stroke-[1.65]" /> : <ThemedAssetIcon src={navIconAssets.settings as string} />}
             {copy.nav.settings}
           </Link>
         </div>
@@ -395,8 +415,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="min-h-screen w-full min-w-0 bg-[#f8f7f7] text-[#171416]">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] border-r border-[#e7e2e4] xl:block" data-testid="app-shell-sidebar">
+      <div className="min-h-screen w-full min-w-0 bg-background text-foreground">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] border-r border-border xl:block" data-testid="app-shell-sidebar">
         <Sidebar copy={copy} onSignOut={signOut} pathname={pathname} user={authUser} />
       </aside>
 
@@ -424,7 +444,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               animate={{ opacity: 1, x: 0 }}
               aria-label={copy.common.primaryNavigation}
               aria-modal="true"
-              className="pointer-events-auto relative h-full w-[min(86vw,320px)] border-r border-[#e7e2e4] bg-white"
+              className="pointer-events-auto relative h-full w-[min(86vw,320px)] border-r border-border bg-card"
               exit={{ opacity: 0, x: -20 }}
               initial={{ opacity: 0, x: -20 }}
               key="mobile-panel"
@@ -442,7 +462,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <div className="w-full min-w-0 xl:pl-[248px]">
-        <header className="sticky top-0 z-30 flex h-[64px] items-center justify-between border-b border-[#e7e2e4] bg-white px-4 sm:px-7 xl:hidden">
+        <header className="sticky top-0 z-30 flex h-[64px] items-center justify-between border-b border-border bg-card px-4 sm:px-7 xl:hidden">
           <div className="flex min-w-0 items-center gap-3">
             <Button aria-controls="mobile-navigation" aria-expanded={mobileOpen} aria-label={copy.common.openNavigation} className="xl:hidden" onClick={() => setMobileOpen(true)} ref={mobileOpenButtonRef} size="icon" variant="ghost">
               <Menu className="size-5" />

@@ -12,7 +12,7 @@ Figma node'ları yapı ve desktop geometriyi doğrular. Runtime state'in kaynağ
 
 ## Kapsanan state'ler
 
-`e2e/visual/figma-production.spec.ts` aşağıdaki 16 state'i `1441 × 1041` desktop viewport'unda çalıştırır:
+`e2e/visual/figma-production.spec.ts` aşağıdaki mevcut 16 Light state'i `1441 × 1041` desktop viewport'unda çalıştırır:
 
 - Overview: canonical active pipeline
 - Documents: populated library
@@ -23,7 +23,16 @@ Figma node'ları yapı ve desktop geometriyi doğrular. Runtime state'in kaynağ
 - Evaluation: Dataset, Results ve iki tamamlanmış run ile populated Compare
 - Settings: canonical settings
 
-Aynı spec login, signup ve forgot-password auth ekranlarını da route inventory olarak screenshot'lar. Upload/dropzone, parse loading/error/retry, management, Playground aksiyonları ve auth/protected smoke mevcut seeded smoke/auth testleriyle korunur.
+Bunlara tam bir Light × Dark matrisi oluşturmadan altı yüksek sinyalli Dark baseline eklenir:
+
+- Overview
+- Chunking config, pipeline Select portal'ı açık
+- Playground Context
+- Evaluation Compare
+- Settings
+- Auth Login
+
+Aynı spec signup ve forgot-password auth ekranlarını route inventory olarak screenshot'lamayı sürdürür. Upload/dropzone, parse loading/error/retry, management, Playground aksiyonları ve auth/protected smoke mevcut seeded smoke/auth testleriyle korunur.
 
 ## Geometry ve pixel gate
 
@@ -57,7 +66,7 @@ Overview journey için desktop connector ve node X koordinatları Figma'nın `10
 npm run e2e:visual:production
 ```
 
-Bu ağır suite default PR CI'a dahil değildir; GitHub Actions'ta manual `Heavy validation` → `production-visual` seçimiyle çalıştırılır.
+Bu ağır suite yalnız classifier `production_visual=true` ürettiğinde PR CI'da çalışır. Tema-wide kaynaklar (`app/globals.css`, root layout, preference/theme altyapısı), görsel bileşenler ve baseline/spec değişiklikleri bu gate'i açar. Bu sınıflandırma tek başına `auth_e2e` açmaz; auth E2E yalnız auth-sensitive dosyalar değiştiğinde çalışır.
 
 Production referanslarını yalnızca bilinçli bir baseline değişikliğinde güncelleyin:
 

@@ -30,8 +30,8 @@ function LineageLink({
   status: PipelineOperationStatus;
 }) {
   return (
-    <Link className="flex min-w-0 items-center gap-1.5 rounded-[8px] px-1.5 py-1 outline-none hover:bg-[#fbf4f6] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" href={href}>
-      <span className="text-xs font-medium text-[#171416]">{label}</span>
+    <Link className="flex min-w-0 items-center gap-1.5 rounded-[8px] px-1.5 py-1 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/25" href={href}>
+      <span className="text-xs font-medium text-foreground">{label}</span>
       <OperationStatusBadge locale={locale} status={status} />
     </Link>
   );
@@ -73,21 +73,21 @@ export function PipelineContextBar({ showLineage = true }: { showLineage?: boole
     : { document: "Document context", pipeline: "Indexing pipeline", placeholder: "Select a document", noDocument: "No active document", noPipeline: "Select a pipeline", lineage: "Indexing lineage", historical: "historical lineage", parse: "Parse", chunk: "Chunk", embedding: "Embedding" };
 
   return (
-    <section className="border-b border-[#e7e2e4] bg-white px-4 py-2.5 sm:px-8" data-testid="pipeline-context-bar">
+    <section className="border-b border-border bg-card px-4 py-2.5 sm:px-8" data-testid="pipeline-context-bar">
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 min-[1360px]:flex-nowrap">
         <div className="flex min-w-0 max-w-full items-center gap-1.5 sm:w-[14rem] sm:max-w-[14rem] sm:shrink-0">
-          <FileText aria-hidden="true" className="size-4 shrink-0 text-[#969093]" />
+          <FileText aria-hidden="true" className="size-4 shrink-0 text-subtle-foreground" />
           <span className="sr-only">{labels.document}</span>
           <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
-            <SelectTrigger aria-label={labels.document} className="h-8 min-w-0 max-w-[min(22rem,55vw)] overflow-hidden border-0 px-1 text-xs font-medium text-[#171416] shadow-none sm:w-[12rem] sm:max-w-[12rem] [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]]:truncate [&_[data-slot=select-value]]:whitespace-nowrap" data-testid="pipeline-context-document-selector" title={documentName ?? (documents.length ? labels.placeholder : labels.noDocument)}>
+            <SelectTrigger aria-label={labels.document} className="h-8 min-w-0 max-w-[min(22rem,55vw)] overflow-hidden border-0 px-1 text-xs font-medium text-foreground shadow-none sm:w-[12rem] sm:max-w-[12rem] [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]]:truncate [&_[data-slot=select-value]]:whitespace-nowrap" data-testid="pipeline-context-document-selector" title={documentName ?? (documents.length ? labels.placeholder : labels.noDocument)}>
               <SelectValue placeholder={documentName ?? (documents.length ? labels.placeholder : labels.noDocument)} />
             </SelectTrigger>
             <SelectContent>{documents.map((document) => <SelectItem className="h-auto min-h-8 whitespace-normal break-words" key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
           </Select>
         </div>
-        {showLineage ? <span aria-hidden="true" className="text-[#d8d2d5]">/</span> : null}
+        {showLineage ? <span aria-hidden="true" className="text-input">/</span> : null}
         <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value)} value={activePipelineId ?? ""}>
-          <SelectTrigger aria-label={labels.pipeline} className="h-8 min-w-0 max-w-[min(18rem,55vw)] overflow-hidden border-0 px-1 text-xs font-semibold text-[#501329] shadow-none sm:w-[16rem] sm:max-w-[16rem] sm:shrink-0 [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]]:truncate [&_[data-slot=select-value]]:whitespace-nowrap" data-testid="pipeline-context-pipeline-selector" title={activePipeline?.name ?? labels.noPipeline}>
+          <SelectTrigger aria-label={labels.pipeline} className="h-8 min-w-0 max-w-[min(18rem,55vw)] overflow-hidden border-0 px-1 text-xs font-semibold text-accent-foreground shadow-none sm:w-[16rem] sm:max-w-[16rem] sm:shrink-0 [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]]:truncate [&_[data-slot=select-value]]:whitespace-nowrap" data-testid="pipeline-context-pipeline-selector" title={activePipeline?.name ?? labels.noPipeline}>
             <SelectValue placeholder={labels.noPipeline} />
           </SelectTrigger>
           <SelectContent>{pipelines.map((pipeline) => <SelectItem className="h-auto min-h-8 whitespace-normal break-words" key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
@@ -96,11 +96,11 @@ export function PipelineContextBar({ showLineage = true }: { showLineage?: boole
         {showLineage ? <nav aria-label={labels.lineage} className="flex min-w-0 flex-wrap items-center gap-1 min-[1360px]:ml-auto min-[1360px]:shrink-0 min-[1360px]:flex-nowrap">
             <span className="sr-only">{labels.lineage}</span>
             <LineageLink href="/parse" label={labels.parse} locale={locale} status={parseStageStatus} />
-            <span aria-hidden="true" className="text-[#d8d2d5]">→</span>
+            <span aria-hidden="true" className="text-input">→</span>
             <LineageLink href="/chunking" label={labels.chunk} locale={locale} status={chunkStageStatus} />
-            <span aria-hidden="true" className="text-[#d8d2d5]">→</span>
+            <span aria-hidden="true" className="text-input">→</span>
             <LineageLink href="/embeddings" label={labels.embedding} locale={locale} status={embeddingStageStatus} />
-            {isHistorical ? <span className="truncate text-[10px] text-[#8d651e]">({labels.historical})</span> : null}
+            {isHistorical ? <span className="truncate text-[10px] text-warning">({labels.historical})</span> : null}
           </nav> : null}
       </div>
     </section>

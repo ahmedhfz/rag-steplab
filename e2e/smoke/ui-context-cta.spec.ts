@@ -66,13 +66,14 @@ async function assertStageContext(page: Page) {
 
 async function assertCompleteDesktopJourney(page: Page) {
   const canvas = page.getByTestId("overview-journey-connectors");
+  const chunkGlyph = page.getByTestId("overview-journey-desktop").getByTestId("overview-journey-glyph-chunk");
   const nodes = page.locator('[data-testid^="overview-journey-node-"]');
   const expectedStates = ["Completed", "Completed", "Completed", "Completed", "Completed", "Skipped", "Completed", "Completed", "Completed"];
 
   await expect(nodes).toHaveCount(9);
   await expect(canvas.locator("path")).toHaveCount(8);
   await expect(page.getByTestId("overview-journey-connector-parse-chunk")).toHaveAttribute("data-state", "Completed");
-  await expect(page.getByTestId("overview-journey-glyph-chunk")).toHaveAttribute("data-state", "Completed");
+  await expect(chunkGlyph).toHaveAttribute("data-state", "Completed");
 
   const nodeStateAndX = await nodes.evaluateAll((elements) => elements.map((element) => ({
     state: element.getAttribute("data-state"),
@@ -81,7 +82,7 @@ async function assertCompleteDesktopJourney(page: Page) {
   expect(nodeStateAndX.map(({ state }) => state)).toEqual(expectedStates);
   expect(nodeStateAndX.slice(1).every(({ x }, index) => x > nodeStateAndX[index].x)).toBe(true);
 
-  const completedIconColor = await page.getByTestId("overview-journey-glyph-chunk").evaluate((element) => getComputedStyle(element).backgroundColor);
+  const completedIconColor = await chunkGlyph.evaluate((element) => getComputedStyle(element).backgroundColor);
   expect(completedIconColor).toBe("rgb(63, 122, 85)");
   await expect(canvas).toHaveAttribute("viewBox", "0 0 1054.1 199.975");
   await expect(canvas).toHaveAttribute("preserveAspectRatio", "none");

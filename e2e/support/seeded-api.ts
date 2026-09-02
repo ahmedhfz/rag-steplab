@@ -35,6 +35,7 @@ export type SeededScenario =
 export type SeededApiOptions = {
   scenario?: SeededScenario;
   longNames?: boolean;
+  theme?: "system" | "light" | "dark";
 };
 
 export const seededStressNames = {
@@ -435,10 +436,11 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
   let pipelineRevision = 1;
   let embeddingAvailable = true;
 
-  await page.addInitScript(() => {
+  await page.addInitScript(({ theme }) => {
     // İlk navigation'da temizle; sonraki route navigation'larında seçili lineage korunmalıdır.
     if (!window.sessionStorage.getItem("rag-steplab-e2e-seeded-reset-v1")) {
-      window.localStorage.setItem("rag-steplab.preferences.v2", JSON.stringify({ locale: "en", showLearningHints: true }));
+      window.localStorage.setItem("rag-steplab.preferences.v3", JSON.stringify({ locale: "en", showLearningHints: true, theme }));
+      window.localStorage.removeItem("rag-steplab.preferences.v2");
       window.localStorage.removeItem("rag-steplab.preferences.v1");
       for (const key of Object.keys(window.localStorage)) {
         if (key.startsWith("rag-steplab-active-document-id") || key.startsWith("rag-steplab-active-pipeline-id") || key.startsWith("rag-steplab-lineage-selections-v1")) {
@@ -447,7 +449,7 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
       }
       window.sessionStorage.setItem("rag-steplab-e2e-seeded-reset-v1", "1");
     }
-  });
+  }, { theme: options.theme ?? "light" });
 
   await page.route("**/*", async (route) => {
     const request = route.request();
