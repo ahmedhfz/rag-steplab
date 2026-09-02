@@ -103,15 +103,15 @@ describe("Overview journey presentation", () => {
     expect(Object.keys(JOURNEY_NODE_VISUALS).sort()).toEqual([...allStates].sort());
     for (const state of allStates) {
       const visual = journeyNodeVisualForState(state);
-      expect(visual.iconColor).toMatch(/^#/);
+      expect(visual.iconColor).toMatch(/^var\(--/);
       expect(visual.backgroundColor).toBeTruthy();
       expect(visual.borderColor).toBeTruthy();
       expect(visual.opacity).toBeGreaterThan(0);
     }
-    expect(journeyNodeVisualForState("Completed").iconColor).toBe("#3f7a55");
-    expect(journeyNodeVisualForState("Ready").iconColor).toBe("#711f3a");
-    expect(journeyNodeVisualForState("Locked").iconColor).toBe("#969093");
-    expect(journeyNodeVisualForState("Not started").iconColor).toBe("#6e676a");
+    expect(journeyNodeVisualForState("Completed").iconColor).toBe("var(--success)");
+    expect(journeyNodeVisualForState("Ready").iconColor).toBe("var(--brand)");
+    expect(journeyNodeVisualForState("Locked").iconColor).toBe("var(--subtle-foreground)");
+    expect(journeyNodeVisualForState("Not started").iconColor).toBe("var(--muted-foreground)");
   });
 
   it("keeps canonical X values normalized and ordered while mapping to a real width", () => {

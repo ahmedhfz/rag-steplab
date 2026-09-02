@@ -5,18 +5,18 @@ import { Slot } from "radix-ui"
 import { cn } from "@/lib/utils"
 
 const badgeVariants = cva(
-  "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:border-[#711f3a] focus-visible:ring-[3px] focus-visible:ring-[#711f3a]/20 aria-invalid:border-[#a23b3b] aria-invalid:ring-[#a23b3b]/20 [&>svg]:pointer-events-none [&>svg]:size-3",
+  "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:border-brand focus-visible:ring-[3px] focus-visible:ring-ring/20 aria-invalid:border-destructive aria-invalid:ring-destructive/20 [&>svg]:pointer-events-none [&>svg]:size-3",
   {
     variants: {
       variant: {
-        default: "bg-[#171416] text-white [a&]:hover:bg-[#2b2729]",
+        default: "bg-foreground text-primary-foreground [a&]:hover:bg-strong-hover",
         secondary:
-          "bg-[#f2eff0] text-[#171416] [a&]:hover:bg-[#e7e2e4]",
+          "bg-secondary text-foreground [a&]:hover:bg-border",
         destructive:
-          "bg-[#f6ebeb] text-[#a23b3b] focus-visible:ring-[#a23b3b]/20 [a&]:hover:bg-[#f1dcdc]",
+          "bg-destructive-subtle text-destructive focus-visible:ring-destructive/20 [a&]:hover:bg-destructive-subtle",
         outline:
-          "border-[#e7e2e4] text-[#6e676a] [a&]:hover:bg-[#fbf4f6] [a&]:hover:text-[#501329]",
-        ghost: "[a&]:hover:bg-[#fbf4f6] [a&]:hover:text-[#501329]",
+          "border-border text-muted-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
+        ghost: "[a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         link: "text-primary underline-offset-4 [a&]:hover:underline",
       },
     },

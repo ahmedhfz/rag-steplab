@@ -5,19 +5,19 @@ import { Slot } from "radix-ui"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 rounded-[10px] text-sm font-medium whitespace-nowrap transition-[background-color,border-color,color,box-shadow,transform,opacity] duration-150 ease-out outline-none active:scale-[0.98] focus-visible:border-[#711f3a] focus-visible:ring-[3px] focus-visible:ring-[#711f3a]/20 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-[#a23b3b] aria-invalid:ring-[#a23b3b]/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "inline-flex shrink-0 items-center justify-center gap-2 rounded-[10px] text-sm font-medium whitespace-nowrap transition-[background-color,border-color,color,box-shadow,transform,opacity] duration-150 ease-out outline-none active:scale-[0.98] focus-visible:border-brand focus-visible:ring-[3px] focus-visible:ring-ring/20 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
-        default: "bg-[#171416] text-white hover:bg-[#2b2729]",
+        default: "bg-foreground text-primary-foreground hover:bg-strong-hover",
         destructive:
-          "bg-[#a23b3b] text-white hover:bg-[#8d3232] focus-visible:ring-[#a23b3b]/20",
+          "bg-destructive text-primary-foreground hover:bg-destructive/90 focus-visible:ring-destructive/20",
         outline:
-          "border border-[#e7e2e4] bg-white text-[#171416] hover:border-[#711f3a] hover:bg-[#fbf4f6] hover:text-[#501329]",
+          "border border-border bg-card text-foreground hover:border-brand hover:bg-accent hover:text-accent-foreground",
         secondary:
-          "bg-[#f2eff0] text-[#171416] hover:bg-[#e7e2e4]",
+          "bg-secondary text-foreground hover:bg-border",
         ghost:
-          "hover:bg-[#fbf4f6] hover:text-[#501329]",
+          "hover:bg-accent hover:text-accent-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

@@ -29,6 +29,9 @@ değerlendirilir; güncel kaynak yeniden okunur.
 - Auth ve owner isolation persistence katmanında gerçektir; kullanıcıya ait
   olmayan belge, pipeline veya run'a erişim eklenmez. Provider, worker ve
   storage sorumluluklarını UI'ya taşımayın; RAG Core sınırını koruyun.
+- Görünüm tercihlerinde `PreferencesProvider` tek kaynaktır. Tema varsayılanı
+  `System` olup `Light` ve `Dark` seçeneklerini, versioned storage migration'ını
+  ve hydration öncesi root bootstrap'ını birlikte koruyun.
 
 ## Validation ve E2E sınırları
 

@@ -142,47 +142,47 @@ export function LoginScreen() {
   return (
     <AuthShell>
       <section aria-label={labels.form} className="w-full max-w-[360px]">
-        <h1 className="text-[24px] font-semibold leading-[29px] tracking-[-0.48px] text-[#171416]">{title}<span className="sr-only">{titleAccessible}</span></h1>
-        <p className="mt-1.5 text-[13px] leading-5 text-[#6e676a]">{subtitle}</p>
+        <h1 className="text-[24px] font-semibold leading-[29px] tracking-[-0.48px] text-foreground">{title}<span className="sr-only">{titleAccessible}</span></h1>
+        <p className="mt-1.5 text-[13px] leading-5 text-muted-foreground">{subtitle}</p>
 
         <form aria-describedby="login-status" className="mt-7" onSubmit={submit}>
           <div className="space-y-2">
-            <label className="flex items-center justify-between text-[13px] font-medium leading-[19px] text-[#171416]" htmlFor="login-email">
+            <label className="flex items-center justify-between text-[13px] font-medium leading-[19px] text-foreground" htmlFor="login-email">
               <span>{labels.email}</span>
             </label>
-            <Input autoComplete="email" className="h-[44px] rounded-[10px] border-[1.5px] border-[#d8d2d5] bg-white px-3 text-[13px] shadow-none placeholder:text-[#969093] focus-visible:border-[#711f3a] focus-visible:ring-[#711f3a]/15" id="login-email" onChange={(event) => setEmail(event.target.value)} placeholder={mode === "signup" || mode === "forgot" ? labels.emailPlaceholderSignup : labels.emailPlaceholder} required type="email" value={email} />
+            <Input autoComplete="email" className="h-[44px] rounded-[10px] border-[1.5px] border-input bg-card px-3 text-[13px] shadow-none placeholder:text-subtle-foreground focus-visible:border-brand focus-visible:ring-ring/15" id="login-email" onChange={(event) => setEmail(event.target.value)} placeholder={mode === "signup" || mode === "forgot" ? labels.emailPlaceholderSignup : labels.emailPlaceholder} required type="email" value={email} />
           </div>
 
           {mode !== "forgot" ? <div className="mt-4 space-y-2">
-            <div className="flex items-center justify-between text-[13px] font-medium leading-[19px] text-[#171416]"><label htmlFor="login-password">{labels.password}</label>{mode === "signin" ? <button className="font-medium text-[#711f3a] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setAuthMode("forgot")} type="button">{labels.forgot}</button> : null}</div>
+            <div className="flex items-center justify-between text-[13px] font-medium leading-[19px] text-foreground"><label htmlFor="login-password">{labels.password}</label>{mode === "signin" ? <button className="font-medium text-brand outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/25" onClick={() => setAuthMode("forgot")} type="button">{labels.forgot}</button> : null}</div>
             <div className="relative">
-              <Input autoComplete={mode === "signup" ? "new-password" : "current-password"} className="h-[44px] rounded-[10px] border-[1.5px] border-[#d8d2d5] bg-white px-3 pr-10 text-[13px] shadow-none placeholder:text-[#969093] focus-visible:border-[#711f3a] focus-visible:ring-[#711f3a]/15" id="login-password" minLength={mode === "signup" ? 10 : undefined} onChange={(event) => setPassword(event.target.value)} placeholder={labels.passwordPlaceholder} required type={showPassword ? "text" : "password"} value={password} />
-              <button aria-label={showPassword ? labels.hidePassword : labels.showPassword} className="absolute right-2.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded text-[#969093] outline-none transition-colors hover:text-[#501329] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setShowPassword((current) => !current)} type="button">{showPassword ? <EyeOff aria-hidden="true" className="size-4" /> : <Eye aria-hidden="true" className="size-4" />}</button>
+              <Input autoComplete={mode === "signup" ? "new-password" : "current-password"} className="h-[44px] rounded-[10px] border-[1.5px] border-input bg-card px-3 pr-10 text-[13px] shadow-none placeholder:text-subtle-foreground focus-visible:border-brand focus-visible:ring-ring/15" id="login-password" minLength={mode === "signup" ? 10 : undefined} onChange={(event) => setPassword(event.target.value)} placeholder={labels.passwordPlaceholder} required type={showPassword ? "text" : "password"} value={password} />
+              <button aria-label={showPassword ? labels.hidePassword : labels.showPassword} className="absolute right-2.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded text-subtle-foreground outline-none transition-colors hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/25" onClick={() => setShowPassword((current) => !current)} type="button">{showPassword ? <EyeOff aria-hidden="true" className="size-4" /> : <Eye aria-hidden="true" className="size-4" />}</button>
             </div>
           </div> : null}
 
           {mode === "signup" ? <div className="mt-4 space-y-2">
-            <label className="text-[13px] font-medium leading-[19px] text-[#171416]" htmlFor="login-password-confirm">{labels.confirm}</label>
-            <Input autoComplete="new-password" className="h-[44px] rounded-[10px] border-[1.5px] border-[#d8d2d5] bg-white px-3 text-[13px] shadow-none placeholder:text-[#969093] focus-visible:border-[#711f3a] focus-visible:ring-[#711f3a]/15" id="login-password-confirm" minLength={10} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.confirmPlaceholder} required type="password" value={confirmation} />
+            <label className="text-[13px] font-medium leading-[19px] text-foreground" htmlFor="login-password-confirm">{labels.confirm}</label>
+            <Input autoComplete="new-password" className="h-[44px] rounded-[10px] border-[1.5px] border-input bg-card px-3 text-[13px] shadow-none placeholder:text-subtle-foreground focus-visible:border-brand focus-visible:ring-ring/15" id="login-password-confirm" minLength={10} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.confirmPlaceholder} required type="password" value={confirmation} />
           </div> : null}
 
-          <Button className="mt-6 h-[43px] w-full rounded-[10px] bg-[#171416] text-[13px] font-medium text-white hover:bg-[#30292c]" disabled={busy} type="submit">{busy ? labels.wait : submitLabel}{mode === "signin" && !busy ? <span aria-hidden="true" className="text-[16px] leading-none">→</span> : null}</Button>
+          <Button className="mt-6 h-[43px] w-full rounded-[10px] bg-foreground text-[13px] font-medium text-primary-foreground hover:bg-strong-hover" disabled={busy} type="submit">{busy ? labels.wait : submitLabel}{mode === "signin" && !busy ? <span aria-hidden="true" className="text-[16px] leading-none">→</span> : null}</Button>
         </form>
 
         {mode === "signin" ? <>
-          <div className="my-6 flex items-center gap-3 text-[11px] text-[#969093]"><span aria-hidden="true" className="h-px flex-1 bg-[#e7e2e4]" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-[#e7e2e4]" /></div>
-          <Button asChild className="h-[42px] w-full rounded-[10px] border-[1.5px] border-[#d8d2d5] bg-white text-[13px] font-medium text-[#171416] shadow-none hover:bg-[#fbf4f6]" variant="outline"><a href="/auth/google"><GoogleMark />{labels.google}</a></Button>
+          <div className="my-6 flex items-center gap-3 text-[11px] text-subtle-foreground"><span aria-hidden="true" className="h-px flex-1 bg-border" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-border" /></div>
+          <Button asChild className="h-[42px] w-full rounded-[10px] border-[1.5px] border-input bg-card text-[13px] font-medium text-foreground shadow-none hover:bg-accent" variant="outline"><a href="/auth/google"><GoogleMark />{labels.google}</a></Button>
         </> : null}
 
         {mode === "signup" ? <>
-          <div className="my-6 flex items-center gap-3 text-[11px] text-[#969093]"><span aria-hidden="true" className="h-px flex-1 bg-[#e7e2e4]" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-[#e7e2e4]" /></div>
-          <Button asChild className="h-[42px] w-full rounded-[10px] border-[1.5px] border-[#d8d2d5] bg-white text-[13px] font-medium text-[#171416] shadow-none hover:bg-[#fbf4f6]" variant="outline"><a href="/auth/google"><GoogleMark />{labels.google}</a></Button>
+          <div className="my-6 flex items-center gap-3 text-[11px] text-subtle-foreground"><span aria-hidden="true" className="h-px flex-1 bg-border" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-border" /></div>
+          <Button asChild className="h-[42px] w-full rounded-[10px] border-[1.5px] border-input bg-card text-[13px] font-medium text-foreground shadow-none hover:bg-accent" variant="outline"><a href="/auth/google"><GoogleMark />{labels.google}</a></Button>
         </> : null}
 
-        {mode === "forgot" ? <div className="mt-6 text-center"><button className="text-[13px] font-medium text-[#711f3a] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setAuthMode("signin")} type="button">{labels.back}</button></div> : null}
-        <p aria-live="polite" className={visibleStatus ? "mt-4 min-h-5 text-center text-xs leading-5 text-[#6e676a]" : "sr-only"} id="login-status" role="status">{visibleStatus}</p>
-        {mode === "signin" ? <div className="mt-6 text-center text-[13px] text-[#6e676a]"><span>{labels.noAccount}</span>{" "}<button className="font-medium text-[#711f3a] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setAuthMode("signup")} type="button">{labels.submitSignUp}</button></div> : null}
-        {mode === "signup" ? <div className="mt-6 text-center text-[13px] text-[#6e676a]"><span>{labels.alreadyAccount}</span>{" "}<button className="font-medium text-[#711f3a] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" onClick={() => setAuthMode("signin")} type="button">{labels.submitSignIn}</button></div> : null}
+        {mode === "forgot" ? <div className="mt-6 text-center"><button className="text-[13px] font-medium text-brand underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25" onClick={() => setAuthMode("signin")} type="button">{labels.back}</button></div> : null}
+        <p aria-live="polite" className={visibleStatus ? "mt-4 min-h-5 text-center text-xs leading-5 text-muted-foreground" : "sr-only"} id="login-status" role="status">{visibleStatus}</p>
+        {mode === "signin" ? <div className="mt-6 text-center text-[13px] text-muted-foreground"><span>{labels.noAccount}</span>{" "}<button className="font-medium text-brand underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25" onClick={() => setAuthMode("signup")} type="button">{labels.submitSignUp}</button></div> : null}
+        {mode === "signup" ? <div className="mt-6 text-center text-[13px] text-muted-foreground"><span>{labels.alreadyAccount}</span>{" "}<button className="font-medium text-brand underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25" onClick={() => setAuthMode("signin")} type="button">{labels.submitSignIn}</button></div> : null}
       </section>
     </AuthShell>
   );

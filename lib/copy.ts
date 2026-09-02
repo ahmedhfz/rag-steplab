@@ -174,6 +174,11 @@ export type AppCopy = {
     languageDescription: string;
     english: string;
     turkish: string;
+    themeTitle: string;
+    themeDescription: string;
+    themeSystem: string;
+    themeLight: string;
+    themeDark: string;
     hintsTitle: string;
     hintsDescription: string;
     hintsEnabled: string;
@@ -370,6 +375,11 @@ export const UI_COPY = {
       languageDescription: "Interface language.",
       english: "English",
       turkish: "Türkçe",
+      themeTitle: "Theme",
+      themeDescription: "Choose a color theme or follow your system setting.",
+      themeSystem: "System",
+      themeLight: "Light",
+      themeDark: "Dark",
       hintsTitle: "Learning hints",
       hintsDescription: "Show collapsed learning notes.",
       hintsEnabled: "Show learning hints",
@@ -564,6 +574,11 @@ export const UI_COPY = {
       languageDescription: "Arayüz dili.",
       english: "English",
       turkish: "Türkçe",
+      themeTitle: "Tema",
+      themeDescription: "Bir renk teması seçin veya sistem ayarınızı kullanın.",
+      themeSystem: "Sistem",
+      themeLight: "Açık",
+      themeDark: "Koyu",
       hintsTitle: "Öğrenme ipuçları",
       hintsDescription: "Kapalı öğrenme notlarını gösterin.",
       hintsEnabled: "Öğrenme ipuçlarını göster",

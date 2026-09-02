@@ -192,14 +192,14 @@ function JourneyNode({
       >
         <JourneyGlyph state={state} stepKey={step.key} />
         {completed ? (
-          <span className="absolute -right-1 -top-1 grid size-3.5 place-items-center rounded-full bg-[#3f7a55]">
+          <span className="absolute -right-1 -top-1 grid size-3.5 place-items-center rounded-full bg-success">
             <Image alt="" height={9} src="/assets/figma/overview/check.svg" width={9} />
           </span>
         ) : null}
       </span>
       <span
         className={cn(
-          "absolute left-1/2 w-28 -translate-x-1/2 text-center text-[11.5px] font-medium leading-4 text-[#171416]",
+          "absolute left-1/2 w-28 -translate-x-1/2 text-center text-[11.5px] font-medium leading-4 text-foreground",
           position.label === "above" ? "-top-6" : "top-12",
         )}
       >
@@ -210,8 +210,8 @@ function JourneyNode({
   );
 
   const className = cn(
-    "absolute z-10 outline-none focus-visible:ring-2 focus-visible:ring-[#711f3a]/25 focus-visible:ring-offset-2",
-    reason ? "cursor-not-allowed" : "rounded-[10px] hover:ring-2 hover:ring-[#d8b5c2]",
+    "absolute z-10 outline-none focus-visible:ring-2 focus-visible:ring-ring/25 focus-visible:ring-offset-2",
+    reason ? "cursor-not-allowed" : "rounded-[10px] hover:ring-2 hover:ring-accent-border",
   );
   const style = { left: position.left, top: position.top };
   return reason ? (
@@ -230,18 +230,19 @@ function JourneyCompact({ labels, reasonFor, stateFor }: { labels: Record<Pipeli
     <ol className="grid gap-2" data-testid="overview-journey-compact">
       {pipelineSteps.map((step) => {
         const reason = reasonFor(step.key);
+        const state = stateFor(step.key);
         const content = (
           <>
-            <span className="grid size-9 shrink-0 place-items-center rounded-[10px] border border-[#e7e2e4] bg-white">
-              <Image alt="" height={18} priority src={journeyAssets[step.key]} width={18} />
+            <span className="grid size-9 shrink-0 place-items-center rounded-[10px] border border-border bg-card">
+              <JourneyGlyph state={state} stepKey={step.key} />
             </span>
-            <span className="min-w-0 flex-1 truncate text-left text-sm font-medium text-[#171416]">{labels[step.key]}</span>
-            <StatusIndicator state={stateFor(step.key)} />
+            <span className="min-w-0 flex-1 truncate text-left text-sm font-medium text-foreground">{labels[step.key]}</span>
+            <StatusIndicator state={state} />
           </>
         );
         return (
           <li key={step.key}>
-            {reason ? <div aria-disabled="true" className="flex min-w-0 items-center gap-3 rounded-[10px] border border-[#e7e2e4] bg-white px-3 py-2.5 opacity-75" data-testid={`overview-compact-journey-node-${step.key}`} title={reason}>{content}</div> : <Link className="flex min-w-0 items-center gap-3 rounded-[10px] border border-[#e7e2e4] bg-white px-3 py-2.5 outline-none hover:border-[#d8b5c2] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25" data-testid={`overview-compact-journey-node-${step.key}`} href={stageHref[step.key]}>{content}</Link>}
+            {reason ? <div aria-disabled="true" className="flex min-w-0 items-center gap-3 rounded-[10px] border border-border bg-card px-3 py-2.5 opacity-75" data-testid={`overview-compact-journey-node-${step.key}`} title={reason}>{content}</div> : <Link className="flex min-w-0 items-center gap-3 rounded-[10px] border border-border bg-card px-3 py-2.5 outline-none hover:border-accent-border focus-visible:ring-2 focus-visible:ring-ring/25" data-testid={`overview-compact-journey-node-${step.key}`} href={stageHref[step.key]}>{content}</Link>}
           </li>
         );
       })}
@@ -413,39 +414,39 @@ export function OverviewScreen() {
   }
 
   return (
-    <div className="min-w-0 overflow-x-clip bg-[#f8f7f7]" data-testid="figma-overview-root">
+    <div className="min-w-0 overflow-x-clip bg-background" data-testid="figma-overview-root">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4" data-testid="figma-overview-main">
         <header className="min-h-[82px] w-full" data-testid="figma-overview-header">
-          <h1 className="m-0 text-[28px] font-semibold leading-[34px] tracking-[-0.56px] text-[#171416]">{copy.overview.title}</h1>
-          <p className="mt-[6px] w-full max-w-[640px] text-sm leading-[21px] text-[#6e676a]">{labels.description}</p>
+          <h1 className="m-0 text-[28px] font-semibold leading-[34px] tracking-[-0.56px] text-foreground">{copy.overview.title}</h1>
+          <p className="mt-[6px] w-full max-w-[640px] text-sm leading-[21px] text-muted-foreground">{labels.description}</p>
         </header>
 
-        <section className="mt-5 rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white p-4" data-testid="workspace-control-plane">
+        <section className="mt-5 rounded-[16px] border-[1.712px] border-border bg-card p-4" data-testid="workspace-control-plane">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <p className="text-[13px] font-semibold uppercase leading-[19.5px] tracking-[0.78px] text-[#969093]">{labels.workspace}</p>
-            <p className="text-xs leading-[18px] text-[#6e676a]">{labels.workspaceHint}</p>
+            <p className="text-[13px] font-semibold uppercase leading-[19.5px] tracking-[0.78px] text-subtle-foreground">{labels.workspace}</p>
+            <p className="text-xs leading-[18px] text-muted-foreground">{labels.workspaceHint}</p>
           </div>
           <div className="mt-2.5 grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
                 <div className="min-w-0">
-                  <label className="mb-1.5 block text-xs font-medium text-[#171416]" htmlFor="overview-document">{labels.document}</label>
+                  <label className="mb-1.5 block text-xs font-medium text-foreground" htmlFor="overview-document">{labels.document}</label>
                   <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
                     <SelectTrigger aria-label={labels.document} className={selectorTriggerClass} data-testid="overview-document-selector" id="overview-document" title={activeDocument?.fileName ?? labels.chooseDocument}><SelectValue placeholder={labels.chooseDocument} /></SelectTrigger>
                     <SelectContent>{documents.map((document) => <SelectItem className={selectorItemClass} key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="min-w-0">
-                  <label className="mb-1.5 block text-xs font-medium text-[#171416]" htmlFor="overview-pipeline">{labels.pipeline}</label>
+                  <label className="mb-1.5 block text-xs font-medium text-foreground" htmlFor="overview-pipeline">{labels.pipeline}</label>
                   <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value)} value={activePipelineId ?? ""}>
                     <SelectTrigger aria-label={labels.pipeline} className={selectorTriggerClass} data-testid="overview-pipeline-selector" id="overview-pipeline" title={activePipeline?.name ?? labels.noPipeline}><SelectValue placeholder={labels.noPipeline} /></SelectTrigger>
                     <SelectContent>{pipelines.map((pipeline) => <SelectItem className={selectorItemClass} key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
             <details className="relative self-end" data-testid="pipeline-management">
-              <summary className="flex h-[42px] cursor-pointer list-none items-center justify-between gap-3 rounded-[10px] border border-[#d8d2d5] bg-white px-3 text-xs font-medium text-[#6e676a] outline-none hover:border-[#bcb5b9] hover:text-[#501329] focus-visible:ring-2 focus-visible:ring-[#711f3a]/25">
+              <summary className="flex h-[42px] cursor-pointer list-none items-center justify-between gap-3 rounded-[10px] border border-input bg-card px-3 text-xs font-medium text-muted-foreground outline-none hover:border-hover-border hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/25">
                 <span>{labels.managePipeline}</span>
-                <ChevronDown aria-hidden="true" className="size-3.5 text-[#969093]" />
+                <ChevronDown aria-hidden="true" className="size-3.5 text-subtle-foreground" />
               </summary>
-              <div className="absolute right-0 z-20 mt-2 flex w-[min(28rem,calc(100vw-4rem))] flex-wrap gap-2 rounded-[10px] border border-[#e7e2e4] bg-white p-3 shadow-lg">
+              <div className="absolute right-0 z-20 mt-2 flex w-[min(28rem,calc(100vw-4rem))] flex-wrap gap-2 rounded-[10px] border border-border bg-card p-3 shadow-lg">
                 <Button disabled={!activeDocumentId || persistenceStatus !== "available"} onClick={beginCreatePipeline} size="sm" variant="secondary">{labels.newPipeline}</Button>
                 {activePipeline ? <Button onClick={() => void selectPipeline(null)} size="sm" variant="ghost" data-testid="clear-pipeline-selection">{labels.clearPipeline}</Button> : null}
                 <Button disabled={!activePipeline} onClick={beginRenamePipeline} size="sm" variant="outline">{labels.rename}</Button>
@@ -454,13 +455,13 @@ export function OverviewScreen() {
             </details>
           </div>
 
-          <div className="mt-3.5 grid min-w-0 gap-3 border-t border-[#e7e2e4] pt-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" data-testid="continue-surface">
+          <div className="mt-3.5 grid min-w-0 gap-3 border-t border-border pt-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" data-testid="continue-surface">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <p className="text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.66px] text-[#969093]">{labels.continueTitle}</p>
+                <p className="text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.66px] text-subtle-foreground">{labels.continueTitle}</p>
                 <StatusIndicator state={overviewModel.continuation.state} />
               </div>
-              <p className="mt-1 truncate text-xs text-[#6e676a]">{labels.nextStep}: <span className="font-medium text-[#171416]">{continuationText.nextStep}</span></p>
+              <p className="mt-1 truncate text-xs text-muted-foreground">{labels.nextStep}: <span className="font-medium text-foreground">{continuationText.nextStep}</span></p>
             </div>
             <Button asChild className="h-[42px] min-w-0 gap-2 rounded-[10px] px-4 text-sm" data-testid="overview-continue-action">
               <Link href={overviewModel.continuation.href}>{continuationText.action}<ArrowRight aria-hidden="true" className="size-4" /></Link>
@@ -468,7 +469,7 @@ export function OverviewScreen() {
           </div>
 
           {editing ? (
-            <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-[#e7e2e4] pt-4" data-testid="pipeline-name-editor">
+            <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-border pt-4" data-testid="pipeline-name-editor">
               <label className="sr-only" htmlFor="overview-pipeline-name">{labels.namePlaceholder}</label>
               <Input autoFocus className="max-w-sm" id="overview-pipeline-name" maxLength={100} onChange={(event) => setPipelineName(event.target.value)} placeholder={labels.namePlaceholder} value={pipelineName} />
               <Button disabled={!pipelineName.trim()} onClick={() => void savePipelineName()} size="sm">{labels.save}</Button>
@@ -477,9 +478,9 @@ export function OverviewScreen() {
           ) : null}
 
           {confirmDelete && activePipeline ? (
-            <div aria-describedby="delete-pipeline-description" aria-labelledby="delete-pipeline-title" aria-modal="true" className="mt-4 rounded-[10px] border border-[#eadfc9] bg-[#fffaf1] p-4" data-testid="delete-pipeline-dialog" role="dialog">
+            <div aria-describedby="delete-pipeline-description" aria-labelledby="delete-pipeline-title" aria-modal="true" className="mt-4 rounded-[10px] border border-warning-border bg-warning-subtle p-4" data-testid="delete-pipeline-dialog" role="dialog">
               <h2 className="text-sm font-semibold" id="delete-pipeline-title">{labels.remove}</h2>
-              <p className="mt-1 text-sm text-[#6e676a]" id="delete-pipeline-description">{labels.confirmDelete}</p>
+              <p className="mt-1 text-sm text-muted-foreground" id="delete-pipeline-description">{labels.confirmDelete}</p>
               <div className="mt-3 flex gap-2">
                 <Button onClick={() => setConfirmDelete(false)} size="sm" variant="outline">{labels.cancel}</Button>
                 <Button onClick={() => { void deletePipeline(activePipeline.id); setConfirmDelete(false); }} size="sm" variant="destructive">{labels.remove}</Button>
@@ -487,24 +488,24 @@ export function OverviewScreen() {
             </div>
           ) : null}
 
-          {activeDocumentId && !activePipeline ? <p className="mt-4 border-t border-[#e7e2e4] pt-3 text-xs leading-5 text-[#6e676a]">{labels.noActivePipeline}</p> : null}
-          {!activeDocumentId && documents.length > 0 ? <p className="mt-4 border-t border-[#e7e2e4] pt-3 text-xs leading-5 text-[#6e676a]">{labels.selectDocumentForPipeline}</p> : null}
-          {persistenceStatus === "checking" ? <p className="mt-4 border-t border-[#e7e2e4] pt-3 text-xs leading-5 text-[#6e676a]">{labels.loading}</p> : null}
-          {persistenceStatus === "unavailable" ? <div className="mt-4 border-t border-[#e7e2e4] pt-3"><p className="text-xs leading-5 text-[#a23b3b]">{labels.unavailable}</p><PipelineErrorMessage message={persistenceError?.message} /></div> : null}
-          {persistenceStatus === "available" && documents.length === 0 ? <p className="mt-4 border-t border-[#e7e2e4] pt-3 text-xs leading-5 text-[#6e676a]">{labels.empty}</p> : null}
+          {activeDocumentId && !activePipeline ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{labels.noActivePipeline}</p> : null}
+          {!activeDocumentId && documents.length > 0 ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{labels.selectDocumentForPipeline}</p> : null}
+          {persistenceStatus === "checking" ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{labels.loading}</p> : null}
+          {persistenceStatus === "unavailable" ? <div className="mt-4 border-t border-border pt-3"><p className="text-xs leading-5 text-destructive">{labels.unavailable}</p><PipelineErrorMessage message={persistenceError?.message} /></div> : null}
+          {persistenceStatus === "available" && documents.length === 0 ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{labels.empty}</p> : null}
         </section>
 
-        <section className="mt-6 rounded-[16px] border-[1.712px] border-[#e7e2e4] bg-white px-5 pb-4 pt-5" data-testid="figma-overview-pipeline">
+        <section className="mt-6 rounded-[16px] border-[1.712px] border-border bg-card px-5 pb-4 pt-5" data-testid="figma-overview-pipeline">
           <div className="flex min-h-[22px] w-full items-center justify-between gap-4">
-            <h2 className="m-0 text-base font-semibold leading-[22px] text-[#171416]">{labels.journey}</h2>
-            <p className="m-0 text-[12.5px] leading-[18.75px] text-[#969093] max-sm:hidden">{labels.journeyDescription}</p>
+            <h2 className="m-0 text-base font-semibold leading-[22px] text-foreground">{labels.journey}</h2>
+            <p className="m-0 text-[12.5px] leading-[18.75px] text-subtle-foreground max-sm:hidden">{labels.journeyDescription}</p>
           </div>
           <div className="relative mt-2 w-full overflow-hidden" data-testid="overview-journey">
             <div className="relative hidden h-[216px] w-full pt-3 min-[1440px]:block" data-testid="overview-journey-desktop">
               <div className="relative h-[200px] w-full">
-                <div className="absolute top-1 h-[192px] rounded-[14px] border-[1.712px] border-[rgba(231,226,228,0.6)] bg-[#fbfafb]" data-testid="figma-overview-prepare" style={journeyGroupPosition("prepare")}><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.knowledge}</span></div>
-                <div className="absolute top-1 h-[192px] rounded-[14px] border-[1.712px] border-[rgba(231,226,228,0.6)] bg-[#fbfafb]" data-testid="figma-overview-test" style={journeyGroupPosition("test")}><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.query}</span></div>
-                <div className="absolute top-1 h-[192px] rounded-[14px] border-[1.712px] border-solid border-[rgba(231,226,228,0.6)] bg-[rgba(251,244,246,0.6)]" data-testid="figma-overview-measure" style={journeyGroupPosition("measure")}><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-[#969093]">{groupLabels.quality}</span></div>
+                <div className="absolute top-1 h-[192px] rounded-[14px] border-[1.712px] border-border/60 bg-technical" data-testid="figma-overview-prepare" style={journeyGroupPosition("prepare")}><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-subtle-foreground">{groupLabels.knowledge}</span></div>
+                <div className="absolute top-1 h-[192px] rounded-[14px] border-[1.712px] border-border/60 bg-technical" data-testid="figma-overview-test" style={journeyGroupPosition("test")}><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-subtle-foreground">{groupLabels.query}</span></div>
+                <div className="absolute top-1 h-[192px] rounded-[14px] border-[1.712px] border-solid border-border/60 bg-accent/60" data-testid="figma-overview-measure" style={journeyGroupPosition("measure")}><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-subtle-foreground">{groupLabels.quality}</span></div>
                 <JourneyConnectors stateFor={(step) => pipelineState[step]} />
                 {pipelineSteps.map((step) => <JourneyNode href={stageHref[step.key]} key={step.key} labels={journeyLabels} reason={lockedReason(step.key)} state={pipelineState[step.key]} step={step} />)}
               </div>

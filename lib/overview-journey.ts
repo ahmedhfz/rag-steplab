@@ -147,23 +147,23 @@ export type JourneyNodeVisual = {
   opacity: number;
 };
 
-const SUCCESS = "#3f7a55";
-const CHERRY = "#711f3a";
-const WARNING = "#8d651e";
-const ERROR = "#a23b3b";
-const MUTED = "#969093";
-const SUBTLE = "#6e676a";
-const BORDER = "#e7e2e4";
+const SUCCESS = "var(--success)";
+const CHERRY = "var(--brand)";
+const WARNING = "var(--warning)";
+const ERROR = "var(--destructive)";
+const MUTED = "var(--subtle-foreground)";
+const SUBTLE = "var(--muted-foreground)";
+const BORDER = "var(--border)";
 
 export const JOURNEY_NODE_VISUALS: Readonly<Record<PipelineStepState, JourneyNodeVisual>> = {
-  Completed: { borderColor: "transparent", backgroundColor: "#eef4ef", iconColor: SUCCESS, opacity: 1 },
-  Ready: { borderColor: "#e3a9b9", backgroundColor: "#f3d9e0", iconColor: CHERRY, opacity: 1 },
-  Processing: { borderColor: "#eadfc9", backgroundColor: "#fffaf1", iconColor: WARNING, opacity: 1 },
-  Error: { borderColor: "#edcfcf", backgroundColor: "#fbefef", iconColor: ERROR, opacity: 1 },
-  Stale: { borderColor: "#eadfc9", backgroundColor: "#fffaf1", iconColor: WARNING, opacity: 1 },
-  Skipped: { borderColor: BORDER, backgroundColor: "#f7f5f6", iconColor: MUTED, opacity: 1 },
-  Locked: { borderColor: BORDER, backgroundColor: "white", iconColor: MUTED, opacity: 0.65 },
-  "Not started": { borderColor: BORDER, backgroundColor: "#f2eff0", iconColor: SUBTLE, opacity: 1 },
+  Completed: { borderColor: "transparent", backgroundColor: "var(--success-subtle)", iconColor: SUCCESS, opacity: 1 },
+  Ready: { borderColor: "var(--brand-subtle-border)", backgroundColor: "var(--brand-subtle)", iconColor: CHERRY, opacity: 1 },
+  Processing: { borderColor: "var(--warning-border)", backgroundColor: "var(--warning-subtle)", iconColor: WARNING, opacity: 1 },
+  Error: { borderColor: "var(--destructive-border)", backgroundColor: "var(--destructive-subtle)", iconColor: ERROR, opacity: 1 },
+  Stale: { borderColor: "var(--warning-border)", backgroundColor: "var(--warning-subtle)", iconColor: WARNING, opacity: 1 },
+  Skipped: { borderColor: BORDER, backgroundColor: "var(--muted)", iconColor: MUTED, opacity: 1 },
+  Locked: { borderColor: BORDER, backgroundColor: "var(--card)", iconColor: MUTED, opacity: 0.65 },
+  "Not started": { borderColor: BORDER, backgroundColor: "var(--secondary)", iconColor: SUBTLE, opacity: 1 },
 };
 
 export function journeyNodeVisualForState(state: PipelineStepState): JourneyNodeVisual {
@@ -183,8 +183,8 @@ export const JOURNEY_CONNECTOR_VISUALS: Readonly<Record<PipelineStepState, Journ
   Error: { color: ERROR, opacity: 0.9, width: 2.56657 },
   Stale: { color: WARNING, opacity: 0.9, width: 2.56657 },
   Skipped: { color: MUTED, opacity: 0.9, width: 2.56657 },
-  Locked: { color: "#d8d2d5", opacity: 1, width: 2.05326 },
-  "Not started": { color: "#d8d2d5", opacity: 1, width: 2.05326 },
+  Locked: { color: "var(--input)", opacity: 1, width: 2.05326 },
+  "Not started": { color: "var(--input)", opacity: 1, width: 2.05326 },
 };
 
 export function journeyConnectorVisualForState(state: PipelineStepState): JourneyConnectorVisual {

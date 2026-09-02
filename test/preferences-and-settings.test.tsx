@@ -5,8 +5,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { PreferencesProvider } from "@/components/preferences-provider";
 import { LearningHint } from "@/components/pipeline-learning-ui";
 import { SettingsScreen } from "@/components/settings-screen";
+import { PREFERENCES_STORAGE_KEY } from "@/lib/theme";
 
-const STORAGE_KEY = "rag-steplab.preferences.v2";
+const STORAGE_KEY = PREFERENCES_STORAGE_KEY;
 
 function renderSettings() {
   return render(
@@ -24,6 +25,8 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
   document.documentElement.lang = "en";
+  document.documentElement.classList.remove("dark");
+  document.documentElement.style.colorScheme = "";
 });
 
 describe("PreferencesProvider and SettingsScreen", () => {
@@ -46,7 +49,7 @@ describe("PreferencesProvider and SettingsScreen", () => {
   });
 
   it("removes learning notes when the preference is disabled", async () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ locale: "en", showLearningHints: false }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ locale: "en", showLearningHints: false, theme: "system" }));
     render(
       <PreferencesProvider>
         <LearningHint locale="en">Hidden learning note.</LearningHint>
@@ -97,6 +100,7 @@ describe("PreferencesProvider and SettingsScreen", () => {
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")).toMatchObject({
       locale: "en",
       showLearningHints: true,
+      theme: "system",
     });
   });
 
@@ -106,6 +110,26 @@ describe("PreferencesProvider and SettingsScreen", () => {
     await waitForHydration();
 
     expect(screen.getByLabelText("English")).toBeChecked();
+    expect(screen.getByLabelText("System")).toBeChecked();
     expect(screen.getByRole("switch", { name: "Show learning hints" })).toBeChecked();
+  });
+
+  it("keeps theme controls accessible in English and Turkish and resets to System", async () => {
+    const user = userEvent.setup();
+    renderSettings();
+    await waitForHydration();
+
+    await user.click(screen.getByLabelText("Dark"));
+    expect(document.documentElement).toHaveClass("dark");
+    expect(document.documentElement.style.colorScheme).toBe("dark");
+
+    await user.click(screen.getByLabelText("Türkçe"));
+    expect(screen.getByRole("radiogroup", { name: "Tema" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Sistem")).not.toBeChecked();
+    expect(screen.getByLabelText("Koyu")).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "Sıfırla" }));
+    expect(screen.getByLabelText("System")).toBeChecked();
+    expect(document.documentElement).not.toHaveClass("dark");
   });
 });

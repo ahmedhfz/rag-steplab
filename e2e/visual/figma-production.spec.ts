@@ -13,13 +13,16 @@ const referenceDirectory = path.resolve("e2e/visual/reference/production");
 const visualDiff = path.resolve("e2e/visual/figma-visual-diff.mjs");
 const updateReferences = process.env.UPDATE_PRODUCTION_VISUAL_REFERENCES === "1";
 
-type VisualGroup = "overview" | "documents" | "parsing" | "chunking" | "embeddings" | "playground" | "evaluation" | "settings";
+type VisualGroup = "overview" | "documents" | "parsing" | "chunking" | "embeddings" | "playground" | "evaluation" | "settings" | "auth";
 
 type VisualState = {
   key: string;
   scenario: SeededScenario;
   route: string;
   group: VisualGroup;
+  theme?: "light" | "dark";
+  canonicalKey?: string;
+  openSelect?: boolean;
 };
 
 const visualStates: VisualState[] = [
@@ -41,6 +44,14 @@ const visualStates: VisualState[] = [
   { key: "settings", scenario: "settings", route: "/settings", group: "settings" },
 ];
 
+const darkVisualStates: VisualState[] = [
+  { key: "overview-dark", canonicalKey: "overview", scenario: "complete", route: "/", group: "overview", theme: "dark" },
+  { key: "chunking-config-select-dark", canonicalKey: "chunking-config", scenario: "chunking-config", route: "/chunking", group: "chunking", theme: "dark", openSelect: true },
+  { key: "playground-context-dark", canonicalKey: "playground-context", scenario: "playground-context", route: "/playground", group: "playground", theme: "dark" },
+  { key: "evaluation-compare-dark", canonicalKey: "evaluation-compare", scenario: "evaluation-compare", route: "/evaluation", group: "evaluation", theme: "dark" },
+  { key: "settings-dark", canonicalKey: "settings", scenario: "settings", route: "/settings", group: "settings", theme: "dark" },
+];
+
 const visualContracts: Record<VisualGroup, { maxMae: number; maxChangedPixelPercentage: number }> = {
   overview: { maxMae: 3.7, maxChangedPixelPercentage: 5 },
   documents: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
@@ -50,6 +61,7 @@ const visualContracts: Record<VisualGroup, { maxMae: number; maxChangedPixelPerc
   playground: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
   evaluation: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
   settings: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
+  auth: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
 };
 
 type RectExpectation = { x?: number; y?: number; width?: number; height?: number };
@@ -92,7 +104,7 @@ async function assertShellGeometry(page: Page) {
   await expect(page.locator("html")).toHaveJSProperty("scrollWidth", viewport.width);
 }
 
-async function assertOverviewGeometry(page: Page) {
+async function assertOverviewGeometry(page: Page, theme: "light" | "dark") {
   await assertRect(page.getByTestId("figma-overview-main"), { x: 248, y: 0, width: 1193 }, "overview-main");
   await assertRect(page.getByTestId("figma-overview-header"), { x: 288, y: 40, width: 1113, height: 82 }, "overview-header");
   const workspace = page.getByTestId("workspace-control-plane");
@@ -139,8 +151,9 @@ async function assertOverviewGeometry(page: Page) {
   expect(nodeGeometry.slice(1).every(({ x }, index) => x > nodeGeometry[index].x), "journey node order").toBe(true);
   expect(nodeGeometry.map(({ state }) => state)).toEqual(["Completed", "Completed", "Completed", "Completed", "Completed", "Skipped", "Completed", "Completed", "Completed"]);
   await expect(page.getByTestId("overview-journey-connector-parse-chunk")).toHaveAttribute("data-state", "Completed");
-  await expect(page.getByTestId("overview-journey-glyph-chunk")).toHaveAttribute("data-state", "Completed");
-  expect(await page.getByTestId("overview-journey-glyph-chunk").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(63, 122, 85)");
+  const chunkGlyph = page.getByTestId("overview-journey-desktop").getByTestId("overview-journey-glyph-chunk");
+  await expect(chunkGlyph).toHaveAttribute("data-state", "Completed");
+  expect(await chunkGlyph.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(theme === "dark" ? "rgb(117, 196, 143)" : "rgb(63, 122, 85)");
   const evaluation = nodeGeometry.at(-1);
   expect(evaluation).toBeDefined();
   expect(evaluation!.x + evaluation!.width / 2).toBeGreaterThanOrEqual(measure.x);
@@ -149,9 +162,10 @@ async function assertOverviewGeometry(page: Page) {
 }
 
 async function assertRouteGeometry(page: Page, state: VisualState) {
+  const stateKey = state.canonicalKey ?? state.key;
   await assertShellGeometry(page);
-  if (state.key === "overview") {
-    await assertOverviewGeometry(page);
+  if (stateKey === "overview") {
+    await assertOverviewGeometry(page, state.theme ?? "light");
     return;
   }
 
@@ -180,14 +194,14 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
   } else if (state.group === "chunking") {
     await assertRect(page.getByTestId("chunking-page-header"), { x: 288, y: 40, width: 1113, height: 92 }, "chunking-header");
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 289, y: 145, width: 556, height: 53 }, "chunking-context");
-    await assertRect(page.getByTestId("chunking-workspace"), { x: 288, y: 223, width: 1113, height: state.key === "chunking-config" ? 240 : 739 }, "chunking-workspace");
+    await assertRect(page.getByTestId("chunking-workspace"), { x: 288, y: 223, width: 1113, height: stateKey === "chunking-config" ? 240 : 739 }, "chunking-workspace");
   } else if (state.group === "embeddings") {
     await assertRect(page.getByTestId("embeddings-page-header"), { x: 288, y: 40, width: 1113, height: 92 }, "embeddings-header");
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 289, y: 145, width: 556, height: 53 }, "embeddings-context");
     await expect(page.getByTestId("embedding-input")).toHaveCount(0);
     const embeddingWorkspace = page.getByTestId("embeddings-workspace");
     await assertRect(embeddingWorkspace, { x: 288, y: 223, width: 1113 }, "embeddings-workspace");
-    expect((await rect(embeddingWorkspace)).height, `${state.key}-workspace-height`).toBeGreaterThan(state.key === "embeddings-ready" ? 60 : 150);
+    expect((await rect(embeddingWorkspace)).height, `${state.key}-workspace-height`).toBeGreaterThan(stateKey === "embeddings-ready" ? 60 : 150);
     await expect(page.getByTestId("embedding-lineage")).toBeVisible();
   } else if (state.group === "playground") {
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: 1193, height: 53 }, "playground-context-bar");
@@ -206,7 +220,7 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     const thumbRect = await rect(rerankerSwitch.locator('[data-slot="switch-thumb"]'));
     const expectedThumbOffset = await rerankerSwitch.getAttribute("data-state") === "checked" ? 18 : 2;
     expect(Math.abs(thumbRect.x - switchRect.x - expectedThumbOffset), `${state.key}-reranker-thumb-offset`).toBeLessThanOrEqual(1);
-    if (state.key !== "playground-empty") {
+    if (stateKey !== "playground-empty") {
       await assertRect(page.getByTestId("playground-stage-layout"), { x: 288, width: 1113 }, "playground-stage-layout");
       await assertRect(page.getByTestId("playground-stage-rail"), { width: 260 }, "playground-stage-rail");
       await assertRect(page.getByTestId("playground-stage-content"), { x: 568, width: 833 }, "playground-stage-content");
@@ -215,9 +229,9 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: 1193, height: 53 }, "evaluation-context-bar");
     await assertRect(page.getByTestId("evaluation-page-header"), { x: 288, y: 93, width: 1113 }, "evaluation-header");
     await assertRect(page.getByTestId("evaluation-workspace-context"), { x: 288, width: 1113 }, "evaluation-workspace-context");
-    const panel = page.getByTestId(`evaluation-panel-${state.key.replace("evaluation-", "")}`);
+    const panel = page.getByTestId(`evaluation-panel-${stateKey.replace("evaluation-", "")}`);
     await assertRect(panel, { x: 288, width: 1113 }, `${state.key}-panel`);
-    if (state.key === "evaluation-compare") {
+    if (stateKey === "evaluation-compare") {
       const cards = page.getByTestId("evaluation-compare-content").locator("article");
       await expect(cards).toHaveCount(2);
       const first = await rect(cards.nth(0));
@@ -232,12 +246,14 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
 }
 
 async function prepareState(page: Page, state: VisualState) {
+  const stateKey = state.canonicalKey ?? state.key;
   await page.setViewportSize(viewport);
+  await page.emulateMedia({ colorScheme: state.theme ?? "light", reducedMotion: "reduce" });
   await page.goto("/parse", { waitUntil: "networkidle" });
   await selectSeededDocument(page);
   await page.goto(state.route, { waitUntil: "networkidle" });
 
-  if (state.key === "playground-reranking") {
+  if (stateKey === "playground-reranking") {
     await expect(page.getByTestId("experiment-stage-trace")).toBeVisible();
     await page.getByTestId("experiment-stage-trace").getByRole("button", { name: /^Reranking\b/ }).click();
     const rerankingContent = page.getByTestId("playground-stage-content");
@@ -245,21 +261,21 @@ async function prepareState(page: Page, state: VisualState) {
     await expect(rerankingContent).toContainText("Reranked position");
     await expect(rerankingContent).not.toContainText("Rerank score");
     await expect(rerankingContent).not.toContainText("confidence");
-  } else if (state.key === "playground-context") {
+  } else if (stateKey === "playground-context") {
     await expect(page.getByTestId("experiment-stage-trace")).toBeVisible();
     await page.getByTestId("experiment-stage-trace").getByRole("button", { name: /^Context\b/ }).click();
     await expect(page.getByTestId("playground-stage-content").getByRole("heading", { name: "Build context", level: 2 })).toBeVisible();
-  } else if (state.key === "playground-answer") {
+  } else if (stateKey === "playground-answer") {
     await expect(page.getByTestId("experiment-stage-trace")).toBeVisible();
     await page.getByTestId("experiment-stage-trace").getByRole("button", { name: /^Answer\b/ }).click();
     await expect(page.getByTestId("playground-stage-content").getByRole("heading", { name: "Answer", level: 2 })).toBeVisible();
     await expect(page.getByTestId("playground-current-actions").getByRole("button", { name: "Run generation again", exact: true })).toBeVisible();
     await expect(page.getByTestId("playground-current-actions").getByRole("button", { name: "Copy trace", exact: true })).toBeVisible();
-  } else if (state.key === "evaluation-results") {
+  } else if (stateKey === "evaluation-results") {
     await page.getByTestId("evaluation-tab-results").click();
     await expect(page.getByTestId("evaluation-panel-results")).toBeVisible();
     await expect(page.getByText("Hit@K", { exact: true }).first()).toBeVisible();
-  } else if (state.key === "evaluation-compare") {
+  } else if (stateKey === "evaluation-compare") {
     await page.getByTestId("evaluation-tab-compare").click();
     const history = page.getByTestId("evaluation-history");
     await expect(history).toBeVisible();
@@ -274,35 +290,40 @@ async function prepareState(page: Page, state: VisualState) {
     await expect(page.getByTestId("evaluation-compare-context")).toContainText("Changed settings");
   }
 
-  if (state.key === "playground-empty") {
+  if (stateKey === "playground-empty") {
     await expect(page.getByTestId("playground-blocker")).toBeVisible();
     await expect(page.getByTestId("experiment-stage-trace")).toHaveCount(0);
-  } else if (state.key === "playground-retrieval") {
+  } else if (stateKey === "playground-retrieval") {
     await expect(page.getByTestId("experiment-stage-trace")).toBeVisible();
     await expect(page.getByTestId("playground-stage-content")).toContainText("ORBIT-731");
     await expect(page.getByTestId("playground-current-actions").getByRole("button", { name: "Continue", exact: true })).toBeVisible();
     await expect(page.getByTestId("playground-current-actions").getByRole("button", { name: "Copy trace", exact: true })).toBeVisible();
-  } else if (state.key === "parsing-result") {
+  } else if (stateKey === "parsing-result") {
     await expect(page.getByTestId("parse-result-summary")).toBeVisible();
-  } else if (state.key === "chunking-config") {
+  } else if (stateKey === "chunking-config") {
     await expect(page.getByTestId("chunking-workspace")).toBeVisible();
     await expect(page.getByTestId("chunk-results")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Run chunking", exact: true })).toBeEnabled();
-  } else if (state.key === "chunking-result") {
+  } else if (stateKey === "chunking-result") {
     await expect(page.getByTestId("chunk-results")).toBeVisible();
-  } else if (state.key === "embeddings-ready") {
+  } else if (stateKey === "embeddings-ready") {
     await expect(page.getByRole("button", { name: "Create embeddings", exact: true })).toBeEnabled();
     await expect(page.getByText("RESULT SUMMARY", { exact: true })).toHaveCount(0);
-  } else if (state.key === "embeddings-result") {
+  } else if (stateKey === "embeddings-result") {
     await expect(page.getByText("RESULT SUMMARY", { exact: true })).toBeVisible();
-  } else if (state.key === "documents-populated") {
+  } else if (stateKey === "documents-populated") {
     await expect(page.getByTestId("document-library")).toBeVisible();
     await expect(page.getByRole("button", { name: /e2e-seeded-golden\.pdf/ }).first()).toBeVisible();
-  } else if (state.key === "evaluation-dataset") {
+  } else if (stateKey === "evaluation-dataset") {
     await expect(page.getByTestId("evaluation-panel-dataset")).toBeVisible();
     await expect(page.getByRole("button", { name: /e2e-seeded-golden-dataset/ }).first()).toBeVisible();
-  } else if (state.key === "settings") {
+  } else if (stateKey === "settings") {
     await expect(page.getByTestId("settings-card")).toBeVisible();
+  }
+
+  if (state.openSelect) {
+    await page.locator('[data-slot="select-trigger"]').first().click();
+    await expect(page.locator('[data-slot="select-content"]')).toBeVisible();
   }
 }
 
@@ -318,8 +339,8 @@ async function captureAndCompare(page: Page, state: VisualState) {
   const screenshot = await page.screenshot({
     animations: "disabled",
     caret: "hide",
-    mask: [dynamicMask],
-    maskColor: "#ffffff",
+    mask: state.group === "auth" ? [] : [dynamicMask],
+    maskColor: state.theme === "dark" ? "#141113" : "#ffffff",
     path: actualPath,
   });
   expect(screenshot.readUInt32BE(16), `${state.key} screenshot width`).toBe(viewport.width);
@@ -356,11 +377,13 @@ async function captureAndCompare(page: Page, state: VisualState) {
 test.describe("canonical desktop production React visual contracts", () => {
   test.describe.configure({ mode: "serial" });
 
-  for (const state of visualStates) {
+  for (const state of [...visualStates, ...darkVisualStates]) {
     test(`${state.key} real React state preserves geometry and visual contract`, async ({ page }) => {
-      await installSeededApi(page, { scenario: state.scenario });
+      await installSeededApi(page, { scenario: state.scenario, theme: state.theme ?? "light" });
       await prepareState(page, state);
       await settle(page);
+      await expect(page.locator("html")).toHaveClass(state.theme === "dark" ? /\bdark\b/ : /^(?!.*\bdark\b)/);
+      await expect(page.locator("html")).toHaveCSS("color-scheme", state.theme ?? "light");
       await assertRouteGeometry(page, state);
       await captureAndCompare(page, state);
     });
@@ -371,6 +394,21 @@ test.describe("canonical desktop auth route inventory", () => {
   // Auth ekranlarını anonim tutarken korumalı Preview'ın bypass cookie'sini koruyoruz.
   // Boş storage state kullanmak Vercel'de uygulama yerine Vercel login ekranını açar.
   test.use({ storageState: "output/playwright/.auth/vercel-bypass.json" });
+
+  test("auth-login-dark preserves its Dark visual contract", async ({ page }) => {
+    const state: VisualState = { key: "auth-login-dark", scenario: "settings", route: "/login", group: "auth", theme: "dark" };
+    await page.setViewportSize(viewport);
+    await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+    await page.addInitScript(() => {
+      window.localStorage.setItem("rag-steplab.preferences.v3", JSON.stringify({ locale: "en", showLearningHints: true, theme: "dark" }));
+    });
+    await page.goto(state.route, { waitUntil: "networkidle" });
+    await expect(page.getByRole("heading", { name: "Sign in", level: 1 })).toBeVisible();
+    await expect(page.locator("html")).toHaveClass(/\bdark\b/);
+    await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
+    await settle(page);
+    await captureAndCompare(page, state);
+  });
 
   for (const route of [
     ["auth-login", "/login", "Sign in"],

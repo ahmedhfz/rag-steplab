@@ -52,6 +52,8 @@ const authPaths = [
 ];
 const criticalContractPaths = [
   "package.json",
+  "app/globals.css",
+  "app/layout.tsx",
   "backend/app/main.py",
   "backend/app/schemas.py",
   "backend/app/document_pipelines.py",
@@ -67,15 +69,19 @@ const criticalContractPaths = [
   "components/source-inspector.tsx",
   "components/overview-screen.tsx",
   "components/evaluation-screen.tsx",
+  "components/preferences-provider.tsx",
+  "components/settings-screen.tsx",
   "lib/document-api.ts",
   "lib/document-parse-types.ts",
   "lib/figma-view-models.ts",
   "lib/overview-journey.ts",
+  "lib/theme.ts",
   "lib/rag-api.ts",
   "lib/rag-api-types.ts",
   "e2e/smoke/document-lifecycle.spec.ts",
   "e2e/smoke/rag-inspection.spec.ts",
   "e2e/smoke/ui-context-cta.spec.ts",
+  "e2e/smoke/theme.spec.ts",
   "e2e/support/browser-quality.ts",
   "e2e/support/seeded-api.ts",
   "e2e/support/seeded-workspace.ts",
@@ -95,6 +101,8 @@ const productionVisualPaths = [
   "e2e/visual/reference/production/",
 ];
 const productionVisualSourcePaths = [
+  "app/globals.css",
+  "app/layout.tsx",
   "app/page.tsx",
   "app/documents/page.tsx",
   "app/parse/page.tsx",
@@ -104,24 +112,30 @@ const productionVisualSourcePaths = [
   "app/evaluation/page.tsx",
   "app/settings/page.tsx",
   "components/app-shell.tsx",
+  "components/auth-shell.tsx",
   "components/chunks-pipeline.tsx",
   "components/document-library.tsx",
   "components/document-pipeline-provider.tsx",
   "components/documents-screen.tsx",
   "components/evaluation-screen.tsx",
+  "components/login-screen.tsx",
   "components/overview-screen.tsx",
   "components/page-transition.tsx",
   "components/parse-screen.tsx",
   "components/pipeline-context-bar.tsx",
   "components/pipeline-learning-ui.tsx",
   "components/pipeline-stage-screens.tsx",
+  "components/preferences-provider.tsx",
+  "components/reset-password-screen.tsx",
   "components/retrieval-screen.tsx",
   "components/settings-screen.tsx",
   "components/source-inspector.tsx",
   "components/status-indicator.tsx",
   "components/ui/",
+  "public/assets/figma/overview/",
   "lib/figma-view-models.ts",
   "lib/overview-journey.ts",
+  "lib/theme.ts",
 ];
 const workerProviderPaths = [
   "backend/modal_app.py",
@@ -226,7 +240,10 @@ if (process.argv.includes("--self-test")) {
   assertClassification(["components/status-indicator.tsx"], { node: true, frontend: true, production_visual: true });
   assertClassification(["package-lock.json"], { node: true, frontend: true, frontend_full_tests: true });
   assertClassification(["package.json"], { node: true, frontend: true, frontend_full_tests: true, critical_e2e: true });
-  assertClassification(["components/login-screen.tsx"], { node: true, frontend: true, auth_e2e: true });
+  assertClassification(["components/login-screen.tsx"], { node: true, frontend: true, auth_e2e: true, production_visual: true });
+  assertClassification(["app/globals.css"], { node: true, frontend: true, critical_e2e: true, production_visual: true });
+  assertClassification(["lib/theme.ts"], { node: true, frontend: true, critical_e2e: true, production_visual: true });
+  assertClassification(["components/preferences-provider.tsx"], { node: true, frontend: true, critical_e2e: true, production_visual: true });
   assertClassification(["backend/tests/test_main.py"], { backend: true });
   assertClassification(["backend/app/auth.py"], { backend: true, modal_deploy: true });
   assertClassification(["backend/app/schemas.py"], { node: true, backend: true, critical_e2e: true, modal_deploy: true });
@@ -238,6 +255,7 @@ if (process.argv.includes("--self-test")) {
   assertClassification(["components/overview-screen.tsx"], { node: true, frontend: true, critical_e2e: true, production_visual: true });
   assertClassification(["components/evaluation-screen.tsx"], { node: true, frontend: true, critical_e2e: true, production_visual: true });
   assertClassification(["e2e/smoke/ui-context-cta.spec.ts"], { node: true, critical_e2e: true, playwright_list: true });
+  assertClassification(["e2e/smoke/theme.spec.ts"], { node: true, critical_e2e: true, playwright_list: true });
   assertClassification(["app/page.tsx"], { node: true, frontend: true, critical_e2e: true, production_visual: true });
   assertClassification(["e2e/support/auth.ts"], { node: true, auth_e2e: true, playwright_list: true });
   assertClassification(["playwright.config.ts"], { node: true, critical_e2e: true, playwright_list: true });
