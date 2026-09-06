@@ -18,6 +18,11 @@ kanoniktir. Path-aware validation yönlendirmesi
 durum belgeleri kod, manifest veya workflow ile çelişirse bağlam olarak
 değerlendirilir; güncel kaynak yeniden okunur.
 
+Backend işlerinde `backend/AGENTS.md`, database işlerinde `supabase/AGENTS.md`
+okunur. Repository becerileri `.agents/skills/` altında tek kopya tutulur:
+`modal` Modal operasyonları, `motion` animasyon işleri, `rag-e2e-validation`
+E2E profil/hedef seçimi içindir. `.codex/config.toml` yalnız Codex MCP ayarını taşır.
+
 ## Mimari ve doğruluk sınırları
 
 - Gerçek provenance korunur: sahte doküman, chunk, skor, cevap veya progress

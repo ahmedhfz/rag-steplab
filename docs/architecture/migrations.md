@@ -11,7 +11,7 @@ PostgreSQL driver olarak psycopg 3 kullanılmaya devam eder.
 Supabase PostgreSQL, pgvector ve private Storage production'ın kaynak
 platformudur. İki ayrı migration history'si aynı şemayı yönetirse local,
 remote ve production state'leri ayrışabilir. Bu nedenle Alembic yalnızca
-historical repository state olarak bırakılmış, çalıştırılabilir migration
+tarihsel Git geçmişinde kalmış, aktif dosya ve çalıştırılabilir migration
 authority olmaktan çıkarılmıştır.
 
 ## Production baseline

@@ -33,14 +33,15 @@ Bu nedenle `queued`/`running`/`failed` run için sahte progress, score veya pars
 ## Modal deployment
 
 Production parsing tam Docling `DocumentConverter` ve semantic normalization
-üzerinden çalışır. Başlangıç profili worker için `CPU 2`, `4096 MiB`, `timeout
+üzerinden çalışır. Mevcut profil worker için `CPU 2`, `4096 MiB`, `timeout
 900 s`, `min_containers=0`, `max_containers=1`; API için yaklaşık `CPU 0.5`,
-`1024 MiB`, `min_containers=0`, `max_containers=2`'dir. Docling modelleri pinned
+`1024 MiB`, `min_containers=1`, `max_containers=2`'dir (`api_eu`). Legacy `api`
+cutover rollback yüzeyi scale-to-zero kalır. Docling modelleri pinned
 ve versioned bir Modal Volume'a prefetch edilir. `backend/app` image'a explicit
 paketlenir ve remote import smoke'ta `app.main` ile `app.parser` doğrulanır.
 
-Modal deploy, model cache hazırlığı, merged SHA doğrulaması ve production full
-RAG smoke kapıları [docs/deployment.md](../docs/deployment.md) içinde tanımlıdır.
+Otomatik Modal deploy/tag/health kontrolleri ile gerektiğinde yetkili model cache
+hazırlığı ve manuel production full-RAG doğrulaması [docs/deployment.md](../docs/deployment.md) içinde tanımlıdır.
 
 ## Çalıştırma
 

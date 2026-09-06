@@ -3,7 +3,7 @@
 ## Sahiplik ve sınırlar
 
 FastAPI uygulaması `backend/app/` altındadır. `pipeline.py`, `parser.py`,
-`chunking.py`, `gemini.py`, `repository.py` ve `modal_app.py` RAG Core,
+`chunking.py`, `gemini.py`, `repository.py` ve `backend/modal_app.py` RAG Core,
 provider ve Modal worker akışını yürütür. Backend frontend UI'sının veya
 Supabase migration history'sinin sahibi değildir.
 

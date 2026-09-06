@@ -67,9 +67,9 @@ taşınmaz.
 `docling==2.117.0` pinned'dir. Model artifact'ları
 `rag-steplab-docling-models-v2` Volume içinde
 `/models/docling/docling-2.117.0` yolunda kalıcıdır. Image, Modal 1.x source
-packaging gereği `backend/app` paketini explicit ekler. Her deploy sonrasında
-remote smoke `app.main`, `app.parser`, Docling sürümü ve artifact yolunu
-doğrulamalıdır.
+packaging gereği `backend/app` paketini explicit ekler. Worker/provider değişikliğinde
+release remote smoke `app.main`, `app.parser` ve Docling sürümünü kontrol eder.
+Artifact/cache hazır oluşu ve gerçek parse sonucu ayrı operasyonel doğrulamadır.
 
 Karaman regression PDF'iyle ilk ölçüm:
 
@@ -95,37 +95,42 @@ benzeri değerler browser'a, `NEXT_PUBLIC_*` değişkenlerine, source control'a,
 smoke output'una veya loglara yazılmaz. CORS yalnız gerçek Vercel origin'lerini
 exact içerir; wildcard kullanılmaz. PDF limiti 50 MiB'dir.
 
-## Deploy sırası
+## Deploy sırası ve gerçek otomatik kapılar
 
-1. Local backend/frontend test, lint, typecheck ve build.
-2. Supabase migration validation ve local schema rebuild.
-3. `main` push'unda Supabase CLI migration deploy ve migration status doğrulaması.
-4. Modal deploy ve Docling model prefetch.
-5. Remote import, health ve Karaman semantic smoke.
-6. Vercel Preview browser E2E ve full RAG smoke.
-7. PR/CI green ve merge.
-8. Merged SHA'nın Modal'a deploy edilmesi ve direct smoke tekrarı.
-9. `NEXT_PUBLIC_API_BASE_URL` production güncellemesi ve Vercel redeploy.
-10. Production browser E2E, full RAG smoke ve kısa health/log observation.
+1. PR'da değişikliğe göre yerel hedefli kontrolleri çalıştır. `.github/workflows/ci.yml`
+   classifier'ın seçtiği frontend/backend/migration ve auth/critical/visual
+   kontrollerini uygular; her PR tüm E2E profillerini çalıştırmaz.
+2. İlgili PR kontrolleri ve inceleme tamamlanınca yetkili merge yapılır.
+3. `.github/workflows/release.yml`, yalnız `main` üzerinde `backend/app/**`,
+   `backend/modal_app.py`, runtime/worker requirements veya `supabase/migrations/**`
+   değiştiğinde tetiklenir. Her main push'u için genel frontend release kapısı değildir.
+4. Release secret hygiene kontrolü yapar. Classifier `modal_deploy=true` ise hafif
+   backend bağımlılıklarıyla backend testleri çalışır. `migration=true` ise local
+   reset/test/lint ve authority kontrolünden sonra linked migration dry-run/apply
+   ve `upToDate` doğrulaması yapılır. Migration başarısızsa aynı job'ın sonraki
+   Modal adımı ilerlemez; Vercel deployment'ı bu job tarafından yönetilmez.
+5. `modal_deploy=true` ise `main` environment'ına Git SHA tag'iyle rolling deploy,
+   tag doğrulaması ve API health/ready/auth koruma kontrolleri yapılır.
+   `worker_provider=true` ise ayrıca remote import smoke çalışır.
+6. Docling prefetch, Karaman semantic smoke ve hosted full-RAG ayrı yetkili
+   operasyonlardır; release workflow'u bunları otomatik çalıştırmaz. Model/cache
+   değişikliği gerektirmedikçe her deploy'da prefetch yapmayın.
+7. Vercel rollout/cutover ve production browser/full-RAG doğrulamasını ayrıca
+   planlayın. Mevcut `.github/workflows/e2e-full.yml` yalnız manuel Heavy validation
+   workflow'udur; schedule yoktur. Deployment başarı kanıtı ile gerçek provider
+   ve corpus sonucu ayrı raporlanır.
 
-`main` branch'ine gelen her push'ta GitHub Actions önce frontend, backend,
-migration validation ve secret-hygiene kapılarını çalıştırır. Migration job'ı
-başarılı olursa Supabase CLI linked production project'e pending
-`supabase/migrations` dosyalarını uygular ve status kontrolü yapar. Bu job için
-`SUPABASE_ACCESS_TOKEN` secret'ı ve `SUPABASE_PROJECT_REF` repository
-variable'ı gerekir; DB password veya service-role key workflow'a eklenmez. Aynı
-job başarısız olursa Modal/Vercel production deploy'ları başlamaz.
+Supabase Dashboard repository integration kullanılmaz; migration authority
+GitHub Actions + Supabase CLI'dır. Linked işlem için `SUPABASE_ACCESS_TOKEN` ve
+`SUPABASE_PROJECT_REF`; Modal için `MODAL_TOKEN_ID` ve `MODAL_TOKEN_SECRET`
+gerekir. Secret değerleri çıktıya veya repository'ye yazılmaz.
 
-Supabase Dashboard repository integration kullanılmaz; tek migration authority
-GitHub Actions + Supabase CLI'dır. Supabase CLI link çalışma anında
-`supabase link --project-ref "$SUPABASE_PROJECT_REF"` ile yapılır.
-
-Modal deploy job'ı
-`modal deploy --env main --tag "$GITHUB_SHA" --strategy rolling backend/modal_app.py`
-komutuyla test edilen commit'i production Modal App'e gönderir. GitHub
-repository/environment secret'larında `MODAL_TOKEN_ID` ve
-`MODAL_TOKEN_SECRET` bulunmalıdır. Modal deployment history içindeki tag,
-Vercel production deployment SHA'sı ve GitHub commit SHA'sı aynı olmalıdır.
+Release komutu:
+`modal deploy --env main --tag "$GITHUB_SHA" --strategy rolling backend/modal_app.py`.
+Workflow Modal tag'ini doğrular; Vercel SHA eşleşmesini garanti etmez. Uçtan uca
+release doğrulaması istendiğinde Vercel deployment SHA'sını ayrıca kontrol edin.
+Manual full-RAG workflow'u sabit production URL'sini kullanır; seçili Git ref ile
+canlı frontend/backend SHA'larının eşit olduğunu bu koşudan çıkarmayın.
 
 ## Migration authority
 
@@ -147,15 +152,29 @@ için kullanılabilir. Existing production baseline migration'ı remote'da tekra
 çalıştırılmaz; Supabase migration repair ile applied olarak işaretlenir.
 Historical baseline yalnız boş/local environment rebuild'i içindir.
 
-Modal deploy komutları:
+Manuel Modal işlemleri yalnız mevcut operasyon yetkisi kapsamında yapılır.
+Repository root'unda temiz ve test edilmiş checkout için production komutu:
 
 ```powershell
-backend\.venv\Scripts\modal.exe deploy backend/modal_app.py
-backend\.venv\Scripts\python.exe -c "import modal; modal.Function.from_name('rag-steplab-api', 'prefetch_docling_models').remote()"
-backend\.venv\Scripts\python.exe -c "import modal; print(modal.Function.from_name('rag-steplab-api', 'remote_import_smoke').remote())"
+$releaseSha = git rev-parse HEAD
+backend\.venv\Scripts\modal.exe deploy --env main --tag $releaseSha --strategy rolling backend/modal_app.py
+backend\.venv\Scripts\python.exe -c "import modal; print(modal.Function.from_name('rag-steplab-api', 'remote_import_smoke', environment_name='main').remote())"
+```
+
+Gerektiğinde ayrı yetkili model-cache hazırlığı:
+
+```powershell
+backend\.venv\Scripts\python.exe -c "import modal; modal.Function.from_name('rag-steplab-api', 'prefetch_docling_models', environment_name='main').remote()"
 ```
 
 ## Test ve production smoke
+
+Aşağıdaki hosted smoke veri oluşturur ve provider maliyeti doğurabilir; sıradan
+local test değildir. Authenticated API için dedicated kullanıcıya ait
+`SMOKE_ACCESS_TOKEN` process environment'ta güvenli şekilde sağlanmalıdır;
+token değeri komuta, loga veya belgeye yazılmaz. Hedef, PDF ve izin verilen veri
+etkisini doğrulamadan çalıştırmayın. Script'in ürettiği kayıtların temizliğini
+ayrı kapsamlandırın; E2E cleanup'ın her smoke verisini sildiğini varsaymayın.
 
 ```powershell
 backend\.venv\Scripts\python.exe -m pytest backend/tests
