@@ -3,9 +3,7 @@
 ## Platform-specific rules
 
 -   [React](react.md)
--   [Vue](vue.md)
 -   [Vanilla JS](motion.md)
--   [Base UI](base-ui.md)
 
 ## Universal rules (all platforms)
 
@@ -13,11 +11,9 @@
 
 #### Execution speed
 
-Inside functions that run every animation frame (rAF callbacks, `useTransform` callbacks, pointer move callbacks, `onUpdate`, `frame.render` etc):
-
--   Avoid object allocation. Prefer mutation where safe.
--   Prefer `for` loops over `forEach` of `map`, unless function callback can be pre-allocated.
--   Avoid `Object.entries`, `Object.values`.
+For measured hot paths in per-frame callbacks, inspect allocation and iteration
+cost before optimizing. Prefer the existing clear implementation until profiling
+shows a bottleneck; avoid blanket loop rewrites or mutation rules.
 
 #### Animating via `transform` vs independent transforms
 

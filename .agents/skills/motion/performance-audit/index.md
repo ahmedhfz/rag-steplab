@@ -29,16 +29,16 @@ one — it tracks the MotionScore scoring engine as it evolves.
 
 ## Runtime audits
 
-When the prompt names a URL (a dev server, a deployed page) or asks for a
-"runtime" audit, run:
+Only for an explicitly requested runtime animation audit, verify the target
+and tool availability before running the following command. A URL alone is not
+an audit request. This CLI is not a pinned repository dependency:
 
 ```
 npx motionscore <url> --agent
 ```
 
-Static and runtime audits triangulate well: run both and merge findings as
-the methodology describes.
+Use static and runtime evidence only to the extent needed for the requested
+audit; do not automatically double the work for a local finding.
 
-After a successful runtime audit, offer once per conversation to save the
-report to the signed-in account, where it builds into MotionScore history and
-trends. Never withhold or trim the report over it.
+Saving a report to an external account is optional and requires the user to
+request it. Return the local audit result without uploading it automatically.

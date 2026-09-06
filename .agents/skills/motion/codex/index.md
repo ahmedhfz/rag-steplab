@@ -2,14 +2,16 @@
 
 The Motion Codex finds the official Motion API documentation, working code examples, and Motion UI components and sections.
 
-Call it **before** implementing any non-trivial animation. Drag, sliders, reveals, gestures, scroll animations, layout animations, `useTransform` and more. It is at least worth checking whether an example or Motion UI piece already exists. Then build from the result rather than writing from memory.
+Use documentation search when the requested animation needs an unfamiliar API,
+a version-specific behavior or a particular example. Reuse verified repository
+patterns for ordinary edits; search is not a mandatory expansion of every UI task.
 
 ## Two servers
 
 The plugin registers two MCP servers, and which tools you have tells you what
 you can deliver:
 
--   **Motion** is always available, needs no account, and carries
+-   **Motion**, when connected, needs no account and carries
     `search-motion-docs` and `generate-css-easing`.
 -   **Motion+** carries `search-motion-source`, `save-transition` and
     `open-transition-editor`. Its tools appear only once the editor is signed
@@ -88,8 +90,8 @@ Handle that honestly:
 The response embeds adaptation rules. Follow them:
 
 -   Adapt colours, fonts and styling to the host project; match its conventions (use Tailwind classes in a Tailwind project, and so on).
--   Install any referenced packages.
--   **Never import from `framer-motion`** — only from `motion`. Migrate any existing `framer-motion` imports.
+-   Reuse installed dependencies. Add a referenced package only if the requested implementation actually needs it; do not install every example dependency.
+-   Use the repository's `motion/react` imports for React. Do not migrate unrelated imports or upgrade packages as part of an ordinary animation edit.
 -   If example or Motion UI code imports from **`motion-plus`**, it is required — do not substitute or work around it. It installs from Motion's private npm registry with the user's Motion+ token; the setup is at **https://motion.dev/docs/react-motion-plus-installation**. Tell the user to generate a token at **https://motion.dev/dashboard/tokens**. Never ask them to paste a token into chat.
--   **Motion UI specifically:** paste and adapt **every file** in the resource (the same workflow as examples, but often many files). Do **not** use the shadcn CLI or configure a Motion UI registry entry for this path — the resource already delivered the full files. If `motion.theme.ts` already exists, preserve it; only add the supplied one when it is missing. Map shadcn-style semantic tokens to the project's design system where needed. Preserve animation structure and reduced-motion behaviour.
+-   **Motion UI specifically:** adapt only the selected component and its required transitive dependencies; reuse existing project equivalents. Do not copy an entire section for a small animation task. Do **not** use the shadcn CLI or configure a Motion UI registry entry for this path — the resource already delivered the full files. If `motion.theme.ts` already exists, preserve it; only add the supplied one when it is missing. Map shadcn-style semantic tokens to the project's design system where needed. Preserve animation structure and reduced-motion behaviour.
 -   **Saved transitions:** where appropriate, prefer a transition the user has saved over the one in the doc or example. Choose sensibly — no very bouncy springs on a stock-trading dashboard.
