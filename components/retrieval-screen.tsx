@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Copy, Minus, Plus, RotateCcw, Search, X } from "lucide-react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
@@ -240,6 +240,11 @@ function ExperimentErrorSurface({
   error: { code?: string | null; message?: string | null } | null;
   locale: Locale;
 }) {
+  if (error?.code === "run_poll_timeout") return (
+    <section className="mt-8 rounded-[16px] border border-warning-border bg-warning-subtle p-5 text-sm text-warning" data-testid="playground-tracking-paused" role="status">
+      {locale === "tr" ? "Tarayıcı takibi duraklatıldı. Run arka planda devam ediyor olabilir; güncel durumu görmek için takibi sürdürün." : "Browser tracking paused. The run may still be active; resume tracking to check its current status."}
+    </section>
+  );
   const labels = locale === "tr"
     ? { title: "Deney tamamlanamadı", message: "Bu deney tamamlanamadı. Tekrar deneyin veya ayrıntıları inceleyin.", details: "Ayrıntılar", code: "Kod", messageLabel: "Mesaj" }
     : { title: "Experiment couldn’t be completed", message: "We couldn’t complete this experiment. Try again or review the details.", details: "Details", code: "Code", messageLabel: "Message" };
@@ -331,6 +336,7 @@ export function RetrievalScreen() {
     experimentHistory,
     runExperiment,
     loadExperiment,
+    resumeRunTracking,
     continueExperiment,
     rerunGeneration,
   } = useDocumentPipeline();
@@ -344,6 +350,36 @@ export function RetrievalScreen() {
   const [targetStage, setTargetStage] = useState<ExperimentTargetStage>("generation");
   const [activeStage, setActiveStage] = useState<PlaygroundStage>("retrieval");
   const [compareIds, setCompareIds] = useState<string[]>([]);
+  const draftRunIdRef = useRef<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const restoreDraft = useCallback((run: ExperimentRun) => {
+    const retrieval = objectValue(run.config.retrieval);
+    setQuestion(run.query);
+    setTopK(String(numberValue(retrieval.topK, 5)));
+    const savedMode = experimentRetrievalMode(run.config);
+    setMode(savedMode === "keyword" || savedMode === "dense" ? savedMode : "hybrid");
+    setRerankerEnabled(Boolean(objectValue(run.config.reranking).enabled));
+    setCandidateCount(numberValue(objectValue(run.config.reranking).candidateCount, 10));
+    setTokenBudget(numberValue(objectValue(run.config.context).tokenBudget, 3000));
+    setTemperature(numberValue(objectValue(run.config.generation).temperature, 0.1));
+    setTargetStage(run.targetStage);
+  }, []);
+  // Hydrate only when the selected run changes, never on polling updates.
+  useEffect(() => {
+    if (!experimentRun || experimentRun.id === draftRunIdRef.current) return;
+    draftRunIdRef.current = experimentRun.id;
+    restoreDraft(experimentRun);
+    setCopyStatus("idle");
+  }, [experimentRun, restoreDraft]);
+  async function copyTrace() {
+    setCopyStatus("idle");
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(experimentRun, null, 2));
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+  }
   const hasChanges = question.length > 0 || topK !== DEFAULT_TOP_K || mode !== DEFAULT_MODE || rerankerEnabled || candidateCount !== 10 || tokenBudget !== 3000 || temperature !== 0.1 || targetStage !== "generation";
   const needsEmbedding = mode !== "keyword";
   const askBlocker = firstBlocker(preferences.locale, [
@@ -530,10 +566,10 @@ export function RetrievalScreen() {
               </> : null}
             </section>
           </div>
-          <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-3" data-testid="playground-current-actions"><span className="mr-1 text-[13px] font-medium text-foreground">{labels.currentActions}</span>{canContinue ? <Button className="gap-2" onClick={() => void continueExperiment()} size="sm" variant="outline">{labels.continue}</Button> : null}{results?.generation ? <Button className="gap-2" disabled={!canRerunGeneration} onClick={() => void rerunGeneration()} size="sm" variant="outline">{labels.runAgain}</Button> : null}<Button className="gap-2" onClick={() => void navigator.clipboard.writeText(JSON.stringify(experimentRun, null, 2))} size="sm" variant="outline"><Copy aria-hidden="true" className="size-4" />{copy.retrieval.copyTrace}</Button></div>
+          <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-3" data-testid="playground-current-actions"><span className="mr-1 text-[13px] font-medium text-foreground">{labels.currentActions}</span>{(experimentRun?.status === "queued" || experimentRun?.status === "running") && experimentStatus !== "processing" ? <Button onClick={() => void resumeRunTracking("experiment")} size="sm" variant="outline">{preferences.locale === "tr" ? "Takibi sürdür" : "Resume tracking"}</Button> : null}{copyStatus !== "idle" ? <span role="status">{copyStatus === "copied" ? (preferences.locale === "tr" ? "Trace kopyalandı." : "Trace copied.") : (preferences.locale === "tr" ? "Kopyalanamadı. Tekrar deneyin." : "Copy failed. Try again.")}</span> : null}{canContinue ? <Button className="gap-2" onClick={() => void continueExperiment()} size="sm" variant="outline">{labels.continue}</Button> : null}{results?.generation ? <Button className="gap-2" disabled={!canRerunGeneration} onClick={() => void rerunGeneration()} size="sm" variant="outline">{labels.runAgain}</Button> : null}<Button className="gap-2" onClick={() => void copyTrace()} size="sm" variant="outline"><Copy aria-hidden="true" className="size-4" />{copy.retrieval.copyTrace}</Button></div>
         </> : null}
 
-        {experimentHistory.length ? <details className="mt-6 rounded-[12px] border border-border bg-card" data-testid="playground-history"><summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-[13px] font-medium text-foreground"><span>{labels.history}</span><span className="text-xs font-normal text-subtle-foreground">{experimentHistory.length}</span></summary><div className="border-t border-border p-3"><div className="space-y-2">{experimentHistory.map((run, index) => { const retrieval = objectValue(run.config.retrieval); const reranking = objectValue(run.config.reranking); const candidateCountValue = isExperimentDetail(run) ? run.stageResults.retrieval?.candidates.length ?? 0 : run.candidateCount ?? 0; return <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border p-3" key={run.id}><label className="flex shrink-0 items-center gap-2"><input aria-label={`${labels.compare} ${experimentIdentity(run, index + 1)}`} checked={compareIds.includes(run.id)} disabled={!compareIds.includes(run.id) && compareIds.length >= 2} onChange={() => toggleCompare(run.id)} type="checkbox" /><span className="sr-only">{labels.compare}</span></label><div className="min-w-0 flex-1"><p className="truncate text-[13px] font-medium text-foreground">{run.query || experimentIdentity(run, index + 1)}</p><p className="mt-1 text-[11.5px] text-subtle-foreground">{experimentRetrievalMode(run.config)} · {copy.retrieval.topK} {String(retrieval.topK ?? "—")} · {Boolean(reranking.enabled) ? (preferences.locale === "tr" ? "Reranker açık" : "Reranker on") : (preferences.locale === "tr" ? "Reranker kapalı" : "Reranker off")} · {formatRunTimestamp(run, preferences.locale) ?? "—"} · {run.timing.durationMs === null ? "—" : `${run.timing.durationMs} ms`} · {candidateCountValue} {labels.candidates.toLowerCase()}</p></div><Button aria-label={`${labels.load} ${experimentIdentity(run, index + 1)}`} onClick={() => void loadExperiment(run.id)} size="sm" variant="ghost">{labels.load}</Button></div>; })}</div>{selectedComparisonRuns.length ? <div className="mt-3 grid gap-3 border-t border-border pt-3 md:grid-cols-2"><p className="sr-only">{labels.selectedRuns}: {compareIds.length}/2</p>{selectedComparisonRuns.map((run, index) => <div className="rounded-[10px] border border-border p-3" key={run.id}><div className="text-xs font-semibold text-accent-foreground">{experimentIdentity(run, index + 1)}</div><dl className="mt-2 grid grid-cols-2 gap-2 text-xs"><div><dt className="text-subtle-foreground">{copy.retrieval.mode}</dt><dd className="mt-1">{experimentRetrievalMode(run.config)}</dd></div><div><dt className="text-subtle-foreground">{labels.candidates}</dt><dd className="mt-1">{run.stageResults.retrieval?.candidates.length ?? 0}</dd></div><div><dt className="text-subtle-foreground">{labels.citations}</dt><dd className="mt-1">{run.stageResults.generation?.citations.filter((citation) => citation.valid).length ?? 0}</dd></div></dl></div>)}</div> : null}</div></details> : null}
+        {experimentHistory.length ? <details className="mt-6 rounded-[12px] border border-border bg-card" data-testid="playground-history"><summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-[13px] font-medium text-foreground"><span>{labels.history}</span><span className="text-xs font-normal text-subtle-foreground">{experimentHistory.length}</span></summary><div className="border-t border-border p-3"><div className="space-y-2">{experimentHistory.map((run, index) => { const retrieval = objectValue(run.config.retrieval); const reranking = objectValue(run.config.reranking); const candidateCountValue = isExperimentDetail(run) ? run.stageResults.retrieval?.candidates.length ?? 0 : run.candidateCount ?? 0; return <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border p-3" key={run.id}><label className="flex shrink-0 items-center gap-2"><input aria-label={`${labels.compare} ${experimentIdentity(run, index + 1)}`} checked={compareIds.includes(run.id)} disabled={!compareIds.includes(run.id) && compareIds.length >= 2} onChange={() => toggleCompare(run.id)} type="checkbox" /><span className="sr-only">{labels.compare}</span></label><div className="min-w-0 flex-1"><p className="truncate text-[13px] font-medium text-foreground">{run.query || experimentIdentity(run, index + 1)}</p><p className="mt-1 text-[11.5px] text-subtle-foreground">{experimentRetrievalMode(run.config)} · {copy.retrieval.topK} {String(retrieval.topK ?? "—")} · {Boolean(reranking.enabled) ? (preferences.locale === "tr" ? "Reranker açık" : "Reranker on") : (preferences.locale === "tr" ? "Reranker kapalı" : "Reranker off")} · {formatRunTimestamp(run, preferences.locale) ?? "—"} · {run.timing.durationMs === null ? "—" : `${run.timing.durationMs} ms`} · {candidateCountValue} {labels.candidates.toLowerCase()}</p></div><Button aria-label={`${labels.load} ${experimentIdentity(run, index + 1)}`} onClick={() => { if (experimentRun?.id === run.id) restoreDraft(experimentRun); void loadExperiment(run.id); }} size="sm" variant="ghost">{labels.load}</Button></div>; })}</div>{selectedComparisonRuns.length ? <div className="mt-3 grid gap-3 border-t border-border pt-3 md:grid-cols-2"><p className="sr-only">{labels.selectedRuns}: {compareIds.length}/2</p>{selectedComparisonRuns.map((run, index) => <div className="rounded-[10px] border border-border p-3" key={run.id}><div className="text-xs font-semibold text-accent-foreground">{experimentIdentity(run, index + 1)}</div><dl className="mt-2 grid grid-cols-2 gap-2 text-xs"><div><dt className="text-subtle-foreground">{copy.retrieval.mode}</dt><dd className="mt-1">{experimentRetrievalMode(run.config)}</dd></div><div><dt className="text-subtle-foreground">{labels.candidates}</dt><dd className="mt-1">{run.stageResults.retrieval?.candidates.length ?? 0}</dd></div><div><dt className="text-subtle-foreground">{labels.citations}</dt><dd className="mt-1">{run.stageResults.generation?.citations.filter((citation) => citation.valid).length ?? 0}</dd></div></dl></div>)}</div> : null}</div></details> : null}
       </div>
     </div>
   );

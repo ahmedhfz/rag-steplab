@@ -173,10 +173,17 @@ function Probe() {
     createPipeline,
     selectPersistedDocument,
     refreshEvaluationRuns,
+    experimentRun,
+    experimentStatus,
+    loadExperiment,
+    resumeRunTracking,
   } = useDocumentPipeline();
 
   return (
     <div>
+      <output data-testid="experiment-state">{experimentRun?.id}:{experimentRun?.status}:{experimentStatus}</output>
+      <button onClick={() => void loadExperiment("tracked-run")}>Load tracked</button>
+      <button onClick={() => void resumeRunTracking("experiment")}>Resume tracked</button>
       <output data-testid="active-document">{activeDocument?.id ?? "none"}</output>
       <output data-testid="active-document-id">{activeDocumentId ?? "none"}</output>
       <output data-testid="pending-upload">{pendingUpload?.name ?? "none"}</output>
@@ -261,6 +268,50 @@ afterEach(() => {
 });
 
 describe("Document pipeline committed state", () => {
+  it("keeps cached history loading separate from fresh same-ID tracking", async () => {
+    const fetch = setupSummaryFetch();
+    const fallback = fetch.getMockImplementation()!;
+    const status = "completed";
+    fetch.mockImplementation((url: string) => url.endsWith("/experiments/tracked-run")
+      ? Promise.resolve(new Response(JSON.stringify({ id: "tracked-run", status, documentId: "document-old", chunkRunId: "chunk-new", query: "q", targetStage: "retrieval", stageResults: { retrieval: { candidates: [], durationMs: 1 } } })))
+      : fallback(url));
+    renderProbe();
+    await waitFor(() => expect(screen.getByTestId("active-document")).toHaveTextContent("document-old"));
+    fireEvent.click(screen.getByText("Load tracked"));
+    await waitFor(() => expect(screen.getByTestId("experiment-state")).toHaveTextContent("tracked-run:completed:completed"));
+    const reads = () => fetch.mock.calls.filter(([url]) => url.endsWith("/experiments/tracked-run")).length;
+    expect(reads()).toBe(1);
+    fireEvent.click(screen.getByText("Load tracked"));
+    expect(reads()).toBe(1);
+    fireEvent.click(screen.getByText("Resume tracked"));
+    await waitFor(() => expect(reads()).toBe(2));
+    await waitFor(() => expect(screen.getByTestId("experiment-state")).toHaveTextContent("tracked-run:completed:completed"));
+    expect(reads()).toBe(2);
+    expect(fetch.mock.calls.every((call) => !call[0].includes("rerun") && !call[0].includes("continue"))).toBe(true);
+  });
+
+  it("discards late tracking results after document selection changes", async () => {
+    const fetch = setupSummaryFetch();
+    const fallback = fetch.getMockImplementation()!;
+    const run = { id: "tracked-run", status: "running", documentId: "document-old", chunkRunId: "chunk-new", query: "q", targetStage: "retrieval", stageResults: {} };
+    let finish: ((response: Response) => void) | undefined;
+    let reads = 0;
+    fetch.mockImplementation((url: string) => {
+      if (!url.endsWith("/experiments/tracked-run")) return fallback(url);
+      if (++reads === 1) return Promise.resolve(new Response(JSON.stringify(run)));
+      return new Promise<Response>((resolve) => { finish = resolve; });
+    });
+    renderProbe();
+    await waitFor(() => expect(screen.getByTestId("active-document")).toHaveTextContent("document-old"));
+    fireEvent.click(screen.getByText("Load tracked"));
+    await waitFor(() => expect(screen.getByTestId("experiment-state")).toHaveTextContent("tracked-run:running:ready"));
+    fireEvent.click(screen.getByText("Resume tracked"));
+    await waitFor(() => expect(reads).toBe(2));
+    fireEvent.click(screen.getByText("Switch to new"));
+    await waitFor(() => expect(screen.getByTestId("active-document")).toHaveTextContent("document-new"));
+    finish!(new Response(JSON.stringify({ ...run, status: "failed" })));
+    await waitFor(() => expect(screen.getByTestId("experiment-state")).not.toHaveTextContent("tracked-run"));
+  });
   it("hydrates persisted evaluation datasets when the summary falls back to the legacy document response", async () => {
     localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
     const detail = documentDetail();

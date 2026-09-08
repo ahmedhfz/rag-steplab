@@ -376,6 +376,9 @@ class Repository:
     def list_document_rows(self, *, owner_user_id: uuid.UUID | str | None = None) -> list[dict[str, Any]]:
         raise NotImplementedError
 
+    def latest_parse_metadata(self, *, owner_user_id=None) -> dict[str, dict[str, Any]]:
+        raise NotImplementedError
+
     def delete_document(self, document_id: str) -> None:
         raise NotImplementedError
 
@@ -889,6 +892,18 @@ class InMemoryRepository(Repository):
         if owner is not None and not isinstance(owner, uuid.UUID):
             owner = uuid.UUID(str(owner))
         return copy.deepcopy([row for row in self.documents.values() if owner is None or row.get("owner_user_id") == owner])
+
+    def latest_parse_metadata(self, *, owner_user_id=None):
+        document_ids = {row["id"] for row in self.list_document_rows(owner_user_id=owner_user_id)}
+        latest = {}
+        for row in self.parses.values():
+            document_id = row["document_id"]
+            if document_id not in document_ids:
+                continue
+            key = (row.get("created_at") or datetime.min.replace(tzinfo=timezone.utc), row["id"])
+            if document_id not in latest or key > latest[document_id][0]:
+                latest[document_id] = (key, {field: row.get(field) for field in ("status", "error_code", "error_message")})
+        return {document_id: metadata for document_id, (_, metadata) in latest.items()}
 
     def delete_document(self, document_id):
         self.documents.pop(document_id, None)
@@ -2020,6 +2035,20 @@ class SqlAlchemyRepository(Repository):
             if owner_user_id is not None:
                 query = query.where(Document.owner_user_id == self._owner_uuid(owner_user_id))
             return [self._document_dict(row) for row in session.scalars(query)]
+
+    def latest_parse_metadata(self, *, owner_user_id=None):
+        ranked = select(
+            ParseRun.document_id, ParseRun.status, ParseRun.error_code, ParseRun.error_message,
+            func.row_number().over(partition_by=ParseRun.document_id,
+                                   order_by=(ParseRun.created_at.desc(), ParseRun.id.desc())).label("position"),
+        ).join(Document, Document.id == ParseRun.document_id)
+        if owner_user_id is not None:
+            ranked = ranked.where(Document.owner_user_id == self._owner_uuid(owner_user_id))
+        latest = ranked.subquery()
+        with session_scope() as session:
+            rows = session.execute(select(latest.c.document_id, latest.c.status, latest.c.error_code,
+                                          latest.c.error_message).where(latest.c.position == 1)).mappings()
+            return {row["document_id"]: dict(row) for row in rows}
 
     def delete_document(self, document_id):
         with session_scope() as session:
@@ -3602,6 +3631,11 @@ class ScopedRepository(Repository):
         if requested_owner != self.owner_user_id:
             return []
         return self._repository.list_document_rows(owner_user_id=self.owner_user_id)
+
+    def latest_parse_metadata(self, *, owner_user_id=None):
+        if owner_user_id is not None and uuid.UUID(str(owner_user_id)) != self.owner_user_id:
+            return {}
+        return self._repository.latest_parse_metadata(owner_user_id=self.owner_user_id)
 
     def delete_document(self, document_id):
         if self._owned_document(document_id) is not None:

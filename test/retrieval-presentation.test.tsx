@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pipeline = vi.hoisted(() => ({ value: null as unknown }));
@@ -75,6 +75,25 @@ afterEach(() => {
 });
 
 describe("Playground presentation states", () => {
+  it("restores saved settings once and preserves edits across polling updates", () => {
+    const view = renderRetrieval();
+    const question = screen.getByRole("textbox", { name: "Question" });
+    expect(question).toHaveValue("What is the laboratory beacon code?");
+    expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+    fireEvent.change(question, { target: { value: "My draft" } });
+    const state = pipeline.value as { experimentRun: ExperimentRun };
+    state.experimentRun = { ...state.experimentRun };
+    view.rerender(<PreferencesProvider><RetrievalScreen /></PreferencesProvider>);
+    expect(question).toHaveValue("My draft");
+    expect(screen.getByText("Unsaved changes")).toBeVisible();
+  });
+
+  it.each([false, true])("reports clipboard success/failure (failure=%s)", async (fails) => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockImplementation(() => fails ? Promise.reject(new Error("denied")) : Promise.resolve()) } });
+    renderRetrieval();
+    fireEvent.click(screen.getByRole("button", { name: "Copy trace" }));
+    await waitFor(() => expect(screen.getByText(fails ? "Copy failed. Try again." : "Trace copied.")).toBeVisible());
+  });
   it("shows a simple insufficient-context state instead of a blank answer", async () => {
     renderRetrieval();
 
