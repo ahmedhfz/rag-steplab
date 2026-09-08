@@ -96,7 +96,8 @@ function runDate(run: EvaluationRun, locale: "en" | "tr") {
 }
 
 function sourceLabelFor(element: ParsedSourceElement, locale: "en" | "tr") {
-  return `${element.pageNumbers[0] ? `${locale === "tr" ? "Sayfa" : "Page"} ${element.pageNumbers[0]} · ` : ""}${element.type} · ${element.text.slice(0, 42)}`;
+  const description = element.text.trim() || element.id;
+  return `${element.pageNumbers[0] ? `${locale === "tr" ? "Sayfa" : "Page"} ${element.pageNumbers[0]} · ` : ""}${element.type} · ${description}`;
 }
 
 function toggleElementValue(current: string, elementId: string) {
@@ -131,7 +132,7 @@ function SourcePicker({
         </div>
         <span className="rounded-full bg-card px-2 py-1 text-[11px] font-medium text-brand">{selectedIds.length}</span>
       </div>
-      {elements.length ? <div className="mt-2.5 flex max-h-24 flex-wrap gap-1.5 overflow-y-auto" role="list" aria-label={ariaLabel}>{elements.map((element) => { const selected = selectedIds.includes(element.id); return <button aria-pressed={selected} className={selected ? "rounded-[6px] border border-accent-border bg-accent px-2 py-0.5 text-left text-[10px] text-accent-foreground" : "rounded-[6px] border border-border bg-card px-2 py-0.5 text-left text-[10px] text-muted-foreground hover:border-accent-border"} key={element.id} onClick={() => onChange(toggleElementValue(value, element.id))} type="button">{sourceLabelFor(element, locale)}</button>; })}</div> : <p className="mt-2.5 text-xs text-subtle-foreground">{labels.noSources}</p>}
+      {elements.length ? <div className="mt-2.5 flex max-h-24 flex-wrap gap-1.5 overflow-y-auto" role="list" aria-label={ariaLabel}>{elements.map((element) => { const selected = selectedIds.includes(element.id); const label = sourceLabelFor(element, locale); return <button aria-label={label} aria-pressed={selected} className={selected ? "max-w-full whitespace-normal break-words rounded-[6px] border border-accent-border bg-accent px-2 py-1 text-left text-xs leading-4 text-accent-foreground" : "max-w-full whitespace-normal break-words rounded-[6px] border border-border bg-card px-2 py-1 text-left text-xs leading-4 text-muted-foreground hover:border-accent-border"} key={element.id} onClick={() => onChange(toggleElementValue(value, element.id))} title={label} type="button">{label}</button>; })}</div> : <p className="mt-2.5 text-xs text-subtle-foreground">{labels.noSources}</p>}
       <details className="mt-2.5 border-t border-border pt-2">
         <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground">{labels.technicalSources}</summary>
         <Input aria-describedby={`${inputId}-hint`} aria-label={labels.technicalSources} className="mt-1.5 h-9 font-mono text-xs" id={inputId} onChange={(event) => onChange(event.target.value)} placeholder="element-1, element-4" value={value} />
@@ -278,6 +279,7 @@ export function EvaluationScreen() {
     evaluationStatus,
     evaluationRun,
     evaluationError,
+    resumeRunTracking,
     evaluationHistory,
     createDataset,
     loadEvaluationDataset,
@@ -420,7 +422,7 @@ export function EvaluationScreen() {
               <h2 className="mt-1 truncate text-[14px] font-semibold text-foreground">{selectedDataset?.name ?? (preferences.locale === "tr" ? "Dataset seçilmedi" : "No dataset selected")}</h2>
               {selectedDataset ? <p className="mt-0.5 text-[11px] text-muted-foreground">v{selectedDataset.version} · {selectedDataset.caseCount} {labels.cases}</p> : null}
             </div>
-            <div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{labels.configSummary}</p><p className="mt-1 truncate text-[13px] font-medium text-foreground" data-testid="evaluation-config-summary">{activeConfigSummary}</p></div>
+            <div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{labels.configSummary}</p><p className="mt-1 break-words text-[13px] font-medium text-foreground" data-testid="evaluation-config-summary">{activeConfigSummary}</p></div>
             <div className="ml-auto">{evaluationDatasets.length ? statusPill(labels.datasetReady) : statusPill(preferences.locale === "tr" ? "Hazır" : "Ready", "ready")}</div>
           </div>
         </section>
@@ -467,7 +469,8 @@ export function EvaluationScreen() {
                 <Button aria-describedby={!canRun ? "evaluation-disabled-reason" : undefined} aria-busy={evaluationStatus === "processing"} className="ml-0 h-[42px] gap-2 sm:ml-auto" disabled={!canRun} onClick={handleRun}><Play aria-hidden="true" className="size-4" />{labels.run}</Button>
               </div>
               <details className="mt-4 rounded-[10px] border border-border"><summary className="flex h-10 cursor-pointer list-none items-center justify-between px-3.5 text-[12.5px] font-medium text-foreground"><span>{labels.advanced} — {labels.judge}</span><ChevronDown aria-hidden="true" className="size-3.5 text-subtle-foreground" /></summary><div className="grid gap-3 border-t border-border p-3.5 sm:grid-cols-2"><label className="flex items-center justify-between gap-3 text-[12px] font-medium" htmlFor="evaluation-judge"><span>{labels.judge}<span className="mt-1 block font-normal text-muted-foreground">{preferences.locale === "tr" ? "Cevap kalitesi için isteğe bağlı değerlendirme" : "Optional answer-quality scoring"}</span></span><Switch checked={judge} id="evaluation-judge" onCheckedChange={setJudge} /></label><p className="text-xs leading-5 text-muted-foreground">{labels.retrievalNote}</p></div></details>
-              {!canRun ? <DisabledReason id="evaluation-disabled-reason">{evaluationBlocker?.message}</DisabledReason> : null}<PipelineErrorMessage message={evaluationError?.message} />
+              {!canRun ? <DisabledReason id="evaluation-disabled-reason">{evaluationBlocker?.message}</DisabledReason> : null}<PipelineErrorMessage message={evaluationError?.code === "run_poll_timeout" ? (preferences.locale === "tr" ? "Tarayıcı takibi duraklatıldı; run arka planda devam ediyor olabilir." : "Browser tracking paused; the run may still be active.") : evaluationError?.message} />
+              {evaluationRun && (evaluationRun.status === "queued" || evaluationRun.status === "running") && evaluationStatus !== "processing" ? <Button onClick={() => void resumeRunTracking("evaluation")} variant="outline">{preferences.locale === "tr" ? "Takibi sürdür" : "Resume tracking"}</Button> : null}
             </div>
 
             {evaluationRun ? (

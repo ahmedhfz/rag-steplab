@@ -34,6 +34,7 @@ import {
   waitForParseRun,
   updateDocumentPipeline,
   waitForEvaluationRun,
+  waitForExperimentRun,
 } from "@/lib/rag-api";
 import type {
   Capabilities,
@@ -174,6 +175,7 @@ type DocumentPipelineContextValue = {
   runEmbedding: () => Promise<EmbeddingRun | null>;
   runExperiment: (input: Omit<ExperimentRequest, "documentId" | "chunkRunId" | "embeddingRunId">) => Promise<void>;
   loadExperiment: (experimentId: string) => Promise<void>;
+  resumeRunTracking: (kind: "experiment" | "evaluation") => Promise<void>;
   loadEvaluationDataset: (datasetId: string) => Promise<EvaluationDataset | null>;
   loadEvaluationRun: (runId: string) => Promise<void>;
   continueExperiment: () => Promise<void>;
@@ -1837,7 +1839,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setExperimentRun(result);
     setExperimentHistory((current) => [result, ...current.filter((run) => run.id !== result.id)]);
     setExperimentError(result.error ? new DocumentApiError(result.error.code, result.error.message) : null);
-    setExperimentStatus(result.status === "completed" ? "completed" : result.status === "running" ? "processing" : "error");
+    setExperimentStatus(result.status === "completed" ? "completed" : result.status === "running" || result.status === "queued" ? "processing" : "error");
     setEvaluationStatus(evaluationDatasets.length > 0 ? "ready" : "locked");
   }, [evaluationDatasets.length]);
 
@@ -1870,13 +1872,13 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
         setExperimentRun(progressRun);
         setExperimentHistory((current) => [progressRun, ...current.filter((run) => run.id !== progressRun.id)]);
-        setExperimentStatus(progressRun.status === "running" ? "processing" : progressRun.status === "completed" ? "completed" : "error");
+        setExperimentStatus(progressRun.status === "running" || progressRun.status === "queued" ? "processing" : progressRun.status === "completed" ? "completed" : "error");
       });
       if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId || (input.retrieval.mode !== "keyword" && selectedEmbeddingRunId !== embeddingRunId)) return;
       commitExperimentResult(result);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId || selectedEmbeddingRunId !== embeddingRunId) return;
+      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId || (input.retrieval.mode !== "keyword" && selectedEmbeddingRunId !== embeddingRunId)) return;
       setExperimentError(asApiError(error, "The experiment could not be completed."));
       setExperimentStatus("error");
     } finally {
@@ -1887,11 +1889,13 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const loadExperiment = useCallback(async (experimentId: string) => {
     const documentId = activeDocumentRef.current?.id;
     if (!documentId) return;
+    controllersRef.current.get("experiment")?.abort();
     const epoch = documentEpochRef.current;
     const selectionVersion = selectionRequestRef.current;
     const cached = readArtifact<ExperimentRun>("experiment", experimentId);
     if (cached && cached.documentId === documentId) {
       commitExperimentResult(cached);
+      if (cached.status === "queued" || cached.status === "running") setExperimentStatus("ready");
       return;
     }
     if (controllersRef.current.has("experiment-load")) return;
@@ -1906,6 +1910,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
       cacheArtifact("experiment", experimentId, result);
       commitExperimentResult(result);
+      if (result.status === "queued" || result.status === "running") setExperimentStatus("ready");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
@@ -1949,12 +1954,15 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const activeSummary = activeDocumentRef.current;
     const documentId = activeSummary?.id;
     if (!documentId) return;
+    controllersRef.current.get("evaluation")?.abort();
+    controllersRef.current.get("evaluation-history")?.abort();
     const epoch = documentEpochRef.current;
     const selectionVersion = selectionRequestRef.current;
     const belongsToDocument = (run: EvaluationRun) => activeDocumentRef.current?.evaluationDatasets.some((dataset) => dataset.id === run.datasetId) ?? false;
     const cached = readArtifact<EvaluationRun>("evaluation", runId);
     if (cached && belongsToDocument(cached)) {
       commitEvaluationResult(cached);
+      if (cached.status === "queued" || cached.status === "running") setEvaluationStatus("ready");
       return;
     }
     if (controllersRef.current.has("evaluation-load")) return;
@@ -1969,6 +1977,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
       cacheArtifact("evaluation", runId, result);
       commitEvaluationResult(result);
+      if (result.status === "queued" || result.status === "running") setEvaluationStatus("ready");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
@@ -2170,10 +2179,61 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (error instanceof DOMException && error.name === "AbortError") return;
       if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
       setEvaluationError(asApiError(error, "Evaluation history could not be loaded."));
+      setEvaluationStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "evaluation-history", controller);
     }
   }, [cacheArtifact, commitEvaluationResult, replaceController]);
+
+  const resumeRunTracking = useCallback(async (kind: "experiment" | "evaluation") => {
+    const runId = kind === "experiment" ? experimentRun?.id : evaluationRun?.id;
+    const documentId = activeDocumentRef.current?.id;
+    if (!runId || !documentId) return;
+    const epoch = documentEpochRef.current;
+    const selectionVersion = selectionRequestRef.current;
+    controllersRef.current.get(`${kind}-load`)?.abort();
+    if (kind === "evaluation") controllersRef.current.get("evaluation-history")?.abort();
+    const controller = replaceController(kind);
+    const isCurrent = () => !controller.signal.aborted && documentEpochRef.current === epoch
+      && selectionRequestRef.current === selectionVersion && activeDocumentRef.current?.id === documentId;
+    const setStatus = kind === "experiment" ? setExperimentStatus : setEvaluationStatus;
+    const setError = kind === "experiment" ? setExperimentError : setEvaluationError;
+    setStatus("processing");
+    setError(null);
+    try {
+      // No initial/cached run: resuming always begins with a fresh GET.
+      if (kind === "experiment") {
+        const accept = (run: ExperimentRun) => {
+          if (isCurrent() && run.documentId === documentId) {
+            setExperimentRun(run);
+            setExperimentHistory((current) => [run, ...current.filter((item) => item.id !== run.id)]);
+          }
+        };
+        const result = await waitForExperimentRun(runId, controller.signal, accept);
+        if (isCurrent() && result.documentId === documentId) {
+          cacheArtifact("experiment", runId, result);
+          setExperimentRun(result);
+          setExperimentHistory((current) => [result, ...current.filter((item) => item.id !== result.id)]);
+          setExperimentError(result.error ? new DocumentApiError(result.error.code, result.error.message) : null);
+          setExperimentStatus(result.status === "completed" ? "completed" : "error");
+        }
+      } else {
+        const result = await waitForEvaluationRun(runId, controller.signal, (run) => {
+          if (isCurrent()) setEvaluationRun(run);
+        });
+        if (isCurrent()) {
+          cacheArtifact("evaluation", runId, result);
+          commitEvaluationResult(result);
+        }
+      }
+    } catch (error) {
+      if (!isCurrent()) return;
+      setError(asApiError(error, "Run tracking could not be completed."));
+      setStatus("error");
+    } finally {
+      removeControllerIfCurrent(controllersRef.current, kind, controller);
+    }
+  }, [experimentRun?.id, evaluationRun?.id, replaceController, cacheArtifact, commitEvaluationResult]);
 
   const activePipeline = useMemo(
     () => pipelines.find((pipeline) => pipeline.id === activePipelineId) ?? null,
@@ -2195,7 +2255,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     pipelineSelectionMode: activePipeline ? "saved" : "scratch",
     selectFile, addDocument, selectPersistedDocument, selectParseRun, selectChunkRun, selectEmbeddingRun, inspectParseRun, inspectChunkRun, inspectEmbeddingRun,
     setPipelineParseRun, setPipelineChunkRun, setPipelineEmbeddingRun, removeFile, parseSelectedFile, reparseActiveDocument, parseActiveDocument, runChunking, runEmbedding,
-    runExperiment, loadExperiment, loadEvaluationDataset, loadEvaluationRun, continueExperiment: continueCurrentExperiment, rerunGeneration: rerunCurrentGeneration,
+    runExperiment, loadExperiment, loadEvaluationDataset, loadEvaluationRun, resumeRunTracking, continueExperiment: continueCurrentExperiment, rerunGeneration: rerunCurrentGeneration,
     createDataset, runEvaluation, refreshPersistence, refreshEvaluationRuns,
     selectPipeline, createPipeline, renamePipeline, deletePipeline,
   }), [
@@ -2206,7 +2266,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     pendingUpload, pipelines, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId, inspectedChunkRunId, inspectedEmbeddingRunId, inspectedParseRunId, uploadNotice,
     addDocument, reparseActiveDocument, parseActiveDocument,
     continueCurrentExperiment, inspectChunkRun, inspectEmbeddingRun, inspectParseRun, loadEvaluationDataset, loadEvaluationRun, loadExperiment, refreshEvaluationRuns, refreshPersistence, removeFile, rerunCurrentGeneration,
-    runChunking, runEmbedding, runEvaluation, runExperiment,
+    runChunking, runEmbedding, runEvaluation, runExperiment, resumeRunTracking,
     createPipeline, deletePipeline, renamePipeline, selectChunkRun, selectEmbeddingRun, selectFile, selectParseRun, selectPersistedDocument, selectPipeline,
     setPipelineChunkRun, setPipelineEmbeddingRun, setPipelineParseRun,
   ]);

@@ -475,18 +475,62 @@ function parsePollTimedOut(deadline: number) {
   );
 }
 
-function waitForParsePoll(signal?: AbortSignal) {
+export function waitForPoll(delayMs: number, signal?: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
       reject(new DOMException("The parse poll was aborted.", "AbortError"));
       return;
     }
-    const timeout = setTimeout(resolve, PARSE_POLL_INTERVAL_MS);
-    signal?.addEventListener("abort", () => {
+    const onAbort = () => {
       clearTimeout(timeout);
       reject(new DOMException("The parse poll was aborted.", "AbortError"));
-    }, { once: true });
+    };
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function waitForParsePoll(signal?: AbortSignal) {
+  return waitForPoll(PARSE_POLL_INTERVAL_MS, signal);
+}
+
+async function pollRun<T extends { status: string }>(
+  read: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal, onProgress?: (run: T) => void, initialRun?: T,
+): Promise<T> {
+  const deadline = Date.now() + PARSE_POLL_TIMEOUT_MS;
+  const timeoutController = new AbortController();
+  const activeSignal = signal ? AbortSignal.any([signal, timeoutController.signal]) : timeoutController.signal;
+  const timeoutError = () => new DocumentApiError("run_poll_timeout", "Browser tracking paused after 15 minutes. Resume tracking to check this run; its backend status is unchanged.");
+  const timeout = setTimeout(() => timeoutController.abort(), PARSE_POLL_TIMEOUT_MS);
+  let run = initialRun;
+  let failures = 0;
+  try {
+    while (true) {
+      activeSignal.throwIfAborted();
+      if (Date.now() >= deadline) throw timeoutError();
+      if (run && run.status !== "queued" && run.status !== "running") return run;
+      const delay = failures ? Math.min(2_000 * 2 ** Math.min(failures - 1, 3), 10_000) : run ? 650 : 0;
+      if (delay) await waitForPoll(Math.min(delay, deadline - Date.now()), activeSignal);
+      if (Date.now() >= deadline) continue;
+      try {
+        run = await read(activeSignal);
+        activeSignal.throwIfAborted();
+        failures = 0;
+        onProgress?.(run);
+      } catch (error) {
+        if (!isTransientParsePollError(error)) throw error;
+        failures++;
+      }
+    }
+  } catch (error) {
+    if (timeoutController.signal.aborted && !signal?.aborted) throw timeoutError();
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function isTransientParsePollError(error: unknown) {
@@ -958,19 +1002,7 @@ export async function waitForExperimentRun(
   onProgress?: (run: ExperimentRun) => void,
   initialRun?: ExperimentRun,
 ): Promise<ExperimentRun> {
-  let run = initialRun ?? await getExperiment(experimentId, signal);
-  while (run.status === "queued" || run.status === "running") {
-    await new Promise<void>((resolve, reject) => {
-      const timeout = window.setTimeout(resolve, 650);
-      signal?.addEventListener("abort", () => {
-        window.clearTimeout(timeout);
-        reject(new DOMException("Aborted", "AbortError"));
-      }, { once: true });
-    });
-    run = await getExperiment(experimentId, signal);
-    onProgress?.(run);
-  }
-  return run;
+  return pollRun((pollSignal) => getExperiment(experimentId, pollSignal), signal, onProgress, initialRun);
 }
 
 export async function getExperiment(experimentId: string, signal?: AbortSignal): Promise<ExperimentRun> {
@@ -1080,16 +1112,7 @@ export async function waitForEvaluationRun(
   onProgress?: (run: EvaluationRun) => void,
   initialRun?: EvaluationRun,
 ): Promise<EvaluationRun> {
-  let run = initialRun ?? await getEvaluationRun(runId, signal);
-  while (run.status === "queued" || run.status === "running") {
-    await new Promise<void>((resolve, reject) => {
-      const timeout = window.setTimeout(resolve, 650);
-      signal?.addEventListener("abort", () => { window.clearTimeout(timeout); reject(new DOMException("Aborted", "AbortError")); }, { once: true });
-    });
-    run = await getEvaluationRun(runId, signal);
-    onProgress?.(run);
-  }
-  return run;
+  return pollRun((pollSignal) => getEvaluationRun(runId, pollSignal), signal, onProgress, initialRun);
 }
 
 function normalizeEvaluationRun(value: unknown): EvaluationRun {
