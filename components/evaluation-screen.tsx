@@ -278,6 +278,7 @@ export function EvaluationScreen() {
     evaluationStatus,
     evaluationRun,
     evaluationError,
+    resumeRunTracking,
     evaluationHistory,
     createDataset,
     loadEvaluationDataset,
@@ -420,7 +421,7 @@ export function EvaluationScreen() {
               <h2 className="mt-1 truncate text-[14px] font-semibold text-foreground">{selectedDataset?.name ?? (preferences.locale === "tr" ? "Dataset seçilmedi" : "No dataset selected")}</h2>
               {selectedDataset ? <p className="mt-0.5 text-[11px] text-muted-foreground">v{selectedDataset.version} · {selectedDataset.caseCount} {labels.cases}</p> : null}
             </div>
-            <div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{labels.configSummary}</p><p className="mt-1 truncate text-[13px] font-medium text-foreground" data-testid="evaluation-config-summary">{activeConfigSummary}</p></div>
+            <div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{labels.configSummary}</p><p className="mt-1 break-words text-[13px] font-medium text-foreground" data-testid="evaluation-config-summary">{activeConfigSummary}</p></div>
             <div className="ml-auto">{evaluationDatasets.length ? statusPill(labels.datasetReady) : statusPill(preferences.locale === "tr" ? "Hazır" : "Ready", "ready")}</div>
           </div>
         </section>
@@ -467,7 +468,8 @@ export function EvaluationScreen() {
                 <Button aria-describedby={!canRun ? "evaluation-disabled-reason" : undefined} aria-busy={evaluationStatus === "processing"} className="ml-0 h-[42px] gap-2 sm:ml-auto" disabled={!canRun} onClick={handleRun}><Play aria-hidden="true" className="size-4" />{labels.run}</Button>
               </div>
               <details className="mt-4 rounded-[10px] border border-border"><summary className="flex h-10 cursor-pointer list-none items-center justify-between px-3.5 text-[12.5px] font-medium text-foreground"><span>{labels.advanced} — {labels.judge}</span><ChevronDown aria-hidden="true" className="size-3.5 text-subtle-foreground" /></summary><div className="grid gap-3 border-t border-border p-3.5 sm:grid-cols-2"><label className="flex items-center justify-between gap-3 text-[12px] font-medium" htmlFor="evaluation-judge"><span>{labels.judge}<span className="mt-1 block font-normal text-muted-foreground">{preferences.locale === "tr" ? "Cevap kalitesi için isteğe bağlı değerlendirme" : "Optional answer-quality scoring"}</span></span><Switch checked={judge} id="evaluation-judge" onCheckedChange={setJudge} /></label><p className="text-xs leading-5 text-muted-foreground">{labels.retrievalNote}</p></div></details>
-              {!canRun ? <DisabledReason id="evaluation-disabled-reason">{evaluationBlocker?.message}</DisabledReason> : null}<PipelineErrorMessage message={evaluationError?.message} />
+              {!canRun ? <DisabledReason id="evaluation-disabled-reason">{evaluationBlocker?.message}</DisabledReason> : null}<PipelineErrorMessage message={evaluationError?.code === "run_poll_timeout" ? (preferences.locale === "tr" ? "Tarayıcı takibi duraklatıldı; run arka planda devam ediyor olabilir." : "Browser tracking paused; the run may still be active.") : evaluationError?.message} />
+              {evaluationRun && (evaluationRun.status === "queued" || evaluationRun.status === "running") && evaluationStatus !== "processing" ? <Button onClick={() => void resumeRunTracking("evaluation")} variant="outline">{preferences.locale === "tr" ? "Takibi sürdür" : "Resume tracking"}</Button> : null}
             </div>
 
             {evaluationRun ? (

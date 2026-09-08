@@ -192,6 +192,27 @@ function renderScreen(node: React.ReactNode) {
 }
 
 describe("Product workspace and build-stage semantic contract", () => {
+  it("distinguishes checking from unavailable and avoids duplicate blocker copy", () => {
+    pipeline.value = { ...createPipelineValue(), persistenceStatus: "checking" };
+    const view = renderScreen(<ParseScreen />);
+    expect(screen.getByText("Checking document service…")).toBeVisible();
+    expect(screen.queryByText("The document service is unavailable.")).not.toBeInTheDocument();
+    pipeline.value = { ...createPipelineValue(), persistenceStatus: "unavailable" };
+    view.rerender(<PreferencesProvider><ParseScreen /></PreferencesProvider>);
+    expect(screen.getAllByText("The document service is unavailable.")).toHaveLength(1);
+  });
+
+  it("moves the strategy selection with arrow keys and keeps one tab stop", () => {
+    pipeline.value = createPipelineValue();
+    renderScreen(<ChunkingScreen />);
+    const radios = screen.getAllByRole("radio");
+    const selected = radios.find((radio) => radio.getAttribute("aria-checked") === "true")!;
+    fireEvent.keyDown(selected, { key: "ArrowRight" });
+    const next = radios[(radios.indexOf(selected) + 1) % radios.length];
+    expect(next).toHaveFocus();
+    expect(next).toHaveAttribute("aria-checked", "true");
+    expect(radios.filter((radio) => radio.tabIndex === 0)).toHaveLength(1);
+  });
   beforeEach(() => {
     pipeline.value = createPipelineValue();
   });

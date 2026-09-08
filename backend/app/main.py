@@ -79,12 +79,21 @@ MAX_FILE_SIZE_BYTES = settings.max_file_size_bytes
 ALLOWED_CONTENT_TYPES = {"", "application/pdf", "application/octet-stream"}
 
 _hide_api_docs = settings.app_env in {"production", "staging"}
+
+
+def require_writes_enabled(request: Request) -> None:
+    # Read-side lease reconciliation and existing workers remain operational.
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not get_settings().write_enabled:
+        raise ApiProblem(503, "writes_disabled", "Pipeline writes are temporarily disabled.")
+
+
 app = FastAPI(
     title="RAG StepLab API",
     version="1.0.0",
     docs_url=None if _hide_api_docs else "/docs",
     redoc_url=None if _hide_api_docs else "/redoc",
     openapi_url=None if _hide_api_docs else "/openapi.json",
+    dependencies=[Depends(require_writes_enabled)],
 )
 app.add_middleware(
     CORSMiddleware,
@@ -800,13 +809,9 @@ def _persisted_parse_response(document: dict[str, Any], parse: dict[str, Any]) -
 def list_documents(user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     repository = _user_repository(user)
     items = []
+    latest_parses = repository.latest_parse_metadata()
     for row in repository.list_document_rows():
-        parses = repository.list_parse_rows(row["id"])
-        latest = max(
-            parses,
-            key=lambda item: (item.get("created_at") or datetime.min.replace(tzinfo=timezone.utc), item.get("id", "")),
-            default=None,
-        )
+        latest = latest_parses.get(row["id"])
         if latest is not None:
             row = {
                 **row,
