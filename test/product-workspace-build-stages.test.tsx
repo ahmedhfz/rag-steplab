@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pipeline = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
@@ -212,6 +212,27 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(next).toHaveFocus();
     expect(next).toHaveAttribute("aria-checked", "true");
     expect(radios.filter((radio) => radio.tabIndex === 0)).toHaveLength(1);
+  });
+  it("keeps chunk heading and page metadata single-sourced in the inspector", () => {
+    const detailedChunk = {
+      id: "chunk-1-1",
+      ordinal: 0,
+      text: "A chunk with source metadata.",
+      tokenCount: 120,
+      pageNumbers: [1],
+      headingPath: ["Introduction", "Overview"],
+      sourceElementIds: ["element-1"],
+    };
+    const detailedRun = { ...chunkRun, chunks: [detailedChunk] };
+    pipeline.value = {
+      ...createPipelineValue(),
+      activeDocument: { ...activeDocument, chunkRuns: [detailedRun] },
+      chunkRun: detailedRun,
+    };
+    renderScreen(<ChunkingScreen />);
+    const detail = within(screen.getByTestId("chunk-inspector-detail"));
+    expect(detail.getAllByText("Introduction › Overview", { exact: true })).toHaveLength(1);
+    expect(detail.getAllByText("pages 1", { exact: true })).toHaveLength(1);
   });
   beforeEach(() => {
     pipeline.value = createPipelineValue();

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pipeline = vi.hoisted(() => ({ value: null as unknown }));
@@ -70,6 +70,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.clearAllMocks();
   localStorage.clear();
 });
@@ -93,6 +94,21 @@ describe("Playground presentation states", () => {
     renderRetrieval();
     fireEvent.click(screen.getByRole("button", { name: "Copy trace" }));
     await waitFor(() => expect(screen.getByText(fails ? "Copy failed. Try again." : "Trace copied.")).toBeVisible());
+  });
+  it("clears clipboard feedback after two seconds", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } });
+    renderRetrieval();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy trace" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Trace copied.")).toBeVisible();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_999); });
+    expect(screen.getByText("Trace copied.")).toBeVisible();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(screen.queryByText("Trace copied.")).not.toBeInTheDocument();
   });
   it("shows a simple insufficient-context state instead of a blank answer", async () => {
     renderRetrieval();
