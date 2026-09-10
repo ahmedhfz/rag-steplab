@@ -69,7 +69,7 @@ def _build_document_converter(artifacts_path: Path | None = None) -> Any:
 
     pipeline_options: Any | None = None
     if PdfPipelineOptions is not None:
-        kwargs: dict[str, Any] = {}
+        kwargs: dict[str, Any] = {"generate_parsed_pages": True}
         if artifacts_path is not None:
             kwargs["artifacts_path"] = str(artifacts_path)
         try:
@@ -78,6 +78,7 @@ def _build_document_converter(artifacts_path: Path | None = None) -> Any:
             # Keep compatibility with a pinned Docling patch release that may
             # expose artifacts_path on the converter settings instead.
             pipeline_options = PdfPipelineOptions()
+            pipeline_options.generate_parsed_pages = True
             if artifacts_path is not None and hasattr(pipeline_options, "artifacts_path"):
                 pipeline_options.artifacts_path = str(artifacts_path)
 
@@ -138,7 +139,7 @@ def parse_pdf_file(
 
         # The existing normalizer is the canonical API/storage boundary. Do not
         # expose Docling's internal document graph to the frontend or database.
-        structured = build_structured_content(document)
+        structured = build_structured_content(document, parsed_pages=getattr(conversion_result, "pages", []))
         counts = Counter(element.type for element in structured.elements)
         page_count = len(structured.pages)
         if not structured.elements:
@@ -173,6 +174,7 @@ def parse_pdf_file(
             "parserVersion": settings.docling_parser_version,
             "doclingVersion": _docling_version(),
             "normalizedSchemaVersion": "normalized-v1",
+            "headingClassifierVersion": "context-v1",
             "mode": "full_document_converter",
             "workerStartMode": "warm" if converter_warm else "cold",
         },
@@ -300,13 +302,25 @@ def _to_markdown(pages: list[ParsedPage]) -> str:
     return "\n\n---\n\n".join(page_markdown).strip()
 
 
-def build_structured_content(document: Any) -> StructuredContent:
+def build_structured_content(document: Any, *, parsed_pages: Iterable[Any] = ()) -> StructuredContent:
     elements: list[ParsedElement] = []
+    items = list(_iter_document_items(document))
+    tables = [item for item in items if _element_type(item) == "table"]
+    page_cells = {
+        page.page_no: getattr(getattr(page, "parsed_page", None), "textline_cells", []) or []
+        for page in parsed_pages
+    }
 
-    for item in _iter_document_items(document):
+    for index, item in enumerate(items):
         element_type = _element_type(item)
         if element_type is None:
             continue
+        following = items[index + 1] if index + 1 < len(items) else None
+        if element_type == "heading" and (
+            _is_local_heading(item, document, tables)
+            or _is_attached_label(item, following, document, page_cells)
+        ):
+            element_type = "paragraph"
 
         page_numbers = _page_numbers(item)
         # A semantic item without page provenance cannot be shown, cited, or
@@ -324,6 +338,8 @@ def build_structured_content(document: Any) -> StructuredContent:
             continue
 
         level = getattr(item, "level", None)
+        if _element_type(item) == "heading" and element_type != "heading":
+            level = None
         elements.append(
             ParsedElement(
                 id=f"element-{len(elements) + 1}",
@@ -348,6 +364,103 @@ def build_structured_content(document: Any) -> StructuredContent:
     return StructuredContent(pages=pages, elements=elements)
 
 
+def _label(item: Any) -> str:
+    label = getattr(item, "label", "")
+    return str(getattr(label, "value", label)).lower().replace("docitemlabel.", "")
+
+
+def _item_boxes(item: Any, document: Any) -> list[tuple[int, float, float, float, float]]:
+    """Compare provenance in top-left coordinates; absent geometry is not evidence."""
+    boxes = []
+    for prov in getattr(item, "prov", []) or []:
+        bbox = getattr(prov, "bbox", None)
+        page = getattr(prov, "page_no", None)
+        if bbox is None or not isinstance(page, int) or page < 1:
+            continue
+        left, top, right, bottom = (float(getattr(bbox, key)) for key in ("l", "t", "r", "b"))
+        origin = getattr(bbox, "coord_origin", "TOPLEFT")
+        if str(getattr(origin, "value", origin)) == "BOTTOMLEFT":
+            page_item = (getattr(document, "pages", {}) or {}).get(page)
+            height = getattr(getattr(page_item, "size", None), "height", None)
+            if height is None:
+                continue
+            top, bottom = height - top, height - bottom
+        if right > left and bottom > top:
+            boxes.append((page, left, top, right, bottom))
+    return boxes
+
+
+def _line_height(item: Any, document: Any, page_cells: dict[int, list[Any]]) -> float | None:
+    heights = []
+    for page, left, top, right, bottom in _item_boxes(item, document):
+        page_item = (getattr(document, "pages", {}) or {}).get(page)
+        page_height = getattr(getattr(page_item, "size", None), "height", None)
+        if page_height is None:
+            continue
+        for cell in page_cells.get(page, []):
+            box = cell.to_bounding_box()
+            box = box.to_top_left_origin(page_height)
+            area = (box.r - box.l) * (box.b - box.t)
+            intersection = max(0, min(right, box.r) - max(left, box.l)) * max(0, min(bottom, box.b) - max(top, box.t))
+            if area > 0 and intersection >= area * 0.8:
+                heights.append(box.b - box.t)
+    return median(heights) if heights else None
+
+
+def _is_attached_label(item: Any, following: Any, document: Any, page_cells: dict[int, list[Any]]) -> bool:
+    text = _item_text(item)
+    if (_label(item) == "title" or len(text) > 80 or len(text.split()) > 10
+            or re.match(r"^(?:\d+(?:\.\d+)*[.)]?|[IVXLCDM]+[.)])\s+\S", text)
+            or following is None or _element_type(following) != "paragraph"):
+        return False
+    height = _line_height(item, document, page_cells)
+    body_height = _line_height(following, document, page_cells)
+    # Boldness alone is not structure. Require body-sized text AND a tight,
+    # aligned continuation. Without source typography, keep Docling's decision.
+    if height is None or body_height is None or height > body_height * 1.05:
+        return False
+    for page, left, top, right, bottom in _item_boxes(item, document):
+        if bottom - top > height * 1.4:
+            continue
+        for next_page, nl, nt, nr, nb in _item_boxes(following, document):
+            if page != next_page:
+                continue
+            below = abs(nl - left) <= height * 0.5 and 0 <= nt - bottom <= height * 0.35
+            inline = abs(nt - top) <= height * 0.25 and 0 <= nl - right <= height
+            if below or inline:
+                return True
+    return False
+
+
+def _is_local_heading(item: Any, document: Any, tables: list[Any]) -> bool:
+    # A layout-model section_header is a candidate, not a document hierarchy tag.
+    # Keep the text/provenance even when its local role contradicts that label.
+    parent = getattr(item, "parent", None)
+    seen: set[str] = set()
+    while parent is not None and callable(getattr(parent, "resolve", None)):
+        ref = str(getattr(parent, "cref", ""))
+        if ref in seen:
+            break
+        seen.add(ref)
+        node = parent.resolve(document)
+        # form_area can wrap an entire checklist section, including its real
+        # title. Only containers with an unambiguously local role override it.
+        if _label(node) in {"table", "picture", "caption", "key_value_region",
+                            "key_value_area", "inline"}:
+            return True
+        parent = getattr(node, "parent", None)
+
+    for page, left, top, right, bottom in _item_boxes(item, document):
+        for table in tables:
+            for table_page, tl, tt, tr, tb in _item_boxes(table, document):
+                if page != table_page:
+                    continue
+                intersection = max(0, min(right, tr) - max(left, tl)) * max(0, min(bottom, tb) - max(top, tt))
+                if intersection >= (right - left) * (bottom - top) * 0.9:
+                    return True
+    return False
+
+
 def _iter_document_items(document: Any) -> Iterable[Any]:
     iterator = getattr(document, "iterate_items", None)
     if callable(iterator):
@@ -361,8 +474,7 @@ def _iter_document_items(document: Any) -> Iterable[Any]:
 
 
 def _element_type(item: Any) -> str | None:
-    label = getattr(item, "label", "")
-    label_value = str(getattr(label, "value", label)).lower().replace("docitemlabel.", "")
+    label_value = _label(item)
 
     if label_value in {"title", "section_header", "heading"}:
         return "heading"

@@ -33,7 +33,16 @@ Bu nedenle `queued`/`running`/`failed` run için sahte progress, score veya pars
 ## Modal deployment
 
 Production parsing tam Docling `DocumentConverter` ve semantic normalization
-üzerinden çalışır. Mevcut profil worker için `CPU 2`, `4096 MiB`, `timeout
+üzerinden çalışır. Normalizasyon, layout modelinin heading adaylarını tablo/container
+üyeliği ve kaynak satır geometrisiyle kontrol eder. Gövde boyutunda, açıklamaya
+bitişik kısa etiketler metin ve provenance korunarak paragraph olur; numaralı,
+daha büyük veya ayrı duran section title'lar korunur. Kaynak geometrisi yoksa
+tipografi üzerinden heading düşürülmez. Docling parsed page verisi yalnız bu
+kontrol için worker belleğinde tutulur; API/storage sözleşmesi `normalized-v1`
+kalır, algoritma `runMetadata.headingClassifierVersion` ile izlenir. Mevcut
+parse artifact'ları değişmez; düzeltme yeni parse/reparse sonuçlarına uygulanır.
+
+Mevcut profil worker için `CPU 2`, `4096 MiB`, `timeout
 900 s`, `min_containers=0`, `max_containers=1`; API için yaklaşık `CPU 0.5`,
 `1024 MiB`, `min_containers=1`, `max_containers=2`'dir (`api_eu`). Legacy `api`
 cutover rollback yüzeyi scale-to-zero kalır. Docling modelleri pinned
