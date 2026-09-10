@@ -60,7 +60,7 @@ export function SourceInspector({ documentId, parseResult, pageNumbers = [], sou
     <DialogPrimitive.Root onOpenChange={(next) => { setOpen(next); if (next) void loadSource(); else setError(null); }} open={open}>
       <DialogPrimitive.Trigger asChild><Button aria-label={triggerAriaLabel} className="gap-2" disabled={!documentId} size="sm" type="button" variant="outline"><FileSearch aria-hidden="true" className="size-4" />{triggerLabel ?? labels.open}</Button></DialogPrimitive.Trigger>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-foreground/35" />
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-overlay/35 dark:bg-overlay/65" data-testid="source-inspector-overlay" />
         <DialogPrimitive.Content className="fixed inset-0 z-50 ml-0 flex max-w-none flex-col overflow-hidden border-0 bg-card shadow-2xl focus:outline-none sm:inset-x-6 sm:bottom-6 sm:top-6 sm:ml-auto sm:max-w-5xl sm:border sm:border-border" data-testid="source-inspector-content">
           <header className="flex items-start justify-between gap-4 border-b border-border p-4 sm:px-6">
             <div><DialogPrimitive.Title className="text-base font-semibold text-foreground">{labels.title}</DialogPrimitive.Title><DialogPrimitive.Description className="mt-1 text-xs text-muted-foreground">{labels.fallback}</DialogPrimitive.Description></div>

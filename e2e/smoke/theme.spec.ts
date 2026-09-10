@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installSeededApi } from "../support/seeded-api";
+import { selectSeededDocument } from "../support/seeded-workspace";
 
 test("@critical Dark ve System-dark ilk paint öncesi root temasını uygular", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
@@ -50,4 +51,19 @@ test("@critical Dark shell ikonları tema rengini ve CSS maskesini kullanır", a
   await expect(assetIcon).toHaveCSS("background-color", "rgb(185, 176, 180)");
   expect(await assetIcon.evaluate((element) => getComputedStyle(element).maskImage)).toContain("documents.svg");
   await expect(documentsLink.locator("img")).toHaveCount(0);
+});
+
+test("Dark kaynak portalı arka planı karartır ve klavye odağını korur", async ({ page }) => {
+  await installSeededApi(page, { scenario: "playground-retrieval", theme: "dark" });
+  await page.goto("/playground");
+  await selectSeededDocument(page);
+  const trigger = page.getByRole("button", { name: "Inspect source" }).first();
+  await trigger.click();
+  await expect(page.getByRole("dialog", { name: "Source inspector" })).toBeVisible();
+  const overlay = page.getByTestId("source-inspector-overlay");
+  const color = await overlay.evaluate((element) => getComputedStyle(element).backgroundColor);
+  expect(color).toMatch(/(?:0 0 0|0, 0, 0)/);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(trigger).toBeFocused();
 });

@@ -193,7 +193,7 @@ function JourneyNode({
         <JourneyGlyph state={state} stepKey={step.key} />
         {completed ? (
           <span className="absolute -right-1 -top-1 grid size-3.5 place-items-center rounded-full bg-success">
-            <Image alt="" height={9} src="/assets/figma/overview/check.svg" width={9} />
+            <Image alt="" className="theme-success-check" height={9} src="/assets/figma/overview/check.svg" width={9} />
           </span>
         ) : null}
       </span>

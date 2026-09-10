@@ -42,6 +42,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-overlay: var(--overlay);
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) + 2px);
@@ -89,27 +90,28 @@
   --strong-hover: #2b2729;
   --input: #d8d2d5;
   --ring: #711f3a;
+  --overlay: #171416;
 }
 
 :root.dark {
   color-scheme: dark;
   --background: #141113;
   --foreground: #f4f1f2;
-  --card: #1b1719;
+  --card: #201b1e;
   --card-foreground: #f4f1f2;
-  --popover: #211b1e;
+  --popover: #2a2227;
   --popover-foreground: #f4f1f2;
   --primary: #f4f1f2;
   --primary-foreground: #1b1719;
-  --secondary: #292326;
+  --secondary: #30272c;
   --secondary-foreground: #f4f1f2;
   --muted: #201b1d;
   --muted-foreground: #b9b0b4;
-  --subtle-foreground: #968d91;
-  --accent: #2b1b21;
+  --subtle-foreground: #aca0a6;
+  --accent: #34212a;
   --accent-foreground: #f0b6c9;
   --accent-border: #6b3f4e;
-  --brand: #d07091;
+  --brand: #de8eaa;
   --brand-subtle: #3a2029;
   --brand-subtle-border: #855169;
   --destructive: #f08a8a;
@@ -125,12 +127,22 @@
   --technical: #100d0f;
   --surface-subtle: #191517;
   --destructive-panel: #281719;
-  --border: #3a3236;
-  --border-subtle: #30292d;
+  --border: #493c43;
+  --border-subtle: #382e33;
   --hover-border: #8a7a81;
   --strong-hover: #dfd8da;
   --input: #76676d;
-  --ring: #d07091;
+  --ring: #de8eaa;
+  --overlay: #000000;
+}
+
+/* Preserve the original artwork in Light; recolor monochrome marks in Dark. */
+.dark .theme-brand-mark {
+  filter: brightness(0) saturate(100%) invert(73%) sepia(18%) saturate(914%) hue-rotate(291deg) brightness(94%) contrast(86%);
+}
+
+.dark .theme-success-check {
+  filter: brightness(0);
 }
 
 @layer base {
@@ -210,6 +222,7 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
+summary:focus-visible,
 [role="button"]:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;

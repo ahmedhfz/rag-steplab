@@ -38,4 +38,16 @@ describe("theme token contrast", () => {
     expect(contrast(tokens.warning, tokens["warning-subtle"])).toBeGreaterThanOrEqual(4.5);
     expect(contrast(tokens.destructive, tokens["destructive-subtle"])).toBeGreaterThanOrEqual(4.5);
   });
+
+  it("keeps Dark secondary text readable on cards, menus and selected surfaces", () => {
+    const tokens = themeTokens(":root.dark");
+    for (const surface of ["card", "popover", "secondary", "accent"]) {
+      for (const text of ["muted-foreground", "subtle-foreground", "brand"]) {
+        expect(contrast(tokens[text], tokens[surface]), `${text} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    expect(contrast(tokens.ring, tokens.card)).toBeGreaterThanOrEqual(3);
+    expect(contrast(tokens.input, tokens.card)).toBeGreaterThanOrEqual(3);
+    expect(tokens.overlay).toBe("#000000");
+  });
 });
