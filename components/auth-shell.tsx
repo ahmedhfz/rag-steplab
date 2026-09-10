@@ -25,7 +25,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-background text-foreground">
       <header className="flex h-[72px] items-center justify-between px-11 max-md:px-6">
         <Link aria-label={labels.home} className="flex items-center gap-1" href="/">
-          <Image alt="" height={28} priority src={UI_ASSETS.brand.mark} width={28} />
+          <Image alt="" className="theme-brand-mark" height={28} priority src={UI_ASSETS.brand.mark} width={28} />
           <span className="text-[15px] font-semibold leading-[22.5px] tracking-[-0.15px]">RAG StepLab</span>
         </Link>
         <div aria-label={labels.language} className="flex h-[34px] items-center gap-0.5 rounded-[10px] border border-border bg-card p-1 shadow-sm" role="group">

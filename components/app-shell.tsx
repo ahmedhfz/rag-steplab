@@ -276,7 +276,7 @@ function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: st
   return (
     <div className="flex h-full flex-col bg-card">
       <div className="flex h-[72px] items-center gap-2.5 px-5 pb-5 pt-6">
-        <Image alt="" height={28} priority src={UI_ASSETS.brand.mark} width={28} />
+        <Image alt="" className="theme-brand-mark" height={28} priority src={UI_ASSETS.brand.mark} width={28} />
         <span className="text-[15px] font-semibold leading-[22.5px] tracking-[-0.15px] text-foreground">{copy.productName}</span>
       </div>
 

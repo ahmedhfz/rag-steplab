@@ -96,7 +96,8 @@ function runDate(run: EvaluationRun, locale: "en" | "tr") {
 }
 
 function sourceLabelFor(element: ParsedSourceElement, locale: "en" | "tr") {
-  return `${element.pageNumbers[0] ? `${locale === "tr" ? "Sayfa" : "Page"} ${element.pageNumbers[0]} · ` : ""}${element.type} · ${element.text.slice(0, 42)}`;
+  const description = element.text.trim() || element.id;
+  return `${element.pageNumbers[0] ? `${locale === "tr" ? "Sayfa" : "Page"} ${element.pageNumbers[0]} · ` : ""}${element.type} · ${description}`;
 }
 
 function toggleElementValue(current: string, elementId: string) {
@@ -131,7 +132,7 @@ function SourcePicker({
         </div>
         <span className="rounded-full bg-card px-2 py-1 text-[11px] font-medium text-brand">{selectedIds.length}</span>
       </div>
-      {elements.length ? <div className="mt-2.5 flex max-h-24 flex-wrap gap-1.5 overflow-y-auto" role="list" aria-label={ariaLabel}>{elements.map((element) => { const selected = selectedIds.includes(element.id); return <button aria-pressed={selected} className={selected ? "rounded-[6px] border border-accent-border bg-accent px-2 py-0.5 text-left text-[10px] text-accent-foreground" : "rounded-[6px] border border-border bg-card px-2 py-0.5 text-left text-[10px] text-muted-foreground hover:border-accent-border"} key={element.id} onClick={() => onChange(toggleElementValue(value, element.id))} type="button">{sourceLabelFor(element, locale)}</button>; })}</div> : <p className="mt-2.5 text-xs text-subtle-foreground">{labels.noSources}</p>}
+      {elements.length ? <div className="mt-2.5 flex max-h-24 flex-wrap gap-1.5 overflow-y-auto" role="list" aria-label={ariaLabel}>{elements.map((element) => { const selected = selectedIds.includes(element.id); const label = sourceLabelFor(element, locale); return <button aria-label={label} aria-pressed={selected} className={selected ? "max-w-full whitespace-normal break-words rounded-[6px] border border-accent-border bg-accent px-2 py-1 text-left text-xs leading-4 text-accent-foreground" : "max-w-full whitespace-normal break-words rounded-[6px] border border-border bg-card px-2 py-1 text-left text-xs leading-4 text-muted-foreground hover:border-accent-border"} key={element.id} onClick={() => onChange(toggleElementValue(value, element.id))} title={label} type="button">{label}</button>; })}</div> : <p className="mt-2.5 text-xs text-subtle-foreground">{labels.noSources}</p>}
       <details className="mt-2.5 border-t border-border pt-2">
         <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground">{labels.technicalSources}</summary>
         <Input aria-describedby={`${inputId}-hint`} aria-label={labels.technicalSources} className="mt-1.5 h-9 font-mono text-xs" id={inputId} onChange={(event) => onChange(event.target.value)} placeholder="element-1, element-4" value={value} />

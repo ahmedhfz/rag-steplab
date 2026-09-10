@@ -371,6 +371,11 @@ export function RetrievalScreen() {
     restoreDraft(experimentRun);
     setCopyStatus("idle");
   }, [experimentRun, restoreDraft]);
+  useEffect(() => {
+    if (copyStatus === "idle") return;
+    const timeout = window.setTimeout(() => setCopyStatus("idle"), 2_000);
+    return () => window.clearTimeout(timeout);
+  }, [copyStatus]);
   async function copyTrace() {
     setCopyStatus("idle");
     try {
