@@ -96,13 +96,17 @@ için yaklaşık `CPU 0.5 / 1024 MiB`'dir. Docling modelleri versioned bir Modal
 Volume'da cache'lenir; cold start'ta tekrar internetten indirilmez.
 
 Production değişiklikleri semantic ve full RAG smoke geçmeden başarılı ilan
-edilmez. Local sözleşme ve semantic smoke için:
+edilmez. Bu kalite beklentisi otomatik release'in tüm zinciri çalıştırdığı
+anlamına gelmez; otomatik/manual ayrımı `docs/deployment.md` içindedir.
+Local kontroller ve ayrı yetkili semantic smoke örneği:
 
 ```powershell
 npm.cmd run lint
 npm.cmd run typecheck
 npm.cmd test
 npm.cmd run build
+# Hosted API: hedef URL'leri ve dedicated SMOKE_ACCESS_TOKEN güvenli process env ile sağlanır.
+# Sonraki smoke veri oluşturabilir ve provider maliyeti doğurabilir.
 $env:SMOKE_REQUIRE_PARSE = "1"
 $env:SMOKE_REQUIRE_SEMANTIC = "1"
 $env:SMOKE_PDF_PATH = "C:\path\to\karaman-operasyon-raporu.pdf"
@@ -111,12 +115,23 @@ node scripts/smoke.mjs
 
 ## Playwright E2E
 
-E2E katmanı iki bilinçli profile ayrılır:
+E2E profilleri `package.json` ve `playwright.config.ts` içinde tanımlıdır:
 
-- `npm run e2e:smoke`: gerçek dedicated Supabase auth + deterministic seeded RAG API. PR gate'idir; production RAG verisi yazmaz.
-- `npm run e2e:full`: gerçek hosted RAG zinciri. Tek worker ile scheduled/manual çalışır ve yalnız `e2e-` namespace'indeki test verisini temizler.
+- `npm run e2e:smoke`: tam deterministic seeded RAG suite; dedicated gerçek auth
+  kullanır fakat production RAG verisi yazmaz.
+- `npm run e2e:critical`: seeded suite'in kritik alt kümesi; classifier seçtiğinde
+  PR CI'da çalışır. Her PR tam `e2e:smoke` koşmaz.
+- `npm run e2e:auth`: gerçek auth akışları; auth-sensitive değişikliklerde seçilir.
+- `npm run e2e:visual:production`: gerçek React route/bileşenleri ve seeded API ile
+  görsel/geometri doğrulaması; canlı provider kanıtı değildir.
+- `npm run e2e:full`: tek worker ile gerçek hosted RAG zinciri; manuel Heavy
+  validation workflow'unda çalışır, schedule yoktur. Önce/sonra cleanup ayrı
+  komuttur ve yalnız dedicated kullanıcının `e2e-` namespace'ini temizler.
 
-İlk yerel kurulum:
+Profil/hedef seçimi için `.agents/skills/rag-e2e-validation/SKILL.md` kullanılır.
+
+İlk yerel kurulum (bootstrap hosted dedicated kullanıcı oluşturabilir/güncelleyebilir;
+hedef ve işlem yetkisini önceden doğrulayın):
 
 ```powershell
 npm ci
@@ -150,7 +165,8 @@ npm run e2e:full
 npm run e2e:cleanup
 ```
 
-Cleanup; dedicated test-account marker'ı, owner user ID ve `e2e-` filename prefix'i dışındaki hiçbir kayda dokunmaz. CI karar tablosu ve yeni flow kuralları `AGENTS.md` içindedir.
+Cleanup; dedicated test-account marker'ı, owner user ID ve `e2e-` filename prefix'i dışındaki hiçbir kayda dokunmaz. CI seçiminin kaynağı `.github/scripts/classify-changes.mjs` ve workflow
+dosyalarıdır; güvenlik sınırları `AGENTS.md` içindedir.
 
 ## Learning roadmap
 

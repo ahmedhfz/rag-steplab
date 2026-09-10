@@ -3,8 +3,8 @@
 ## Migration otoritesi
 
 Şema için tek aktif otorite Supabase CLI ve `supabase/migrations/` dizinidir.
-Alembic historical repository state olarak kalır; çalıştırılabilir migration
-otoritesi değildir. Migration geçmişini yeniden yazmayın veya paralel bir
+Alembic yalnız tarihsel Git geçmişindedir; aktif dosya veya çalıştırılabilir
+migration otoritesi değildir. Migration geçmişini yeniden yazmayın veya paralel bir
 history başlatmayın.
 
 ## Yerel migration akışı
@@ -28,8 +28,14 @@ Local state'in hosted state ile aynı olduğunu varsaymayın.
 
 Production `supabase db push --linked` yalnız release workflow'u veya açık
 operasyon yetkisi kapsamında çalıştırılır. Database password, service-role key
-ve başka credential repository'ye yazılmaz. RLS, owner isolation ve append-only
-migration davranışını koruyun.
+ve başka credential repository'ye yazılmaz. Append-only migration davranışını koruyun.
+
+Mevcut `rag_lab` uygulama şeması private privilege sınırı ve backend
+`ScopedRepository` içindeki `owner_user_id` filtreleriyle korunur; aktif RLS
+politikaları varmış gibi davranmayın. `supabase/tests/database/01_schema.sql`
+özellikle documents RLS'nin kapalı olduğunu doğrular. `anon`/`authenticated`
+erişimini genişletmeyin; güvenlik modeli değişikliği ayrı tasarım ve yetki gerektirir.
+Bu açıklama Supabase'in diğer şemalarındaki RLS davranışını değiştirme talimatı değildir.
 
 ## Kanonik dokümantasyon
 
