@@ -276,9 +276,7 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(screen.getByTestId("parse-document-status")).toHaveTextContent("Parse Completed");
     expect(screen.getByTestId("parse-reports-action")).toBeDisabled();
     expect(screen.queryByRole("navigation", { name: "Indexing lineage" })).not.toBeInTheDocument();
-    expect(screen.getByTestId("parse-page-header")).toContainElement(screen.getByTestId("parse-next-action"));
-    expect(screen.getByTestId("parse-next-action")).toBeDisabled();
-    expect(screen.getByText("Complete parsing before continuing to Chunking.", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByTestId("parse-next-action")).not.toBeInTheDocument();
   });
 
   it("shows the active document on Embeddings with one dominant Playground CTA", () => {
@@ -295,12 +293,13 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(screen.getByTestId("embedding-details")).toHaveTextContent("Stored in pgvector");
     expect(screen.getAllByRole("link", { name: /Go to Playground/ })).toHaveLength(1);
     expect(screen.queryAllByRole("button", { name: /Go to Playground/ })).toHaveLength(0);
-    expect(screen.getByTestId("embeddings-page-header")).toContainElement(screen.getByTestId("embeddings-next-action"));
+    expect(screen.getByTestId("embeddings-next-action-footer")).toContainElement(screen.getByTestId("embeddings-next-action"));
+    expect(screen.getByTestId("embeddings-page-header")).not.toContainElement(screen.getByTestId("embeddings-next-action"));
     expect(screen.getByTestId("embeddings-page-header")).not.toContainElement(screen.getByTestId("embedding-run-action"));
     expect(screen.getByTestId("embedding-run-action")).toBeVisible();
   });
 
-  it("keeps a locked next action in the header with its remediation", () => {
+  it("hides the next action until embeddings are ready", () => {
     pipeline.value = {
       ...createPipelineValue(),
       activeDocument: { ...activeDocument, activeEmbeddingRunId: null, embeddingRuns: [] },
@@ -311,22 +310,32 @@ describe("Product workspace and build-stage semantic contract", () => {
     };
     renderScreen(<EmbeddingsScreen />);
 
-    const nextAction = screen.getByTestId("embeddings-next-action");
-    expect(screen.getByTestId("embeddings-page-header")).toContainElement(nextAction);
-    expect(nextAction).toBeDisabled();
-    expect(nextAction).toHaveAttribute("aria-describedby", "embeddings-next-action-disabled-reason");
-    expect(screen.getByText("Create embeddings before continuing to Playground.", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByTestId("embeddings-next-action")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("embeddings-next-action-footer")).not.toBeInTheDocument();
   });
 
-  it("uses the same header next-action slot on Chunking", () => {
+  it("uses the same footer next-action slot on Chunking", () => {
     renderScreen(<ChunkingScreen />);
 
-    expect(screen.getByTestId("chunking-page-header")).toContainElement(screen.getByTestId("chunking-next-action"));
+    expect(screen.getByTestId("chunking-next-action-footer")).toContainElement(screen.getByTestId("chunking-next-action"));
+    expect(screen.getByTestId("chunking-page-header")).not.toContainElement(screen.getByTestId("chunking-next-action"));
     expect(screen.getByTestId("chunking-next-action")).toHaveAttribute("href", "/embeddings");
     expect(screen.getAllByRole("link", { name: /Go to Embeddings/ })).toHaveLength(1);
     expect(screen.getByTestId("chunking-workspace")).toContainElement(screen.getByTestId("chunking-run-action"));
     expect(screen.getByTestId("chunking-config-card")).toContainElement(screen.getByTestId("chunk-compact-controls"));
     expect(screen.getByTestId("chunking-config-card")).toContainElement(screen.getByTestId("chunking-run-action"));
+  });
+
+  it("does not offer a next step for an unselected inspected embedding", () => {
+    pipeline.value = { ...createPipelineValue(), selectedEmbeddingRunId: "another-run" };
+    renderScreen(<EmbeddingsScreen />);
+    expect(screen.queryByTestId("embeddings-next-action")).not.toBeInTheDocument();
+  });
+
+  it("hides the Chunking next step without an upstream parse selection", () => {
+    pipeline.value = { ...createPipelineValue(), selectedParseRunId: null };
+    renderScreen(<ChunkingScreen />);
+    expect(screen.queryByTestId("chunking-next-action")).not.toBeInTheDocument();
   });
 
   it("keeps the pipeline placeholder out of selectable domain items", () => {

@@ -68,7 +68,7 @@ function EmbeddingLineage({ chunkCount, run, locale }: { chunkCount: number | nu
   const count = chunkCount ?? run?.embeddingCount ?? null;
   const embeddingCount = run?.embeddingCount ?? null;
   return (
-    <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center" data-testid="embedding-lineage">
+    <div className="grid gap-3 sm:grid-cols-[minmax(0,max-content)_max-content_minmax(0,max-content)] sm:items-center sm:justify-start sm:gap-5" data-testid="embedding-lineage">
       <div className="flex min-w-0 items-center gap-3" data-testid="embedding-primary-result">
         <FileText aria-hidden="true" className="size-5 shrink-0 text-muted-foreground" />
         <div className="min-w-0"><p className="truncate text-sm font-semibold text-foreground">{count ?? "—"} {labels.chunks}</p><p className="mt-1 truncate text-xs text-muted-foreground">{labels.input}</p></div>
@@ -145,7 +145,7 @@ export function ChunksPipeline({ locale, showAction = true, stage = "both" }: { 
   if (stage === "embeddings") {
     return (
       <div className="mt-6" data-testid="embeddings-workspace">
-        <section className="rounded-[14px] border border-border bg-card px-4 py-3">
+        <section className="w-full max-w-[760px] rounded-[14px] border border-border bg-card p-4 sm:w-fit" data-testid="embedding-action-card">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-5">
           {showAction ? <div className="min-w-0 shrink-0">
               <Button aria-busy={embeddingStatus === "processing"} aria-describedby={!canEmbed ? "embedding-run-disabled-reason" : undefined} className="h-9 gap-2 rounded-[9px] px-3.5 text-[13px]" data-testid="embedding-run-action" disabled={!canEmbed} onClick={() => void handleEmbedding()}><Play aria-hidden="true" className="size-3.5" />{embeddingStatus === "processing" ? labels.creating : labels.create}</Button>

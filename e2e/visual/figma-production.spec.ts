@@ -164,6 +164,20 @@ async function assertOverviewGeometry(page: Page, theme: "light" | "dark") {
 async function assertRouteGeometry(page: Page, state: VisualState) {
   const stateKey = state.canonicalKey ?? state.key;
   await assertShellGeometry(page);
+  const stage = state.group === "parsing" ? "parse" : state.group;
+  if (["parse", "chunking", "embeddings"].includes(stage)) {
+    const next = page.getByTestId(`${stage}-next-action`);
+    if (["chunking-config", "embeddings-ready"].includes(stateKey)) {
+      await expect(next).toHaveCount(0);
+    } else {
+      await expect(next).toHaveCount(1);
+      const footer = page.getByTestId(`${stage}-next-action-footer`);
+      await expect(footer.locator(`[data-testid="${stage}-next-action"]`)).toHaveCount(1);
+      const history = page.getByTestId(stage === "parse" ? "parse-history" : stage === "chunking" ? "chunk-history" : "embedding-history");
+      const historyRect = await rect(history);
+      expect((await rect(footer)).y).toBeGreaterThanOrEqual(historyRect.y + historyRect.height);
+    }
+  }
   if (stateKey === "overview") {
     await assertOverviewGeometry(page, state.theme ?? "light");
     return;
@@ -203,6 +217,10 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     await assertRect(embeddingWorkspace, { x: 288, y: 223, width: 1113 }, "embeddings-workspace");
     expect((await rect(embeddingWorkspace)).height, `${state.key}-workspace-height`).toBeGreaterThan(stateKey === "embeddings-ready" ? 60 : 150);
     await expect(page.getByTestId("embedding-lineage")).toBeVisible();
+    expect((await rect(page.getByTestId("embedding-action-card"))).width).toBeLessThanOrEqual(760);
+    const inputRect = await rect(page.getByTestId("embedding-primary-result"));
+    const outputRect = await rect(page.getByTestId("embedding-output-result"));
+    expect(outputRect.x - inputRect.x - inputRect.width).toBeLessThan(80);
   } else if (state.group === "playground") {
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: 1193, height: 53 }, "playground-context-bar");
     await assertRect(page.getByTestId("playground-page-header"), { x: 288, y: 93, width: 1113, height: 92 }, "playground-header");

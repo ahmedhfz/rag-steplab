@@ -416,14 +416,14 @@ export function EvaluationScreen() {
         </header>
 
         <section aria-label={preferences.locale === "tr" ? "Evaluation bağlam özeti" : "Evaluation context summary"} className="mt-4 rounded-[14px] border border-border bg-card px-4 py-2.5" data-testid="evaluation-workspace-context">
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
-            <div className="min-w-0">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center">
+            <div className="min-w-0 md:flex-[0_1_18rem]">
               <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{labels.contextDataset}</p>
               <h2 className="mt-1 truncate text-[14px] font-semibold text-foreground">{selectedDataset?.name ?? (preferences.locale === "tr" ? "Dataset seçilmedi" : "No dataset selected")}</h2>
               {selectedDataset ? <p className="mt-0.5 text-[11px] text-muted-foreground">v{selectedDataset.version} · {selectedDataset.caseCount} {labels.cases}</p> : null}
             </div>
-            <div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{labels.configSummary}</p><p className="mt-1 break-words text-[13px] font-medium text-foreground" data-testid="evaluation-config-summary">{activeConfigSummary}</p></div>
-            <div className="ml-auto">{evaluationDatasets.length ? statusPill(labels.datasetReady) : statusPill(preferences.locale === "tr" ? "Hazır" : "Ready", "ready")}</div>
+            <div className="min-w-0 md:flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{labels.configSummary}</p><p className="mt-1 break-words text-[13px] font-medium text-foreground" data-testid="evaluation-config-summary">{activeConfigSummary}</p></div>
+            <div className="self-start md:ml-auto md:self-auto">{evaluationDatasets.length ? statusPill(labels.datasetReady) : statusPill(preferences.locale === "tr" ? "Hazır" : "Ready", "ready")}</div>
           </div>
         </section>
 
