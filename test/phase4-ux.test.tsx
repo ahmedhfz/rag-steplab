@@ -46,12 +46,16 @@ describe("Phase 6B pipeline IA", () => {
     cleanup();
     renderWithPipeline(<ChunkingScreen />);
     expect(screen.getByRole("button", { name: "Run chunking" })).toBeDisabled();
-    expect(screen.getByText("Select a document", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByTestId("chunking-next-action")).not.toBeInTheDocument();
+    await waitFor(() => expect(document.getElementById("chunk-disabled-reason")).toBeTruthy());
+    expect(document.getElementById("chunk-disabled-reason")).toHaveTextContent(/operation|document|parse/i);
 
     cleanup();
     renderWithPipeline(<EmbeddingsScreen />);
     expect(screen.getByRole("button", { name: "Create embeddings" })).toBeDisabled();
-    expect(screen.getByText("Create embeddings before continuing to Playground.")).toBeInTheDocument();
+    expect(screen.queryByTestId("embeddings-next-action")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("embedding-blocker")).toBeInTheDocument());
+    expect(screen.getByTestId("embedding-blocker")).toHaveTextContent(/operation|document|chunk run/i);
   });
 
   it("keeps the Playground route available even when no embedding is selected", () => {

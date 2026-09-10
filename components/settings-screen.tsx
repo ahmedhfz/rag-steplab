@@ -59,11 +59,11 @@ export function SettingsScreen() {
               <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">{copy.settings.languageDescription}</p>
             </div>
             <RadioGroup aria-label={copy.settings.languageTitle} className="flex h-[42px] w-full shrink-0 items-center justify-center gap-0 rounded-[10px] border border-border bg-secondary p-1 sm:w-auto" onValueChange={(value) => setLocale(value as "en" | "tr")} value={preferences.locale}>
-              <label className={cn("flex min-h-10 cursor-pointer items-center rounded-[8px] px-3 text-[13px] text-muted-foreground transition-colors", preferences.locale === "en" && "bg-card font-medium text-foreground shadow-sm")} htmlFor="locale-en">
+              <label className={cn("flex min-h-10 min-w-0 flex-1 cursor-pointer items-center justify-center rounded-[8px] px-2 text-[13px] text-muted-foreground transition-colors sm:flex-none sm:px-3", preferences.locale === "en" && "bg-card font-medium text-foreground shadow-sm")} htmlFor="locale-en">
                 <RadioGroupItem aria-label={copy.settings.english} className="sr-only" id="locale-en" value="en" />
                 <span>{copy.settings.english}</span>
               </label>
-              <label className={cn("flex min-h-10 cursor-pointer items-center rounded-[8px] px-3 text-[13px] text-muted-foreground transition-colors", preferences.locale === "tr" && "bg-card font-medium text-foreground shadow-sm")} htmlFor="locale-tr">
+              <label className={cn("flex min-h-10 min-w-0 flex-1 cursor-pointer items-center justify-center rounded-[8px] px-2 text-[13px] text-muted-foreground transition-colors sm:flex-none sm:px-3", preferences.locale === "tr" && "bg-card font-medium text-foreground shadow-sm")} htmlFor="locale-tr">
                 <RadioGroupItem aria-label={copy.settings.turkish} className="sr-only" id="locale-tr" value="tr" />
                 <span>{copy.settings.turkish}</span>
               </label>
@@ -77,7 +77,7 @@ export function SettingsScreen() {
             </div>
             <RadioGroup aria-label={copy.settings.themeTitle} className="flex h-[42px] w-full shrink-0 items-center justify-center gap-0 rounded-[10px] border border-border bg-secondary p-1 sm:w-auto" onValueChange={(value) => setTheme(value as "system" | "light" | "dark")} value={preferences.theme}>
               {themeOptions.map((option) => (
-                <label className={cn("flex min-h-10 cursor-pointer items-center rounded-[8px] px-3 text-[13px] text-muted-foreground transition-colors", preferences.theme === option.value && "bg-card font-medium text-foreground shadow-sm", !isHydrated && "cursor-not-allowed opacity-60")} htmlFor={`theme-${option.value}`} key={option.value}>
+                <label className={cn("flex min-h-10 min-w-0 flex-1 cursor-pointer items-center justify-center rounded-[8px] px-2 text-[13px] text-muted-foreground transition-colors sm:flex-none sm:px-3", preferences.theme === option.value && "bg-card font-medium text-foreground shadow-sm", !isHydrated && "cursor-not-allowed opacity-60")} htmlFor={`theme-${option.value}`} key={option.value}>
                   <RadioGroupItem aria-label={option.label} className="sr-only" disabled={!isHydrated} id={`theme-${option.value}`} value={option.value} />
                   <span>{option.label}</span>
                 </label>

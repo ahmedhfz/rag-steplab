@@ -5,6 +5,7 @@ import { installSeededApi, seededStressNames } from "../support/seeded-api";
 import { selectSeededDocument } from "../support/seeded-workspace";
 
 const viewports = [
+  { width: 320, height: 900 },
   { width: 1440, height: 900 },
   { width: 1280, height: 900 },
   { width: 1024, height: 900 },
@@ -148,6 +149,39 @@ test("UI context and CTA remain reachable without horizontal overflow at support
       await assertStageContext(page);
       await assertNoHorizontalOverflow(page);
     }
+  }
+
+  quality.assertClean();
+});
+
+test("@critical dense context controls remain usable at narrow desktop web widths", async ({ page }) => {
+  const quality = installBrowserQualityGuards(page);
+  await installSeededApi(page, { scenario: "complete" });
+
+  for (const width of [320, 390, 640] as const) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/settings", { waitUntil: "domcontentloaded" });
+    const themeGroup = page.getByRole("radiogroup", { name: "Theme" });
+    await expect(themeGroup).toBeVisible();
+    await expect(themeGroup).toHaveJSProperty("scrollWidth", await themeGroup.evaluate((element) => element.clientWidth));
+
+    await page.goto("/evaluation", { waitUntil: "domcontentloaded" });
+    await selectSeededDocument(page);
+    const evaluationContext = page.getByTestId("evaluation-workspace-context");
+    const contextLayout = await evaluationContext.locator(":scope > div").evaluate((element) => ({
+      direction: getComputedStyle(element).flexDirection,
+      width: element.getBoundingClientRect().width,
+    }));
+    expect(contextLayout.width).toBeGreaterThan(0);
+    if (width < 768) expect(contextLayout.direction).toBe("column");
+    await expect(page.getByTestId("evaluation-config-summary")).toBeVisible();
+
+    await page.goto("/embeddings", { waitUntil: "domcontentloaded" });
+    const embeddingCard = page.getByTestId("embedding-action-card");
+    await expect(embeddingCard).toBeVisible();
+    const embeddingWidth = await embeddingCard.evaluate((element) => element.getBoundingClientRect().width);
+    expect(embeddingWidth).toBeGreaterThanOrEqual(width < 640 ? width - 32 : 0);
+    await assertNoHorizontalOverflow(page);
   }
 
   quality.assertClean();

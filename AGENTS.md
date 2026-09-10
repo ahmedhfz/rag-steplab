@@ -28,6 +28,9 @@ E2E profil/hedef seçimi içindir. `.codex/config.toml` yalnız Codex MCP ayarı
 - Gerçek provenance korunur: sahte doküman, chunk, skor, cevap veya progress
   gösterilmez. Gerekli aktif upstream lineage yoksa aksiyon disabled olur ve
   kullanıcıya nedeni görünür.
+- Sayfalar arası sonraki aşama geçişi içerik sonunda yer alır ve yalnız seçili
+  pipeline'ın gerekli tamamlanmış, uyumlu çıktısı varsa görünür. Run/Re-run
+  aksiyonlarının disabled durumları ve açıklamaları çalışma alanında kalır.
 - Inspect ile use akışlarını ayırın. Saved pipeline ve document-scoped
   lineage kanonik kimliktir; reparse/rechunk veya başarısız upstream sonrası
   stale downstream çıktıları geçersiz kılınır.
