@@ -22,6 +22,21 @@ Backend işlerinde `backend/AGENTS.md`, database işlerinde `supabase/AGENTS.md`
 okunur. Repository becerileri `.agents/skills/` altında tek kopya tutulur:
 `modal` Modal operasyonları, `motion` animasyon işleri, `rag-e2e-validation`
 E2E profil/hedef seçimi içindir. `.codex/config.toml` yalnız Codex MCP ayarını taşır.
+- Localhost açılışında tek giriş noktası olarak `npm run dev` kullanın ve `.env` içindeki `NEXT_PUBLIC_API_BASE_URL` hedefini kontrol edin: hesap dokümanları hosted persistence'taysa kanonik hosted API'ye bağlanın; `127.0.0.1:8000` yalnız bilinçli local `DATABASE_URL`/veri kurulumu varsa seçilsin, aksi halde boş in-memory repository “doküman yok” gösterebilir. Açılış sonrası `http://localhost:3000` üzerinde `/documents` ekranını ve `capabilities`/`documents` isteklerinin başarılı olduğunu doğrulayın; “RAG backend could not be reached” veya “Henüz doküman yok” durumu beklenmedikse API hedefini düzeltmeden kullanıcı akışına devam etmeyin.
+
+## Proje durumu kullanımı
+
+- Görev başında `AGENTS.md` sonrasında `PROJECT_STATE.md` okuyun. `README.md`
+  projenin ne olduğunu, `AGENTS.md` ajanların nasıl çalıştığını,
+  `PROJECT_STATE.md` güncel repository durumunu anlatır. Durum belgesi eskimişse
+  kod ve güncel repository kanıtı otoritedir.
+- Görev sonunda anlamlı çalışma mevcut durumu değiştirdiyse `PROJECT_STATE.md`
+  ve güncelleme tarihini yenileyin. `Recently Completed`, `Current Work`, `Next`
+  ve `Open Questions` bölümlerini gerektiğinde düzeltin; eski bilgileri kaldırın.
+- Belge kısa ve güncel bir özet olmalıdır; append-only görev günlüğü değildir.
+  Ayrıntılı geçmiş Git'te kalır. Yalnız uygulanmış veya doğrulanmış kararları
+  mevcut gerçek olarak yazın; secrets, token, credential veya hassas environment
+  değerlerini hiçbir zaman kaydetmeyin.
 
 ## Mimari ve doğruluk sınırları
 
