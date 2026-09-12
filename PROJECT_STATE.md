@@ -1,6 +1,6 @@
 # Project State
 
-Last updated: 2026-09-11
+Last updated: 2026-09-12
 
 ## Current Status
 
@@ -38,6 +38,9 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
 
 ## Recently Completed
 
+- Doküman kitaplığına açık onay isteyen silme akışı eklendi; başarılı silme
+  sonrası document-scoped pipeline/lineage seçimleri temizleniyor ve aktif
+  doküman silindiyse sıradaki doküman seçiliyor.
 - Docling heading adayları kaynak geometri ve tablo/container bağlamıyla
   sınıflandırıldı; kısa callout metinleri paragraph olarak korunuyor (`cb6b72d`).
 - Responsive arayüz ve içerik sonu aşama geçişleri düzeltildi (`4007c89`).
@@ -47,17 +50,11 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
 
 ## Current Work
 
-Doküman silme arayüzü, provider state güncellemesi, API istemcisi ve ilgili
-testlerdeki mevcut yerel çalışma, kullanıcının onayıyla
-`rag-steplab: proje durumu oncesi mevcut yerel calisma 2026-09-11` adlı Git
-stash'inde korunuyor. Main'e dahil değildir; doğrulanmış/tamamlanmış sayılmaz.
-İnceleme sırasında açık PR bulunmadı.
+None
 
 ## Next
 
-Bekleyen doküman silme çalışmasına dönüldüğünde stash diff'ini mevcut main ile
-karşılaştırıp ilgili lifecycle/state ve API testleriyle doğrulamak; mevcut
-`AGENTS.md` talimatını koruyarak yalnız gerekli değişiklikleri geri almak.
+None
 
 ## Open Questions
 

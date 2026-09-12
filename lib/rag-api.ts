@@ -821,6 +821,10 @@ export async function uploadDocument(file: File, signal?: AbortSignal): Promise<
   };
 }
 
+export async function deleteDocument(documentId: string, signal?: AbortSignal): Promise<void> {
+  await request(`/documents/${encodeURIComponent(documentId)}`, { method: "DELETE", signal });
+}
+
 export async function getDocument(documentId: string, signal?: AbortSignal): Promise<DocumentDetail> {
   const payload = object(await request(`/documents/${encodeURIComponent(documentId)}`, { signal }));
   const activeParsePayload = payload.activeParseRun;

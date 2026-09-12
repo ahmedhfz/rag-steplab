@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -119,5 +119,60 @@ describe("Phase 6B document ownership", () => {
     Object.defineProperty(dropEvent, "dataTransfer", { value: { files: [file] } });
     fireEvent(screen.getByTestId("pdf-drop-zone"), dropEvent);
     expect(await screen.findByRole("status")).toHaveTextContent("Document added");
+  });
+
+  it("requires confirmation before deleting a persisted document and removes it from the library", async () => {
+    const user = userEvent.setup();
+    const documentItem = { id: "document-delete", fileName: "delete-me.pdf", mediaType: "application/pdf", sizeBytes: 8, pageCount: 1, sha256: "delete-sha", activeParseRunId: null, activeChunkRunId: null, activeEmbeddingRunId: null, latestParseStatus: "completed", latestParseError: null, createdAt: null, updatedAt: null };
+    localStorage.setItem("rag-steplab-active-pipeline-id:document:test-user:document-delete", "pipeline-delete");
+    localStorage.setItem("rag-steplab-lineage-selections-v1:test-user", JSON.stringify({ "document-delete": { selectedParseRunId: "parse-delete", selectedChunkRunId: null, selectedEmbeddingRunId: null } }));
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/documents/document-delete") && init?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
+      const payload = url.endsWith("/capabilities") ? capabilities : { items: [documentItem] };
+      return Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithPipeline(<DocumentsScreen />);
+
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Delete: delete-me.pdf" }).length).toBeGreaterThan(0));
+    await user.click(screen.getAllByRole("button", { name: "Delete: delete-me.pdf" })[0]);
+    const dialog = screen.getByTestId("delete-document-dialog");
+    expect(dialog).toHaveTextContent("delete-me.pdf");
+    expect(fetchMock.mock.calls.some(([url, request]) => String(url).endsWith("/documents/document-delete") && (request as RequestInit | undefined)?.method === "DELETE")).toBe(false);
+
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url, request]) => String(url).endsWith("/documents/document-delete") && (request as RequestInit | undefined)?.method === "DELETE")).toBe(true));
+    await waitFor(() => expect(screen.getByText("No documents yet.")).toBeInTheDocument());
+    expect(screen.queryByTestId("delete-document-dialog")).not.toBeInTheDocument();
+    expect(localStorage.getItem("rag-steplab-active-pipeline-id:document:test-user:document-delete")).toBeNull();
+    expect(JSON.parse(localStorage.getItem("rag-steplab-lineage-selections-v1:test-user") ?? "{}")).not.toHaveProperty("document-delete");
+  });
+
+  it("clears active lineage and selects the next document after deleting the active one", async () => {
+    const user = userEvent.setup();
+    const firstDocument = { id: "document-active", fileName: "active.pdf", mediaType: "application/pdf", sizeBytes: 8, pageCount: 1, sha256: "active-sha", activeParseRunId: null, activeChunkRunId: null, activeEmbeddingRunId: null, latestParseStatus: "completed", latestParseError: null, createdAt: null, updatedAt: null };
+    const nextDocument = { ...firstDocument, id: "document-next", fileName: "next.pdf", sha256: "next-sha" };
+    const summary = (document: typeof firstDocument) => ({ ...document, parseRuns: [], chunkRuns: [], embeddingRuns: [], experiments: [], evaluationDatasets: [], evaluationRuns: [] });
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/documents/document-active") && init?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
+      if (url.endsWith("/capabilities")) return Promise.resolve(new Response(JSON.stringify(capabilities), { status: 200 }));
+      if (url.endsWith("/documents") && !init?.method) return Promise.resolve(new Response(JSON.stringify({ items: [firstDocument, nextDocument] }), { status: 200 }));
+      if (url.endsWith("/documents/document-active/summary")) return Promise.resolve(new Response(JSON.stringify(summary(firstDocument)), { status: 200 }));
+      if (url.endsWith("/documents/document-next/summary")) return Promise.resolve(new Response(JSON.stringify(summary(nextDocument)), { status: 200 }));
+      if (url.endsWith("/documents/document-active/pipelines") || url.endsWith("/documents/document-next/pipelines")) return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithPipeline(<DocumentsScreen />);
+
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Open document: active.pdf" }).length).toBeGreaterThan(0));
+    await user.click(screen.getAllByRole("button", { name: "Open document: active.pdf" })[0]);
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/documents/document-active/summary"))).toBe(true));
+    await user.click(screen.getAllByRole("button", { name: "Delete: active.pdf" })[0]);
+    await user.click(within(screen.getByTestId("delete-document-dialog")).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Open document: next.pdf" }).length).toBeGreaterThan(0));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/documents/document-next/summary"))).toBe(true));
+    expect(screen.queryByText("active.pdf", { exact: true })).not.toBeInTheDocument();
   });
 });

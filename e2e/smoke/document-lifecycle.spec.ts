@@ -40,6 +40,21 @@ test("@critical click upload, drag/drop ve duplicate reuse notice birlikte çal�
   quality.assertClean();
 });
 
+test("@critical document library deletes a document only after explicit confirmation", async ({ page }) => {
+  const quality = installBrowserQualityGuards(page);
+
+  await page.goto("/documents");
+  await expect(page.getByRole("button", { name: "Delete: e2e-seeded-golden.pdf" })).toBeVisible();
+  await page.getByRole("button", { name: "Delete: e2e-seeded-golden.pdf" }).click();
+  const dialog = page.getByTestId("delete-document-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("e2e-seeded-golden.pdf");
+  await dialog.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(page.getByText("No documents yet.")).toBeVisible();
+
+  quality.assertClean();
+});
+
 test("@critical parse lifecycle gerçek UI progress, phase ve elapsed durumlarını gösterir", async ({ page }) => {
   const quality = installBrowserQualityGuards(page);
 
