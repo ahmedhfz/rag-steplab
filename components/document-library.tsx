@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowUpRight, FileText, MoreHorizontal } from "lucide-react";
+import { useState } from "react";
+import { ArrowUpRight, FileText, MoreHorizontal, Trash2, X } from "lucide-react";
+import { Dialog as DialogPrimitive } from "radix-ui";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { EmptyPipelineState, PipelineErrorMessage } from "@/components/pipeline-learning-ui";
@@ -9,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { type AppLocale } from "@/lib/copy";
 import { formatDocumentFileSize } from "@/lib/document-file";
 import type { ParseRunStatus } from "@/lib/document-parse-types";
+import type { PersistedDocument } from "@/lib/rag-api-types";
 import { cn } from "@/lib/utils";
 
 type DocumentStatus = "not-started" | "processing" | "completed" | "failed";
@@ -42,7 +45,10 @@ function formatUpdatedAt(value: string | null, locale: AppLocale) {
 }
 
 export function DocumentLibrary({ locale }: { locale: AppLocale }) {
-  const { documents, activeDocumentId, persistenceStatus, persistenceError, selectPersistedDocument } = useDocumentPipeline();
+  const { documents, activeDocumentId, persistenceStatus, persistenceError, selectPersistedDocument, deletePersistedDocument } = useDocumentPipeline();
+  const [documentPendingDelete, setDocumentPendingDelete] = useState<PersistedDocument | null>(null);
+  const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const labels = locale === "tr"
     ? {
         title: "Doküman kitaplığı",
@@ -57,10 +63,17 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
         size: "Boyut",
         uploaded: "Yüklendi",
         active: "Aktif",
+        actions: "İşlemler",
         open: "Dokümanı aç",
         menu: "Diğer işlemler",
         openParse: "Parsed içeriği aç",
         openChunks: "Chunk'ları aç",
+        delete: "Sil",
+        deleting: "Siliniyor…",
+        deleteTitle: "Dokümanı silmek istediğinizden emin misiniz?",
+        deleteDescription: "Bu işlem parse, chunk, embedding ve ilişkili pipeline verilerini de kaldırır. Devam etmek istiyor musunuz?",
+        cancel: "İptal",
+        deleteFailed: "Doküman silinemedi. Lütfen tekrar deneyin.",
         noPages: "—",
       }
     : {
@@ -76,12 +89,39 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
         size: "Size",
         uploaded: "Uploaded",
         active: "Active",
+        actions: "Actions",
         open: "Open document",
         menu: "More actions",
         openParse: "Open parsed content",
         openChunks: "Open chunks",
+        delete: "Delete",
+        deleting: "Deleting…",
+        deleteTitle: "Are you sure you want to delete this document?",
+        deleteDescription: "This also removes its parse, chunk, embedding, and related pipeline data. Do you want to continue?",
+        cancel: "Cancel",
+        deleteFailed: "The document could not be deleted. Please try again.",
         noPages: "—",
       };
+
+  const requestDelete = (document: PersistedDocument) => {
+    setDeleteError(null);
+    setDocumentPendingDelete(document);
+  };
+
+  const confirmDelete = async () => {
+    if (!documentPendingDelete) return;
+    const target = documentPendingDelete;
+    setDeletingDocumentId(target.id);
+    setDeleteError(null);
+    try {
+      await deletePersistedDocument(target.id);
+      setDocumentPendingDelete(null);
+    } catch (error) {
+      setDeleteError(error instanceof Error && error.message ? error.message : labels.deleteFailed);
+    } finally {
+      setDeletingDocumentId(null);
+    }
+  };
 
   return (
     <section aria-label={labels.title} className="mt-8 min-w-0" data-testid="document-library">
@@ -112,6 +152,7 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                       <th className="px-5 py-3 font-medium">{labels.size}</th>
                       <th className="px-5 py-3 font-medium">{labels.uploaded}</th>
                       <th className="px-5 py-3 font-medium">{labels.status}</th>
+                      <th className="px-5 py-3 text-right font-medium">{labels.actions}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -130,6 +171,9 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                           <td className="whitespace-nowrap px-5 py-4 text-[13px] leading-[19.5px] text-muted-foreground">{formatDocumentFileSize(document.sizeBytes, locale)}</td>
                           <td className="whitespace-nowrap px-5 py-4 text-[13px] leading-[19.5px] text-muted-foreground">{formatUpdatedAt(document.createdAt ?? document.updatedAt, locale)}</td>
                           <td className="whitespace-nowrap px-5 py-4"><DocumentStatusBadge locale={locale} status={status} /></td>
+                          <td className="whitespace-nowrap px-5 py-4 text-right">
+                            <Button aria-label={`${labels.delete}: ${document.fileName}`} className="text-muted-foreground hover:bg-destructive-subtle hover:text-destructive" disabled={deletingDocumentId === document.id} onClick={() => requestDelete(document)} size="icon-sm" title={labels.delete} type="button" variant="ghost"><Trash2 aria-hidden="true" className="size-4" /></Button>
+                          </td>
                         </tr>
                       );
                     })}
@@ -160,6 +204,7 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                                     <div className="absolute right-0 top-11 z-10 min-w-[184px] rounded-[10px] border border-border bg-card p-1.5 shadow-lg">
                                       <Link className="flex min-h-10 items-center justify-between gap-3 rounded-[7px] px-2.5 text-sm text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25" href="/parse" onClick={() => void selectPersistedDocument(document.id)}>{labels.openParse}<ArrowUpRight aria-hidden="true" className="size-3.5 text-brand" /></Link>
                                       <Link className="flex min-h-10 items-center justify-between gap-3 rounded-[7px] px-2.5 text-sm text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25" href="/chunking" onClick={() => void selectPersistedDocument(document.id)}>{labels.openChunks}<ArrowUpRight aria-hidden="true" className="size-3.5 text-brand" /></Link>
+                                      <button aria-label={`${labels.delete}: ${document.fileName}`} className="flex min-h-10 w-full items-center justify-center rounded-[7px] px-2.5 text-destructive hover:bg-destructive-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25 disabled:pointer-events-none disabled:opacity-50" disabled={deletingDocumentId === document.id} onClick={() => requestDelete(document)} title={labels.delete} type="button"><Trash2 aria-hidden="true" className="size-4" /></button>
                                     </div>
                                   </details>
                                 </div>
@@ -180,6 +225,38 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                     })}
                   </ul>
                 </div>
+
+                <DialogPrimitive.Root
+                  onOpenChange={(open) => {
+                    if (!open && deletingDocumentId === null) {
+                      setDocumentPendingDelete(null);
+                      setDeleteError(null);
+                    }
+                  }}
+                  open={Boolean(documentPendingDelete)}
+                >
+                  {documentPendingDelete ? (
+                    <DialogPrimitive.Portal>
+                      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-overlay/35 dark:bg-overlay/65" data-testid="delete-document-overlay" />
+                      <DialogPrimitive.Content className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-border bg-card p-5 shadow-2xl focus:outline-none sm:p-6" data-testid="delete-document-dialog">
+                        <div className="flex items-start justify-between gap-4">
+                          <DialogPrimitive.Title className="text-base font-semibold text-foreground">{labels.deleteTitle}</DialogPrimitive.Title>
+                          <DialogPrimitive.Close asChild>
+                            <Button aria-label={labels.cancel} disabled={deletingDocumentId !== null} size="icon-sm" title={labels.cancel} type="button" variant="ghost"><X aria-hidden="true" className="size-4" /></Button>
+                          </DialogPrimitive.Close>
+                        </div>
+                        <DialogPrimitive.Description className="mt-2 text-sm leading-6 text-muted-foreground"><span className="font-medium text-foreground">{documentPendingDelete.fileName}</span> — {labels.deleteDescription}</DialogPrimitive.Description>
+                        {deleteError ? <p className="mt-3 text-sm text-destructive" role="alert">{deleteError}</p> : null}
+                        <div className="mt-5 flex flex-wrap justify-end gap-2">
+                          <DialogPrimitive.Close asChild>
+                            <Button disabled={deletingDocumentId !== null} size="sm" type="button" variant="outline">{labels.cancel}</Button>
+                          </DialogPrimitive.Close>
+                          <Button disabled={deletingDocumentId !== null} onClick={() => void confirmDelete()} size="sm" variant="destructive">{deletingDocumentId ? labels.deleting : labels.delete}</Button>
+                        </div>
+                      </DialogPrimitive.Content>
+                    </DialogPrimitive.Portal>
+                  ) : null}
+                </DialogPrimitive.Root>
               </>
             )}
       </div>

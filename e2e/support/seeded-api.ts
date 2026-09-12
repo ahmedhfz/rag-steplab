@@ -435,6 +435,7 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
   let evaluationPoll = 0;
   let pipelineRevision = 1;
   let embeddingAvailable = true;
+  let documentDeleted = false;
 
   await page.addInitScript(({ theme }) => {
     // İlk navigation'da temizle; sonraki route navigation'larında seçili lineage korunmalıdır.
@@ -477,8 +478,12 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
     }
 
     if (pathname === "/capabilities") return json(route, { embeddingModel: embedding.model, embeddingDimensions: 768, generationModel: experiment.stageResults.generation.model, rerankModel: "gemini-flash-lite-latest", judgeModel: "gemini-flash-lite-latest", embeddingFormatVersion: embedding.embeddingFormatVersion, limits: { maxTopK: 20 } });
-    if (pathname === "/documents" && method === "GET") return json(route, { items: [current.document] });
+    if (pathname === "/documents" && method === "GET") return json(route, { items: documentDeleted ? [] : [current.document] });
     if (pathname === "/documents" && method === "POST") return json(route, { document: current.document, reusedDocument: true }, 200);
+    if (pathname === `/documents/${documentId}` && method === "DELETE") {
+      documentDeleted = true;
+      return route.fulfill({ status: 204, body: "" });
+    }
     if (pathname === `/documents/${documentId}/summary`) return json(route, current.summary);
     if (pathname === `/documents/${documentId}/pipelines` && method === "POST") {
       const input = request.postDataJSON() as { name: string; parseRunId?: string | null; chunkRunId?: string | null; embeddingRunId?: string | null };

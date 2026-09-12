@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { continueExperiment, createDocumentPipeline, createExperimentAsync, deleteDocumentPipeline, getChunkRun, getDocument, getDocumentSummary, getEmbeddingRun, getEvaluationRun, getExperiment, getParseRun, listDocumentPipelines, listDocuments, parseAndPersistDocument, rerunGeneration, updateDocumentPipeline, uploadDocument, waitForParseRun } from "@/lib/rag-api";
+import { continueExperiment, createDocumentPipeline, createExperimentAsync, deleteDocument, deleteDocumentPipeline, getChunkRun, getDocument, getDocumentSummary, getEmbeddingRun, getEvaluationRun, getExperiment, getParseRun, listDocumentPipelines, listDocuments, parseAndPersistDocument, rerunGeneration, updateDocumentPipeline, uploadDocument, waitForParseRun } from "@/lib/rag-api";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -153,6 +153,14 @@ describe("RAG API contract normalization", () => {
     await expect(updateDocumentPipeline("pipeline-1", { expectedRevision: 1, name: "Renamed" })).resolves.toMatchObject({ revision: 2 });
     await expect(deleteDocumentPipeline("pipeline-1")).resolves.toBeUndefined();
     expect(fetchMock.mock.calls[2][1]).toEqual(expect.objectContaining({ method: "PATCH", body: JSON.stringify({ expectedRevision: 1, name: "Renamed" }) }));
+  });
+
+  it("deletes a document through the owner-scoped endpoint and accepts 204", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(deleteDocument("document/1")).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8000/documents/document%2F1", expect.objectContaining({ method: "DELETE" }));
   });
 
   it("carries the existing reusedDocument flag through the persisted parse contract", async () => {

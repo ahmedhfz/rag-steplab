@@ -26,6 +26,7 @@ import {
   listDocumentPipelines,
   listDocuments,
   uploadDocument,
+  deleteDocument,
   listEvaluationRuns,
   parseAndPersistDocument,
   reparsePersistedDocument,
@@ -154,6 +155,7 @@ type DocumentPipelineContextValue = {
   selectFile: (file: File | undefined) => void;
   addDocument: (file: File) => Promise<PersistedDocument | null>;
   selectPersistedDocument: (documentId: string) => Promise<void>;
+  deletePersistedDocument: (documentId: string) => Promise<void>;
   selectParseRun: (runId: string) => Promise<void>;
   selectChunkRun: (runId: string) => Promise<void>;
   selectEmbeddingRun: (runId: string) => Promise<void>;
@@ -224,6 +226,14 @@ function rememberActivePipeline(pipelineId: string | null, userId?: string | nul
     window.localStorage.setItem(key, pipelineId ?? SCRATCH_PIPELINE_STORAGE_VALUE);
   } catch {
     // Pipeline kimliği yalnız oturum kolaylığıdır; asıl seçim server state'idir.
+  }
+}
+
+function forgetActivePipeline(userId?: string | null, documentId?: string | null) {
+  try {
+    window.localStorage.removeItem(activePipelineStorageKey(userId, documentId));
+  } catch {
+    // Storage engeli silme akışını durdurmamalıdır.
   }
 }
 
@@ -961,8 +971,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const metadata = metadataOverride ?? documents.find((document) => document.id === documentId);
     if (!metadata) return;
     const previousDocument = activeDocumentRef.current;
-    const previousMetadata = activeDocumentMetadata;
-    const previousDocumentId = activeDocumentId;
+    const previousMetadata = previousDocument ? activeDocumentMetadata : null;
+    const previousDocumentId = previousDocument?.id ?? null;
     const previousSummaryFetchedAt = activeDocumentSummaryLoadedAtRef.current;
     const previousPipeline = activePipelineRef.current;
     const previousPipelines = pipelines;
@@ -1045,7 +1055,91 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       setPersistenceError(asApiError(error, "The selected document could not be loaded."));
       setPersistenceStatus(documents.length > 0 ? "available" : "unavailable");
     }
-  }, [activeDocumentId, activeDocumentMetadata, activePipelineId, authUserId, buildDocumentSnapshot, commitDocumentSnapshot, documents, loadThenCommitDocument, pipelines, replaceController, resumeParseRun, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId, setInspectedSelection]);
+  }, [activeDocumentMetadata, activePipelineId, authUserId, buildDocumentSnapshot, commitDocumentSnapshot, documents, loadThenCommitDocument, pipelines, replaceController, resumeParseRun, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId, setInspectedSelection]);
+
+  const deletePersistedDocument = useCallback(async (documentId: string) => {
+    const metadata = documents.find((document) => document.id === documentId);
+    if (!metadata) return;
+    const isActive = activeDocumentRef.current?.id === documentId || activeDocumentId === documentId;
+    const controller = replaceController("document-delete");
+
+    if (isActive) {
+      controllersRef.current.forEach((current, key) => {
+        if (key !== "document-delete") current.abort();
+      });
+      documentLoadRequestRef.current += 1;
+      documentEpochRef.current += 1;
+      selectionRequestRef.current += 1;
+      inspectionRequestRef.current += 1;
+      runIdRef.current += 1;
+      parseInFlightRef.current = false;
+      activeParseRunIdRef.current = null;
+    }
+
+    try {
+      await deleteDocument(documentId, controller.signal);
+      const remainingDocuments = documents.filter((document) => document.id !== documentId);
+      setDocuments(remainingDocuments);
+      setPersistenceError(null);
+      forgetActivePipeline(authUserId, documentId);
+      const nextSelections = { ...lineageSelectionsRef.current };
+      delete nextSelections[documentId];
+      lineageSelectionsRef.current = nextSelections;
+      rememberLineageSelections(nextSelections, authUserId);
+      if (!isActive) return;
+
+      activeDocumentRef.current = null;
+      activeDocumentSummaryLoadedAtRef.current = 0;
+      activePipelineRef.current = null;
+      pipelineRevisionRef.current.clear();
+      setActiveDocument(null);
+      setActiveDocumentId(null);
+      setActiveDocumentMetadata(null);
+      setPipelines([]);
+      setActivePipelineId(null);
+      setPendingUpload(null);
+      setFileError(null);
+      setParseStatus("not-started");
+      setParseProgress(0);
+      setLastReportedParseProgress(0);
+      setParsePhase(null);
+      setParseResult(null);
+      setParseError(null);
+      setActivity([]);
+      setSelectedParseRunId(null);
+      setSelectedChunkRunId(null);
+      setSelectedEmbeddingRunId(null);
+      setInspectedSelection(emptyLineageSelection());
+      setChunkStatus("locked");
+      setChunkRun(null);
+      setChunkError(null);
+      setEmbeddingStatus("locked");
+      setEmbeddingRun(null);
+      setEmbeddingError(null);
+      setExperimentStatus("locked");
+      setExperimentRun(null);
+      setExperimentError(null);
+      setExperimentHistory([]);
+      setEvaluationDatasets([]);
+      setEvaluationStatus("locked");
+      setEvaluationRun(null);
+      setEvaluationError(null);
+      setEvaluationHistory([]);
+      setUploadNotice(null);
+      rememberActiveDocument(null, authUserId);
+      setPersistenceStatus("available");
+
+      const nextDocument = remainingDocuments[0];
+      if (nextDocument) await selectPersistedDocument(nextDocument.id, nextDocument);
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError")) {
+        setPersistenceError(asApiError(error, "The document could not be deleted."));
+      }
+      throw error;
+    } finally {
+      removeControllerIfCurrent(controllersRef.current, "document-delete", controller);
+    }
+  }, [activeDocumentId, authUserId, documents, replaceController, selectPersistedDocument, setInspectedSelection]);
 
   const addDocument = useCallback(async (file: File): Promise<PersistedDocument | null> => {
     const validationError = validatePdfFile(file);
@@ -2253,7 +2347,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     uploadNotice,
     pipelines, activePipelineId, activePipeline,
     pipelineSelectionMode: activePipeline ? "saved" : "scratch",
-    selectFile, addDocument, selectPersistedDocument, selectParseRun, selectChunkRun, selectEmbeddingRun, inspectParseRun, inspectChunkRun, inspectEmbeddingRun,
+    selectFile, addDocument, selectPersistedDocument, deletePersistedDocument, selectParseRun, selectChunkRun, selectEmbeddingRun, inspectParseRun, inspectChunkRun, inspectEmbeddingRun,
     setPipelineParseRun, setPipelineChunkRun, setPipelineEmbeddingRun, removeFile, parseSelectedFile, reparseActiveDocument, parseActiveDocument, runChunking, runEmbedding,
     runExperiment, loadExperiment, loadEvaluationDataset, loadEvaluationRun, resumeRunTracking, continueExperiment: continueCurrentExperiment, rerunGeneration: rerunCurrentGeneration,
     createDataset, runEvaluation, refreshPersistence, refreshEvaluationRuns,
@@ -2264,7 +2358,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     evaluationRun, evaluationStatus, experimentError, experimentHistory, experimentRun, experimentStatus,
     fileError, lastReportedParseProgress, parseError, parsePhase, parseProgress, parseResult, parseSelectedFile, parseStatus, persistenceError, persistenceStatus,
     pendingUpload, pipelines, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId, inspectedChunkRunId, inspectedEmbeddingRunId, inspectedParseRunId, uploadNotice,
-    addDocument, reparseActiveDocument, parseActiveDocument,
+    addDocument, deletePersistedDocument, reparseActiveDocument, parseActiveDocument,
     continueCurrentExperiment, inspectChunkRun, inspectEmbeddingRun, inspectParseRun, loadEvaluationDataset, loadEvaluationRun, loadExperiment, refreshEvaluationRuns, refreshPersistence, removeFile, rerunCurrentGeneration,
     runChunking, runEmbedding, runEvaluation, runExperiment, resumeRunTracking,
     createPipeline, deletePipeline, renamePipeline, selectChunkRun, selectEmbeddingRun, selectFile, selectParseRun, selectPersistedDocument, selectPipeline,
