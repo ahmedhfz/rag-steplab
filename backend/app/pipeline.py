@@ -17,6 +17,7 @@ import tempfile
 import time
 import uuid
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -1108,13 +1109,38 @@ _FACTUAL_TOKEN_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+_FACTUAL_DATE_RE = re.compile(r"^(\d{1,4})[./](\d{1,2})[./](\d{2,4})$")
+_FACTUAL_TIME_RE = re.compile(r"^\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?$")
+_FACTUAL_IDENTIFIER_RE = re.compile(r"^[a-zçği̇öşü]{1,8}-\d{1,8}$", re.IGNORECASE)
+
 
 def _factual_token_variants(token: str) -> set[str]:
     normalized = token.casefold().replace(" ", "")
     variants = {normalized}
-    if re.fullmatch(r"[\d.,]+", normalized):
+    date_match = _FACTUAL_DATE_RE.fullmatch(normalized)
+    if date_match:
+        day, month, year = (int(part) for part in date_match.groups())
+        variants.add(f"date:{day:02d}-{month:02d}-{year:04d}")
+    elif _FACTUAL_TIME_RE.fullmatch(normalized) or _FACTUAL_IDENTIFIER_RE.fullmatch(normalized):
+        # Times and identifiers must remain exact.  In particular, a nearby
+        # but different maintenance window must not pass grounding validation.
+        return variants
+    elif re.fullmatch(r"[\d.,]+", normalized):
         variants.add(normalized.replace(",", "."))
         variants.add(normalized.replace(".", "").replace(",", ""))
+        numeric_parts = re.fullmatch(r"(?:\d+)(?:[.,](\d+))?", normalized)
+        fraction = numeric_parts.group(1) if numeric_parts else None
+        # Decimal punctuation and insignificant trailing zeroes vary between
+        # provider output and Turkish source text.  Avoid interpreting
+        # three-digit dot groups such as 1.050 as decimal 1.05; those are
+        # handled by the existing thousands-separator variant above.
+        if fraction is None or len(fraction) <= 2:
+            try:
+                value = Decimal(normalized.replace(",", "."))
+            except InvalidOperation:
+                pass
+            else:
+                variants.add(f"number:{format(value.normalize(), 'f')}")
     return variants
 
 
