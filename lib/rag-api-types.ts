@@ -242,9 +242,11 @@ export type RetrievedCandidate = {
   rank: number;
   score: number | null;
   denseScore: number | null;
+  denseRank: number | null;
   keywordScore: number | null;
   keywordRank: number | null;
   rrfScore: number | null;
+  fusionScore: number | null;
   text: string;
   documentId: string;
   pageNumbers: number[];
@@ -300,6 +302,7 @@ export type ExperimentStageResults = {
   } & Partial<StageIdentityMetadata> | null;
   reranking: {
     candidates: RerankedCandidate[];
+    inputCandidates?: RetrievedCandidate[] | null;
     durationMs: number | null;
     method: string | null;
     rerankScoreSemantics?: string | null;

@@ -28,6 +28,15 @@ görünür failed sözleşmesine normalize edilir.
 
 ## Bağımlılık ve doğrulama
 
+OCR profili `app/ocr.py` içinde hash ile sabitlenir: mevcut v3 detector/angle
+classifier + PP-OCRv6 Small recognizer, CPU ONNX Runtime. OCR modellerini
+request sırasında indirmeyin; `python -m app.ocr` yalnız hazırlık işlemidir.
+Modal OCR dosyaları image içinde, Docling layout/table cache'i Volume içindedir.
+Parsed element `sourceOrigin/sourceRegions` alanları native/OCR/mixed/unknown
+ve hücre geometrisini korur; confidence tanısal skordur, doğruluk olasılığı değildir.
+`RUN_OCR_REGRESSION=1 pytest tests/test_ocr_recognition.py` gerçek model testidir;
+hafif CI'nin bu modelleri taşıması gerekmez.
+
 CI için hafif bağımlılıklar `backend/requirements-ci.txt`, worker/Docling/ML
 bağımlılıkları `backend/requirements-worker.txt` ve çalışma bağımlılıkları
 ilgili requirements dosyalarındadır; CI'ye ağır worker paketleri eklemeyin.

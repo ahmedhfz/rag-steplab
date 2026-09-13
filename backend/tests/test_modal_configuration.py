@@ -31,6 +31,10 @@ def test_api_requirements_do_not_initialize_docling_runtime():
     assert "torch" not in ci_requirements
     assert "nvidia" not in ci_requirements
     assert "docling==2.117.0" in worker_requirements
+    assert "rapidocr==3.9.2" in worker_requirements
+    assert "onnxruntime==1.30.0" in worker_requirements
+    assert modal_app.worker_env["RAG_OCR_MODEL_PATH"] == modal_app.OCR_MODEL_PATH
+    assert not modal_app.OCR_MODEL_PATH.startswith(modal_app.MODEL_MOUNT_PATH + "/")
 
 
 def test_production_health_check_uses_the_routing_region_endpoint():

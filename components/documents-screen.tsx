@@ -9,6 +9,7 @@ import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { DocumentUploadPanel } from "@/components/document-upload-panel";
 import { DocumentLibrary } from "@/components/document-library";
 import { usePreferences } from "@/components/preferences-provider";
+import { OcrSourceDetails } from "@/components/ocr-source-details";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { type AppCopy, type DocumentViewKey, UI_COPY } from "@/lib/copy";
@@ -165,6 +166,7 @@ function TableElement({ element }: { element: ParsedElement }) {
 }
 
 function StructuredElement({ copy, element, index }: { copy: AppCopy["documents"]; element: ParsedElement; index: number }) {
+  const { preferences } = usePreferences();
   return (
     <motion.article
       animate={{ opacity: 1, x: 0 }}
@@ -185,6 +187,7 @@ function StructuredElement({ copy, element, index }: { copy: AppCopy["documents"
       ) : (
         <p className="whitespace-pre-wrap text-sm leading-6 text-foreground">{element.text}</p>
       )}
+      <OcrSourceDetails element={element} locale={preferences.locale} />
     </motion.article>
   );
 }

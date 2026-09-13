@@ -38,9 +38,28 @@ Production parsing tam Docling `DocumentConverter` ve semantic normalization
 bitişik kısa etiketler metin ve provenance korunarak paragraph olur; numaralı,
 daha büyük veya ayrı duran section title'lar korunur. Kaynak geometrisi yoksa
 tipografi üzerinden heading düşürülmez. Docling parsed page verisi yalnız bu
-kontrol için worker belleğinde tutulur; API/storage sözleşmesi `normalized-v1`
+kontrol ve native/OCR provenance eşlemesi için worker belleğinde tutulur; API/storage sözleşmesi `normalized-v1`
 kalır, algoritma `runMetadata.headingClassifierVersion` ile izlenir. Mevcut
 parse artifact'ları değişmez; düzeltme yeni parse/reparse sonuçlarına uygulanır.
+
+OCR, Docling'in seçici PDF davranışını ve native metin önceliğini korur.
+`app/ocr.py` üç ONNX dosyasını SHA256 ile sabitler: v3 English mobile detector,
+mevcut angle classifier, PP-OCRv6 Small multilingual recognizer. RapidOCR 3.9.2 /
+ONNX Runtime 1.30.0 CPU kullanılır; embedded recognition dictionary Türkçe
+harfleri taşır. Global preprocessing veya sözlük düzeltmesi uygulanmaz.
+Yerelde `python -m app.ocr` modelleri hazırlayın; gerekirse `RAG_OCR_MODEL_PATH`
+ayarlayın. Parse sırasında indirme/fallback yoktur; eksik veya farklı hash hata verir.
+Modal worker image modeli hazırlarken indirir; boş Docling Volume OCR profili değiştirmez.
+
+`sourceOrigin` ve `sourceRegions` öğe seviyesinde kaynak/koordinat/OCR confidence
+taşır; tam profil yalnız `runMetadata.ocr` içindedir. Native metne skor atanmaz;
+eski kayıtlar unknown kalır. Parse ve Source Inspector bölge ve tanısal skor
+gösterir. PDF viewer FitR desteği varsa bölgeye yakınlaşır; koordinatlar her
+durumda görünür. Chunk `sourceElementIds` bu öğelere mevcut lineage ile bağlanır.
+Confidence kalibre doğruluk değildir; otomatik eleme/eşik uygulanmaz.
+
+Gerçek crop testi: `RUN_OCR_REGRESSION=1 python -m pytest tests/test_ocr_recognition.py`.
+Ölçüm: `python scripts/benchmark_ocr.py --output result.json --pdf <stress-test.pdf>`.
 
 Mevcut profil worker için `CPU 2`, `4096 MiB`, `timeout
 900 s`, `min_containers=0`, `max_containers=1`; API için yaklaşık `CPU 0.5`,

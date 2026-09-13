@@ -64,7 +64,8 @@ describe("RAG API contract normalization", () => {
         document: { fileName: "lesson.pdf", mediaType: "application/pdf", sizeBytes: 100, pageCount: 1 },
         structured: {
           pages: [{ pageNumber: 1, elements: [] }],
-          elements: [{ id: "element-1", type: "heading", pageNumbers: [1], text: "RAG Basics", level: 1, table: null }],
+          elements: [{ id: "element-1", type: "heading", pageNumbers: [1], text: "RAG Basics", level: 1, table: null,
+            sourceOrigin: "mixed", sourceRegions: [{ pageNumber: 1, bbox: [1, 2, 3, 4], coordinateOrigin: "TOPLEFT", origin: "ocr", confidence: .95, text: "RAG" }] }],
         },
         markdown: "# RAG Basics",
         summary: { pageCount: 1, headingCount: 1, paragraphCount: 0, listCount: 0, tableCount: 0 },
@@ -76,7 +77,8 @@ describe("RAG API contract normalization", () => {
     }), { status: 200, headers: { "Content-Type": "application/json" } })));
 
     await expect(getDocument("document-1")).resolves.toMatchObject({
-      activeParseRun: { documentId: "document-1", parseRunId: "parse-1", markdown: "# RAG Basics" },
+      activeParseRun: { documentId: "document-1", parseRunId: "parse-1", markdown: "# RAG Basics",
+        structured: { elements: [{ sourceOrigin: "mixed", sourceRegions: [{ origin: "ocr", confidence: .95, bbox: [1, 2, 3, 4] }] }] } },
     });
   });
 
@@ -285,6 +287,52 @@ describe("RAG API contract normalization", () => {
       ["http://127.0.0.1:8000/experiments/experiment-1/continue", "POST"],
       ["http://127.0.0.1:8000/experiments/experiment-1/rerun-generation", "POST"],
     ]);
+  });
+
+  it("uses ordered reranking results while retaining provider input candidates", async () => {
+    const candidate = (chunkId: string, rank: number) => ({
+      chunkId,
+      rank,
+      score: 0.5,
+      denseScore: 0.5,
+      denseRank: rank,
+      keywordScore: null,
+      keywordRank: null,
+      rrfScore: null,
+      fusionScore: null,
+      text: `Source ${chunkId}`,
+      documentId: "document-1",
+      pageNumbers: [1],
+      sourceElementIds: [`element-${chunkId}`],
+      headingPath: [],
+      originalRank: rank,
+      rerankRank: rank,
+      rerankScore: null,
+    });
+    const payload = {
+      id: "experiment-reranking",
+      status: "completed",
+      documentId: "document-1",
+      chunkRunId: "chunk-1",
+      embeddingRunId: "embedding-1",
+      query: "query",
+      targetStage: "reranking",
+      stageResults: {
+        retrieval: { status: "completed", candidates: [candidate("chunk-1", 1), candidate("chunk-2", 2)], results: [candidate("chunk-1", 1)] },
+        reranking: {
+          status: "completed",
+          candidates: [candidate("chunk-1", 1), candidate("chunk-2", 2)],
+          inputCandidates: [candidate("chunk-1", 1), candidate("chunk-2", 2)],
+          results: [candidate("chunk-2", 1), candidate("chunk-1", 2)],
+        },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    const result = await getExperiment("experiment-reranking");
+
+    expect(result.stageResults.reranking?.candidates.map((item) => item.chunkId)).toEqual(["chunk-2", "chunk-1"]);
+    expect(result.stageResults.reranking?.inputCandidates?.map((item) => item.chunkId)).toEqual(["chunk-1", "chunk-2"]);
   });
 
   it("uses one experiment state machine for a production 202 response", async () => {

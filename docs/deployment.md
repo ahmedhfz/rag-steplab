@@ -71,6 +71,16 @@ packaging gereği `backend/app` paketini explicit ekler. Worker/provider değiş
 release remote smoke `app.main`, `app.parser` ve Docling sürümünü kontrol eder.
 Artifact/cache hazır oluşu ve gerçek parse sonucu ayrı operasyonel doğrulamadır.
 
+OCR profilinin üç hash-pinned ONNX modeli `app/ocr.py` ile worker image build
+sırasında `/opt/rag-steplab/ocr/rapidocr-v6-small-onnx-v1` içine hazırlanır.
+Bu yol Docling Volume dışında kalır; boş Volume OCR modelini maskelemez.
+`prefetch_docling_models` yalnız layout/tableformer indirir ve image OCR
+manifestini doğrular. RapidOCR default downloader ile başka recognition
+profili hazırlamayın. Request sırasında OCR indirmesi veya sessiz fallback
+yoktur. Runtime pin'leri `requirements-worker.txt` içindedir. Bu değişiklik
+henüz deploy edildiği anlamına gelmez; yeni worker image + yetkili hosted parse
+doğrulaması ayrı release adımıdır.
+
 Karaman regression PDF'iyle ilk ölçüm:
 
 | Koşum | Parse süresi | Peak RSS |

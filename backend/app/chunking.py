@@ -12,8 +12,8 @@ from typing import Any, Iterable
 CHUNKER_VERSION = "rag-steplab-chunker-v1"
 CHUNKER_VERSIONS = {
     "fixed_token": CHUNKER_VERSION,
-    "recursive_token": "rag-steplab-recursive-chunker-v2",
-    "structure_aware": "rag-steplab-structure-chunker-v2",
+    "recursive_token": "rag-steplab-recursive-chunker-v3",
+    "structure_aware": "rag-steplab-structure-chunker-v3",
 }
 
 
@@ -193,6 +193,10 @@ def _recursive_group_records(record: ElementRecord, size: int) -> list[ElementRe
     text = record.text
     if TOKENIZER.count(text) <= size:
         return [record]
+    if record.type == "table":
+        table_groups = _split_table_record(record, size)
+        if table_groups:
+            return table_groups
     pieces = [piece.strip() for piece in re.split(r"\n\s*\n|(?<=[.!?])\s+|\n|(?<=,|;)\s+|\s+", text) if piece.strip()]
     if not pieces:
         return [record]
@@ -224,6 +228,64 @@ def _recursive_group_records(record: ElementRecord, size: int) -> list[ElementRe
     return result
 
 
+def _split_table_record(record: ElementRecord, size: int) -> list[ElementRecord]:
+    """Split Markdown tables by complete rows and repeat their header."""
+
+    lines = [line.strip() for line in record.text.splitlines() if line.strip()]
+    if len(lines) < 3 or not all(line.startswith("|") for line in lines):
+        return []
+    header = lines[:2]
+    body = lines[2:]
+    groups: list[str] = []
+    current = header[:]
+    for row in body:
+        candidate = "\n".join(current + [row])
+        if len(current) > len(header) and TOKENIZER.count(candidate) > size:
+            groups.append("\n".join(current))
+            current = header[:]
+            candidate = "\n".join(current + [row])
+        if TOKENIZER.count(candidate) <= size:
+            current.append(row)
+            continue
+        # A single pathological row cannot retain the Markdown table shape;
+        # fall back to the normal recursive splitter for that row only.
+        if len(current) > len(header):
+            groups.append("\n".join(current))
+            current = header[:]
+        if TOKENIZER.count("\n".join(current + [row])) > size:
+            groups.extend(
+                piece.text
+                for piece in _recursive_group_records(
+                    ElementRecord(
+                        id=record.id,
+                        type="paragraph",
+                        text=row,
+                        page_numbers=record.page_numbers,
+                        level=record.level,
+                        heading_path=record.heading_path,
+                    ),
+                    size,
+                )
+            )
+            current = header[:]
+        else:
+            current.append(row)
+    if len(current) > len(header):
+        groups.append("\n".join(current))
+    return [
+        ElementRecord(
+            id=record.id,
+            type=record.type,
+            text=group,
+            page_numbers=record.page_numbers,
+            level=record.level,
+            heading_path=record.heading_path,
+        )
+        for group in groups
+        if group.strip()
+    ]
+
+
 def _recursive(records: list[ElementRecord], size: int, overlap: int) -> list[ChunkDraft]:
     # Keep semantic boundaries as source segments, but run one continuous
     # token window over the whole document so overlap cannot reset at every
@@ -249,10 +311,35 @@ def _recursive(records: list[ElementRecord], size: int, overlap: int) -> list[Ch
 def _structure_aware(records: list[ElementRecord], size: int, overlap: int) -> list[ChunkDraft]:
     sections: list[list[ElementRecord]] = []
     current: list[ElementRecord] = []
+    current_root_level: int | None = None
     for record in records:
-        if record.type == "heading" and current:
-            sections.append(current)
-            current = []
+        if record.type == "heading":
+            heading_level = record.level or 1
+            if current_root_level is None and heading_level <= 2:
+                if current:
+                    sections.append(current)
+                    current = []
+                current_root_level = heading_level
+            elif heading_level <= 2 and current:
+                # A level-1 parent immediately followed by its first level-2
+                # child becomes that child's root. Subsequent level-2 siblings
+                # start a new semantic section, while level-3 descendants stay
+                # attached to the active root.
+                parent_only = (
+                    len(current) == 1
+                    and current[0].type == "heading"
+                    and (current[0].level or 1) < heading_level
+                )
+                if parent_only:
+                    current_root_level = heading_level
+                elif current_root_level == 1 and heading_level == 2:
+                    sections.append(current)
+                    current = []
+                    current_root_level = heading_level
+                elif current_root_level is not None and heading_level <= current_root_level:
+                    sections.append(current)
+                    current = []
+                    current_root_level = heading_level
         current.append(record)
     if current:
         sections.append(current)
@@ -274,24 +361,67 @@ def _structure_aware(records: list[ElementRecord], size: int, overlap: int) -> l
                 )
             )
             continue
-        # Preserve the section boundary while allowing overlap across records
-        # inside the section. Fitted tables/lists remain atomic segments.
+        # Preserve the section boundary while allowing overlap across semantic
+        # records. Tables are split only between complete Markdown rows.
         segments: list[ElementRecord] = []
         for record in section:
             segments.extend(_recursive_group_records(record, size))
-        for draft in _window_drafts(segments, size, overlap):
-            result.append(
-                ChunkDraft(
-                    ordinal=len(result),
-                    text=draft.text,
-                    page_numbers=draft.page_numbers,
-                    source_element_ids=draft.source_element_ids,
-                    heading_path=draft.heading_path,
-                    token_count=draft.token_count,
-                    character_count=draft.character_count,
-                )
-            )
+        for draft in _pack_semantic_segments(segments, size, overlap, ordinal_start=len(result)):
+            result.append(draft)
     return result
+
+
+def _draft_from_records(records: list[ElementRecord], ordinal: int) -> ChunkDraft | None:
+    text = "\n\n".join(record.text for record in records).strip()
+    if not text:
+        return None
+    return ChunkDraft(
+        ordinal=ordinal,
+        text=text,
+        page_numbers=sorted({page for record in records for page in record.page_numbers}),
+        source_element_ids=[record.id for record in records],
+        heading_path=list(records[-1].heading_path or records[0].heading_path),
+        token_count=TOKENIZER.count(text),
+        character_count=len(text),
+    )
+
+
+def _pack_semantic_segments(
+    segments: list[ElementRecord],
+    size: int,
+    overlap: int,
+    *,
+    ordinal_start: int = 0,
+) -> list[ChunkDraft]:
+    """Pack records without cutting a table/list row at a token boundary."""
+
+    drafts: list[ChunkDraft] = []
+    current: list[ElementRecord] = []
+    for segment in segments:
+        candidate = current + [segment]
+        if current and TOKENIZER.count("\n\n".join(item.text for item in candidate)) > size:
+            draft = _draft_from_records(current, ordinal_start + len(drafts))
+            if draft is not None:
+                drafts.append(draft)
+            carry: list[ElementRecord] = []
+            carried_tokens = 0
+            for previous in reversed(current):
+                previous_tokens = TOKENIZER.count(previous.text)
+                if carried_tokens + previous_tokens > overlap:
+                    break
+                carry.insert(0, previous)
+                carried_tokens += previous_tokens
+            current = carry + [segment]
+            if TOKENIZER.count("\n\n".join(item.text for item in current)) > size:
+                # The segment itself should already be bounded. If the overlap
+                # made it exceed the limit, drop the overlap before emitting.
+                current = [segment]
+        else:
+            current = candidate
+    draft = _draft_from_records(current, ordinal_start + len(drafts))
+    if draft is not None:
+        drafts.append(draft)
+    return drafts
 
 
 def chunk_structured(structured: Any, strategy: str, config: Any) -> list[ChunkDraft]:

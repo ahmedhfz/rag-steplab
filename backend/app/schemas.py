@@ -33,6 +33,16 @@ class ParsedTable(CamelCaseModel):
     markdown: str = ""
 
 
+class SourceRegion(CamelCaseModel):
+    page_number: int = Field(ge=1)
+    bbox: list[float] = Field(min_length=4, max_length=4)
+    coordinate_origin: Literal["TOPLEFT"] = "TOPLEFT"
+    page_height: float | None = Field(default=None, gt=0)
+    origin: Literal["native_pdf", "ocr", "unknown"] = "unknown"
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    text: str = ""
+
+
 class ParsedElement(CamelCaseModel):
     id: str
     type: ElementType
@@ -40,6 +50,8 @@ class ParsedElement(CamelCaseModel):
     text: str = ""
     level: int | None = Field(default=None, ge=1)
     table: ParsedTable | None = None
+    source_origin: Literal["native_pdf", "ocr", "mixed", "unknown"] = "unknown"
+    source_regions: list[SourceRegion] = Field(default_factory=list)
 
 
 class ParsedPage(CamelCaseModel):

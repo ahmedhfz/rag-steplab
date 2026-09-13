@@ -249,16 +249,20 @@ function normalizeChunk(value: unknown): ChunkItem {
 function normalizeRetrievedCandidate(value: unknown): RetrievedCandidate {
   const payload = requiredObject(value, "retrieval candidate");
   const denseScore = optionalNumber(field(payload, "denseScore", "dense_score"));
+  const denseRank = optionalNumber(field(payload, "denseRank", "dense_rank"));
   const keywordScore = optionalNumber(field(payload, "keywordScore", "keyword_score"));
   const rrfScore = optionalNumber(field(payload, "rrfScore", "rrf_score"));
+  const fusionScore = optionalNumber(field(payload, "fusionScore", "fusion_score"));
   return {
     chunkId: requiredString(field(payload, "chunkId", "chunk_id") ?? payload.id, "retrieval chunk id"),
     rank: requiredNumber(payload.rank, "retrieval rank"),
-    score: optionalNumber(payload.score) ?? rrfScore ?? denseScore ?? keywordScore,
+    score: optionalNumber(payload.score) ?? fusionScore ?? rrfScore ?? denseScore ?? keywordScore,
     denseScore,
+    denseRank,
     keywordScore,
     keywordRank: optionalNumber(field(payload, "keywordRank", "keyword_rank")),
     rrfScore,
+    fusionScore,
     text: requiredString(payload.text ?? payload.preview, "retrieval candidate text"),
     documentId: requiredString(field(payload, "documentId", "document_id"), "retrieval document id"),
     pageNumbers: numbers(field(payload, "pageNumbers", "page_numbers") ?? payload.pages),
@@ -312,6 +316,8 @@ function normalizeStageResults(value: unknown): ExperimentStageResults {
   const generationValidity = boolean(object(generation.citationValidity).valid);
   const selectedContext = array(context.selected, (item) => ({ ...object(item), selected: true, tokenCount: object(item).localTokenCount ?? object(item).tokenCount }));
   const excludedContext = array(context.excluded, (item) => ({ ...object(item), selected: false, tokenCount: object(item).localTokenCount ?? object(item).tokenCount }));
+  const rerankingOutput = reranking.results ?? reranking.candidates;
+  const rerankingInput = reranking.inputCandidates;
   return {
     retrieval: Object.keys(retrieval).length === 0 ? null : {
       ...normalizeStageIdentity(retrieval),
@@ -320,7 +326,10 @@ function normalizeStageResults(value: unknown): ExperimentStageResults {
     },
     reranking: Object.keys(reranking).length === 0 ? null : {
       ...normalizeStageIdentity(reranking),
-      candidates: requiredArray(reranking.candidates ?? reranking.results, normalizeRerankedCandidate, "reranking results"),
+      // The ordered provider output is the result shown to users. Older
+      // payloads without ``results`` fall back to their candidates field.
+      candidates: requiredArray(rerankingOutput, normalizeRerankedCandidate, "reranking results"),
+      inputCandidates: Array.isArray(rerankingInput) ? array(rerankingInput, normalizeRetrievedCandidate) : null,
       durationMs: optionalNumber(field(reranking, "durationMs", "duration_ms")),
       method: optionalString(reranking.method ?? reranking.effectiveModel ?? reranking.model),
       rerankScoreSemantics: optionalString(reranking.rerankScoreSemantics),

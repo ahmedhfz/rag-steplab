@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import modal
+from app.ocr import PROFILE
 
 
 _BACKEND_ROOT = Path(__file__).resolve().parent
@@ -22,6 +23,7 @@ MODEL_VOLUME_NAME = os.getenv("MODAL_DOCLING_VOLUME_NAME", "rag-steplab-docling-
 MODEL_MOUNT_PATH = "/models/docling"
 PARSER_VERSION = os.getenv("DOCLING_PARSER_VERSION", "docling-2.117.0")
 MODEL_ARTIFACTS_PATH = f"{MODEL_MOUNT_PATH}/{PARSER_VERSION}"
+OCR_MODEL_PATH = f"/opt/rag-steplab/ocr/{PROFILE}"
 
 
 def _named_secrets(variable: str, default: str) -> list[modal.Secret]:
@@ -63,11 +65,16 @@ worker_image = (
     # Keep this runtime-only layer after the Python dependency layers so a
     # package-list change does not force the large Docling/Torch stack to rebuild.
     .apt_install("libgl1", "libglib2.0-0")
-    .add_local_python_source("app")
+    .add_local_python_source("app", copy=True)
+    # Separate image assets from the mounted Docling volume: an empty volume
+    # cannot mask the pinned OCR profile, and requests never download OCR.
+    .env({"RAG_OCR_MODEL_PATH": OCR_MODEL_PATH})
+    .run_commands("python -m app.ocr")
 )
 worker_env = {
     "DOCLING_ARTIFACTS_PATH": MODEL_ARTIFACTS_PATH,
     "DOCLING_PARSER_VERSION": PARSER_VERSION,
+    "RAG_OCR_MODEL_PATH": OCR_MODEL_PATH,
 }
 
 worker_options: dict[str, Any] = {
@@ -169,13 +176,14 @@ def prefetch_docling_models() -> dict[str, str]:
             "download",
             "layout",
             "tableformer",
-            "rapidocr",
             "--output-dir",
             MODEL_ARTIFACTS_PATH,
         ],
         check=True,
     )
     model_volume.commit()
+    from app.ocr import asset_manifest
+    asset_manifest()
     return {"volume": MODEL_VOLUME_NAME, "path": MODEL_ARTIFACTS_PATH, "parserVersion": PARSER_VERSION}
 
 
@@ -192,6 +200,7 @@ def remote_import_smoke() -> dict[str, Any]:
     import docling
     import app.main
     import app.parser
+    from app.ocr import asset_manifest
 
     return {
         "appImported": app.main.app.title == "RAG StepLab API",
@@ -199,6 +208,7 @@ def remote_import_smoke() -> dict[str, Any]:
         "doclingVersion": getattr(docling, "__version__", "unknown"),
         "artifactPath": os.getenv("DOCLING_ARTIFACTS_PATH"),
         "artifactPathExists": Path(MODEL_ARTIFACTS_PATH).is_dir(),
+        "ocr": asset_manifest(),
     }
 
 
