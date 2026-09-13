@@ -63,7 +63,10 @@ Functional/OCR release `feature/rag-dogruluk-ocr-yayini` worktree'sinde ikon
 göçünden ayrıldı; yeni model/cache henüz Modal'a deploy edilmedi. Yerel kritik
 E2E ve OCR diagnostics, ağ kapalı Linux model regresyonu ve boş dizinden
 hash-pinned asset hazırlığı geçti. Tam stress PDF'de tarif A/B/C sırası doğrulandı.
-Hosted yeni parse/chunk/embed lineage ve 14 soruluk kabul testi bekliyor.
+PR #94 merge edildi; Vercel production `4189f04` sürümüne geçti. Modal image
+build'inde `app.ocr` import yolu eksik olduğu için backend v53'te kaldı;
+build-time `/root` Python path düzeltmesi doğrulanıyor. Hosted yeni
+parse/chunk/embed lineage ve 14 soruluk kabul testi bekliyor.
 
 ## Next
 

@@ -69,7 +69,9 @@ worker_image = (
     # Separate image assets from the mounted Docling volume: an empty volume
     # cannot mask the pinned OCR profile, and requests never download OCR.
     .env({"RAG_OCR_MODEL_PATH": OCR_MODEL_PATH})
-    .run_commands("python -m app.ocr")
+    # Modal puts copied Python sources in /root, but build commands do not
+    # receive the function runner's automatic Python path.
+    .run_commands("PYTHONPATH=/root python -m app.ocr")
 )
 worker_env = {
     "DOCLING_ARTIFACTS_PATH": MODEL_ARTIFACTS_PATH,
