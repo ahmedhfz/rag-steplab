@@ -38,6 +38,13 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
 
 ## Recently Completed
 
+- Fonksiyonel/OCR remediation production'a alındı: main `f954a53` Vercel
+  production ve Modal `v55` üzerinde çalışıyor. Yeni hosted parse/chunk/embed
+  lineage'i (`a37f7ebe-8587-4153-9cf9-e440328fc13b`, parse
+  `18aeddd7-2b9b-4a5b-81cb-2d0fa6f5fd53`) ile 14 soruluk kabul koşusu
+  tamamlandı; B1 OCR, yapısal parse, retrieval, reranking ve abstention
+  doğrulandı. Üretimde bulunan grounding sayı/tarih biçimleme kusuru
+  `f954a53` ile düzeltildi ve kabul koşusu tekrarlandı.
 - Docling normalizasyonu checkbox/provenance/time-range koruması, geometri
   tabanlı okuma sırası ve bağlamsal başlık seviyeleriyle; structure-aware
   chunking, calibrated hybrid trace ve grounded generation validation güncellendi.
@@ -59,18 +66,14 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
 
 ## Current Work
 
-Functional/OCR release `feature/rag-dogruluk-ocr-yayini` worktree'sinde ikon
-göçünden ayrıldı; yeni model/cache henüz Modal'a deploy edilmedi. Yerel kritik
-E2E ve OCR diagnostics, ağ kapalı Linux model regresyonu ve boş dizinden
-hash-pinned asset hazırlığı geçti. Tam stress PDF'de tarif A/B/C sırası doğrulandı.
-PR #94 merge edildi; Vercel production `4189f04` sürümüne geçti. Modal image
-build'inde `app.ocr` import yolu eksik olduğu için backend v53'te kaldı;
-build-time `/root` Python path düzeltmesi doğrulanıyor. Hosted yeni
-parse/chunk/embed lineage ve 14 soruluk kabul testi bekliyor.
+Production doğruluk kapısı tamamlandı. OCR provenance/confidence görünürlüğü ve
+grounding güvenlik davranışı mevcut; daha geniş etiketli corpus ile confidence
+kalibrasyonu ve eşik seçimi hâlâ ölçülmedi.
 
 ## Next
 
-Yetkili release öncesi yeni worker image ve hosted OCR/RAG doğrulaması.
+UI/UX polish ve normal ürün iterasyonu; yeni OCR kalite ölçümleri yalnızca
+etiketli örnekler ve açık kapsam kararıyla genişletilecek.
 
 ## Open Questions
 
