@@ -59,12 +59,12 @@ SUPPORTED_NORMALIZED_SCHEMA_VERSION = "normalized-v1"
 STAGE_ORDER = ["retrieval", "reranking", "context", "generation"]
 STAGE_FINGERPRINT_SCHEMA_VERSION = "stage-fingerprint-v1"
 EXPERIMENT_FINGERPRINT_SCHEMA_VERSION = "experiment-fingerprint-v1"
-RETRIEVAL_ALGORITHM_VERSION = "retrieval-sql-rrf-v2"
+RETRIEVAL_ALGORITHM_VERSION = "retrieval-sql-calibrated-hybrid-v3"
 RERANK_ALGORITHM_VERSION = "gemini-listwise-v2"
 RERANK_PROMPT_VERSION = "rerank-query-candidate-order-v2"
 CONTEXT_ALGORITHM_VERSION = "greedy-budget-dedup-v1"
-GENERATION_PROMPT_VERSION = "grounded-json-segments-v3"
-GENERATION_VALIDATION_VERSION = "citation-validation-v2"
+GENERATION_PROMPT_VERSION = "grounded-json-segments-v4"
+GENERATION_VALIDATION_VERSION = "citation-validation-v3"
 JUDGE_PROMPT_VERSION = "generation-metrics-judge-v2"
 JUDGE_METRIC_VERSION = "generation-metrics-v1"
 CITATION_VALIDITY_METHOD = "context_id_membership_v1"
@@ -888,6 +888,25 @@ def _candidate_view(chunk: dict[str, Any], *, dense: float | None = None, keywor
     }
 
 
+def _normalized_branch_scores(items: list[dict[str, Any]], key: str) -> dict[str, float]:
+    values = [
+        float(item[key])
+        for item in items
+        if item.get(key) is not None
+    ]
+    if not values:
+        return {}
+    minimum = min(values)
+    maximum = max(values)
+    if maximum == minimum:
+        return {item["chunkId"]: 1.0 for item in items if item.get(key) is not None}
+    return {
+        item["chunkId"]: (float(item[key]) - minimum) / (maximum - minimum)
+        for item in items
+        if item.get(key) is not None
+    }
+
+
 def _assemble_retrieval(
     mode: str,
     top_k: int,
@@ -902,27 +921,57 @@ def _assemble_retrieval(
     keyword_positions = {item["chunkId"]: index + 1 for index, item in enumerate(keyword_ranked)}
     ids = set(dense_by_id) | set(keyword_by_id)
     candidate_k = min(200, max(top_k * 4, 20))
+    dense_normalized = _normalized_branch_scores(dense_ranked, "denseScore")
+    keyword_normalized = _normalized_branch_scores(keyword_ranked, "keywordScore")
+    dense_weight = 0.7
+    keyword_weight = 0.3
     if mode == "dense":
         ordered_ids = [item["chunkId"] for item in dense_ranked[:candidate_k]]
     elif mode == "keyword":
         ordered_ids = [item["chunkId"] for item in keyword_ranked[:candidate_k]]
     else:
-        def rrf(chunk_id: str) -> float:
-            return (1 / (60 + dense_positions[chunk_id]) if chunk_id in dense_positions else 0) + (1 / (60 + keyword_positions[chunk_id]) if chunk_id in keyword_positions else 0)
+        def fusion(chunk_id: str) -> float:
+            return (
+                dense_weight * dense_normalized.get(chunk_id, 0.0)
+                + keyword_weight * keyword_normalized.get(chunk_id, 0.0)
+            )
 
-        ordered_ids = sorted(ids, key=lambda chunk_id: (-rrf(chunk_id), min(dense_positions.get(chunk_id, 100000), keyword_positions.get(chunk_id, 100000)), chunk_id))[:candidate_k]
+        ordered_ids = sorted(
+            ids,
+            key=lambda chunk_id: (
+                -fusion(chunk_id),
+                -float(dense_by_id.get(chunk_id, {}).get("denseScore") or 0),
+                -float(keyword_by_id.get(chunk_id, {}).get("keywordScore") or 0),
+                min(dense_positions.get(chunk_id, 100000), keyword_positions.get(chunk_id, 100000)),
+                chunk_id,
+            ),
+        )[:candidate_k]
     pool_values: list[dict[str, Any]] = []
     for pool_rank, chunk_id in enumerate(ordered_ids, start=1):
-        base = dense_by_id.get(chunk_id) or keyword_by_id.get(chunk_id)
-        assert base is not None
+        dense_item = dense_by_id.get(chunk_id)
+        keyword_item = keyword_by_id.get(chunk_id)
+        base = dict(dense_item or keyword_item or {})
+        assert base
+        if dense_item is not None and dense_item.get("denseScore") is not None:
+            base["denseScore"] = dense_item["denseScore"]
+        if keyword_item is not None and keyword_item.get("keywordScore") is not None:
+            base["keywordScore"] = keyword_item["keywordScore"]
         dense_rank = dense_positions.get(chunk_id)
         keyword_rank = keyword_positions.get(chunk_id)
         fused = (1 / (60 + dense_rank) if dense_rank else 0) + (1 / (60 + keyword_rank) if keyword_rank else 0)
+        calibrated = (
+            dense_weight * dense_normalized.get(chunk_id, 0.0)
+            + keyword_weight * keyword_normalized.get(chunk_id, 0.0)
+            if mode == "hybrid"
+            else None
+        )
         pool_values.append({
             **base,
+            "score": calibrated if mode == "hybrid" else (base.get("denseScore") if mode == "dense" else base.get("keywordScore")),
             "denseRank": dense_rank,
             "keywordRank": keyword_rank,
             "rrfScore": fused if mode == "hybrid" else None,
+            "fusionScore": calibrated,
             "poolRank": pool_rank,
             "rank": pool_rank,
         })
@@ -937,6 +986,8 @@ def _assemble_retrieval(
         "candidateK": candidate_k,
         "availableCandidateCount": len(pool_values),
         "rrfK": 60 if mode == "hybrid" else None,
+        "fusion": {"method": "min_max_weighted", "denseWeight": dense_weight, "keywordWeight": keyword_weight}
+        if mode == "hybrid" else None,
         "candidates": pool_values,
         "results": results,
     }
@@ -1014,7 +1065,11 @@ def _rerank_stage(
         "configuredModel": metadata.configured_model,
         "effectiveModel": metadata.effective_model,
         "rerankScoreSemantics": RERANK_SCORE_SEMANTICS,
-        "candidates": candidates,
+        # Keep both sides of the reranker contract explicit. ``results`` is
+        # the ordered output consumed by context; ``inputCandidates`` is the
+        # candidate slice sent to the provider for trace/debugging.
+        "candidates": results,
+        "inputCandidates": candidates,
         "results": results,
     }
 
@@ -1048,6 +1103,47 @@ def _context_stage(candidates: list[dict[str, Any]], budget: int) -> dict[str, A
     }
 
 
+_FACTUAL_TOKEN_RE = re.compile(
+    r"(?<![\w])(?:[A-ZÇĞİÖŞÜ]{1,8}-\d{1,8}|\d{1,4}[./]\d{1,2}[./]\d{2,4}|\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?|\d+(?:[.,]\d+)?)(?![\w])",
+    flags=re.IGNORECASE,
+)
+
+
+def _factual_token_variants(token: str) -> set[str]:
+    normalized = token.casefold().replace(" ", "")
+    variants = {normalized}
+    if re.fullmatch(r"[\d.,]+", normalized):
+        variants.add(normalized.replace(",", "."))
+        variants.add(normalized.replace(".", "").replace(",", ""))
+    return variants
+
+
+def _unsupported_factual_token(text: str, source_text: str) -> str | None:
+    source_tokens: set[str] = set()
+    for token in _FACTUAL_TOKEN_RE.findall(source_text):
+        source_tokens.update(_factual_token_variants(token))
+    for token in _FACTUAL_TOKEN_RE.findall(text):
+        if not _factual_token_variants(token).intersection(source_tokens):
+            return token
+    return None
+
+
+def _grounding_abstention(service: GeminiService, metadata: Any | None) -> dict[str, Any]:
+    return {
+        "status": "completed",
+        "insufficientContext": True,
+        "answer": "",
+        "segments": [],
+        "claims": [],
+        "citations": [],
+        "citationValidity": {"valid": True, "count": 0, "method": CITATION_VALIDITY_METHOD},
+        "citationCoverage": {"segmentCount": 0, "citedSegmentCount": 0, "ratio": 1.0},
+        "groundingFailure": "unsupported_factual_token",
+        "configuredModel": service.settings.gemini_generation_model,
+        "effectiveModel": getattr(metadata, "effective_model", None),
+    }
+
+
 def _generation_stage(query: str, context: dict[str, Any], config: Any, service: GeminiService) -> dict[str, Any]:
     selected = context.get("selected", [])
     if not selected:
@@ -1066,6 +1162,10 @@ def _generation_stage(query: str, context: dict[str, Any], config: Any, service:
     prompt = (
         "Answer only from the supplied context. Answer in the language of the user's question unless the user explicitly requests another language. "
         "If it is insufficient, set insufficientContext=true and return no segments. "
+        "Do not add corrections, historical values, comparisons, or causal claims unless they are directly supported by the cited context. "
+        "Copy dates, times, identifiers, quantities, and currency values exactly from the cited context. "
+        "Preserve source qualifiers such as GÜNCEL, GEÇERSİZ, ARŞİV, and any instruction that a product label has priority. "
+        "If a value is ambiguous, conflicting, or absent from the cited context, abstain instead of guessing. "
         "Return JSON: {insufficientContext:boolean,segments:[{text:string,citationIds:string[]}]}. "
         "Every non-empty segment must cite one or more supplied citation IDs; do not repeat an ID inside a segment.\n"
         f"Question: {query}\nContext:\n{context['formattedContext']}"
@@ -1103,6 +1203,14 @@ def _generation_stage(query: str, context: dict[str, Any], config: Any, service:
                     raise ApiProblem(503, "citation_invalid", "The generated answer referenced an invalid citation ID.")
                 if len(set(ids)) != len(ids) or any(identifier not in allowed for identifier in ids):
                     raise ApiProblem(503, "citation_invalid", "The generated answer referenced an unknown citation.")
+                cited_source = "\n".join(allowed[identifier].get("text", "") for identifier in ids)
+                unsupported = _unsupported_factual_token(text, cited_source)
+                if unsupported is not None:
+                    raise ApiProblem(
+                        503,
+                        "grounding_invalid",
+                        f"The generated answer contains unsupported factual token {unsupported!r}.",
+                    )
                 segments.append({"text": text.strip(), "citationIds": list(ids)})
                 for identifier in ids:
                     source = allowed[identifier]
@@ -1119,8 +1227,10 @@ def _generation_stage(query: str, context: dict[str, Any], config: Any, service:
             answer = "\n\n".join(segment["text"] for segment in segments) if not insufficient else ""
             claims = copy.deepcopy(segments)
             break
-        except ApiProblem:
+        except ApiProblem as exc:
             if attempt + 1 >= attempts:
+                if exc.code == "grounding_invalid":
+                    return _grounding_abstention(service, metadata)
                 raise
     return {
         "status": "completed",
@@ -1570,7 +1680,9 @@ def _run_experiment_stages(
                 "candidateCount": request.reranking.candidate_count,
                 "candidateK": candidate_k,
                 "topK": request.retrieval.top_k,
-                "effectiveCandidateCount": len(reranking.get("candidates", [])),
+                "effectiveCandidateCount": reranking.get("candidateCount")
+                if reranking.get("candidateCount") is not None
+                else len(reranking.get("inputCandidates") or reranking.get("candidates", [])),
             }
             reranking["provenance"] = {
                 "algorithmVersion": RERANK_ALGORITHM_VERSION,

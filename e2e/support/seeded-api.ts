@@ -36,6 +36,7 @@ export type SeededApiOptions = {
   scenario?: SeededScenario;
   longNames?: boolean;
   theme?: "system" | "light" | "dark";
+  ocrDiagnostics?: boolean;
 };
 
 export const seededStressNames = {
@@ -428,6 +429,17 @@ async function json(route: Route, value: unknown, status = 200) {
 }
 
 export async function installSeededApi(page: Page, options: SeededApiOptions = {}) {
+  const diagnosticElements = elements.map((element) => ({ ...element,
+    sourceOrigin: element.id === "element-fact" ? "mixed" : "native_pdf",
+    sourceRegions: element.id === "element-fact" ? [
+      { pageNumber: 1, bbox: [30, 100, 300, 120], pageHeight: 842, coordinateOrigin: "TOPLEFT", origin: "ocr", confidence: .99062, text: element.text },
+    ] : [],
+  }));
+  // Mock provenance exercises the UI contract; it is not a real OCR result.
+  const selectedParseResult = options.ocrDiagnostics ? { ...parseResult, structured: {
+    elements: diagnosticElements,
+    pages: parseResult.structured.pages.map((page) => ({ ...page, elements: diagnosticElements.filter((element) => element.pageNumbers.includes(page.pageNumber)) })),
+  } } : parseResult;
   const scenario = options.scenario ?? "complete";
   const pdf = await readFile(generatedFixturePath);
   let parsePoll = 0;
@@ -513,11 +525,11 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
         revision: pipelineRevision,
       });
     }
-    if (pathname === `/parse-runs/${parseRunId}`) return json(route, { id: parseRunId, documentId, status: "completed", progress: 100, phase: "completed", result: parseResult });
+    if (pathname === `/parse-runs/${parseRunId}`) return json(route, { id: parseRunId, documentId, status: "completed", progress: 100, phase: "completed", result: selectedParseResult });
     if (pathname === "/parse-runs/e2e-seeded-reparse") {
       parsePoll += 1;
       if (parsePoll === 1) return json(route, { id: "e2e-seeded-reparse", documentId, status: "running", progress: 34, phase: "docling_starting", runMetadata: { progress: 34, phase: "docling_starting" } });
-      return json(route, { id: "e2e-seeded-reparse", documentId, status: "completed", progress: 100, phase: "completed", result: { ...parseResult, parseRunId: "e2e-seeded-reparse" } });
+      return json(route, { id: "e2e-seeded-reparse", documentId, status: "completed", progress: 100, phase: "completed", result: { ...selectedParseResult, parseRunId: "e2e-seeded-reparse" } });
     }
     if (pathname === `/documents/${documentId}/parse` && method === "POST") return json(route, { id: "e2e-seeded-reparse", parseRunId: "e2e-seeded-reparse", documentId, status: "queued", progress: 0, phase: "queued", reusedDocument: true }, 202);
     if (pathname === `/chunk-runs/${chunkRunId}`) return json(route, chunk);

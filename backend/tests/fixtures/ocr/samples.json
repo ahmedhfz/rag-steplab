@@ -1,0 +1,614 @@
+[
+  {
+    "path": "samples/real-1-0.png",
+    "truth": "RAF A",
+    "subset": "real",
+    "bounds": [
+      28,
+      25,
+      136,
+      59
+    ],
+    "region": 1
+  },
+  {
+    "path": "samples/real-1-1.png",
+    "truth": "Kahvaltılık",
+    "subset": "real",
+    "bounds": [
+      28,
+      80,
+      167,
+      111
+    ],
+    "region": 1
+  },
+  {
+    "path": "samples/real-1-2.png",
+    "truth": "A1: yulaf",
+    "subset": "real",
+    "bounds": [
+      26,
+      112,
+      152,
+      148
+    ],
+    "region": 1
+  },
+  {
+    "path": "samples/real-1-3.png",
+    "truth": "A2: bal",
+    "subset": "real",
+    "bounds": [
+      28,
+      146,
+      126,
+      178
+    ],
+    "region": 1
+  },
+  {
+    "path": "samples/real-1-4.png",
+    "truth": "A3: kahve",
+    "subset": "real",
+    "bounds": [
+      27,
+      179,
+      162,
+      211
+    ],
+    "region": 1
+  },
+  {
+    "path": "samples/real-2-0.png",
+    "truth": "RAF B",
+    "subset": "real",
+    "bounds": [
+      24,
+      24,
+      133,
+      60
+    ],
+    "region": 2
+  },
+  {
+    "path": "samples/real-2-1.png",
+    "truth": "Kuru gıda",
+    "subset": "real",
+    "bounds": [
+      24,
+      78,
+      155,
+      116
+    ],
+    "region": 2
+  },
+  {
+    "path": "samples/real-2-2.png",
+    "truth": "B1: pirinç",
+    "subset": "real",
+    "bounds": [
+      24,
+      111,
+      155,
+      149
+    ],
+    "region": 2
+  },
+  {
+    "path": "samples/real-2-3.png",
+    "truth": "B2: makarna",
+    "subset": "real",
+    "bounds": [
+      25,
+      146,
+      195,
+      178
+    ],
+    "region": 2
+  },
+  {
+    "path": "samples/real-2-4.png",
+    "truth": "B3: mercimek",
+    "subset": "real",
+    "bounds": [
+      25,
+      180,
+      211,
+      211
+    ],
+    "region": 2
+  },
+  {
+    "path": "samples/real-3-0.png",
+    "truth": "RAF C",
+    "subset": "real",
+    "bounds": [
+      25,
+      24,
+      133,
+      60
+    ],
+    "region": 3
+  },
+  {
+    "path": "samples/real-3-1.png",
+    "truth": "Konserve",
+    "subset": "real",
+    "bounds": [
+      25,
+      81,
+      152,
+      112
+    ],
+    "region": 3
+  },
+  {
+    "path": "samples/real-3-2.png",
+    "truth": "C1: domates",
+    "subset": "real",
+    "bounds": [
+      25,
+      113,
+      195,
+      144
+    ],
+    "region": 3
+  },
+  {
+    "path": "samples/real-3-3.png",
+    "truth": "C2: nohut",
+    "subset": "real",
+    "bounds": [
+      25,
+      146,
+      159,
+      177
+    ],
+    "region": 3
+  },
+  {
+    "path": "samples/real-3-4.png",
+    "truth": "C3: ton balığı",
+    "subset": "real",
+    "bounds": [
+      24,
+      178,
+      202,
+      214
+    ],
+    "region": 3
+  },
+  {
+    "path": "samples/real-4-0.png",
+    "truth": "ÇEKMECE D",
+    "subset": "real",
+    "bounds": [
+      25,
+      24,
+      226,
+      64
+    ],
+    "region": 4
+  },
+  {
+    "path": "samples/real-4-1.png",
+    "truth": "Atıştırmalık",
+    "subset": "real",
+    "bounds": [
+      24,
+      80,
+      179,
+      116
+    ],
+    "region": 4
+  },
+  {
+    "path": "samples/real-4-2.png",
+    "truth": "D1: kraker",
+    "subset": "real",
+    "bounds": [
+      25,
+      115,
+      168,
+      145
+    ],
+    "region": 4
+  },
+  {
+    "path": "samples/real-4-3.png",
+    "truth": "D2: kuru meyve",
+    "subset": "real",
+    "bounds": [
+      24,
+      146,
+      237,
+      182
+    ],
+    "region": 4
+  },
+  {
+    "path": "samples/real-4-4.png",
+    "truth": "D3: bitter çikolata",
+    "subset": "real",
+    "bounds": [
+      24,
+      180,
+      262,
+      214
+    ],
+    "region": 4
+  },
+  {
+    "path": "samples/real-5-0.png",
+    "truth": "SEPET E",
+    "subset": "real",
+    "bounds": [
+      29,
+      27,
+      171,
+      59
+    ],
+    "region": 5
+  },
+  {
+    "path": "samples/real-5-1.png",
+    "truth": "Temizlik stoğu",
+    "subset": "real",
+    "bounds": [
+      26,
+      79,
+      216,
+      116
+    ],
+    "region": 5
+  },
+  {
+    "path": "samples/real-5-2.png",
+    "truth": "E1: sünger",
+    "subset": "real",
+    "bounds": [
+      27,
+      113,
+      175,
+      150
+    ],
+    "region": 5
+  },
+  {
+    "path": "samples/real-5-3.png",
+    "truth": "E2: çöp poşeti",
+    "subset": "real",
+    "bounds": [
+      26,
+      145,
+      218,
+      184
+    ],
+    "region": 5
+  },
+  {
+    "path": "samples/real-5-4.png",
+    "truth": "E3: bulaşık tableti",
+    "subset": "real",
+    "bounds": [
+      27,
+      179,
+      266,
+      215
+    ],
+    "region": 5
+  },
+  {
+    "path": "samples/real-6-0.png",
+    "truth": "KUTU F",
+    "subset": "real",
+    "bounds": [
+      26,
+      23,
+      155,
+      56
+    ],
+    "region": 6
+  },
+  {
+    "path": "samples/real-6-1.png",
+    "truth": "Misafir stoğu",
+    "subset": "real",
+    "bounds": [
+      24,
+      76,
+      197,
+      113
+    ],
+    "region": 6
+  },
+  {
+    "path": "samples/real-6-2.png",
+    "truth": "F1: peçete",
+    "subset": "real",
+    "bounds": [
+      22,
+      109,
+      170,
+      148
+    ],
+    "region": 6
+  },
+  {
+    "path": "samples/real-6-3.png",
+    "truth": "F2: çay",
+    "subset": "real",
+    "bounds": [
+      23,
+      142,
+      127,
+      182
+    ],
+    "region": 6
+  },
+  {
+    "path": "samples/real-6-4.png",
+    "truth": "F3: şeker",
+    "subset": "real",
+    "bounds": [
+      23,
+      176,
+      152,
+      212
+    ],
+    "region": 6
+  },
+  {
+    "path": "samples/synthetic-16-0.png",
+    "truth": "ç ğ ı İ ö ş ü",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 16
+  },
+  {
+    "path": "samples/synthetic-16-1.png",
+    "truth": "Ç Ğ I İ Ö Ş Ü",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 16
+  },
+  {
+    "path": "samples/synthetic-16-2.png",
+    "truth": "A1 B1 D1 E1 F1",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 16
+  },
+  {
+    "path": "samples/synthetic-16-3.png",
+    "truth": "1 l I 0 O",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 16
+  },
+  {
+    "path": "samples/synthetic-16-4.png",
+    "truth": "B1: pirinç",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 16
+  },
+  {
+    "path": "samples/synthetic-16-5.png",
+    "truth": "A1: yulaf",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 16
+  },
+  {
+    "path": "samples/synthetic-16-6.png",
+    "truth": "D1: kraker",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 16
+  },
+  {
+    "path": "samples/synthetic-16-7.png",
+    "truth": "E1: sünger",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 16
+  },
+  {
+    "path": "samples/synthetic-16-8.png",
+    "truth": "F1: peçete",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 16
+  },
+  {
+    "path": "samples/synthetic-16-9.png",
+    "truth": "I1: ılık süt",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 16
+  },
+  {
+    "path": "samples/synthetic-16-10.png",
+    "truth": "O0: öğütülmüş çay",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 16
+  },
+  {
+    "path": "samples/synthetic-16-11.png",
+    "truth": "şeker çörek çikolata",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 16
+  },
+  {
+    "path": "samples/synthetic-24-0.png",
+    "truth": "ç ğ ı İ ö ş ü",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 24
+  },
+  {
+    "path": "samples/synthetic-24-1.png",
+    "truth": "Ç Ğ I İ Ö Ş Ü",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 24
+  },
+  {
+    "path": "samples/synthetic-24-2.png",
+    "truth": "A1 B1 D1 E1 F1",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 24
+  },
+  {
+    "path": "samples/synthetic-24-3.png",
+    "truth": "1 l I 0 O",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 24
+  },
+  {
+    "path": "samples/synthetic-24-4.png",
+    "truth": "B1: pirinç",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 24
+  },
+  {
+    "path": "samples/synthetic-24-5.png",
+    "truth": "A1: yulaf",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 24
+  },
+  {
+    "path": "samples/synthetic-24-6.png",
+    "truth": "D1: kraker",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 24
+  },
+  {
+    "path": "samples/synthetic-24-7.png",
+    "truth": "E1: sünger",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 24
+  },
+  {
+    "path": "samples/synthetic-24-8.png",
+    "truth": "F1: peçete",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 24
+  },
+  {
+    "path": "samples/synthetic-24-9.png",
+    "truth": "I1: ılık süt",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 24
+  },
+  {
+    "path": "samples/synthetic-24-10.png",
+    "truth": "O0: öğütülmüş çay",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 24
+  },
+  {
+    "path": "samples/synthetic-24-11.png",
+    "truth": "şeker çörek çikolata",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 24
+  },
+  {
+    "path": "samples/synthetic-32-0.png",
+    "truth": "ç ğ ı İ ö ş ü",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 32
+  },
+  {
+    "path": "samples/synthetic-32-1.png",
+    "truth": "Ç Ğ I İ Ö Ş Ü",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 32
+  },
+  {
+    "path": "samples/synthetic-32-2.png",
+    "truth": "A1 B1 D1 E1 F1",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 32
+  },
+  {
+    "path": "samples/synthetic-32-3.png",
+    "truth": "1 l I 0 O",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 32
+  },
+  {
+    "path": "samples/synthetic-32-4.png",
+    "truth": "B1: pirinç",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 32
+  },
+  {
+    "path": "samples/synthetic-32-5.png",
+    "truth": "A1: yulaf",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 32
+  },
+  {
+    "path": "samples/synthetic-32-6.png",
+    "truth": "D1: kraker",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 32
+  },
+  {
+    "path": "samples/synthetic-32-7.png",
+    "truth": "E1: sünger",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 32
+  },
+  {
+    "path": "samples/synthetic-32-8.png",
+    "truth": "F1: peçete",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 32
+  },
+  {
+    "path": "samples/synthetic-32-9.png",
+    "truth": "I1: ılık süt",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 32
+  },
+  {
+    "path": "samples/synthetic-32-10.png",
+    "truth": "O0: öğütülmüş çay",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 32
+  },
+  {
+    "path": "samples/synthetic-32-11.png",
+    "truth": "şeker çörek çikolata",
+    "subset": "synthetic",
+    "font": "arial.ttf",
+    "font_size": 32
+  }
+]

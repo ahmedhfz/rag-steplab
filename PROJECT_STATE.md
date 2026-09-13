@@ -1,6 +1,6 @@
 # Project State
 
-Last updated: 2026-09-12
+Last updated: 2026-09-13
 
 ## Current Status
 
@@ -38,6 +38,15 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
 
 ## Recently Completed
 
+- Docling normalizasyonu checkbox/provenance/time-range koruması, geometri
+  tabanlı okuma sırası ve bağlamsal başlık seviyeleriyle; structure-aware
+  chunking, calibrated hybrid trace ve grounded generation validation güncellendi.
+- OCR remediation uygulandı: Docling'in PDF-aware seçici OCR akışında RapidOCR
+  3.9.2 + CPU ONNX Runtime 1.30.0 ve hash-pinned PP-OCRv6 Small recognizer
+  kullanılıyor; native/OCR/mixed provenance, bbox ve tanısal confidence
+  parsed element sözleşmesine eklendi. Gerçek stress PDF'inin 7. sayfasında
+  `B1: pirinç` ve 15. sayfa tablo başlığı doğrulandı; full worker benchmark'ı
+  Linux Python 3.13 / 2 CPU / 4 GiB koşulunda tamamlandı.
 - Doküman kitaplığına açık onay isteyen silme akışı eklendi; başarılı silme
   sonrası document-scoped pipeline/lineage seçimleri temizleniyor ve aktif
   doküman silindiyse sıradaki doküman seçiliyor.
@@ -50,12 +59,21 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
 
 ## Current Work
 
-None
+Functional/OCR release `feature/rag-dogruluk-ocr-yayini` worktree'sinde ikon
+göçünden ayrıldı; yeni model/cache henüz Modal'a deploy edilmedi. Yerel kritik
+E2E ve OCR diagnostics, ağ kapalı Linux model regresyonu ve boş dizinden
+hash-pinned asset hazırlığı geçti. Tam stress PDF'de tarif A/B/C sırası doğrulandı.
+Hosted yeni parse/chunk/embed lineage ve 14 soruluk kabul testi bekliyor.
 
 ## Next
 
-None
+Yetkili release öncesi yeni worker image ve hosted OCR/RAG doğrulaması.
 
 ## Open Questions
 
-None
+Türkçe OCR için confidence dağılımı ve kabul/insan inceleme eşiği daha geniş,
+etiketli bir corpus ile ölçülmedi; mevcut metadata tanısal görünürlük sağlar,
+otomatik filtre uygulamaz.
+Temiz `origin/main` üzerinde de iki inspection E2E beklentisi başarısız:
+geçmiş experiment için `Unsaved changes` ve chunk teknik ID görünürlüğü.
+Kritik lineage/OCR gate'leri geçti; bu pre-existing beklentiler ayrıca ele alınmalıdır.

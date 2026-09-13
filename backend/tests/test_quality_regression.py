@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from app.chunking import TOKENIZER
+from app.chunking import TOKENIZER, chunk_structured
 from app.pipeline import (
     _assemble_retrieval,
     _context_stage,
@@ -105,7 +105,59 @@ def test_quality_fixture_preserves_listwise_rerank_order_and_exposes_ordinal_ran
     assert [item["chunkId"] for item in reranked["results"]] == ["chunk-keyword", "chunk-dense", "chunk-hybrid"]
     assert [item["rerankRank"] for item in reranked["results"]] == [1, 2, 3]
     assert [item["rerankScore"] for item in reranked["results"]] == [3, 2, 1]
+    assert [item["chunkId"] for item in reranked["inputCandidates"]] == [
+        item["chunkId"] for item in retrieval["candidates"][:3]
+    ]
     assert reranked["rerankScoreSemantics"] == "deprecated_ordinal_not_confidence"
+
+
+def test_hybrid_fusion_keeps_branch_scores_and_prefers_strong_dense_match():
+    dense = [
+        {**_fixture_chunks()[0], "denseScore": 0.92},
+        {**_fixture_chunks()[1], "denseScore": 0.40},
+    ]
+    keyword = [
+        {**_fixture_chunks()[1], "keywordScore": 1.00},
+        {**_fixture_chunks()[0], "keywordScore": 0.20},
+    ]
+
+    result = _assemble_retrieval("hybrid", 2, dense, keyword)
+
+    assert result["results"][0]["chunkId"] == "chunk-hybrid"
+    first = result["results"][0]
+    assert first["denseScore"] == 0.92
+    assert first["keywordScore"] == 0.20
+    assert first["denseRank"] == 1
+    assert first["keywordRank"] == 2
+    assert first["fusionScore"] is not None
+    assert result["fusion"] == {"method": "min_max_weighted", "denseWeight": 0.7, "keywordWeight": 0.3}
+
+
+def test_structure_aware_chunking_keeps_recipe_parent_and_table_rows_intact():
+    structured = {
+        "elements": [
+            {"id": "h1", "type": "heading", "text": "9. Tarif Kartları", "level": 1, "page_numbers": [1]},
+            {"id": "h2", "type": "heading", "text": "Tarif A", "level": 2, "page_numbers": [1]},
+            {"id": "h3", "type": "heading", "text": "Malzemeler", "level": 3, "page_numbers": [1]},
+            {"id": "list", "type": "list", "text": "1 su bardağı mercimek", "page_numbers": [1]},
+            {"id": "h4", "type": "heading", "text": "Adımlar", "level": 3, "page_numbers": [1]},
+            {"id": "steps", "type": "list", "text": "Mercimeği pişir.", "page_numbers": [1]},
+            {"id": "table", "type": "table", "text": "| Gün | Görev |\n| --- | --- |\n| Pzt | Salon |\n| Sal | Banyo |\n| Çar | Mutfak |", "page_numbers": [1]},
+        ]
+    }
+
+    chunks = chunk_structured(
+        structured,
+        "structure_aware",
+        {"chunkSizeTokens": 64, "overlapTokens": 0},
+    )
+
+    assert chunks[0].heading_path == ["9. Tarif Kartları", "Tarif A", "Adımlar"]
+    assert "Tarif A" in chunks[0].text and "Malzemeler" in chunks[0].text
+    assert all(not (chunk.text.strip() in {"9. Tarif Kartları", "Tarif A", "Malzemeler", "Adımlar"}) for chunk in chunks)
+    table_chunks = [chunk for chunk in chunks if "| Gün | Görev |" in chunk.text]
+    assert table_chunks
+    assert all("| --- | --- |" in chunk.text for chunk in table_chunks)
 
 
 def test_quality_fixture_keeps_greedy_budget_and_exact_duplicate_decisions_visible():
@@ -194,7 +246,33 @@ def test_generation_prompt_declares_user_language_and_citation_semantics():
     )
 
     assert "Answer in the language of the user's question unless the user explicitly requests another language." in service.prompt
+    assert "Copy dates, times, identifiers, quantities, and currency values exactly from the cited context." in service.prompt
     assert result["citationValidity"]["method"] == "context_id_membership_v1"
+
+
+def test_generation_abstains_after_unsupported_factual_token_retries():
+    class Service:
+        settings = SimpleNamespace(gemini_generation_model="generation-model", gemini_max_retries=1)
+
+        def generate_json(self, _prompt, _config):
+            return {
+                "insufficientContext": False,
+                "segments": [{"text": "Teslimat 10:30-10:00 aralığındadır.", "citationIds": ["C1"]}],
+            }, SimpleNamespace(configured_model="generation-model", effective_model="generation-v1")
+
+    result = _generation_stage(
+        "Teslimat aralığı nedir?",
+        {
+            "selected": [{"citationId": "C1", "chunkId": "chunk-1", "text": "Teslimat 10:30-11:00 aralığındadır."}],
+            "formattedContext": "[C1] Teslimat 10:30-11:00 aralığındadır.",
+        },
+        SimpleNamespace(max_output_tokens=128, temperature=0.1),
+        Service(),
+    )
+
+    assert result["insufficientContext"] is True
+    assert result["answer"] == ""
+    assert result["groundingFailure"] == "unsupported_factual_token"
 
 
 def test_no_answer_retrieval_metrics_are_excluded_and_abstention_is_separate():

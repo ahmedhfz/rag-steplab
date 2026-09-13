@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.errors import ApiProblem
-from app.parser import _TextLine, _build_page_elements, build_structured_content, parse_pdf_file
+from app.parser import _TextLine, _build_page_elements, _item_text, build_structured_content, parse_pdf_file
 
 
 def semantic_item(label, text, box=None, page=1, **kwargs):
@@ -108,7 +108,7 @@ def test_parse_to_structure_aware_chunking_keeps_text_and_real_section_boundarie
     assert all(chunk.page_numbers == [1] for chunk in after)
     assert parsed.summary.heading_count == 2
     assert "# Ödünç kaydı" not in parsed.markdown
-    assert parsed.run_metadata["headingClassifierVersion"] == "context-v1"
+    assert parsed.run_metadata["headingClassifierVersion"] == "context-v2"
 
 
 @pytest.mark.parametrize("text", ["Miktar", "Durum", "Not", "Amaç", "GÜNCEL", "Ödünç kaydı"])
@@ -186,6 +186,160 @@ def test_build_structured_content_normalizes_docling_items():
     assert [element.text for element in structured.pages[0].elements] == ["RAG StepLab", "A paragraph."]
     assert structured.pages[1].elements[-1].table is not None
     assert structured.pages[1].elements[-1].table.rows == [["Name", "Value"]]
+
+
+def test_checkbox_items_and_unknown_readable_labels_are_preserved():
+    items = [
+        semantic_item("checkbox_unselected", "☐ Telefon ve cüzdan üzerinde mi?", level=2),
+        semantic_item("checkbox_selected", "☑ Kimlik/kart", level=2),
+        semantic_item("future_label", "Future readable field", level=2),
+    ]
+
+    structured = build_structured_content(semantic_document(items))
+
+    assert [element.type for element in structured.elements] == ["list", "list", "other"]
+    assert [element.text for element in structured.elements] == [
+        "☐ Telefon ve cüzdan üzerinde mi?",
+        "☑ Kimlik/kart",
+        "Future readable field",
+    ]
+
+
+def test_item_text_joins_wrapped_lines_without_losing_time_range_separator():
+    assert _item_text(SimpleNamespace(text="18:00-\n20:00")) == "18:00-20:00"
+    assert _item_text(SimpleNamespace(text="hafta-\nici")) == "haftaici"
+
+
+def test_page_textline_provenance_restores_dropped_time_range_separator():
+    item = semantic_item("text", "S-01 için 18:0020:00", (50, 100, 300, 122))
+    cell_box = SimpleNamespace(l=50, t=100, r=300, b=110)
+    cell_box.to_top_left_origin = lambda height: cell_box
+    cells = [SimpleNamespace(
+        text="S-01 için 18:00-",
+        to_bounding_box=lambda: cell_box,
+    )]
+    parsed_pages = [SimpleNamespace(page_no=1, parsed_page=SimpleNamespace(textline_cells=cells))]
+
+    structured = build_structured_content(
+        semantic_document([item]),
+        parsed_pages=parsed_pages,
+    )
+
+    assert structured.elements[0].text == "S-01 için 18:00-20:00"
+
+
+def test_heading_levels_use_docling_geometry_when_source_levels_are_flat():
+    items = [
+        semantic_item("section_header", "9. Tarif Kartları", (50, 50, 280, 72), level=1),
+        semantic_item("section_header", "Tarif A", (50, 80, 220, 94), level=1),
+        semantic_item("section_header", "Malzemeler", (50, 100, 140, 111), level=1),
+        semantic_item("list_item", "1 su bardağı mercimek", (50, 114, 260, 125)),
+        semantic_item("section_header", "Adımlar", (50, 130, 100, 141), level=1),
+        semantic_item("list_item", "Mercimeği pişir.", (50, 144, 230, 155)),
+    ]
+    cells = parsed_page_cells(
+        (50, 50, 280, 72),
+        (50, 80, 220, 94),
+        (50, 100, 140, 111),
+        (50, 114, 260, 125),
+        (50, 130, 100, 141),
+        (50, 144, 230, 155),
+    )
+
+    headings = [
+        element
+        for element in build_structured_content(semantic_document(items), parsed_pages=cells).elements
+        if element.type == "heading"
+    ]
+
+    assert [(heading.text, heading.level) for heading in headings] == [
+        ("9. Tarif Kartları", 1),
+        ("Tarif A", 2),
+        ("Malzemeler", 3),
+        ("Adımlar", 3),
+    ]
+
+
+def test_same_page_semantic_blocks_follow_visual_column_order():
+    items = [
+        semantic_item("section_header", "9. Tarif Kartları", (50, 40, 280, 62), level=1),
+        semantic_item("section_header", "Tarif A", (50, 80, 220, 96), level=1),
+        semantic_item("section_header", "Ayrıntılar A", (50, 102, 180, 114), level=1),
+        semantic_item("list_item", "A içeriği", (50, 118, 220, 128)),
+        semantic_item("section_header", "Tarif C", (50, 260, 220, 276), level=1),
+        semantic_item("text", "C içeriği.", (50, 282, 300, 294)),
+        semantic_item("section_header", "Tarif B", (311, 80, 480, 96), level=1),
+        semantic_item("section_header", "Ayrıntılar B", (311, 102, 440, 114), level=1),
+        semantic_item("list_item", "B içeriği", (311, 118, 480, 128)),
+    ]
+    cells = parsed_page_cells(*[(50, 40, 280, 62), (50, 80, 220, 96), (50, 102, 180, 114),
+                                (50, 118, 220, 128), (50, 260, 220, 276), (50, 282, 300, 294),
+                                (311, 80, 480, 96), (311, 102, 440, 114), (311, 118, 480, 128)])
+
+    structured = build_structured_content(semantic_document(items), parsed_pages=cells)
+    headings = [element.text for element in structured.elements if element.type == "heading"]
+
+    assert headings == [
+        "9. Tarif Kartları",
+        "Tarif A",
+        "Ayrıntılar A",
+        "Tarif B",
+        "Ayrıntılar B",
+        "Tarif C",
+    ]
+    assert [element.id for element in structured.elements] == [
+        f"element-{index}" for index in range(1, len(structured.elements) + 1)
+    ]
+
+
+def test_recipe_title_convention_keeps_late_recipe_as_level_two():
+    items = [
+        semantic_item("section_header", "9. Tarif Kartları", (50, 50, 280, 72), level=1),
+        semantic_item("section_header", "Tarif A", (50, 80, 220, 94), level=1),
+        semantic_item("text", "A body paragraph.", (50, 100, 300, 112)),
+        semantic_item(
+            "section_header",
+            "Tarif B - Tepsi Sebzeli Makarna Malzemeler",
+            (50, 130, 330, 141),
+            level=1,
+        ),
+    ]
+    cells = parsed_page_cells(
+        (50, 50, 280, 72),
+        (50, 80, 220, 94),
+        (50, 100, 300, 112),
+        (50, 130, 330, 141),
+    )
+
+    headings = [
+        element
+        for element in build_structured_content(semantic_document(items), parsed_pages=cells).elements
+        if element.type == "heading"
+    ]
+
+    assert headings[-1].text.startswith("Tarif B")
+    assert headings[-1].level == 2
+
+
+def test_numbered_section_resets_unrelated_heading_style_history():
+    items = [
+        semantic_item("section_header", "8. Önceki Bölüm", (50, 10, 280, 32), level=1),
+        semantic_item("section_header", "Küçük alt başlık", (50, 40, 220, 49), level=1),
+        semantic_item("text", "Önceki içerik.", (50, 60, 220, 68)),
+        semantic_item("section_header", "9. Tarif Kartları", (50, 80, 280, 102), level=1),
+        semantic_item("section_header", "Tarif A", (50, 110, 220, 124), level=1),
+        semantic_item("section_header", "Malzemeler", (50, 130, 140, 141), level=1),
+        semantic_item("list_item", "Mercimek", (50, 146, 220, 157)),
+        semantic_item("section_header", "Tarif C", (50, 260, 220, 274), level=1),
+        semantic_item("text", "C içeriği.", (50, 280, 220, 291)),
+        semantic_item("section_header", "Tarif B", (311, 110, 480, 124), level=1),
+        semantic_item("section_header", "Malzemeler", (311, 130, 440, 141), level=1),
+        semantic_item("list_item", "Makarna", (311, 146, 480, 157)),
+    ]
+    cells = parsed_page_cells(*[(item.prov[0].bbox.l, item.prov[0].bbox.t, item.prov[0].bbox.r, item.prov[0].bbox.b) for item in items])
+    headings = [e for e in build_structured_content(semantic_document(items), parsed_pages=cells).elements if e.type == "heading"]
+    recipes = [(e.text, e.level) for e in headings if e.text.startswith("Tarif ")]
+    assert recipes == [("Tarif A", 2), ("Tarif B", 2), ("Tarif C", 2)]
 
 
 def test_build_page_elements_preserves_headings_and_joins_paragraph_lines():

@@ -5,6 +5,16 @@ export type ParsedTable = {
   markdown: string;
 };
 
+export type SourceRegion = {
+  pageNumber: number;
+  bbox: [number, number, number, number];
+  coordinateOrigin: "TOPLEFT";
+  pageHeight?: number | null;
+  origin: "native_pdf" | "ocr" | "unknown";
+  confidence: number | null;
+  text: string;
+};
+
 export type ParsedElement = {
   id: string;
   type: ParsedElementType;
@@ -12,6 +22,8 @@ export type ParsedElement = {
   text: string;
   level: number | null;
   table: ParsedTable | null;
+  sourceOrigin?: "native_pdf" | "ocr" | "mixed" | "unknown";
+  sourceRegions?: SourceRegion[];
 };
 
 export type ParsedPage = {
