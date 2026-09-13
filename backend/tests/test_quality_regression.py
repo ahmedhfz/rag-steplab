@@ -13,6 +13,7 @@ from app.pipeline import (
     _generation_stage,
     _rerank_stage,
     _retrieval_stage,
+    _unsupported_factual_token,
 )
 from app.quality import compute_retrieval_metrics
 from app.repository import simple_fts_terms
@@ -273,6 +274,19 @@ def test_generation_abstains_after_unsupported_factual_token_retries():
     assert result["insufficientContext"] is True
     assert result["answer"] == ""
     assert result["groundingFailure"] == "unsupported_factual_token"
+
+
+def test_grounding_accepts_locale_equivalent_date_and_decimal_formats():
+    source = "Fiş tarihi 08.09.2026; ara toplam 781,40 TL; indirim -31,40 TL; ödenen 750,00 TL."
+    answer = "08/09/2026 tarihli fişte ara toplam 781.4 TL, indirim -31.4 TL ve ödenen 750 TL'dir."
+
+    assert _unsupported_factual_token(answer, source) is None
+
+
+def test_grounding_keeps_distinct_times_strict():
+    source = "Planlanan ziyaret 10:30-11:00 aralığındadır."
+
+    assert _unsupported_factual_token("Planlanan ziyaret 10:30-10:00 aralığındadır.", source) == "10:30-10:00"
 
 
 def test_no_answer_retrieval_metrics_are_excluded_and_abstention_is_separate():
