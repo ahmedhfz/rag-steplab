@@ -1,10 +1,10 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { LoaderCircle, Upload } from "lucide-react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { usePreferences } from "@/components/preferences-provider";
+import { AppIcon } from "@/components/ui/app-icon";
 import { type AppCopy, UI_COPY } from "@/lib/copy";
 import { formatDocumentFileSize, validatePdfFile, type DocumentFileValidationError } from "@/lib/document-file";
 import { cn } from "@/lib/utils";
@@ -69,7 +69,7 @@ export function DocumentUploadPanel() {
         type="button"
       >
         <span className="grid size-10 place-items-center rounded-[12px] bg-card text-brand shadow-[0_1px_1.5px_rgba(0,0,0,0.08)]">
-          {isSubmitting ? <LoaderCircle aria-hidden="true" className="size-[22px] animate-spin" /> : <Upload aria-hidden="true" className="size-[22px]" />}
+          {isSubmitting ? <AppIcon name="loading" className="size-[22px] animate-spin" /> : <AppIcon name="upload" className="size-[22px]" />}
         </span>
         <span className="mt-3 text-[15px] font-medium leading-[22.5px] text-foreground">
           {isSubmitting

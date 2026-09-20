@@ -1,9 +1,9 @@
 "use client";
 
-import { AlertCircle, CheckCircle2, Circle, CircleDot, Forward, History, LoaderCircle, LockKeyhole } from "lucide-react";
 import { motion } from "motion/react";
 
 import { usePreferences } from "@/components/preferences-provider";
+import { AppIcon } from "@/components/ui/app-icon";
 import { UI_COPY } from "@/lib/copy";
 import type { PipelineStepState } from "@/lib/rag-ui-types";
 import { cn } from "@/lib/utils";
@@ -27,26 +27,26 @@ function StateIcon({ state }: { state: PipelineStepState }) {
         initial={{ opacity: 0, scale: 0.7 }}
         transition={{ type: "spring", stiffness: 480, damping: 22 }}
       >
-        <CheckCircle2 aria-hidden="true" className="size-4" />
+        <AppIcon name="completed" className="size-4" />
       </motion.span>
     );
   }
-  if (state === "Not started") return <Circle aria-hidden="true" className="size-4" />;
-  if (state === "Ready") return <CircleDot aria-hidden="true" className="size-4" />;
+  if (state === "Not started") return <AppIcon name="circle" className="size-4" />;
+  if (state === "Ready") return <AppIcon name="ready" className="size-4" />;
   if (state === "Processing") {
     return (
       <motion.span
         animate={{ rotate: 360 }}
         transition={{ duration: 0.9, ease: "linear", repeat: Infinity }}
       >
-        <LoaderCircle aria-hidden="true" className="size-4" />
+        <AppIcon name="loading" className="size-4" />
       </motion.span>
     );
   }
-  if (state === "Error") return <AlertCircle aria-hidden="true" className="size-4" />;
-  if (state === "Skipped") return <Forward aria-hidden="true" className="size-4" />;
-  if (state === "Stale") return <History aria-hidden="true" className="size-4" />;
-  return <LockKeyhole aria-hidden="true" className="size-3.5" />;
+  if (state === "Error") return <AppIcon name="warning" className="size-4" />;
+  if (state === "Skipped") return <AppIcon name="minus" className="size-4" />;
+  if (state === "Stale") return <AppIcon name="history" className="size-4" />;
+  return <AppIcon name="lock" className="size-3.5" />;
 }
 
 export function StatusIndicator({ state, compact = false }: { state: PipelineStepState; compact?: boolean }) {

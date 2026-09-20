@@ -1,10 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 
 import { AuthShell } from "@/components/auth-shell";
+import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePreferences } from "@/components/preferences-provider";
@@ -157,7 +157,7 @@ export function LoginScreen() {
             <div className="flex items-center justify-between text-[13px] font-medium leading-[19px] text-foreground"><label htmlFor="login-password">{labels.password}</label>{mode === "signin" ? <button className="font-medium text-brand outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/25" onClick={() => setAuthMode("forgot")} type="button">{labels.forgot}</button> : null}</div>
             <div className="relative">
               <Input autoComplete={mode === "signup" ? "new-password" : "current-password"} className="h-[44px] rounded-[10px] border-[1.5px] border-input bg-card px-3 pr-10 text-[13px] shadow-none placeholder:text-subtle-foreground focus-visible:border-brand focus-visible:ring-ring/15" id="login-password" minLength={mode === "signup" ? 10 : undefined} onChange={(event) => setPassword(event.target.value)} placeholder={labels.passwordPlaceholder} required type={showPassword ? "text" : "password"} value={password} />
-              <button aria-label={showPassword ? labels.hidePassword : labels.showPassword} className="absolute right-2.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded text-subtle-foreground outline-none transition-colors hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/25" onClick={() => setShowPassword((current) => !current)} type="button">{showPassword ? <EyeOff aria-hidden="true" className="size-4" /> : <Eye aria-hidden="true" className="size-4" />}</button>
+              <button aria-label={showPassword ? labels.hidePassword : labels.showPassword} className="absolute right-2.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded text-subtle-foreground outline-none transition-colors hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/25" onClick={() => setShowPassword((current) => !current)} type="button">{showPassword ? <AppIcon name="eyeOff" className="size-4" /> : <AppIcon name="eye" className="size-4" />}</button>
             </div>
           </div> : null}
 
@@ -166,7 +166,7 @@ export function LoginScreen() {
             <Input autoComplete="new-password" className="h-[44px] rounded-[10px] border-[1.5px] border-input bg-card px-3 text-[13px] shadow-none placeholder:text-subtle-foreground focus-visible:border-brand focus-visible:ring-ring/15" id="login-password-confirm" minLength={10} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.confirmPlaceholder} required type="password" value={confirmation} />
           </div> : null}
 
-          <Button className="mt-6 h-[43px] w-full rounded-[10px] bg-foreground text-[13px] font-medium text-primary-foreground hover:bg-strong-hover" disabled={busy} type="submit">{busy ? labels.wait : submitLabel}{mode === "signin" && !busy ? <span aria-hidden="true" className="text-[16px] leading-none">→</span> : null}</Button>
+          <Button className="mt-6 h-[43px] w-full rounded-[10px] bg-foreground text-[13px] font-medium text-primary-foreground hover:bg-strong-hover" disabled={busy} type="submit">{busy ? labels.wait : submitLabel}{mode === "signin" && !busy ? <AppIcon name="arrowRight" className="size-4" /> : null}</Button>
         </form>
 
         {mode === "signin" ? <>

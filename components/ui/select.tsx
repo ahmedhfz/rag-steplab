@@ -1,9 +1,9 @@
 "use client"
 
 import * as React from "react"
-import { Check, ChevronDown } from "lucide-react"
 import { Select as SelectPrimitive } from "radix-ui"
 
+import { AppIcon } from "@/components/ui/app-icon"
 import { cn } from "@/lib/utils"
 
 function Select(props: React.ComponentProps<typeof SelectPrimitive.Root>) {
@@ -30,7 +30,7 @@ function SelectTrigger({
     >
       {children}
       <SelectPrimitive.Icon asChild>
-        <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-subtle-foreground transition-transform duration-150 group-data-[state=open]:rotate-180" />
+        <AppIcon name="chevronDown" className="size-4 shrink-0 text-subtle-foreground transition-transform duration-150 group-data-[state=open]:rotate-180" />
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   )
@@ -80,7 +80,7 @@ function SelectItem({
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
       <span className="absolute right-2 flex size-4 items-center justify-center">
         <SelectPrimitive.ItemIndicator>
-          <Check aria-hidden="true" className="size-3.5" />
+          <AppIcon name="check" className="size-3.5" />
         </SelectPrimitive.ItemIndicator>
       </span>
     </SelectPrimitive.Item>
