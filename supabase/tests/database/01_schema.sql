@@ -1,6 +1,6 @@
 begin;
 
-select plan(50);
+select plan(56);
 
 select ok(to_regnamespace('rag_lab') is not null, 'rag_lab schema exists');
 
@@ -288,6 +288,70 @@ select ok(
   and has_table_privilege('rag_steplab_app', 'rag_lab.documents', 'UPDATE')
   and has_table_privilege('rag_steplab_app', 'rag_lab.documents', 'DELETE'),
   'runtime role has document DML access'
+);
+
+select ok(to_regclass('rag_lab.storage_cleanups') is not null, 'storage cleanup outbox table exists');
+
+select ok(
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'rag_lab' and table_name = 'storage_cleanups'
+      and column_name = 'owner_user_id' and data_type = 'uuid' and is_nullable = 'NO'
+  )
+  and exists (
+    select 1 from information_schema.columns
+    where table_schema = 'rag_lab' and table_name = 'storage_cleanups'
+      and column_name = 'storage_path' and is_nullable = 'NO'
+  ),
+  'storage cleanup rows retain owner and private object path'
+);
+
+select ok(
+  exists (
+    select 1 from pg_constraint
+    where conrelid = 'rag_lab.storage_cleanups'::regclass
+      and conname = 'storage_cleanups_status_check'
+      and contype = 'c'
+  )
+  and exists (
+    select 1 from pg_constraint
+    where conrelid = 'rag_lab.storage_cleanups'::regclass
+      and conname = 'storage_cleanups_attempt_nonnegative'
+      and contype = 'c'
+  )
+  and exists (
+    select 1 from pg_constraint
+    where conrelid = 'rag_lab.storage_cleanups'::regclass
+      and conname = 'storage_cleanups_storage_path_key'
+      and contype = 'u'
+  ),
+  'storage cleanup state and idempotency constraints exist'
+);
+
+select ok(
+  not exists (
+    select 1 from pg_constraint
+    where conrelid = 'rag_lab.storage_cleanups'::regclass
+      and contype = 'f'
+      and confrelid = 'auth.users'::regclass
+  ),
+  'cleanup outbox survives auth user deletion until storage retry completes'
+);
+
+select ok(
+  not (select relrowsecurity from pg_class where oid = 'rag_lab.storage_cleanups'::regclass)
+  and to_regclass('rag_lab.ix_storage_cleanups_owner_pending') is not null,
+  'cleanup outbox is backend-private and indexed by owner pending state'
+);
+
+select ok(
+  not has_table_privilege('anon', 'rag_lab.storage_cleanups', 'SELECT')
+  and not has_table_privilege('authenticated', 'rag_lab.storage_cleanups', 'SELECT')
+  and has_table_privilege('rag_steplab_app', 'rag_lab.storage_cleanups', 'SELECT')
+  and has_table_privilege('rag_steplab_app', 'rag_lab.storage_cleanups', 'INSERT')
+  and has_table_privilege('rag_steplab_app', 'rag_lab.storage_cleanups', 'UPDATE')
+  and has_table_privilege('rag_steplab_app', 'rag_lab.storage_cleanups', 'DELETE'),
+  'only the private runtime role can mutate cleanup outbox'
 );
 
 select ok(

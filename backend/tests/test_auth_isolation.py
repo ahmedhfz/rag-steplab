@@ -113,10 +113,15 @@ def test_user_scope_hides_other_users_document_by_list_and_id():
     foreign_delete = client.delete(f"/documents/{document_b['id']}")
     assert foreign_delete.status_code == 404
     assert get_repository().get_document_row(document_b["id"]) is not None
+    assert get_repository().list_pending_storage_cleanups(owner_user_id=USER_A) == []
 
     own_delete = client.delete(f"/documents/{document_a['id']}")
     assert own_delete.status_code == 204
     assert get_repository().get_document_row(document_a["id"]) is None
+    cleanup_rows = list(get_repository().storage_cleanups.values())
+    assert len(cleanup_rows) == 1
+    assert cleanup_rows[0]["owner_user_id"] == USER_A
+    assert cleanup_rows[0]["status"] == "completed"
 
 
 def test_private_source_preview_respects_document_owner_scope():

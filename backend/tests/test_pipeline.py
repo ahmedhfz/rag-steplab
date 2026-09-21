@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import json
+import re
 import uuid
 
 from fastapi.testclient import TestClient
@@ -99,7 +101,8 @@ class Phase5FakeGemini:
 
     def rerank(self, prompt):
         type(self).calls["rerank"] += 1
-        identifiers = [line.split(":", 1)[0] for line in prompt.splitlines()[1:] if ":" in line]
+        payload = re.search(r"<untrusted_candidates_json>(.+)</untrusted_candidates_json>", prompt)
+        identifiers = [item["candidateId"] for item in json.loads(payload.group(1))] if payload else []
         return identifiers, type("Metadata", (), {
             "configured_model": self.settings.gemini_rerank_model,
             "effective_model": "gemini-rerank-v1-001",
@@ -466,6 +469,11 @@ def test_chunk_identity_reuses_completed_artifact_and_hashes_effective_config(mo
     assert first.json()["id"] == second.json()["id"]
     assert first.json()["reusedArtifact"] is False
     assert second.json()["reusedArtifact"] is True
+    assert first.json()["config"] == {"chunkSizeTokens": 512, "overlapTokens": 64}
+    assert first.json()["configHash"] == second.json()["configHash"]
+    assert first.json()["tokenizerVersion"] == second.json()["tokenizerVersion"]
+    assert first.json()["chunkerVersion"] == second.json()["chunkerVersion"]
+    assert first.json()["lineageFingerprint"] == second.json()["lineageFingerprint"]
     assert calls == 1
     assert config_hash({"chunk_size_tokens": 512}) == config_hash({"chunk_size_tokens": 512, "overlap_tokens": 64})
     assert config_hash(effective_config(ChunkRunRequest().config)) == config_hash({"chunk_size_tokens": 512, "overlap_tokens": 64})
@@ -477,6 +485,7 @@ def test_chunk_identity_reuses_completed_artifact_and_hashes_effective_config(mo
     )
     assert versioned.status_code == 200
     assert versioned.json()["id"] != first.json()["id"]
+    assert versioned.json()["lineageFingerprint"] != first.json()["lineageFingerprint"]
     assert versioned.json()["reusedArtifact"] is False
     assert calls == 2
 
@@ -687,12 +696,13 @@ def test_chunk_claim_race_has_one_owner_and_completed_retry_reuses_it(monkeypatc
     assert reused["status"] == "completed"
 
 
-def test_all_ten_database_tables_are_declared():
+def test_all_database_tables_are_declared():
     from app.models import Base
 
-    assert len(Base.metadata.tables) == 10
+    assert len(Base.metadata.tables) == 11
     assert {table.name for table in Base.metadata.tables.values()} == {
         "documents",
+        "storage_cleanups",
         "parse_runs",
         "chunk_runs",
         "chunks",
@@ -751,7 +761,9 @@ def test_generation_citations_and_evaluation_use_real_stage_metadata(monkeypatch
             return [1.0, 0.0, 0.0], FakeMetadata()
 
         def rerank(self, prompt):
-            return [prompt.splitlines()[1].split(":", 1)[0]], FakeMetadata()
+            payload = re.search(r"<untrusted_candidates_json>(.+)</untrusted_candidates_json>", prompt)
+            identifiers = [item["candidateId"] for item in json.loads(payload.group(1))] if payload else []
+            return identifiers[:1], FakeMetadata()
 
         def generate_json(self, prompt, config):
             return {
@@ -804,6 +816,7 @@ def test_generation_citations_and_evaluation_use_real_stage_metadata(monkeypatch
 
 def test_benchmark_evaluation_processes_more_than_interactive_case_limit(monkeypatch):
     parsed = _queue_and_run(monkeypatch)
+    monkeypatch.setattr("app.main.get_settings", lambda: Settings(benchmark_evaluation_enabled=True))
     document_id = parsed["documentId"]
     chunk = client.post(
         f"/documents/{document_id}/chunks",

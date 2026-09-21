@@ -27,8 +27,13 @@ Amaç yalnızca sonuç üretmek değil; kullanılan ayarların, ara çıktılar�
 - Optional Gemini reranking, görünür context construction, grounded generation ve backend-doğrulamalı citations çalışır.
 - Golden evaluation dataset'leri Hit@K, Recall@K, Precision@K, MRR, citation validity ve groundedness ölçümleri üretir.
 - Parse/chunk/embedding/experiment geçmişi yenilemeden sonra geri yüklenir; reparse ve rechunk eski downstream run'ları stale yapar.
+- Ağır provider/parse işleri kullanıcı başına durable tek-aktif-run admission'ıyla
+  korunur; benchmark evaluation public kullanımda varsayılan kapalıdır.
+- Doküman silme private Storage object'ini transaction-backed cleanup outbox ile
+  eventually ve idempotent biçimde temizler; retry yalnız mutasyonlarda çalışır,
+  doküman listeleme GET'i read-only kalır.
 
-Uygulama sahte doküman, chunk, skor, cevap veya evaluation metriği göstermez. Authenticated Supabase oturumları ve kullanıcı sahipliğiyle persistence izole edilir; kişisel veya hassas PDF'ler public deployment'a yüklenmemelidir.
+Uygulama sahte doküman, chunk, skor, cevap veya evaluation metriği göstermez. Authenticated Supabase oturumları ve kullanıcı sahipliğiyle persistence izole edilir; retrieved metin prompt talimatı değil güvenilmeyen veri kabul edilir. Kişisel veya hassas PDF'ler public deployment'a yüklenmemelidir.
 
 ## Backend
 

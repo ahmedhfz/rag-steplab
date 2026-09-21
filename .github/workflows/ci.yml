@@ -67,6 +67,10 @@ jobs:
         if: steps.classify.outputs.node == 'true'
         run: npm ci
 
+      - name: Audit production npm dependencies
+        if: steps.classify.outputs.node == 'true'
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Lint changed JavaScript and TypeScript
         if: steps.classify.outputs.frontend == 'true' || steps.classify.outputs.playwright_list == 'true'
         shell: bash
@@ -109,6 +113,16 @@ jobs:
       - name: Install lightweight backend dependencies
         if: steps.classify.outputs.backend == 'true'
         run: python -m pip install --disable-pip-version-check -r backend/requirements-ci.txt
+
+      - name: Audit Python requirement files
+        if: steps.classify.outputs.backend == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check pip-audit==2.10.0
+          # requirements-worker.txt includes the base backend requirements.
+          python -m pip_audit --progress-spinner off -r backend/requirements-worker.txt
+          python -m pip_audit --progress-spinner off -r backend/requirements-ci.txt
 
       - name: Run all backend unit and contract tests
         if: steps.classify.outputs.backend == 'true'

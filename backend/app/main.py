@@ -369,6 +369,24 @@ def _user_repository(user: CurrentUser):
     return get_repository().scoped(user.id)
 
 
+def _retry_pending_storage_cleanups(repository, *, limit: int = 3) -> dict[str, int]:
+    attempted = completed = failed = 0
+    for cleanup in repository.list_pending_storage_cleanups(limit=limit):
+        attempted += 1
+        try:
+            get_storage().remove(cleanup["storage_path"])
+        except ApiProblem as exc:
+            repository.fail_storage_cleanup(cleanup["id"], exc.code)
+            failed += 1
+        except Exception:
+            repository.fail_storage_cleanup(cleanup["id"], "storage_delete_failed")
+            failed += 1
+        else:
+            repository.complete_storage_cleanup(cleanup["id"])
+            completed += 1
+    return {"attempted": attempted, "completed": completed, "failed": failed}
+
+
 @app.get("/capabilities", response_model=CapabilitiesResponse)
 def capabilities(_: CurrentUser = Depends(get_current_user)) -> CapabilitiesResponse:
     current_settings = get_settings()
@@ -443,6 +461,10 @@ async def upload_document(
         file_name,
         repository=_user_repository(user),
     )
+    # Storage cleanup retries are mutation-scoped.  Keep document listing
+    # read-only while allowing normal upload activity to drain pending
+    # outbox entries for this owner.
+    await run_in_threadpool(_retry_pending_storage_cleanups, _user_repository(user))
     payload = DocumentUploadResponse(
         document=_document_list_item(document),
         reused_document=reused_document,
@@ -854,10 +876,10 @@ def delete_document(document_id: str, user: CurrentUser = Depends(get_current_us
     document = repository.get_document_row(document_id)
     if document is None:
         raise ApiProblem(404, "document_not_found", "The document was not found.")
-    repository.delete_document(document_id)
-    # DB lineage silindikten sonra private object best-effort temizlenir;
-    # storage adapter cleanup hatalarında credential veya path sızdırmaz.
-    get_storage().remove(document["storage_path"])
+    cleanup = repository.delete_document_with_cleanup(document_id)
+    if cleanup is None:
+        raise ApiProblem(404, "document_not_found", "The document was not found.")
+    _retry_pending_storage_cleanups(repository)
     return Response(status_code=204)
 
 
@@ -1087,6 +1109,12 @@ def rerun_generation_run(experiment_id: str, user: CurrentUser = Depends(get_cur
 
 @app.post("/evaluation/datasets")
 def evaluation_dataset(request: EvaluationDatasetRequest, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    if request.evaluation_mode == "benchmark" and not get_settings().benchmark_evaluation_enabled:
+        raise ApiProblem(
+            403,
+            "benchmark_evaluation_disabled",
+            "Benchmark evaluation is available only when explicitly enabled by the server.",
+        )
     return _camelize(create_dataset(request, repository=_user_repository(user)))
 
 

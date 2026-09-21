@@ -40,6 +40,10 @@ export type RunSummary = {
   historicalLineage: boolean;
   upstream: Record<string, string | null>;
   config: Record<string, unknown>;
+  configHash?: string | null;
+  tokenizerVersion?: string | null;
+  chunkerVersion?: string | null;
+  lineageFingerprint?: string | null;
   timing: RunTiming;
   error: ApiProblem | null;
   // Document detail history already carries these stage-specific fields.

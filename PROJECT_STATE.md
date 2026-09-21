@@ -1,6 +1,6 @@
 # Project State
 
-Last updated: 2026-09-13
+Last updated: 2026-09-21
 
 ## Current Status
 
@@ -28,7 +28,9 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
 - Şema değişikliklerinin tek otoritesi `supabase/migrations/` ve Supabase CLI'dır.
   Runtime persistence SQLAlchemy/psycopg üzerinden yürür.
 - Uzun işler Modal worker'a ayrılır; durable run state ve lease/fencing
-  mekanizması korunur. Frontend provider veya storage sorumluluğunu üstlenmez.
+  mekanizması korunur. Kullanıcı başına tek aktif ağır iş admission'ı parse,
+  embedding, provider experiment ve evaluation için veritabanı durumuna dayanır.
+  Frontend provider veya storage sorumluluğunu üstlenmez.
 - `PreferencesProvider` görünüm tercihlerini yönetir; System varsayılanı,
   Light/Dark ve hydration öncesi tema bootstrap'ı uygulanmıştır.
 - Sonraki aşama CTA'sı içerik sonunda, yalnız uyumlu tamamlanmış upstream
@@ -37,6 +39,14 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
   özetidir. Ayrıntılı geçmiş Git'tedir; bu dosya görev günlüğü değildir.
 
 ## Recently Completed
+
+- Post-release hardening yerel olarak uygulandı: Next.js security patch'i,
+  production dependency audit kapıları, haftalık bounded Dependabot, güvenilmeyen
+  retrieval context prompt sınırı, chunk lineage fingerprint'i, opt-in benchmark
+  evaluation ve kullanıcı başına durable ağır iş admission'ı eklendi.
+- Doküman silme private Storage cleanup'ı transaction-backed outbox ile eventual
+  ve idempotent hale getirildi. İki eski inspection E2E beklentisi mevcut ürün
+  davranışına göre düzeltildi.
 
 - Fonksiyonel/OCR remediation production'a alındı: main `f954a53` Vercel
   production ve Modal `v55` üzerinde çalışıyor. Yeni hosted parse/chunk/embed
@@ -69,20 +79,23 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
 
 ## Current Work
 
-Production doğruluk kapısı tamamlandı. OCR provenance/confidence görünürlüğü ve
-grounding güvenlik davranışı mevcut; daha geniş etiketli corpus ile confidence
-kalibrasyonu ve eşik seçimi hâlâ ölçülmedi.
+Post-release hardening değişiklikleri izole worktree'de yerel validation'dan
+geçti; henüz commit, push, merge veya deploy edilmemiştir. Supabase migration
+reset'i Docker daemon yokluğu nedeniyle bu makinede çalıştırılamadı; production
+doğruluk kapısının önceki hosted kanıtı ayrı tutulur.
 
 ## Next
 
-UI/UX polish ve normal ürün iterasyonu; yeni OCR kalite ölçümleri yalnızca
-etiketli örnekler ve açık kapsam kararıyla genişletilecek.
+Hardening diff'inin review/release kararı; sonrasında UI/UX polish ve normal ürün
+iterasyonu. Yeni OCR kalite ölçümleri yalnızca etiketli örnekler ve açık kapsam
+kararıyla genişletilecek.
 
 ## Open Questions
 
 Türkçe OCR için confidence dağılımı ve kabul/insan inceleme eşiği daha geniş,
 etiketli bir corpus ile ölçülmedi; mevcut metadata tanısal görünürlük sağlar,
 otomatik filtre uygulamaz.
-Temiz `origin/main` üzerinde de iki inspection E2E beklentisi başarısız:
-geçmiş experiment için `Unsaved changes` ve chunk teknik ID görünürlüğü.
-Kritik lineage/OCR gate'leri geçti; bu pre-existing beklentiler ayrıca ele alınmalıdır.
+4 GiB hosted worker'da 28 sayfalık stress PDF tamamlandı ancak 3472,25 MiB peak
+RSS yalnız yaklaşık %15 bellek payı bırakıyor. Yeni kaynak artışı yapılmadı;
+daha büyük ve görsel-yoğun fixture matrisi olmadan daha geniş güvenli zarf iddiası
+yapılmamalıdır.
