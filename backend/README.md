@@ -164,6 +164,16 @@ lock altında durable run state'e bakar; yeni bağımsız iş 429
 aynı kabul edilmiş işin parçasıdır. Completed, failed veya interrupted terminal
 durumları kapasiteyi serbest bırakır.
 
+Yeni iş admission'ı aynı owner lock ve transaction içinde süresi dolan aktif
+kayıtları `interrupted` durumuna uzlaştırır; geçmiş ve kısmi çıktılar silinmez.
+Embedding/experiment/evaluation için explicit lease önceliklidir; eski lease'siz
+kayıtlarda `started_at`, yoksa `created_at` üzerine mevcut pipeline çalışma bütçesi
+uygulanır. Parse için Modal'ın 900 saniye execution + 300 saniye startup sınırı
+ve 120 saniye tolerans kullanılır. Parse polling/yeniden başlatma ve pipeline
+polling de aynı zaman aşımı kurallarını uygular. Temizlik yeni iş veya durum
+sorgusu sırasında yapılır; ayrı bir periyodik tarayıcı yoktur. Worker'ın gerçek
+bitiş anı bilinmeyen timeout kayıtlarında `duration_ms` boş bırakılır.
+
 Doküman silme, source object bilgisini `rag_lab.storage_cleanups` private outbox'ına
 document cascade ile aynı transaction'da yazar. Storage silme geçici olarak
 başarısız olsa bile mantıksal silme tamamlanır; `DELETE` veya normal upload gibi

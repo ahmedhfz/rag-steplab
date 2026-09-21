@@ -80,13 +80,20 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
 
 ## Current Work
 
-Post-release hardening cycle kapandı. PR #100'ün CI migration runtime kapısı,
-production migration dry-run/apply/alignment adımları ve Modal deploy/tag/health
-kontrolleri geçti; geliştirme UI/UX polish ve normal ürün iterasyonuna dönebilir.
+Aktif iş zaman aşımı düzeltmesi yerel çalışma ağacında hazır; henüz yayımlanmadı.
+Admission artık owner-scoped row lock altında süresi dolmuş parse, embedding,
+experiment ve evaluation kayıtlarını sonlandırıyor. Lease'siz eski kayıtlar
+başlangıç/oluşturulma zamanına göre değerlendirilir; geçerli işler korunur.
+Parse polling/yeniden başlatma ve expired retry admission kontrolleri de kapsandı.
+Canlı incelemede bulunan 23 Ağustos tarihli tek takılmış experiment `interrupted`
+durumuna alındı; 21 Eylül kontrolünde dört ağır iş türünde aktif kayıt kalmadı.
+Yerel doğrulama: backend 177 passed / 1 skipped; localhost seeded kritik E2E
+14 passed. Bu sonuçlar yeni kodun production deployment kanıtı değildir.
 
 ## Next
 
-UI/UX polish ve normal ürün iterasyonu. Yeni OCR kalite ölçümleri yalnızca
+Zaman aşımı düzeltmesini normal PR/release akışıyla yayımlamak; ardından UI/UX
+polish ve normal ürün iterasyonu. Yeni OCR kalite ölçümleri yalnızca
 etiketli örnekler ve açık kapsam kararıyla genişletilecek.
 
 ## Open Questions
