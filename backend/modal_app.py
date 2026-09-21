@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import modal
+from app.config import PARSE_WORKER_STARTUP_TIMEOUT_SECONDS, PARSE_WORKER_TIMEOUT_SECONDS
 from app.ocr import PROFILE
 
 
@@ -88,8 +89,8 @@ worker_options: dict[str, Any] = {
     "memory": 4096,
     "min_containers": 0,
     "max_containers": 1,
-    "timeout": 900,
-    "startup_timeout": 300,
+    "timeout": PARSE_WORKER_TIMEOUT_SECONDS,
+    "startup_timeout": PARSE_WORKER_STARTUP_TIMEOUT_SECONDS,
 }
 
 legacy_api_options: dict[str, Any] = {
