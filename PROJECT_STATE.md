@@ -40,13 +40,14 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
 
 ## Recently Completed
 
-- Post-release hardening yerel olarak uygulandı: Next.js security patch'i,
-  production dependency audit kapıları, haftalık bounded Dependabot, güvenilmeyen
-  retrieval context prompt sınırı, chunk lineage fingerprint'i, opt-in benchmark
-  evaluation ve kullanıcı başına durable ağır iş admission'ı eklendi.
+- Post-release hardening PR #100 (`93d76ac`) ile main'e merge edilip normal
+  release workflow'u üzerinden yayımlandı: Next.js security patch'i, production
+  dependency audit kapıları, haftalık bounded Dependabot, güvenilmeyen retrieval
+  context prompt sınırı, chunk lineage fingerprint'i, opt-in benchmark evaluation
+  ve kullanıcı başına durable ağır iş admission'ı eklendi.
 - Doküman silme private Storage cleanup'ı transaction-backed outbox ile eventual
-  ve idempotent hale getirildi. İki eski inspection E2E beklentisi mevcut ürün
-  davranışına göre düzeltildi.
+  ve idempotent hale getirildi; migration production'a uygulandı. İki eski
+  inspection E2E beklentisi mevcut ürün davranışına göre düzeltildi.
 
 - Fonksiyonel/OCR remediation production'a alındı: main `f954a53` Vercel
   production ve Modal `v55` üzerinde çalışıyor. Yeni hosted parse/chunk/embed
@@ -79,16 +80,14 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
 
 ## Current Work
 
-Post-release hardening değişiklikleri izole worktree'de yerel validation'dan
-geçti; henüz commit, push, merge veya deploy edilmemiştir. Supabase migration
-reset'i Docker daemon yokluğu nedeniyle bu makinede çalıştırılamadı; production
-doğruluk kapısının önceki hosted kanıtı ayrı tutulur.
+Post-release hardening cycle kapandı. PR #100'ün CI migration runtime kapısı,
+production migration dry-run/apply/alignment adımları ve Modal deploy/tag/health
+kontrolleri geçti; geliştirme UI/UX polish ve normal ürün iterasyonuna dönebilir.
 
 ## Next
 
-Hardening diff'inin review/release kararı; sonrasında UI/UX polish ve normal ürün
-iterasyonu. Yeni OCR kalite ölçümleri yalnızca etiketli örnekler ve açık kapsam
-kararıyla genişletilecek.
+UI/UX polish ve normal ürün iterasyonu. Yeni OCR kalite ölçümleri yalnızca
+etiketli örnekler ve açık kapsam kararıyla genişletilecek.
 
 ## Open Questions
 
