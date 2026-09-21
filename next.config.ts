@@ -29,7 +29,7 @@ const contentSecurityPolicy = [
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
   `connect-src ${[...connectOrigins].join(" ")}`,
-  "frame-src 'self' blob:",
+  `frame-src 'self' blob:${isVercelPreview ? " https://vercel.live" : ""}`,
   "frame-ancestors 'none'",
   "object-src 'none'",
   "base-uri 'self'",
