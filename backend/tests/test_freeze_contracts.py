@@ -46,8 +46,7 @@ class _RerankService:
 
     def rerank(self, prompt):
         self.prompt = prompt
-        identifiers = [line.split(":", 1)[0] for line in prompt.splitlines()[1:] if ":" in line]
-        return list(reversed(identifiers)), SimpleNamespace(
+        return ["chunk-1", "chunk-0"], SimpleNamespace(
             configured_model="rerank-configured",
             effective_model="rerank-effective",
         )

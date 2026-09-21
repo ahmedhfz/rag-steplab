@@ -74,9 +74,11 @@ class SupabaseStorage:
     def remove(self, path: str) -> None:
         try:
             self._client.storage.from_(self._bucket).remove([path])
-        except Exception:
-            # Compensation is best effort; the original DB/storage error is more useful.
-            return
+        except Exception as exc:
+            message = str(exc).lower()
+            if "404" in message or "not found" in message:
+                return
+            raise ApiProblem(503, "storage_delete_failed", "The stored PDF could not be removed yet.") from exc
 
 
 _memory_storage = MemoryStorage()

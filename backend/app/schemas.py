@@ -113,6 +113,10 @@ class RunSummary(CamelCaseModel):
     historical_lineage: bool = False
     upstream: dict[str, str | None] = Field(default_factory=dict)
     config: dict[str, Any] = Field(default_factory=dict)
+    config_hash: str | None = None
+    tokenizer_version: str | None = None
+    chunker_version: str | None = None
+    lineage_fingerprint: str | None = None
     timing: RunTiming = Field(default_factory=RunTiming)
     error: ApiError | None = None
 

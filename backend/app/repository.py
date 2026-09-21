@@ -37,6 +37,7 @@ from .models import (
     EvaluationRun,
     ExperimentRun,
     ParseRun,
+    StorageCleanup,
 )
 from .schemas import (
     ChunkItem,
@@ -106,6 +107,20 @@ def _dump(value: Any) -> Any:
     return value
 
 
+def chunk_lineage_fingerprint(row: dict[str, Any]) -> str | None:
+    required = (
+        row.get("parse_run_id"),
+        row.get("strategy"),
+        row.get("config_hash"),
+        row.get("tokenizer_version"),
+        row.get("chunker_version"),
+    )
+    if any(value is None for value in required):
+        return None
+    payload = json.dumps(required, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _record_timing(row: dict[str, Any]) -> RunTiming:
     return RunTiming(
         started_at=row.get("started_at"),
@@ -137,6 +152,10 @@ def _run_summary(row: dict[str, Any], *, stale: bool = False) -> RunSummary:
             "embeddingRunId": row.get("embedding_run_id"),
         },
         config=copy.deepcopy(row.get("config", {})),
+        config_hash=row.get("config_hash"),
+        tokenizer_version=row.get("tokenizer_version"),
+        chunker_version=row.get("chunker_version"),
+        lineage_fingerprint=chunk_lineage_fingerprint(row),
         timing=_record_timing(row),
         error=ApiError(code=error_code, message=error_message) if error_code and error_message else None,
     )
@@ -177,6 +196,10 @@ def _summary_chunk_row(row: dict[str, Any]) -> dict[str, Any]:
         "parse_run_id": row.get("parse_run_id"),
         "strategy": row.get("strategy"),
         "config": copy.deepcopy(row.get("config") or {}),
+        "config_hash": row.get("config_hash"),
+        "tokenizer_version": row.get("tokenizer_version"),
+        "chunker_version": row.get("chunker_version"),
+        "lineage_fingerprint": chunk_lineage_fingerprint(row),
         "status": row.get("status", "completed"),
         "chunk_count": row.get("chunk_count", 0),
         "error_code": row.get("error_code"),
@@ -317,6 +340,7 @@ class Repository:
         parser_version: str = "unknown",
         config: dict[str, Any] | None = None,
         run_id: str | None = None,
+        admission_owner_user_id: uuid.UUID | str | None = None,
     ) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -380,6 +404,23 @@ class Repository:
         raise NotImplementedError
 
     def delete_document(self, document_id: str) -> None:
+        raise NotImplementedError
+
+    def delete_document_with_cleanup(self, document_id: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def list_pending_storage_cleanups(
+        self,
+        *,
+        limit: int = 3,
+        owner_user_id: uuid.UUID | str | None = None,
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def complete_storage_cleanup(self, cleanup_id: str) -> None:
+        raise NotImplementedError
+
+    def fail_storage_cleanup(self, cleanup_id: str, code: str) -> None:
         raise NotImplementedError
 
     def create_document_pipeline(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -472,6 +513,7 @@ class Repository:
         model: str,
         dimensions: int,
         format_version: str,
+        admission_owner_user_id: uuid.UUID | str | None = None,
     ) -> tuple[dict[str, Any], bool]:
         raise NotImplementedError
 
@@ -518,7 +560,13 @@ class Repository:
     ) -> dict[str, Any] | None:
         raise NotImplementedError
 
-    def claim_experiment(self, row: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    def claim_experiment(
+        self,
+        row: dict[str, Any],
+        *,
+        admission_owner_user_id: uuid.UUID | str | None = None,
+        bypass_user_admission: bool = False,
+    ) -> tuple[dict[str, Any], bool]:
         """Claim one exact request; ``True`` means this caller owns execution."""
         raise NotImplementedError
 
@@ -625,7 +673,12 @@ class Repository:
     def save_evaluation(self, row: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
 
-    def claim_evaluation(self, row: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    def claim_evaluation(
+        self,
+        row: dict[str, Any],
+        *,
+        admission_owner_user_id: uuid.UUID | str | None = None,
+    ) -> tuple[dict[str, Any], bool]:
         """Claim one active exact evaluation request."""
         raise NotImplementedError
 
@@ -669,7 +722,47 @@ class InMemoryRepository(Repository):
         self.experiments: dict[str, dict[str, Any]] = {}
         self.datasets: dict[str, dict[str, Any]] = {}
         self.evaluations: dict[str, dict[str, Any]] = {}
+        self.storage_cleanups: dict[str, dict[str, Any]] = {}
         self._run_number_counters: dict[tuple[str, str], int] = {}
+
+    def _assert_user_heavy_run_available(self, owner_user_id: uuid.UUID | str | None) -> None:
+        if owner_user_id is None:
+            return
+        owner = owner_user_id if isinstance(owner_user_id, uuid.UUID) else uuid.UUID(str(owner_user_id))
+        document_ids = {
+            row["id"] for row in self.documents.values() if row.get("owner_user_id") == owner
+        }
+        active = any(
+            row.get("document_id") in document_ids and row.get("status") in {"queued", "running"}
+            for row in self.parses.values()
+        )
+        active = active or any(
+            row.get("document_id") in document_ids
+            and row.get("status") == "running"
+            and not _lease_expired(row)
+            for row in self.embedding_runs.values()
+        )
+        active = active or any(
+            row.get("document_id") in document_ids
+            and row.get("status") in {"queued", "running"}
+            and not _lease_expired(row)
+            for row in self.experiments.values()
+        )
+        dataset_ids = {
+            row["id"] for row in self.datasets.values() if row.get("document_id") in document_ids
+        }
+        active = active or any(
+            row.get("dataset_id") in dataset_ids
+            and row.get("status") in {"queued", "running"}
+            and not _lease_expired(row)
+            for row in self.evaluations.values()
+        )
+        if active:
+            raise ApiProblem(
+                429,
+                "user_run_limit_reached",
+                "Another expensive operation is already queued or running for this user.",
+            )
 
     def _next_run_number(self, document_id: str, kind: str) -> int:
         key = (document_id, kind)
@@ -721,7 +814,15 @@ class InMemoryRepository(Repository):
         self.mark_parse_running(queued["id"])
         return self.complete_parse(queued["id"], parsed, parser_version="unknown")
 
-    def create_parse_run(self, document_id, *, parser_version="unknown", config=None, run_id=None):
+    def create_parse_run(
+        self,
+        document_id,
+        *,
+        parser_version="unknown",
+        config=None,
+        run_id=None,
+        admission_owner_user_id=None,
+    ):
         document = self.documents.get(document_id)
         if document is None:
             return None
@@ -729,6 +830,7 @@ class InMemoryRepository(Repository):
             existing = self.find_inflight_parse(document_id)
             if existing is not None:
                 raise ApiProblem(409, "parse_already_in_progress", "A parse run is already in progress for this document.")
+            self._assert_user_heavy_run_available(admission_owner_user_id)
             identifier = run_id or new_id()
             now = now_utc()
             row = {
@@ -920,6 +1022,55 @@ class InMemoryRepository(Repository):
         self.datasets = {key: row for key, row in self.datasets.items() if key not in dataset_ids}
         self.evaluations = {key: row for key, row in self.evaluations.items() if row["dataset_id"] not in dataset_ids}
 
+    def delete_document_with_cleanup(self, document_id):
+        with self._lock:
+            document = self.documents.get(document_id)
+            if document is None:
+                return None
+            existing = next(
+                (
+                    row for row in self.storage_cleanups.values()
+                    if row["storage_path"] == document["storage_path"]
+                ),
+                None,
+            )
+            cleanup = existing or {
+                "id": new_id(),
+                "owner_user_id": document["owner_user_id"],
+                "storage_bucket": document["storage_bucket"],
+                "storage_path": document["storage_path"],
+                "status": "pending",
+                "attempt_count": 0,
+                "last_error_code": None,
+                "created_at": now_utc(),
+                "completed_at": None,
+            }
+            self.storage_cleanups[cleanup["id"]] = cleanup
+            self.delete_document(document_id)
+            return copy.deepcopy(cleanup)
+
+    def list_pending_storage_cleanups(self, *, limit=3, owner_user_id=None):
+        owner = None if owner_user_id is None else uuid.UUID(str(owner_user_id))
+        rows = [
+            row for row in self.storage_cleanups.values()
+            if row["status"] == "pending" and (owner is None or row["owner_user_id"] == owner)
+        ]
+        rows.sort(key=lambda row: (row["created_at"], row["id"]))
+        return copy.deepcopy(rows[: max(0, limit)])
+
+    def complete_storage_cleanup(self, cleanup_id):
+        with self._lock:
+            row = self.storage_cleanups.get(cleanup_id)
+            if row is not None:
+                row.update({"status": "completed", "last_error_code": None, "completed_at": now_utc()})
+
+    def fail_storage_cleanup(self, cleanup_id, code):
+        with self._lock:
+            row = self.storage_cleanups.get(cleanup_id)
+            if row is not None and row["status"] == "pending":
+                row["attempt_count"] += 1
+                row["last_error_code"] = code
+
     def _ensure_unique_pipeline_name(self, document_id, name, *, exclude_id=None):
         normalized = name.casefold()
         if any(
@@ -1071,8 +1222,8 @@ class InMemoryRepository(Repository):
                             "error_message": None,
                         }
                     )
-                    return copy.deepcopy(existing | {"chunks": self.chunks.get(existing["id"], [])}), True
-                return copy.deepcopy(existing | {"chunks": self.chunks.get(existing["id"], [])}), False
+                    return copy.deepcopy(existing | {"chunks": self.chunks.get(existing["id"], []), "lineage_fingerprint": chunk_lineage_fingerprint(existing)}), True
+                return copy.deepcopy(existing | {"chunks": self.chunks.get(existing["id"], []), "lineage_fingerprint": chunk_lineage_fingerprint(existing)}), False
 
             identifier = new_id()
             started_at = now_utc()
@@ -1100,7 +1251,7 @@ class InMemoryRepository(Repository):
             }
             self.chunk_runs[identifier] = row
             self.chunks[identifier] = []
-            return copy.deepcopy(row | {"chunks": []}), True
+            return copy.deepcopy(row | {"chunks": [], "lineage_fingerprint": chunk_lineage_fingerprint(row)}), True
 
     def complete_chunk_run(self, run_id, drafts, lease_token=None):
         with self._lock:
@@ -1110,9 +1261,9 @@ class InMemoryRepository(Repository):
             if lease_token is not None and str(row.get("lease_token")) != str(lease_token):
                 return None
             if row["status"] == "completed":
-                return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, [])})
+                return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, []), "lineage_fingerprint": chunk_lineage_fingerprint(row)})
             if row["status"] != "running":
-                return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, [])})
+                return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, []), "lineage_fingerprint": chunk_lineage_fingerprint(row)})
 
             completed_at = now_utc()
             items: list[dict[str, Any]] = []
@@ -1149,7 +1300,7 @@ class InMemoryRepository(Repository):
             document["active_chunk_run_id"] = run_id
             document["active_embedding_run_id"] = None
             document["updated_at"] = completed_at
-            return copy.deepcopy(row | {"chunks": items})
+            return copy.deepcopy(row | {"chunks": items, "lineage_fingerprint": chunk_lineage_fingerprint(row)})
 
     def fail_chunk_run(self, run_id, code, message, lease_token=None):
         with self._lock:
@@ -1198,14 +1349,22 @@ class InMemoryRepository(Repository):
             document = self.documents.get(row["document_id"])
             if document is None or document.get("owner_user_id") != uuid.UUID(str(owner_user_id)):
                 return None
-        return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, [])})
+        return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, []), "lineage_fingerprint": chunk_lineage_fingerprint(row)})
 
     def list_chunk_rows(self, document_id):
         return copy.deepcopy(
-            [row | {"chunks": self.chunks.get(row["id"], [])} for row in self.chunk_runs.values() if row["document_id"] == document_id]
+            [row | {"chunks": self.chunks.get(row["id"], []), "lineage_fingerprint": chunk_lineage_fingerprint(row)} for row in self.chunk_runs.values() if row["document_id"] == document_id]
         )
 
-    def claim_embedding_run(self, document_id, chunk_run_id, model, dimensions, format_version):
+    def claim_embedding_run(
+        self,
+        document_id,
+        chunk_run_id,
+        model,
+        dimensions,
+        format_version,
+        admission_owner_user_id=None,
+    ):
         with self._lock:
             existing = next(
                 (
@@ -1236,6 +1395,8 @@ class InMemoryRepository(Repository):
                     )
                     return copy.deepcopy(existing), True
                 return copy.deepcopy(existing), False
+
+            self._assert_user_heavy_run_available(admission_owner_user_id)
 
             identifier = new_id()
             started_at = now_utc()
@@ -1392,7 +1553,7 @@ class InMemoryRepository(Repository):
             rows.sort(key=lambda row: (row.get("created_at") or now_utc(), row.get("id", "")), reverse=True)
             return copy.deepcopy(rows[0]) if rows else None
 
-    def claim_experiment(self, row):
+    def claim_experiment(self, row, *, admission_owner_user_id=None, bypass_user_admission=False):
         with self._lock:
             requested_status = row.get("status", "running")
             durable = requested_status in {"queued", "running"} and row.get("lease_token") is not None
@@ -1425,6 +1586,8 @@ class InMemoryRepository(Repository):
                     )
                     return copy.deepcopy(existing), True
                 return copy.deepcopy(existing), False
+            if not bypass_user_admission:
+                self._assert_user_heavy_run_available(admission_owner_user_id)
             payload = copy.deepcopy(row)
             payload.setdefault("id", new_id())
             payload.setdefault("created_at", now_utc())
@@ -1572,7 +1735,7 @@ class InMemoryRepository(Repository):
         self.evaluations[payload["id"]] = payload
         return copy.deepcopy(payload)
 
-    def claim_evaluation(self, row):
+    def claim_evaluation(self, row, *, admission_owner_user_id=None):
         with self._lock:
             requested_status = row.get("status", "queued")
             durable = requested_status in {"queued", "running"} and row.get("lease_token") is not None
@@ -1605,6 +1768,7 @@ class InMemoryRepository(Repository):
                     )
                     return copy.deepcopy(existing), True
                 return copy.deepcopy(existing), False
+            self._assert_user_heavy_run_available(admission_owner_user_id)
             payload = copy.deepcopy(row)
             payload.setdefault("id", new_id())
             payload.setdefault("created_at", now_utc())
@@ -1775,6 +1939,67 @@ def _orm_dict(row: Any, fields: Iterable[str]) -> dict[str, Any]:
 class SqlAlchemyRepository(Repository):
     persistent = True
 
+    @staticmethod
+    def _lock_user_admission(session, owner_user_id: uuid.UUID | str | None) -> None:
+        if owner_user_id is None:
+            return
+        owner = str(owner_user_id)
+        # Every admission check and insert for a user occurs under the same
+        # transaction-scoped Postgres lock, so separate API containers agree.
+        session.execute(
+            text("select pg_advisory_xact_lock(hashtextextended(:owner_user_id, 0))"),
+            {"owner_user_id": owner},
+        )
+
+    @classmethod
+    def _assert_user_heavy_run_available(cls, session, owner_user_id: uuid.UUID | str | None) -> None:
+        if owner_user_id is None:
+            return
+        owner = str(owner_user_id)
+        cls._lock_user_admission(session, owner_user_id)
+        active = session.execute(
+            text(
+                """
+                select exists (
+                    select 1
+                    from rag_lab.parse_runs pr
+                    join rag_lab.documents d on d.id = pr.document_id
+                    where d.owner_user_id = cast(:owner_user_id as uuid)
+                      and pr.status in ('queued', 'running')
+                    union all
+                    select 1
+                    from rag_lab.embedding_runs er
+                    join rag_lab.documents d on d.id = er.document_id
+                    where d.owner_user_id = cast(:owner_user_id as uuid)
+                      and er.status = 'running'
+                      and (er.lease_expires_at is null or er.lease_expires_at > now())
+                    union all
+                    select 1
+                    from rag_lab.experiment_runs xr
+                    join rag_lab.documents d on d.id = xr.document_id
+                    where d.owner_user_id = cast(:owner_user_id as uuid)
+                      and xr.status in ('queued', 'running')
+                      and (xr.lease_expires_at is null or xr.lease_expires_at > now())
+                    union all
+                    select 1
+                    from rag_lab.evaluation_runs vr
+                    join rag_lab.evaluation_datasets ds on ds.id = vr.dataset_id
+                    join rag_lab.documents d on d.id = ds.document_id
+                    where d.owner_user_id = cast(:owner_user_id as uuid)
+                      and vr.status in ('queued', 'running')
+                      and (vr.lease_expires_at is null or vr.lease_expires_at > now())
+                )
+                """
+            ),
+            {"owner_user_id": owner},
+        ).scalar_one()
+        if active:
+            raise ApiProblem(
+                429,
+                "user_run_limit_reached",
+                "Another expensive operation is already queued or running for this user.",
+            )
+
     def create_document(self, metadata, storage_bucket, storage_path, sha256):
         row = Document(
             id=new_id(),
@@ -1848,10 +2073,19 @@ class SqlAlchemyRepository(Repository):
         self.mark_parse_running(queued["id"])
         return self.complete_parse(queued["id"], parsed, parser_version="unknown")
 
-    def create_parse_run(self, document_id, *, parser_version="unknown", config=None, run_id=None):
+    def create_parse_run(
+        self,
+        document_id,
+        *,
+        parser_version="unknown",
+        config=None,
+        run_id=None,
+        admission_owner_user_id=None,
+    ):
         identifier = run_id or new_id()
         try:
             with session_scope() as session:
+                self._lock_user_admission(session, admission_owner_user_id)
                 document = session.get(Document, document_id)
                 if document is None:
                     return None
@@ -1867,6 +2101,7 @@ class SqlAlchemyRepository(Repository):
                         "parse_already_in_progress",
                         "A parse run is already in progress for this document.",
                     )
+                self._assert_user_heavy_run_available(session, admission_owner_user_id)
                 row = ParseRun(
                     id=identifier,
                     document_id=document_id,
@@ -2055,6 +2290,69 @@ class SqlAlchemyRepository(Repository):
             row = session.get(Document, document_id)
             if row is not None:
                 session.delete(row)
+
+    @staticmethod
+    def _storage_cleanup_dict(row: StorageCleanup) -> dict[str, Any]:
+        return {
+            "id": row.id,
+            "owner_user_id": row.owner_user_id,
+            "storage_bucket": row.storage_bucket,
+            "storage_path": row.storage_path,
+            "status": row.status,
+            "attempt_count": row.attempt_count,
+            "last_error_code": row.last_error_code,
+            "created_at": row.created_at,
+            "completed_at": row.completed_at,
+        }
+
+    def delete_document_with_cleanup(self, document_id):
+        with session_scope() as session:
+            document = session.scalars(
+                select(Document).where(Document.id == document_id).with_for_update()
+            ).first()
+            if document is None:
+                return None
+            cleanup = session.scalars(
+                select(StorageCleanup).where(StorageCleanup.storage_path == document.storage_path)
+            ).first()
+            if cleanup is None:
+                cleanup = StorageCleanup(
+                    id=new_id(),
+                    owner_user_id=document.owner_user_id,
+                    storage_bucket=document.storage_bucket,
+                    storage_path=document.storage_path,
+                    status="pending",
+                    attempt_count=0,
+                )
+                session.add(cleanup)
+                session.flush()
+            payload = self._storage_cleanup_dict(cleanup)
+            session.delete(document)
+            session.flush()
+            return payload
+
+    def list_pending_storage_cleanups(self, *, limit=3, owner_user_id=None):
+        with session_scope() as session:
+            query = select(StorageCleanup).where(StorageCleanup.status == "pending")
+            if owner_user_id is not None:
+                query = query.where(StorageCleanup.owner_user_id == self._owner_uuid(owner_user_id))
+            rows = session.scalars(query.order_by(StorageCleanup.created_at, StorageCleanup.id).limit(max(0, limit))).all()
+            return [self._storage_cleanup_dict(row) for row in rows]
+
+    def complete_storage_cleanup(self, cleanup_id):
+        with session_scope() as session:
+            row = session.get(StorageCleanup, cleanup_id)
+            if row is not None:
+                row.status = "completed"
+                row.last_error_code = None
+                row.completed_at = now_utc()
+
+    def fail_storage_cleanup(self, cleanup_id, code):
+        with session_scope() as session:
+            row = session.get(StorageCleanup, cleanup_id)
+            if row is not None and row.status == "pending":
+                row.attempt_count += 1
+                row.last_error_code = code
 
     @staticmethod
     def _document_pipeline_dict(row: DocumentPipeline) -> dict[str, Any]:
@@ -2698,7 +2996,7 @@ class SqlAlchemyRepository(Repository):
         }
 
     def _chunk_dict_with_chunks(self, row: ChunkRun, chunks: list[Chunk]) -> dict[str, Any]:
-        return {
+        payload = {
             "id": row.id,
             "run_number": row.run_number,
             "document_id": row.document_id,
@@ -2718,6 +3016,8 @@ class SqlAlchemyRepository(Repository):
             "duration_ms": row.duration_ms,
             "chunks": [self._chunk_item(chunk) for chunk in chunks],
         }
+        payload["lineage_fingerprint"] = chunk_lineage_fingerprint(payload)
+        return payload
 
     def _chunk_dict(self, row: ChunkRun, session) -> dict[str, Any]:
         chunks = session.scalars(select(Chunk).where(Chunk.chunk_run_id == row.id).order_by(Chunk.ordinal)).all()
@@ -2758,7 +3058,15 @@ class SqlAlchemyRepository(Repository):
                     grouped[run.id][1].append(chunk)
             return [self._chunk_dict_with_chunks(run, chunks) for run, chunks in grouped.values()]
 
-    def claim_embedding_run(self, document_id, chunk_run_id, model, dimensions, format_version):
+    def claim_embedding_run(
+        self,
+        document_id,
+        chunk_run_id,
+        model,
+        dimensions,
+        format_version,
+        admission_owner_user_id=None,
+    ):
         identifier = new_id()
         started_at = now_utc()
         values = {
@@ -2778,6 +3086,34 @@ class SqlAlchemyRepository(Repository):
             "duration_ms": None,
         }
         with session_scope() as session:
+            self._lock_user_admission(session, admission_owner_user_id)
+            existing = session.scalars(
+                select(EmbeddingRun)
+                .where(
+                    EmbeddingRun.chunk_run_id == chunk_run_id,
+                    EmbeddingRun.model == model,
+                    EmbeddingRun.dimensions == dimensions,
+                    EmbeddingRun.embedding_format_version == format_version,
+                    EmbeddingRun.identity_claimed.is_(True),
+                    EmbeddingRun.status.in_(["running", "completed"]),
+                )
+                .with_for_update()
+                .order_by(EmbeddingRun.created_at.asc(), EmbeddingRun.id.asc())
+            ).first()
+            if existing is not None:
+                payload = self._embedding_dict(existing)
+                if existing.status == "running" and _lease_expired(payload):
+                    renewed_at = now_utc()
+                    existing.lease_token = uuid.uuid4()
+                    existing.lease_expires_at = renewed_at + timedelta(seconds=pipeline_lease_duration_seconds(get_settings()))
+                    existing.started_at = renewed_at
+                    existing.completed_at = None
+                    existing.error_code = None
+                    existing.error_message = None
+                    session.flush()
+                    return self._embedding_dict(existing), True
+                return payload, False
+            self._assert_user_heavy_run_available(session, admission_owner_user_id)
             result = session.execute(
                 pg_insert(EmbeddingRun)
                 .values(**values)
@@ -3045,7 +3381,7 @@ class SqlAlchemyRepository(Repository):
             ).first()
             return self._exp_dict(row) if row else None
 
-    def claim_experiment(self, row):
+    def claim_experiment(self, row, *, admission_owner_user_id=None, bypass_user_admission=False):
         identifier = row.get("id") or new_id()
         started_at = row.get("started_at") or now_utc()
         lease_token = row.get("lease_token")
@@ -3074,6 +3410,36 @@ class SqlAlchemyRepository(Repository):
             "worker_started_at": row.get("worker_started_at"),
         }
         with session_scope() as session:
+            self._lock_user_admission(session, admission_owner_user_id)
+            existing = session.scalars(
+                select(ExperimentRun)
+                .where(
+                    ExperimentRun.document_id == row["document_id"],
+                    ExperimentRun.experiment_fingerprint == row.get("experiment_fingerprint"),
+                    ExperimentRun.identity_claimed.is_(True),
+                    ExperimentRun.status.in_(["queued", "running"]),
+                )
+                .with_for_update()
+                .order_by(ExperimentRun.created_at.asc(), ExperimentRun.id.asc())
+            ).first()
+            if existing is not None:
+                existing_payload = self._exp_dict(existing)
+                if durable and _lease_expired(existing_payload):
+                    existing.status = requested_status
+                    existing.lease_token = lease_token_value
+                    existing.lease_expires_at = row.get("lease_expires_at")
+                    existing.dispatch_id = None
+                    existing.worker_started_at = None
+                    existing.attempt_count = (existing.attempt_count or 0) + 1
+                    existing.error_code = None
+                    existing.error_message = None
+                    existing.started_at = started_at
+                    existing.completed_at = None
+                    session.flush()
+                    return self._exp_dict(existing), True
+                return existing_payload, False
+            if not bypass_user_admission:
+                self._assert_user_heavy_run_available(session, admission_owner_user_id)
             result = session.execute(
                 pg_insert(ExperimentRun)
                 .values(**values)
@@ -3321,7 +3687,7 @@ class SqlAlchemyRepository(Repository):
             session.flush()
             return self._eval_dict(entity)
 
-    def claim_evaluation(self, row):
+    def claim_evaluation(self, row, *, admission_owner_user_id=None):
         identifier = row.get("id") or new_id()
         started_at = row.get("started_at") or now_utc()
         lease_token = row.get("lease_token")
@@ -3347,6 +3713,35 @@ class SqlAlchemyRepository(Repository):
             "duration_ms": row.get("duration_ms"),
         }
         with session_scope() as session:
+            self._lock_user_admission(session, admission_owner_user_id)
+            existing = session.scalars(
+                select(EvaluationRun)
+                .where(
+                    EvaluationRun.dataset_id == row["dataset_id"],
+                    EvaluationRun.evaluation_fingerprint == row.get("evaluation_fingerprint"),
+                    EvaluationRun.identity_claimed.is_(True),
+                    EvaluationRun.status.in_(["queued", "running"]),
+                )
+                .with_for_update()
+                .order_by(EvaluationRun.created_at.asc(), EvaluationRun.id.asc())
+            ).first()
+            if existing is not None:
+                existing_payload = self._eval_dict(existing)
+                if durable and _lease_expired(existing_payload):
+                    existing.status = requested_status
+                    existing.lease_token = lease_token_value
+                    existing.lease_expires_at = row.get("lease_expires_at")
+                    existing.dispatch_id = None
+                    existing.worker_started_at = None
+                    existing.attempt_count = (existing.attempt_count or 0) + 1
+                    existing.error_code = None
+                    existing.error_message = None
+                    existing.started_at = started_at
+                    existing.completed_at = None
+                    session.flush()
+                    return self._eval_dict(existing), True
+                return existing_payload, False
+            self._assert_user_heavy_run_available(session, admission_owner_user_id)
             result = session.execute(
                 pg_insert(EvaluationRun)
                 .values(**values)
@@ -3577,7 +3972,13 @@ class ScopedRepository(Repository):
     def create_parse_run(self, document_id, *, parser_version="unknown", config=None, run_id=None):
         if self._owned_document(document_id) is None:
             return None
-        return self._repository.create_parse_run(document_id, parser_version=parser_version, config=config, run_id=run_id)
+        return self._repository.create_parse_run(
+            document_id,
+            parser_version=parser_version,
+            config=config,
+            run_id=run_id,
+            admission_owner_user_id=self.owner_user_id,
+        )
 
     def queue_parse_run(self, document_id, *, parser_version="unknown", config=None, run_id=None):
         return self.create_parse_run(document_id, parser_version=parser_version, config=config, run_id=run_id)
@@ -3640,6 +4041,27 @@ class ScopedRepository(Repository):
     def delete_document(self, document_id):
         if self._owned_document(document_id) is not None:
             self._repository.delete_document(document_id)
+
+    def delete_document_with_cleanup(self, document_id):
+        if self._owned_document(document_id) is None:
+            return None
+        return self._repository.delete_document_with_cleanup(document_id)
+
+    def list_pending_storage_cleanups(self, *, limit=3):
+        return self._repository.list_pending_storage_cleanups(
+            limit=limit,
+            owner_user_id=self.owner_user_id,
+        )
+
+    def complete_storage_cleanup(self, cleanup_id):
+        owned = {row["id"] for row in self.list_pending_storage_cleanups(limit=100)}
+        if cleanup_id in owned:
+            self._repository.complete_storage_cleanup(cleanup_id)
+
+    def fail_storage_cleanup(self, cleanup_id, code):
+        owned = {row["id"] for row in self.list_pending_storage_cleanups(limit=100)}
+        if cleanup_id in owned:
+            self._repository.fail_storage_cleanup(cleanup_id, code)
 
     def create_document_pipeline(self, row):
         payload = dict(row)
@@ -3726,7 +4148,14 @@ class ScopedRepository(Repository):
     def claim_embedding_run(self, document_id, chunk_run_id, model, dimensions, format_version):
         if self._owned_document(document_id) is None or self.get_chunk_row(chunk_run_id) is None:
             raise ApiProblem(404, "embedding_run_not_found", "The requested document lineage was not found.")
-        return self._repository.claim_embedding_run(document_id, chunk_run_id, model, dimensions, format_version)
+        return self._repository.claim_embedding_run(
+            document_id,
+            chunk_run_id,
+            model,
+            dimensions,
+            format_version,
+            admission_owner_user_id=self.owner_user_id,
+        )
 
     def complete_embedding_run(self, run_id, values, input_hashes=None, effective_model=None, lease_token=None):
         if self.get_embedding_row(run_id) is None:
@@ -3769,10 +4198,14 @@ class ScopedRepository(Repository):
             return None
         return self._repository.get_completed_experiment_by_fingerprint(document_id, experiment_fingerprint)
 
-    def claim_experiment(self, row):
+    def claim_experiment(self, row, *, bypass_user_admission=False):
         if self._owned_document(row.get("document_id", "")) is None:
             raise ApiProblem(404, "experiment_not_found", "The experiment lineage was not found.")
-        return self._repository.claim_experiment(row)
+        return self._repository.claim_experiment(
+            row,
+            admission_owner_user_id=None if bypass_user_admission else self.owner_user_id,
+            bypass_user_admission=bypass_user_admission,
+        )
 
     def update_experiment_stage(self, experiment_id, stage, result, lease_token=None):
         if self.get_experiment_row(experiment_id) is None:
@@ -3887,7 +4320,10 @@ class ScopedRepository(Repository):
         dataset = self.get_dataset_row(row.get("dataset_id", ""))
         if dataset is None:
             raise ApiProblem(404, "evaluation_run_not_found", "The evaluation lineage was not found.")
-        return self._repository.claim_evaluation(row)
+        return self._repository.claim_evaluation(
+            row,
+            admission_owner_user_id=self.owner_user_id,
+        )
 
     def get_evaluation_by_fingerprint(self, dataset_id, evaluation_fingerprint):
         dataset = self.get_dataset_row(dataset_id)

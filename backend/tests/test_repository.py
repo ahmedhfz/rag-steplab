@@ -1,7 +1,11 @@
 from datetime import timedelta
 from types import SimpleNamespace
+import uuid
+
+import pytest
 
 from app.chunking import CHUNKER_VERSION, TOKENIZER_VERSION, config_hash, effective_config
+from app.errors import ApiProblem
 from app.repository import InMemoryRepository, now_utc
 
 
@@ -79,3 +83,42 @@ def test_pipeline_run_numbers_are_monotonic_after_history_deletion():
     third = repository.create_parse_run(document["id"], parser_version="test")
 
     assert [first["run_number"], second["run_number"], third["run_number"]] == [1, 2, 3]
+def test_scoped_heavy_run_admission_is_durable_per_user_and_owner_isolated():
+    repository = InMemoryRepository()
+    first_owner = uuid.UUID("11111111-1111-4111-8111-111111111111")
+    second_owner = uuid.UUID("22222222-2222-4222-8222-222222222222")
+    first = repository.scoped(first_owner)
+    second = repository.scoped(second_owner)
+    first_document = first.create_document(
+        {"file_name": "first.pdf", "media_type": "application/pdf", "size_bytes": 8, "page_count": 0},
+        "rag-documents",
+        "first/source.pdf",
+        "a" * 64,
+    )
+    second_document = second.create_document(
+        {"file_name": "second.pdf", "media_type": "application/pdf", "size_bytes": 8, "page_count": 0},
+        "rag-documents",
+        "second/source.pdf",
+        "b" * 64,
+    )
+
+    active = first.create_parse_run(first_document["id"])
+    assert active["status"] == "queued"
+    with pytest.raises(ApiProblem) as blocked:
+        first.claim_experiment(
+            {
+                "document_id": first_document["id"],
+                "chunk_run_id": "chunk-1",
+                "query": "question",
+                "target_stage": "generation",
+                "experiment_fingerprint": "fingerprint-1",
+                "status": "queued",
+                "lease_token": str(uuid.uuid4()),
+                "lease_expires_at": now_utc() + timedelta(minutes=5),
+            }
+        )
+    assert blocked.value.status_code == 429
+    assert blocked.value.code == "user_run_limit_reached"
+
+    isolated = second.create_parse_run(second_document["id"])
+    assert isolated["status"] == "queued"

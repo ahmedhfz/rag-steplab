@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.auth import CurrentUser
 from app.config import Settings
 from app.main import app, list_documents
-from app.models import Document
+from app.models import Document, StorageCleanup
 from app.repository import ScopedRepository, SqlAlchemyRepository
 
 
@@ -39,6 +39,7 @@ def test_document_list_has_bounded_real_sql_queries(monkeypatch, count):
     with engine.begin() as connection:
         connection.execute(text("ATTACH DATABASE ':memory:' AS rag_lab"))
         Document.__table__.create(connection)
+        StorageCleanup.__table__.create(connection)
         # Intentionally omit heavy body columns: the production query must not read them.
         connection.execute(text("CREATE TABLE rag_lab.parse_runs (id TEXT, document_id TEXT, status TEXT, error_code TEXT, error_message TEXT, created_at DATETIME)"))
         for i in range(count + 2):
@@ -63,6 +64,8 @@ def test_document_list_has_bounded_real_sql_queries(monkeypatch, count):
     monkeypatch.setattr("app.main._user_repository", lambda user: ScopedRepository(SqlAlchemyRepository(), user.id))
     result = list_documents(CurrentUser(id=owner, role="authenticated"))
     assert len(result["items"]) == count + 1
+    # Listing must only read parse metadata and document projections; cleanup
+    # retries are mutation-scoped and therefore absent from this GET path.
     assert len(statements) == 2
     assert all("markdown" not in sql and "structured" not in sql for sql in statements)
     parsed = next(row for row in result["items"] if row["id"] == "doc-0")

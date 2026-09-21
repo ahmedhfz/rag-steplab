@@ -87,6 +87,74 @@ def test_delete_document_removes_owned_lineage_and_private_source():
     assert storage_path not in get_storage().objects
 
 
+def test_delete_document_retries_temporary_storage_failure_on_later_mutation(monkeypatch):
+    uploaded = client.post("/documents", files={"file": ("retry.pdf", b"%PDF-1.7", "application/pdf")})
+    document_id = uploaded.json()["document"]["id"]
+    storage = get_storage()
+    storage_path = next(iter(storage.objects))
+    original_remove = storage.remove
+    attempts = 0
+
+    def flaky_remove(path):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ApiProblem(503, "storage_delete_failed", "temporary")
+        original_remove(path)
+
+    monkeypatch.setattr(storage, "remove", flaky_remove)
+    deleted = client.delete(f"/documents/{document_id}")
+
+    assert deleted.status_code == 204
+    assert storage_path in storage.objects
+    assert client.get("/documents").status_code == 200
+    # Listing is a read-only projection and must not mutate the cleanup outbox.
+    assert storage_path in storage.objects
+    assert attempts == 1
+
+    trigger = client.post("/documents", files={"file": ("retry-trigger.pdf", b"%PDF-1.8", "application/pdf")})
+    assert trigger.status_code == 201
+    assert storage_path not in storage.objects
+    assert attempts == 2
+
+    # Keep the trigger upload's object cleanup bounded to this test as well.
+    assert client.delete(f"/documents/{trigger.json()['document']['id']}").status_code == 204
+
+
+def test_delete_document_treats_missing_storage_object_as_success_and_is_idempotent():
+    uploaded = client.post("/documents", files={"file": ("missing.pdf", b"%PDF-1.7", "application/pdf")})
+    document_id = uploaded.json()["document"]["id"]
+    storage_path = next(iter(get_storage().objects))
+    get_storage().objects.pop(storage_path)
+
+    first = client.delete(f"/documents/{document_id}")
+    second = client.delete(f"/documents/{document_id}")
+
+    assert first.status_code == 204
+    assert second.status_code == 404
+    assert get_storage().objects == {}
+
+
+def test_benchmark_dataset_requires_explicit_server_capability(monkeypatch):
+    payload = {
+        "documentId": "document-1",
+        "name": "benchmark",
+        "evaluationMode": "benchmark",
+        "cases": [{"question": f"Question {index}"} for index in range(11)],
+    }
+    monkeypatch.setattr("app.main.get_settings", lambda: Settings(benchmark_evaluation_enabled=False))
+
+    blocked = client.post("/evaluation/datasets", json=payload)
+    assert blocked.status_code == 403
+    assert blocked.json()["error"]["code"] == "benchmark_evaluation_disabled"
+
+    monkeypatch.setattr("app.main.get_settings", lambda: Settings(benchmark_evaluation_enabled=True))
+    monkeypatch.setattr("app.main.create_dataset", lambda request, repository: {"id": "benchmark-1", "case_count": len(request.cases)})
+    enabled = client.post("/evaluation/datasets", json=payload)
+    assert enabled.status_code == 200
+    assert enabled.json() == {"id": "benchmark-1", "caseCount": 11}
+
+
 def test_explicit_parse_after_upload_creates_one_parse_run(monkeypatch):
     monkeypatch.setattr("app.main._dispatch_queued_parse", lambda parse: parse)
 

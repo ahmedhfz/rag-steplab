@@ -133,7 +133,9 @@ Frontend varsayılan olarak `http://127.0.0.1:8000` adresini kullanır. Farklı 
 `EvaluationDatasetRequest` interaktif kullanımda en fazla 10 case kabul eder.
 Bounded backend benchmark'ı için `evaluationMode=benchmark` ile üst sınır 200
 case'tir; değerlendirme worker'ı da persisted dataset'leri aynı 200 case sınırı
-ile korur. `EvaluationCase.expectedOutcome=insufficient_context`, relevant
+ile korur. Benchmark modu public API'de varsayılan olarak kapalıdır; yalnız
+kontrollü internal koşularda server-side `BENCHMARK_EVALUATION_ENABLED=true`
+ile açılır. `EvaluationCase.expectedOutcome=insufficient_context`, relevant
 element ID'si olmayan no-answer case'idir. Bu case'lerin Hit@K, Recall@K,
 Precision@K ve MRR değerleri aggregate retrieval ortalamasına dahil edilmez;
 abstention doğruluğu ayrı raporlanır.
@@ -144,6 +146,30 @@ entailment veya faithfulness ölçümü değildir; groundedness/faithfulness ayr
 metriklerdir. Gemini generation, reranking ve judge çağrıları resmi JSON schema
 ile sınırlandırılır, ancak uygulama tarafındaki JSON parse ve semantic
 validation katmanı korunur.
+
+Reranking ve generation prompt'ları retrieved document/chunk metnini güvenilmeyen
+veri olarak sınırlar; dokümanın içindeki komutlar sistem veya kullanıcı talimatı
+sayılmaz. Chunk özetleri `configHash`, `tokenizerVersion`, `chunkerVersion` ve
+bu alanları strategy ile parse run kimliğine bağlayan `lineageFingerprint` taşır. Böylece
+tokenizer fallback'i dahil ortam farkları aynı ayar görünümünün arkasında kalmaz.
+Gemini adapter'ı mevcut tek `contents` ve structured-JSON sözleşmesini korur;
+ayrı system/user role API'sine geçilmedi, çünkü bu sağlayıcı sözleşmesini ve
+cache fingerprint'lerini gereksiz yere değiştirecekti. Delimiter sınırı, allowlist
+kontrolü ve semantic validation birlikte savunma katmanıdır.
+
+Parse, embedding, provider-backed experiment ve evaluation admission'ı kullanıcı
+başına tek aktif ağır iş ile sınırlıdır. Kontrol PostgreSQL transaction advisory
+lock altında durable run state'e bakar; yeni bağımsız iş 429
+`user_run_limit_reached` alır. Evaluation'ın kendi sıralı child experiment'ları
+aynı kabul edilmiş işin parçasıdır. Completed, failed veya interrupted terminal
+durumları kapasiteyi serbest bırakır.
+
+Doküman silme, source object bilgisini `rag_lab.storage_cleanups` private outbox'ına
+document cascade ile aynı transaction'da yazar. Storage silme geçici olarak
+başarısız olsa bile mantıksal silme tamamlanır; `DELETE` veya normal upload gibi
+mutasyonlar pending kaydı idempotent olarak yeniden dener (listeleme GET'leri
+özellikle yan etkisizdir). Outbox client rollerine açık değildir ve auth
+kullanıcısı silinse de object cleanup tamamlanana kadar korunur.
 
 ## Test
 

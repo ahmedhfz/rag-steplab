@@ -1,4 +1,4 @@
-"""SQLAlchemy 2 models for the ten persisted RAG StepLab tables."""
+"""SQLAlchemy 2 models for the persisted RAG StepLab tables."""
 
 from __future__ import annotations
 
@@ -64,6 +64,25 @@ class Document(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class StorageCleanup(Base):
+    __tablename__ = "storage_cleanups"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'completed')", name="storage_cleanups_status_check"),
+        CheckConstraint("attempt_count >= 0", name="storage_cleanups_attempt_nonnegative"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    storage_bucket: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_path: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ParseRun(Base):

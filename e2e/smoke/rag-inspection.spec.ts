@@ -205,7 +205,8 @@ test("Geçmiş experiment yüklemek aktif indexing pipeline'ı değiştirmez", a
   await history.locator("summary").click();
   await history.getByRole("button", { name: "Load Experiment 1" }).click();
   await expect(page.getByTestId("playground-run-state")).toContainText("Viewing");
-  await expect(page.getByTestId("playground-run-state")).toContainText("Unsaved changes");
+  await expect(page.getByTestId("playground-run-state")).toContainText("Exact experiment loaded");
+  await expect(page.getByTestId("playground-run-state")).not.toContainText("Unsaved changes");
   await expect(pipelineSelector).toContainText("Seeded indexing pipeline");
 
   quality.assertClean();
@@ -240,12 +241,13 @@ test("Playground question CTA geometry and responsive overflow contractını kor
   quality.assertClean();
 });
 
-test("insan odaklı görünüm teknik kimlikleri global moda bağlamaz", async ({ page }) => {
+test("chunk teknik kimliği inspector içinde görünür ve global moda bağlanmaz", async ({ page }) => {
   const quality = installBrowserQualityGuards(page);
 
   await page.goto("/chunking");
   await selectSeededDocument(page);
-  await expect(page.getByText("e2e-seeded-chunk-item", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("chunk-inspector-detail")).toContainText("Chunk ID");
+  await expect(page.getByTestId("chunk-inspector-detail")).toContainText("e2e-seeded-chunk-item");
   await expect(page.getByText("Chunk 1", { exact: true })).toBeVisible();
   await page.goto("/settings");
   await expect(page.getByRole("radio", { name: "Technical" })).toHaveCount(0);

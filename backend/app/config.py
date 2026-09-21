@@ -80,6 +80,7 @@ class Settings:
     cors_origin_regex: str | None = None
     write_enabled: bool = True
     max_concurrent_pipeline_runs: int = 1
+    benchmark_evaluation_enabled: bool = False
     pipeline_worker_timeout_seconds: int = 1800
     pipeline_worker_startup_timeout_seconds: int = 300
     pipeline_lease_grace_seconds: int = 120
@@ -156,6 +157,7 @@ def get_settings() -> Settings:
         cors_origin_regex=os.getenv("CORS_ORIGIN_REGEX") or None,
         write_enabled=_bool("WRITE_ENABLED", True),
         max_concurrent_pipeline_runs=max(1, _int("MAX_CONCURRENT_PIPELINE_RUNS", 1)),
+        benchmark_evaluation_enabled=_bool("BENCHMARK_EVALUATION_ENABLED", False),
         pipeline_worker_timeout_seconds=max(60, _int("PIPELINE_WORKER_TIMEOUT_SECONDS", 1800)),
         pipeline_worker_startup_timeout_seconds=max(30, _int("PIPELINE_WORKER_STARTUP_TIMEOUT_SECONDS", 300)),
         pipeline_lease_grace_seconds=max(10, _int("PIPELINE_LEASE_GRACE_SECONDS", 120)),

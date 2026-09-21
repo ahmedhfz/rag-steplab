@@ -105,6 +105,26 @@ benzeri değerler browser'a, `NEXT_PUBLIC_*` değişkenlerine, source control'a,
 smoke output'una veya loglara yazılmaz. CORS yalnız gerçek Vercel origin'lerini
 exact içerir; wildcard kullanılmaz. PDF limiti 50 MiB'dir.
 
+`BENCHMARK_EVALUATION_ENABLED` varsayılan olarak `false` kalır. Yalnız sınırlı,
+internal benchmark çalışması için geçici olarak açılır; normal kullanıcı
+evaluation akışının 10-case sınırını genişletmez.
+
+Next.js tüm route'larda CSP, `frame-ancestors 'none'`, `X-Frame-Options: DENY`,
+`nosniff`, strict-origin referrer ve daraltılmış Permissions Policy gönderir.
+CSP `connect-src` yalnız self ile build sırasında tanımlı API/Supabase origin'lerini
+kapsar; yalnız Vercel Preview geri bildirim aracı için `VERCEL_ENV=preview`
+koşulunda `https://vercel.live` script, bağlantı ve frame kaynağı olarak eklenir.
+PDF önizleme için blob frame korunur; production CSP'de Vercel kaynağı yoktur.
+HSTS uygulama tarafından tekrar
+üretilmez: production TLS/HSTS davranışı Vercel edge katmanının sorumluluğudur
+ve release smoke'ta response header olarak ayrıca doğrulanmalıdır.
+
+CI, production npm dependency audit'i ile worker/base ve CI Python requirement
+audit'lerini çalıştırır. Dependabot npm, pip ve GitHub Actions için haftalık,
+bounded PR üretir. Repository private ve GitHub Code Scanning etkin olmadığı
+için bu değişiklik CodeQL workflow'u eklemez; ücretsiz uygunluk doğrulanmadan
+Advanced Security gerektiren bir gate zorunlu kılınmaz.
+
 ## Deploy sırası ve gerçek otomatik kapılar
 
 1. PR'da değişikliğe göre yerel hedefli kontrolleri çalıştır. `.github/workflows/ci.yml`
