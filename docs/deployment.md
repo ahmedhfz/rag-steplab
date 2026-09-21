@@ -112,7 +112,9 @@ evaluation akışının 10-case sınırını genişletmez.
 Next.js tüm route'larda CSP, `frame-ancestors 'none'`, `X-Frame-Options: DENY`,
 `nosniff`, strict-origin referrer ve daraltılmış Permissions Policy gönderir.
 CSP `connect-src` yalnız self ile build sırasında tanımlı API/Supabase origin'lerini
-kapsar; PDF önizleme için blob frame korunur. HSTS uygulama tarafından tekrar
+kapsar; yalnız Vercel Preview geri bildirim aracı için `VERCEL_ENV=preview`
+koşulunda `https://vercel.live` eklenir. PDF önizleme için blob frame korunur.
+HSTS uygulama tarafından tekrar
 üretilmez: production TLS/HSTS davranışı Vercel edge katmanının sorumluluğudur
 ve release smoke'ta response header olarak ayrıca doğrulanmalıdır.
 

@@ -4,6 +4,7 @@ import { shouldProxyRemoteApi } from "./lib/api-base-url";
 const configuredApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim().replace(/\/$/, "");
 const proxyRemoteApi = shouldProxyRemoteApi(configuredApiBaseUrl, process.env.NODE_ENV);
 const configuredSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim().replace(/\/$/, "");
+const isVercelPreview = process.env.VERCEL === "1" && process.env.VERCEL_ENV === "preview";
 
 function origin(value: string | undefined): string | null {
   if (!value) return null;
@@ -15,6 +16,7 @@ function origin(value: string | undefined): string | null {
 }
 
 const connectOrigins = new Set<string>(["'self'"]);
+if (isVercelPreview) connectOrigins.add("https://vercel.live");
 for (const candidate of [origin(configuredApiBaseUrl), origin(configuredSupabaseUrl)]) {
   if (!candidate) continue;
   connectOrigins.add(candidate);
@@ -22,7 +24,7 @@ for (const candidate of [origin(configuredApiBaseUrl), origin(configuredSupabase
 }
 const contentSecurityPolicy = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
+  `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}${isVercelPreview ? " https://vercel.live" : ""}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
