@@ -49,13 +49,13 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
   ve idempotent hale getirildi; migration production'a uygulandı. İki eski
   inspection E2E beklentisi mevcut ürün davranışına göre düzeltildi.
 
-- Fonksiyonel/OCR remediation production'a alındı: main `f954a53` Vercel
-  production ve Modal `v55` üzerinde çalışıyor. Yeni hosted parse/chunk/embed
-  lineage'i (`a37f7ebe-8587-4153-9cf9-e440328fc13b`, parse
-  `18aeddd7-2b9b-4a5b-81cb-2d0fa6f5fd53`) ile 14 soruluk kabul koşusu
-  tamamlandı; B1 OCR, yapısal parse, retrieval, reranking ve abstention
-  doğrulandı. Üretimde bulunan grounding sayı/tarih biçimleme kusuru
-  `f954a53` ile düzeltildi ve kabul koşusu tekrarlandı.
+- Fonksiyonel/OCR remediation için önceki production kabul kanıtı `f954a53`
+  release'inde tamamlandı: hosted parse/chunk/embed lineage'i
+  (`a37f7ebe-8587-4153-9cf9-e440328fc13b`, parse
+  `18aeddd7-2b9b-4a5b-81cb-2d0fa6f5fd53`) ile 14 soruluk koşuda B1 OCR,
+  yapısal parse, retrieval, reranking ve abstention doğrulandı; grounding
+  sayı/tarih kusuru düzeltildi. Güncel hardening release'i Modal'da
+  `93d76ac`, Vercel production main deployment'ı `a16e2e6` ile izlenir.
 - Tüm uygulama ikonları `iconoir-react@7.12.1` tabanlı tek semantic registry'ye
   taşındı; Navigation/Journey ve aşama durumları aynı ikon ailesini kullanıyor.
   Lucide bağımlılığı kaldırıldı; Google ve marka asset'leri korunuyor.
