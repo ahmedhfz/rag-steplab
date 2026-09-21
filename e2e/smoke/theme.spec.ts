@@ -42,14 +42,14 @@ test("@critical tema tercihi kalıcıdır ve System canlı OS değişimini izler
   expect(stored).toMatchObject({ locale: "en", showLearningHints: true, theme: "dark" });
 });
 
-test("@critical Dark shell ikonları tema rengini ve CSS maskesini kullanır", async ({ page }) => {
+test("@critical Dark shell ikonları tema rengini ve Iconoir SVG’yi kullanır", async ({ page }) => {
   await installSeededApi(page, { theme: "dark" });
   await page.goto("/settings");
 
   const documentsLink = page.getByRole("link", { name: "Documents", exact: true });
-  const assetIcon = documentsLink.locator("span[aria-hidden='true']");
-  await expect(assetIcon).toHaveCSS("background-color", "rgb(185, 176, 180)");
-  expect(await assetIcon.evaluate((element) => getComputedStyle(element).maskImage)).toContain("documents.svg");
+  const appIcon = documentsLink.locator("svg[aria-hidden='true']");
+  await expect(appIcon).toHaveCount(1);
+  await expect(appIcon).toHaveCSS("color", "rgb(185, 176, 180)");
   await expect(documentsLink.locator("img")).toHaveCount(0);
 });
 
