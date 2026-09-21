@@ -45,6 +45,9 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
   tamamlandı; B1 OCR, yapısal parse, retrieval, reranking ve abstention
   doğrulandı. Üretimde bulunan grounding sayı/tarih biçimleme kusuru
   `f954a53` ile düzeltildi ve kabul koşusu tekrarlandı.
+- Tüm uygulama ikonları `iconoir-react@7.12.1` tabanlı tek semantic registry'ye
+  taşındı; Navigation/Journey ve aşama durumları aynı ikon ailesini kullanıyor.
+  Lucide bağımlılığı kaldırıldı; Google ve marka asset'leri korunuyor.
 - Docling normalizasyonu checkbox/provenance/time-range koruması, geometri
   tabanlı okuma sırası ve bağlamsal başlık seviyeleriyle; structure-aware
   chunking, calibrated hybrid trace ve grounded generation validation güncellendi.

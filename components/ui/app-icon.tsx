@@ -1,0 +1,115 @@
+"use client";
+
+import {
+  ArrowLeft,
+  ArrowDown,
+  ArrowRight,
+  ArrowUp,
+  ArrowUpRight,
+  Check,
+  CheckCircle,
+  Circle,
+  Clock,
+  ClockRotateRight,
+  Copy,
+  Database,
+  Eye,
+  EyeClosed,
+  HelpCircle,
+  HomeSimple,
+  LightBulb,
+  ListSelect,
+  Lock,
+  LogOut,
+  Menu,
+  Minus,
+  MoreHoriz,
+  NavArrowDown,
+  Network,
+  OnePointCircle,
+  OpenBook,
+  OpenNewWindow,
+  Page,
+  PageSearch,
+  Play,
+  Plus,
+  Refresh,
+  RefreshDouble,
+  Search,
+  Settings,
+  SortDown,
+  Sparks,
+  StatsReport,
+  Trash,
+  UndoCircle,
+  Upload,
+  ViewGrid,
+  WarningCircle,
+  WarningTriangle,
+  Xmark,
+} from "iconoir-react";
+import type { ComponentProps, ElementType } from "react";
+
+/**
+ * Uygulamadaki ikonların tek semantic kaynağı.
+ * Ekranlar iconoir-react bileşenlerini doğrudan içe aktarmak yerine bu registry'yi kullanır.
+ */
+export const SEMANTIC_ICONS = {
+  overview: HomeSimple,
+  document: Page,
+  parse: PageSearch,
+  chunk: ViewGrid,
+  embed: Network,
+  retrieve: Search,
+  rerank: SortDown,
+  context: ListSelect,
+  generate: Sparks,
+  evaluate: StatsReport,
+  settings: Settings,
+  arrowLeft: ArrowLeft,
+  trendDown: ArrowDown,
+  arrowRight: ArrowRight,
+  trendUp: ArrowUp,
+  arrowUpRight: ArrowUpRight,
+  openBook: OpenBook,
+  check: Check,
+  completed: CheckCircle,
+  chevronDown: NavArrowDown,
+  circle: Circle,
+  ready: OnePointCircle,
+  help: HelpCircle,
+  clock: Clock,
+  copy: Copy,
+  database: Database,
+  externalLink: OpenNewWindow,
+  eye: Eye,
+  eyeOff: EyeClosed,
+  fileSearch: PageSearch,
+  history: ClockRotateRight,
+  loading: Refresh,
+  lock: Lock,
+  logOut: LogOut,
+  menu: Menu,
+  minus: Minus,
+  moreHorizontal: MoreHoriz,
+  play: Play,
+  plus: Plus,
+  refresh: RefreshDouble,
+  reset: UndoCircle,
+  trash: Trash,
+  warning: WarningCircle,
+  warningTriangle: WarningTriangle,
+  upload: Upload,
+  close: Xmark,
+  lightBulb: LightBulb,
+} as const;
+
+export type SemanticIconName = keyof typeof SEMANTIC_ICONS;
+export type AppIconProps = Omit<ComponentProps<(typeof SEMANTIC_ICONS)[SemanticIconName]>, "name"> & {
+  name: SemanticIconName;
+};
+
+export function AppIcon({ name, strokeWidth = 1.5, ...props }: AppIconProps) {
+  const Icon = SEMANTIC_ICONS[name] as ElementType;
+  return <Icon aria-hidden={props["aria-hidden"] ?? true} strokeWidth={strokeWidth} {...props} />;
+}

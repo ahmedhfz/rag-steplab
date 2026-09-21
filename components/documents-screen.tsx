@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowUpRight } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
@@ -10,6 +9,7 @@ import { DocumentUploadPanel } from "@/components/document-upload-panel";
 import { DocumentLibrary } from "@/components/document-library";
 import { usePreferences } from "@/components/preferences-provider";
 import { OcrSourceDetails } from "@/components/ocr-source-details";
+import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { type AppCopy, type DocumentViewKey, UI_COPY } from "@/lib/copy";
@@ -124,7 +124,7 @@ export function DocumentOverviewTab({ copy, selectedFile, persistedDocument, res
               <div>
                 <p>{copy.noDocumentSelected}</p>
                 <Button asChild className="mt-4" size="sm" variant="outline">
-                  <Link className="text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25" href="/">{copy.chooseFromOverview} <ArrowUpRight aria-hidden="true" className="size-4" /></Link>
+                  <Link className="text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25" href="/">{copy.chooseFromOverview} <AppIcon name="arrowUpRight" className="size-4" /></Link>
                 </Button>
               </div>
             </EmptyState>
@@ -302,7 +302,7 @@ export function DeveloperOutput({ copy, result }: { copy: AppCopy["documents"]; 
     <details className="rounded-[10px] border border-border bg-card">
       <summary className="flex h-[46px] cursor-pointer list-none items-center justify-between px-4 text-[13px] font-medium text-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/25 sm:px-5">
         <span>{copy.markdown === "Markdown" ? "Developer output — Markdown & JSON" : "Geliştirici çıktısı — Markdown ve JSON"}</span>
-        <span aria-hidden="true" className="text-subtle-foreground">⌄</span>
+        <AppIcon name="chevronDown" className="size-3.5 text-subtle-foreground" />
       </summary>
       <div className="border-t border-border">
         {!result ? <p className="px-4 py-4 text-xs text-muted-foreground">{copy.parsedViewsUnavailable}</p> : (

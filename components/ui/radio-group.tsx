@@ -1,9 +1,9 @@
 "use client"
 
 import * as React from "react"
-import { Circle } from "lucide-react"
 import { RadioGroup as RadioGroupPrimitive } from "radix-ui"
 
+import { AppIcon } from "@/components/ui/app-icon"
 import { cn } from "@/lib/utils"
 
 function RadioGroup({
@@ -33,7 +33,7 @@ function RadioGroupItem({
       {...props}
     >
       <RadioGroupPrimitive.Indicator className="relative z-10 grid place-items-center" data-slot="radio-group-indicator">
-        <Circle aria-hidden="true" className="size-2 fill-current stroke-none" />
+        <AppIcon name="circle" className="size-2" strokeWidth={4} />
       </RadioGroupPrimitive.Indicator>
     </RadioGroupPrimitive.Item>
   )

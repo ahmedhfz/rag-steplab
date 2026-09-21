@@ -3,90 +3,43 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import {
-  ArrowLeft,
-  BarChart3,
-  Braces,
-  BookOpen,
-  CircleHelp,
-  FileText,
-  Grid2X2,
-  Home,
-  LogOut,
-  ListFilter,
-  Menu,
-  Search,
-  Settings,
-  X,
-  type LucideIcon,
-} from "lucide-react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuthBootstrap } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { PageTransition } from "@/components/page-transition";
+import { AppIcon, type SemanticIconName } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
 import { type AppCopy, type AppNavKey, UI_COPY } from "@/lib/copy";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { UI_ASSETS } from "@/lib/ui-assets";
 import { cn } from "@/lib/utils";
 
-type NavItem = { key: AppNavKey; href: string; icon: LucideIcon };
+type NavItem = { key: AppNavKey; href: string; icon: SemanticIconName };
 type NavGroup = { label?: "pipeline" | "experiment" | "system"; items: NavItem[] };
 
 const navGroups: NavGroup[] = [
-  { items: [{ key: "overview", href: "/", icon: Home }] },
+  { items: [{ key: "overview", href: "/", icon: "overview" }] },
   {
     label: "pipeline",
     items: [
-      { key: "documents", href: "/documents", icon: FileText },
-      { key: "parse", href: "/parse", icon: ListFilter },
-      { key: "chunking", href: "/chunking", icon: Grid2X2 },
-      { key: "embeddings", href: "/embeddings", icon: Braces },
+      { key: "documents", href: "/documents", icon: "document" },
+      { key: "parse", href: "/parse", icon: "parse" },
+      { key: "chunking", href: "/chunking", icon: "chunk" },
+      { key: "embeddings", href: "/embeddings", icon: "embed" },
     ],
   },
   {
     label: "experiment",
     items: [
-      { key: "playground", href: "/playground", icon: Search },
-      { key: "evaluation", href: "/evaluation", icon: BarChart3 },
+      { key: "playground", href: "/playground", icon: "retrieve" },
+      { key: "evaluation", href: "/evaluation", icon: "evaluate" },
     ],
   },
 ];
 
-const settingsNavItem: NavItem = { key: "settings", href: "/settings", icon: Settings };
-
-const navIconAssets: Partial<Record<AppNavKey, string>> = {
-  overview: "/assets/figma/overview/overview.svg",
-  documents: "/assets/figma/overview/documents.svg",
-  parse: "/assets/figma/overview/parsing.svg",
-  chunking: "/assets/figma/overview/chunking.svg",
-  embeddings: "/assets/figma/overview/embeddings.svg",
-  playground: "/assets/figma/overview/playground.svg",
-  evaluation: "/assets/figma/overview/evaluation.svg",
-  settings: "/assets/figma/overview/settings.svg",
-};
-
-function ThemedAssetIcon({ src }: { src: string }) {
-  const maskImage = `url("${src}")`;
-  return (
-    <span
-      aria-hidden="true"
-      className="block size-[17.975px] shrink-0 bg-current"
-      style={{
-        maskImage,
-        maskPosition: "center",
-        maskRepeat: "no-repeat",
-        maskSize: "contain",
-        WebkitMaskImage: maskImage,
-        WebkitMaskPosition: "center",
-        WebkitMaskRepeat: "no-repeat",
-        WebkitMaskSize: "contain",
-      }}
-    />
-  );
-}
+const settingsNavItem: NavItem = { key: "settings", href: "/settings", icon: "settings" };
 
 function isNavItemActive(key: AppNavKey, pathname: string) {
   if (key === "overview") return pathname === "/";
@@ -125,20 +78,20 @@ function getInitials(name: string | null, email: string | null) {
 }
 
 type UserMenuItemProps = {
-  icon: LucideIcon;
+  icon: SemanticIconName;
   label: string;
   onClick?: () => void;
   href?: string;
 };
 
-function UserMenuItem({ icon: Icon, label, onClick, href }: UserMenuItemProps) {
+function UserMenuItem({ icon, label, onClick, href }: UserMenuItemProps) {
   const className = "flex h-9 w-full items-center gap-2.5 rounded-[8px] px-2.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20";
 
   if (href) {
-    return <Link className={className} href={href} onClick={onClick}><Icon aria-hidden="true" className="size-4 text-subtle-foreground" />{label}</Link>;
+    return <Link className={className} href={href} onClick={onClick}><AppIcon name={icon} className="size-4 text-subtle-foreground" />{label}</Link>;
   }
 
-  return <button className={className} onClick={onClick} type="button"><Icon aria-hidden="true" className="size-4 text-subtle-foreground" />{label}</button>;
+  return <button className={className} onClick={onClick} type="button"><AppIcon name={icon} className="size-4 text-subtle-foreground" />{label}</button>;
 }
 
 type UserMenuProps = {
@@ -228,18 +181,18 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
                   <p className="truncate text-sm font-semibold text-foreground">{displayName}</p>
                   <p className="truncate text-xs text-subtle-foreground">{user.email ?? copy.common.frontendFoundation}</p>
                 </div>
-                <UserMenuItem icon={BookOpen} label={copy.guides} onClick={() => setOpenView("guides")} />
-                <UserMenuItem icon={CircleHelp} label={copy.help} onClick={() => setOpenView("help")} />
-                <UserMenuItem href="/settings" icon={Settings} label={copy.nav.settings} onClick={closeAfterNavigation} />
+                <UserMenuItem icon="openBook" label={copy.guides} onClick={() => setOpenView("guides")} />
+                <UserMenuItem icon="help" label={copy.help} onClick={() => setOpenView("help")} />
+                <UserMenuItem href="/settings" icon="settings" label={copy.nav.settings} onClick={closeAfterNavigation} />
                 <div className="my-1 border-t" />
-                <UserMenuItem icon={LogOut} label={copy.common.signOut} onClick={() => void handleSignOut()} />
+                <UserMenuItem icon="logOut" label={copy.common.signOut} onClick={() => void handleSignOut()} />
               </>
             )}
 
             {openView === "guides" && (
               <div className="p-1">
                 <button className="mb-2 flex items-center gap-1.5 rounded px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground" onClick={() => setOpenView("menu")} type="button">
-                  <ArrowLeft aria-hidden="true" className="size-3.5" />
+                  <AppIcon name="arrowLeft" className="size-3.5" />
                   {copy.common.back}
                 </button>
                 <h2 className="px-1.5 text-sm font-semibold text-foreground">{copy.guidePanel.title}</h2>
@@ -255,7 +208,7 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
             {openView === "help" && (
               <div className="p-1">
                 <button className="mb-2 flex items-center gap-1.5 rounded px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground" onClick={() => setOpenView("menu")} type="button">
-                  <ArrowLeft aria-hidden="true" className="size-3.5" />
+                  <AppIcon name="arrowLeft" className="size-3.5" />
                   {copy.common.back}
                 </button>
                 <h2 className="px-1.5 text-sm font-semibold text-foreground">{copy.helpPanel.title}</h2>
@@ -299,7 +252,7 @@ function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: st
                     onClick={onNavigate}
                     prefetch={false}
                   >
-                    {isActive ? <item.icon aria-hidden="true" className="size-[17.975px] stroke-[1.65]" /> : navIconAssets[item.key] ? <ThemedAssetIcon src={navIconAssets[item.key] as string} /> : <item.icon aria-hidden="true" className="size-[17.975px] stroke-[1.65]" />}
+                    <AppIcon name={item.icon} className="size-[17.975px]" strokeWidth={1.65} />
                     {copy.nav[item.key]}
                   </Link>
                 );
@@ -318,7 +271,7 @@ function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: st
             onClick={onNavigate}
             prefetch={false}
           >
-            {isNavItemActive(settingsNavItem.key, pathname) ? <settingsNavItem.icon aria-hidden="true" className="size-[17.975px] stroke-[1.65]" /> : <ThemedAssetIcon src={navIconAssets.settings as string} />}
+            <AppIcon name={settingsNavItem.icon} className="size-[17.975px]" strokeWidth={1.65} />
             {copy.nav.settings}
           </Link>
         </div>
@@ -453,7 +406,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               transition={{ duration: 0.18, ease: "easeOut" }}
             >
               <Button aria-label={copy.common.close} autoFocus className="absolute right-3 top-4 z-10" onClick={() => setMobileOpen(false)} ref={mobileCloseButtonRef} size="icon" variant="ghost">
-                <X aria-hidden="true" className="size-5" />
+                <AppIcon name="close" className="size-5" />
               </Button>
               <Sidebar copy={copy} onNavigate={() => setMobileOpen(false)} onSignOut={signOut} pathname={pathname} user={authUser} />
             </motion.aside>
@@ -465,7 +418,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <header className="sticky top-0 z-30 flex h-[64px] items-center justify-between border-b border-border bg-card px-4 sm:px-7 xl:hidden">
           <div className="flex min-w-0 items-center gap-3">
             <Button aria-controls="mobile-navigation" aria-expanded={mobileOpen} aria-label={copy.common.openNavigation} className="xl:hidden" onClick={() => setMobileOpen(true)} ref={mobileOpenButtonRef} size="icon" variant="ghost">
-              <Menu className="size-5" />
+              <AppIcon name="menu" className="size-5" />
             </Button>
             <span className="truncate text-lg font-semibold tracking-[-0.02em]">{getPageTitle(pathname, copy)}</span>
           </div>

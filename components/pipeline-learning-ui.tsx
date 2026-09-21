@@ -1,9 +1,9 @@
 "use client";
 
-import { AlertCircle, CheckCircle2, ChevronDown, Clock3, History, LoaderCircle, LockKeyhole, Play } from "lucide-react";
 import { motion } from "motion/react";
 
 import { Badge } from "@/components/ui/badge";
+import { AppIcon } from "@/components/ui/app-icon";
 import type { AppLocale } from "@/lib/copy";
 import type { PipelineOperationStatus } from "@/components/document-pipeline-provider";
 import type { RunSummary } from "@/lib/rag-api-types";
@@ -26,13 +26,13 @@ const statusStyles: Record<PipelineOperationStatus, string> = {
 };
 
 function StatusIcon({ status }: { status: PipelineOperationStatus }) {
-  if (status === "processing") return <LoaderCircle aria-hidden="true" className="size-3 animate-spin" />;
-  if (status === "completed") return <CheckCircle2 aria-hidden="true" className="size-3" />;
-  if (status === "skipped") return <span aria-hidden="true" className="size-3 text-center">–</span>;
-  if (status === "error") return <AlertCircle aria-hidden="true" className="size-3" />;
-  if (status === "stale") return <History aria-hidden="true" className="size-3" />;
-  if (status === "ready") return <Play aria-hidden="true" className="size-3" />;
-  return <LockKeyhole aria-hidden="true" className="size-3" />;
+  if (status === "processing") return <AppIcon name="loading" className="size-3 animate-spin" />;
+  if (status === "completed") return <AppIcon name="completed" className="size-3" />;
+  if (status === "skipped") return <AppIcon name="minus" className="size-3" />;
+  if (status === "error") return <AppIcon name="warning" className="size-3" />;
+  if (status === "stale") return <AppIcon name="history" className="size-3" />;
+  if (status === "ready") return <AppIcon name="play" className="size-3" />;
+  return <AppIcon name="lock" className="size-3" />;
 }
 
 export function OperationStatusBadge({ status, locale }: { status: PipelineOperationStatus; locale: AppLocale }) {
@@ -90,7 +90,7 @@ export function RunMetadata({ run, locale }: { run: RunSummary; locale: AppLocal
         <summary className="cursor-pointer font-medium text-muted-foreground">{labels.config}</summary>
         <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-5 text-muted-foreground">{JSON.stringify(run.config, null, 2)}</pre>
       </details>
-      {!run.isCompatible && <p className="text-warning sm:col-span-2 lg:col-span-4" role="status"><History aria-hidden="true" className="mr-1 inline size-3.5" />{labels.incompatible}</p>}
+      {!run.isCompatible && <p className="text-warning sm:col-span-2 lg:col-span-4" role="status"><AppIcon name="history" className="mr-1 inline size-3.5" />{labels.incompatible}</p>}
     </div>
   );
 }
@@ -102,7 +102,7 @@ export function LearningHint({ locale, children }: { locale: AppLocale; children
     <details className="rounded-[10px] border border-brand-subtle bg-accent">
       <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-accent-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/25">
         <span>{locale === "tr" ? "Bu neden önemli?" : "Why this matters"}</span>
-        <ChevronDown aria-hidden="true" className="size-3.5 shrink-0 text-subtle-foreground" />
+        <AppIcon name="chevronDown" className="size-3.5 shrink-0 text-subtle-foreground" />
       </summary>
       <div className="border-t border-brand-subtle px-3 py-2 text-xs leading-5 text-accent-foreground/75" role="note">{children}</div>
     </details>
@@ -131,7 +131,7 @@ export function MetricCard({ label, value, description }: { label: string; value
 export function EmptyPipelineState({ children }: { children: React.ReactNode }) {
   return (
     <div aria-live="polite" className="flex min-h-24 items-center justify-center border-y border-border px-5 py-7 text-center text-sm text-muted-foreground">
-      <Clock3 aria-hidden="true" className="mr-2 size-4" />{children}
+      <AppIcon name="clock" className="mr-2 size-4" />{children}
     </div>
   );
 }

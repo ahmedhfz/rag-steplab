@@ -28,7 +28,14 @@ test("@critical Playground stage rail, provenance ve Source Inspector contractı
   await page.getByRole("button", { name: "Inspect source" }).first().click();
   const dialog = page.getByRole("dialog", { name: "Source inspector" });
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText("Document → Page 1 → Parse element → Chunk → Retrieval/Context → Citation");
+  const provenance = dialog.locator("aside > p").first();
+  await expect(provenance).toContainText("Document");
+  await expect(provenance).toContainText("Page 1");
+  await expect(provenance).toContainText("Parse element");
+  await expect(provenance).toContainText("Chunk");
+  await expect(provenance).toContainText("Retrieval/Context");
+  await expect(provenance).toContainText("Citation");
+  await expect(provenance.locator("svg")).toHaveCount(5);
   await expect(dialog.locator("iframe")).toHaveAttribute("src", /#page=1$/);
   await page.getByRole("button", { name: "Close" }).click();
 

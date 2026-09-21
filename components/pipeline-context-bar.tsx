@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { FileText } from "lucide-react";
 
 import { useDocumentPipeline, type PipelineOperationStatus } from "@/components/document-pipeline-provider";
 import { OperationStatusBadge } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
+import { AppIcon } from "@/components/ui/app-icon";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { RunSummary } from "@/lib/rag-api-types";
 import type { AppLocale } from "@/lib/copy";
@@ -76,7 +76,7 @@ export function PipelineContextBar({ showLineage = true }: { showLineage?: boole
     <section className="border-b border-border bg-card px-4 py-2.5 sm:px-8" data-testid="pipeline-context-bar">
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 min-[1360px]:flex-nowrap">
         <div className="flex min-w-0 max-w-full items-center gap-1.5 sm:w-[14rem] sm:max-w-[14rem] sm:shrink-0">
-          <FileText aria-hidden="true" className="size-4 shrink-0 text-subtle-foreground" />
+          <AppIcon name="document" className="size-4 shrink-0 text-subtle-foreground" />
           <span className="sr-only">{labels.document}</span>
           <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
             <SelectTrigger aria-label={labels.document} className="h-8 min-w-0 max-w-[min(22rem,55vw)] overflow-hidden border-0 px-1 text-xs font-medium text-foreground shadow-none sm:w-[12rem] sm:max-w-[12rem] [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]]:truncate [&_[data-slot=select-value]]:whitespace-nowrap" data-testid="pipeline-context-document-selector" title={documentName ?? (documents.length ? labels.placeholder : labels.noDocument)}>
@@ -96,9 +96,9 @@ export function PipelineContextBar({ showLineage = true }: { showLineage?: boole
         {showLineage ? <nav aria-label={labels.lineage} className="flex min-w-0 flex-wrap items-center gap-1 min-[1360px]:ml-auto min-[1360px]:shrink-0 min-[1360px]:flex-nowrap">
             <span className="sr-only">{labels.lineage}</span>
             <LineageLink href="/parse" label={labels.parse} locale={locale} status={parseStageStatus} />
-            <span aria-hidden="true" className="text-input">→</span>
+            <span aria-hidden="true" className="text-input"><AppIcon name="arrowRight" className="size-3.5" /></span>
             <LineageLink href="/chunking" label={labels.chunk} locale={locale} status={chunkStageStatus} />
-            <span aria-hidden="true" className="text-input">→</span>
+            <span aria-hidden="true" className="text-input"><AppIcon name="arrowRight" className="size-3.5" /></span>
             <LineageLink href="/embeddings" label={labels.embedding} locale={locale} status={embeddingStageStatus} />
             {isHistorical ? <span className="truncate text-[10px] text-warning">({labels.historical})</span> : null}
           </nav> : null}

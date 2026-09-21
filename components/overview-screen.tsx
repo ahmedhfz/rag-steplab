@@ -1,14 +1,13 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, ChevronDown } from "lucide-react";
 import { useState } from "react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { LearningHint, PipelineErrorMessage } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
 import { StatusIndicator } from "@/components/status-indicator";
+import { AppIcon, type SemanticIconName } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -57,17 +56,16 @@ const stageHref: Record<PipelineStepKey, string> = {
   evaluate: "/evaluation",
 };
 
-const journeyAssets: Record<PipelineStepKey, string> = {
-  document: "/assets/figma/overview/documents1.svg",
-  parse: "/assets/figma/overview/parsing1.svg",
-  chunk: "/assets/figma/overview/chunking1.svg",
-  embed: "/assets/figma/overview/embeddings1.svg",
-  index: "/assets/figma/overview/embeddings1.svg",
-  retrieve: "/assets/figma/overview/playground1.svg",
-  rerank: "/assets/figma/overview/evaluation1.svg",
-  context: "/assets/figma/overview/source.svg",
-  generate: "/assets/figma/overview/sparkle.svg",
-  evaluate: "/assets/figma/overview/evaluation1.svg",
+const journeyIcons: Record<JourneyStepKey, SemanticIconName> = {
+  document: "document",
+  parse: "parse",
+  chunk: "chunk",
+  embed: "embed",
+  retrieve: "retrieve",
+  rerank: "rerank",
+  context: "context",
+  generate: "generate",
+  evaluate: "evaluate",
 };
 
 const continuationCopy: Record<AppLocale, Record<OverviewContinuationKind, { action: string; nextStep: string }>> = {
@@ -106,25 +104,14 @@ const selectorItemClass = "h-auto min-h-8 whitespace-normal break-words";
 
 function JourneyGlyph({ stepKey, state }: { stepKey: JourneyStepKey; state: PipelineStepState }) {
   const visual = journeyNodeVisualForState(state);
-  const maskImage = `url("${journeyAssets[stepKey]}")`;
   return (
-    <span
+    <AppIcon
       aria-hidden="true"
-      className="block size-[19px] bg-current"
+      className="size-[19px]"
       data-state={state}
       data-testid={`overview-journey-glyph-${stepKey}`}
-      style={{
-        backgroundColor: visual.iconColor,
-        color: visual.iconColor,
-        maskImage,
-        maskPosition: "center",
-        maskRepeat: "no-repeat",
-        maskSize: "contain",
-        WebkitMaskImage: maskImage,
-        WebkitMaskPosition: "center",
-        WebkitMaskRepeat: "no-repeat",
-        WebkitMaskSize: "contain",
-      }}
+      name={journeyIcons[stepKey]}
+      style={{ color: visual.iconColor }}
     />
   );
 }
@@ -193,7 +180,7 @@ function JourneyNode({
         <JourneyGlyph state={state} stepKey={step.key} />
         {completed ? (
           <span className="absolute -right-1 -top-1 grid size-3.5 place-items-center rounded-full bg-success">
-            <Image alt="" className="theme-success-check" height={9} src="/assets/figma/overview/check.svg" width={9} />
+            <AppIcon name="check" className="size-[9px] text-primary-foreground" />
           </span>
         ) : null}
       </span>
@@ -444,7 +431,7 @@ export function OverviewScreen() {
             <details className="relative self-end" data-testid="pipeline-management">
               <summary className="flex h-[42px] cursor-pointer list-none items-center justify-between gap-3 rounded-[10px] border border-input bg-card px-3 text-xs font-medium text-muted-foreground outline-none hover:border-hover-border hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/25">
                 <span>{labels.managePipeline}</span>
-                <ChevronDown aria-hidden="true" className="size-3.5 text-subtle-foreground" />
+                <AppIcon name="chevronDown" className="size-3.5 text-subtle-foreground" />
               </summary>
               <div className="absolute right-0 z-20 mt-2 flex w-[min(28rem,calc(100vw-4rem))] flex-wrap gap-2 rounded-[10px] border border-border bg-card p-3 shadow-lg">
                 <Button disabled={!activeDocumentId || persistenceStatus !== "available"} onClick={beginCreatePipeline} size="sm" variant="secondary">{labels.newPipeline}</Button>
@@ -464,7 +451,7 @@ export function OverviewScreen() {
               <p className="mt-1 truncate text-xs text-muted-foreground">{labels.nextStep}: <span className="font-medium text-foreground">{continuationText.nextStep}</span></p>
             </div>
             <Button asChild className="h-[42px] min-w-0 gap-2 rounded-[10px] px-4 text-sm" data-testid="overview-continue-action">
-              <Link href={overviewModel.continuation.href}>{continuationText.action}<ArrowRight aria-hidden="true" className="size-4" /></Link>
+              <Link href={overviewModel.continuation.href}>{continuationText.action}<AppIcon name="arrowRight" className="size-4" /></Link>
             </Button>
           </div>
 

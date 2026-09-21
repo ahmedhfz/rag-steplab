@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
 
 import { ChunkingWorkspace, EmbeddingWorkspace } from "@/components/chunks-pipeline";
 import { PipelineContextBar } from "@/components/pipeline-context-bar";
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { usePreferences } from "@/components/preferences-provider";
+import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
 import type { AppLocale } from "@/lib/copy";
 import type { RunSummary } from "@/lib/rag-api-types";
@@ -52,7 +52,7 @@ function ArtifactHistory({
     <section className="mt-8" data-testid={`${kind}-history`}>
       <details className="rounded-[12px] border-[1.712px] border-border bg-card">
         <summary className="flex h-[46px] cursor-pointer list-none items-center justify-between px-4 text-[13px] font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/25 sm:px-5">
-          <span>{title} ({runs.length})</span><span aria-hidden="true" className="text-subtle-foreground">⌄</span>
+          <span>{title} ({runs.length})</span><AppIcon name="chevronDown" className="size-3.5 text-subtle-foreground" />
         </summary>
         <div className="space-y-2 border-t-[1.712px] border-border p-4">
           {runs.map((run) => {
@@ -103,7 +103,7 @@ export function StageNextAction({ href, label, disabled, testId }: { href: strin
   return (
     <footer className="mt-8 flex justify-end border-t border-border pt-5" data-testid={`${testId}-footer`}>
       <Button asChild className="h-[42px] gap-2 rounded-[10px] px-4 text-sm" data-testid={testId}>
-        <Link href={href}>{label}<ArrowRight aria-hidden="true" className="size-4" /></Link>
+        <Link href={href}>{label}<AppIcon name="arrowRight" className="size-4" /></Link>
       </Button>
     </footer>
   );
