@@ -56,7 +56,7 @@ function friendlyAuthError(error: unknown, locale: AppLocale) {
   if (message.includes("email not confirmed")) return tr ? "Devam etmek için e-posta adresinizi doğrulayın." : "Confirm your email address before continuing.";
   if (message.includes("password")) return tr ? "Şifre gereksinimleri karşılanmıyor." : "The password does not meet the requirements.";
   if (message.includes("rate limit") || message.includes("too many")) return tr ? "Çok fazla deneme yapıldı. Biraz sonra tekrar deneyin." : "Too many attempts. Please try again shortly.";
-  return supabaseAuthErrorMessage(error);
+  return supabaseAuthErrorMessage(error, locale);
 }
 
 export function LoginScreen() {
@@ -144,6 +144,7 @@ export function LoginScreen() {
       <section aria-label={labels.form} className="w-full max-w-[360px]">
         <h1 className="text-[24px] font-semibold leading-[29px] tracking-[-0.48px] text-foreground">{title}<span className="sr-only">{titleAccessible}</span></h1>
         <p className="mt-1.5 text-[13px] leading-5 text-muted-foreground">{subtitle}</p>
+        {mode !== "forgot" ? <p className="mt-3 text-[13px] leading-5 text-muted-foreground md:sr-only">{preferences.locale === "tr" ? "PDF'den cevaba: parse, chunk, retrieval ve kaynakları adım adım inceleyin." : "From PDF to answer: inspect parsing, chunks, retrieval, and sources step by step."}</p> : null}
 
         <form aria-describedby="login-status" className="mt-7" onSubmit={submit}>
           <div className="space-y-2">

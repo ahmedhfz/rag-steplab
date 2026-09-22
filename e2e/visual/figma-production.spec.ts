@@ -26,6 +26,7 @@ type VisualState = {
 };
 
 const visualStates: VisualState[] = [
+  { key: "overview-first-use", scenario: "fresh", route: "/", group: "overview" },
   { key: "overview", scenario: "complete", route: "/", group: "overview" },
   { key: "documents-populated", scenario: "documents-populated", route: "/documents", group: "documents" },
   { key: "parsing-result", scenario: "parsing-result", route: "/parse", group: "parsing" },
@@ -183,6 +184,17 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     await assertOverviewGeometry(page, state.theme ?? "light");
     return;
   }
+  if (stateKey === "overview-first-use") {
+    await assertRect(page.getByTestId("figma-overview-main"), { x: 248, y: 0, width: 1193 }, "overview-main");
+    await assertRect(page.getByTestId("figma-overview-header"), { x: 288, y: 40, width: 1113 }, "overview-header");
+    const firstUse = page.getByTestId("overview-first-use");
+    await assertRect(firstUse, { x: 288, width: 1113 }, "overview-first-use");
+    await expect(page.getByTestId("workspace-control-plane")).toHaveCount(0);
+    await expect(firstUse.getByRole("button", { name: "Try a sample PDF" })).toBeVisible();
+    await expect(firstUse.getByRole("link", { name: "Add your own PDF" })).toBeVisible();
+    expect((await rect(page.getByTestId("figma-overview-pipeline"))).y).toBeGreaterThan((await rect(firstUse)).y + (await rect(firstUse)).height);
+    return;
+  }
 
   const rootTestId = state.group === "documents"
     ? "documents-screen"
@@ -268,6 +280,11 @@ async function prepareState(page: Page, state: VisualState) {
   const stateKey = state.canonicalKey ?? state.key;
   await page.setViewportSize(viewport);
   await page.emulateMedia({ colorScheme: state.theme ?? "light", reducedMotion: "reduce" });
+  if (stateKey === "overview-first-use") {
+    await page.goto(state.route, { waitUntil: "networkidle" });
+    await expect(page.getByTestId("overview-first-use")).toBeVisible();
+    return;
+  }
   await page.goto("/parse", { waitUntil: "networkidle" });
   await selectSeededDocument(page);
   await page.goto(state.route, { waitUntil: "networkidle" });

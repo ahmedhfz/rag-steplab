@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -13,6 +13,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { LoginScreen } from "@/components/login-screen";
+import { PreferencesProvider } from "@/components/preferences-provider";
 
 afterEach(() => cleanup());
 
@@ -27,6 +28,19 @@ describe("LoginScreen", () => {
       .toHaveAttribute("href", "/auth/google");
     expect(screen.getByTestId("auth-hero-image")).toHaveAttribute("alt", expect.stringContaining("RAG"));
     expect(screen.queryByText("RAG'inizin her adımını anlayın.")).not.toBeInTheDocument();
+  });
+
+  it("switches the illustration and first-use explanation with the selected language", async () => {
+    const user = userEvent.setup();
+    render(<PreferencesProvider><LoginScreen /></PreferencesProvider>);
+    await user.click(screen.getByRole("button", { name: "TR" }));
+    await waitFor(() => expect(screen.getByTestId("auth-hero-image")).toHaveAttribute("src", expect.stringContaining("login-hero.png")));
+    expect(screen.getByTestId("auth-hero-image")).toHaveAttribute("src", expect.stringContaining("login-hero.png"));
+    expect(screen.getByText(/PDF'den cevaba/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "EN" }));
+    expect(screen.getByTestId("auth-hero-image")).toHaveAttribute("src", expect.stringContaining("login-hero-en.png"));
+    expect(screen.getByText(/From PDF to answer/)).toBeInTheDocument();
   });
 
   it("supports password visibility and maps missing local auth configuration safely", async () => {

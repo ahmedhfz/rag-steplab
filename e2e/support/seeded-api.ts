@@ -15,6 +15,7 @@ const evaluationRunIdB = "e2e-seeded-evaluation-b";
 const pipelineId = "e2e-seeded-pipeline";
 
 export type SeededScenario =
+  | "fresh"
   | "complete"
   | "documents-populated"
   | "parsing-result"
@@ -53,6 +54,7 @@ type ScenarioDefinition = {
 };
 
 const scenarioDefinitions: Record<SeededScenario, ScenarioDefinition> = {
+  fresh: { chunk: false, embedding: false, experiment: null, dataset: false, evaluationCount: 0 },
   complete: { chunk: true, embedding: true, experiment: "generation", dataset: true, evaluationCount: 1 },
   "documents-populated": { chunk: true, embedding: true, experiment: "generation", dataset: true, evaluationCount: 1 },
   "parsing-result": { chunk: false, embedding: false, experiment: null, dataset: false, evaluationCount: 0 },
@@ -490,7 +492,7 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
     }
 
     if (pathname === "/capabilities") return json(route, { embeddingModel: embedding.model, embeddingDimensions: 768, generationModel: experiment.stageResults.generation.model, rerankModel: "gemini-flash-lite-latest", judgeModel: "gemini-flash-lite-latest", embeddingFormatVersion: embedding.embeddingFormatVersion, limits: { maxTopK: 20 } });
-    if (pathname === "/documents" && method === "GET") return json(route, { items: documentDeleted ? [] : [current.document] });
+    if (pathname === "/documents" && method === "GET") return json(route, { items: documentDeleted || scenario === "fresh" ? [] : [current.document] });
     if (pathname === "/documents" && method === "POST") return json(route, { document: current.document, reusedDocument: true }, 200);
     if (pathname === `/documents/${documentId}` && method === "DELETE") {
       documentDeleted = true;
