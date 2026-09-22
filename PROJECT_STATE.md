@@ -13,6 +13,8 @@ dense/keyword/hybrid retrieval; optional reranking; context, generation ve
 citation doğrulaması; dataset tabanlı evaluation ve karşılaştırma uygulanmıştır.
 Doküman kitaplığı, document-scoped saved pipeline'lar, Build aşamaları,
 Playground, Evaluation, auth ve görünüm ayarları arayüzde bulunur.
+İlk kullanımda TR/EN kurgusal örnek PDF, doküman ekleme yolu ve Journey birlikte
+gösterilir; örnek sorular yalnız seçili örnek PDF ile eşleştiğinde görünür.
 
 Vitest, backend pytest, database testleri ve Playwright seeded/auth/visual/full
 profilleri vardır. CI değişen yollara göre gate seçer. Deployment düzeni Vercel
@@ -40,6 +42,12 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
 
 ## Recently Completed
 
+- Takılmış ağır işler için zaman aşımı ve expired retry admission düzeltmesi
+  `51b9459` ile main'e alındı. Bu kayıt kendi başına production release kanıtı değildir.
+- Public-beta UI polish yerel çalışma ağacında: ilk kullanım ve örnek PDF akışı,
+  TR/EN login anlatımı, Build aksiyon/engelleyici metinleri, Playground citation
+  ve Source Inspector kanıt sırası, Evaluation hazırlık durumu. Seeded görsel ve
+  etkileşim doğrulaması gerçek provider kalite kanıtı sayılmaz.
 - Post-release hardening PR #100 (`93d76ac`) ile main'e merge edilip normal
   release workflow'u üzerinden yayımlandı: Next.js security patch'i, production
   dependency audit kapıları, haftalık bounded Dependabot, güvenilmeyen retrieval
@@ -80,20 +88,14 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
 
 ## Current Work
 
-Aktif iş zaman aşımı düzeltmesi yerel çalışma ağacında hazır; henüz yayımlanmadı.
-Admission artık owner-scoped row lock altında süresi dolmuş parse, embedding,
-experiment ve evaluation kayıtlarını sonlandırıyor. Lease'siz eski kayıtlar
-başlangıç/oluşturulma zamanına göre değerlendirilir; geçerli işler korunur.
-Parse polling/yeniden başlatma ve expired retry admission kontrolleri de kapsandı.
-Canlı incelemede bulunan 23 Ağustos tarihli tek takılmış experiment `interrupted`
-durumuna alındı; 21 Eylül kontrolünde dört ağır iş türünde aktif kayıt kalmadı.
-Yerel doğrulama: backend 177 passed / 1 skipped; localhost seeded kritik E2E
-14 passed. Bu sonuçlar yeni kodun production deployment kanıtı değildir.
+Public-beta UI polish yerel feature branch'te tamamlandı; push, merge ve deploy
+yapılmadı. TR/EN, tema, responsive ve seeded visual kontrolleriyle
+doğrulanıyor; hosted provider veya production corpus kalite koşusu yapılmadı.
 
 ## Next
 
-Zaman aşımı düzeltmesini normal PR/release akışıyla yayımlamak; ardından UI/UX
-polish ve normal ürün iterasyonu. Yeni OCR kalite ölçümleri yalnızca
+Tam yerel polish doğrulamasını bitirip değişiklikleri gözden geçirmek; ardından
+normal PR/release kararı ve gerçek kullanıcı geri bildirimi. Yeni OCR kalite ölçümleri yalnızca
 etiketli örnekler ve açık kapsam kararıyla genişletilecek.
 
 ## Open Questions

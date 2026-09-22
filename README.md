@@ -1,6 +1,6 @@
 # RAG StepLab
 
-RAG StepLab, Retrieval-Augmented Generation sistemlerini adım adım öğrenmek ve deneylerle incelemek için geliştirilen görsel, etkileşimli bir learning laboratory projesidir. Bir SaaS veya ürün prototipi değildir.
+RAG StepLab, Retrieval-Augmented Generation sistemlerini adım adım öğrenmek ve deneylerle incelemek için geliştirilen görsel, etkileşimli bir developer tool'dur. Public beta olarak paylaşılabilir; amacı genel amaçlı bir PDF sohbet ürünü olmak değil, RAG kararlarını ve kanıtlarını görünür kılmaktır.
 
 ## Kimler için?
 
@@ -16,6 +16,15 @@ RAG'e yeni başlayan ve parsing'den generation'a kadar pipeline'ın her aşamas�
 - tracing, karşılaştırma ve observability
 
 Amaç yalnızca sonuç üretmek değil; kullanılan ayarların, ara çıktıların ve ölçümlerin sistem davranışını nasıl değiştirdiğini görünür kılmaktır.
+
+## İlk deneme
+
+1. Giriş yapın ve Overview'da **Örnek PDF ile dene** seçeneğini kullanın veya kendi PDF'nizi ekleyin.
+2. Seçili dokümanı **Parse → Chunking → Embeddings** aşamalarında işleyin. Her aşamada gerçek çıktı ve geçmişi inceleyin; **Continue** yalnızca uyumlu çıktı hazırsa görünür.
+3. **Playground**'da soru sorun; retrieval, reranking, context, generation ve citation adımlarını ayrı ayrı görün. Cevaptaki kaynakları **Source Inspector** ile PDF ve çıkarılmış metin üzerinde kontrol edin.
+4. İsterseniz **Evaluation**'da kendi sorularınızı ve beklenen kaynakları içeren bir dataset oluşturup sonuçları karşılaştırın.
+
+TR/EN için depoda dört sayfalık, seçilebilir metin içeren kurgusal kent bisikleti PDF'leri bulunur (`public/samples/`). Örnek sorular yalnızca bu dosyalardan biri gerçekten seçiliyken gösterilir; örnek düğmesi sahte parse, chunk veya cevap üretmez. PDF hesaba eklendikten sonra normal özel depolama ve gerçek pipeline kullanılır. Kendi PDF'nizi yüklemeden önce paylaşım ve gizlilik koşullarını gözden geçirin; hassas belgeleri public beta'da kullanmayın. Parse ve sonraki provider aşamaları servis erişimi gerektirir ve kullanım maliyeti doğurabilir.
 
 ## Mevcut durum
 
@@ -156,7 +165,7 @@ npm run e2e:report
 npm run e2e:fixture
 ```
 
-Fast fixture iki sayfalı küçük bir sentetik PDF'tir ve `ORBIT-731` marker'ı, heading, liste, tablo, page provenance ve citation akışını sabit tutar. Failure halinde HTML report, trace, screenshot ve video `output/playwright/` altında bulunur.
+Fast E2E fixture iki sayfalı küçük bir sentetik PDF'tir ve `ORBIT-731` marker'ı, heading, liste, tablo, page provenance ve citation akışını sabit tutar. Bu test fixture'ı kullanıcıya sunulan dört sayfalık örnek PDF'lerden ayrıdır. Failure halinde HTML report, trace, screenshot ve video `output/playwright/` altında bulunur.
 
 Gerçek full koşuyu yerelde yalnız açık production cleanup kilidiyle başlatın:
 

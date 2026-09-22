@@ -21,7 +21,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "RAG StepLab",
-  description: "A local learning interface for understanding RAG systems.",
+  description: "Explore each RAG stage, inspect source evidence, and compare real pipeline results in a hands-on learning lab.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
