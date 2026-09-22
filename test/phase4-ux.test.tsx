@@ -41,7 +41,7 @@ describe("Phase 6B pipeline IA", () => {
     renderWithPipeline(<ParseScreen />);
     expect(screen.getByRole("heading", { name: "Parsing", level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Parse" })).toBeDisabled();
-    await waitFor(() => expect(screen.getAllByText("Select a persisted document before parsing.").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("Select a document before parsing.").length).toBeGreaterThan(0));
 
     cleanup();
     renderWithPipeline(<ChunkingScreen />);

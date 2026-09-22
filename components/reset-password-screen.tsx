@@ -29,7 +29,7 @@ export function ResetPasswordScreen() {
       if (error) throw error;
       router.replace("/");
     } catch (error) {
-      setStatus(supabaseAuthErrorMessage(error));
+      setStatus(supabaseAuthErrorMessage(error, preferences.locale));
     } finally {
       setBusy(false);
     }

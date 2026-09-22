@@ -51,7 +51,7 @@ test("seeded state reload sonrası korunur ve responsive gezinme çalışır", a
   await expect(page.getByTestId("document-library-table")).toBeHidden();
   const mobileDocument = page.getByTestId("document-library-mobile-item").first();
   await expect(mobileDocument).toBeVisible();
-  await expect(mobileDocument.getByRole("button", { name: "Open document: e2e-seeded-golden.pdf" })).toBeVisible();
+  await expect(mobileDocument.getByRole("button", { name: "Select document: e2e-seeded-golden.pdf" })).toBeVisible();
   await mobileDocument.locator("summary").click();
   await expect(mobileDocument.getByRole("link", { name: "Open parsed content" })).toBeVisible();
   await mobileDocument.locator("summary").click();

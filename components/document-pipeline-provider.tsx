@@ -168,7 +168,7 @@ type DocumentPipelineContextValue = {
   selectPipeline: (pipelineId: string | null) => Promise<void>;
   createPipeline: (name: string) => Promise<DocumentPipeline | null>;
   renamePipeline: (pipelineId: string, name: string) => Promise<DocumentPipeline | null>;
-  deletePipeline: (pipelineId: string) => Promise<void>;
+  deletePipeline: (pipelineId: string) => Promise<boolean>;
   removeFile: () => void;
   parseSelectedFile: () => Promise<void>;
   reparseActiveDocument: () => Promise<void>;
@@ -1630,7 +1630,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
 
   const deletePipeline = useCallback(async (pipelineId: string) => {
     const current = pipelines.find((item) => item.id === pipelineId);
-    if (!current) return;
+    if (!current) return false;
     try {
       await deleteDocumentPipeline(pipelineId);
       setPersistenceError(null);
@@ -1643,8 +1643,10 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         setActivePipelineId(null);
         rememberActivePipeline(null, authUserId, activePipeline.documentId);
       }
+      return true;
     } catch (error) {
       setPersistenceError(asApiError(error, "Pipeline could not be deleted."));
+      return false;
     }
   }, [authUserId, pipelines, rememberSelection, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId]);
 
