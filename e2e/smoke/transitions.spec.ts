@@ -7,7 +7,7 @@ for (const reducedMotion of ["no-preference", "reduce"] as const) {
     await page.emulateMedia({ reducedMotion });
     await installSeededApi(page);
     await page.goto("/settings");
-    await page.getByLabel("Dark", { exact: true }).click();
+    await page.getByText("Dark", { exact: true }).click();
     await expect(page.getByLabel("Dark", { exact: true })).toBeChecked();
     const pill = page.getByRole("radiogroup", { name: "Theme" }).locator(".t-tabs-pill");
     await expect(pill).toBeVisible();

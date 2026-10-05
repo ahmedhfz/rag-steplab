@@ -1,6 +1,6 @@
 "use client";
 
-import { IconSwap, TransitionText } from "@/components/ui/transitions";
+import { IconSwap, TransitionForm, TransitionText } from "@/components/ui/transitions";
 
 import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore } from "react";
@@ -149,7 +149,7 @@ export function LoginScreen() {
         <h1 className="text-[24px] font-semibold leading-[29px] tracking-[-0.48px] text-foreground">{title}<span className="sr-only">{titleAccessible}</span></h1>
         <p className="mt-1.5 text-[13px] leading-5 text-muted-foreground">{subtitle}</p>
 
-        <form aria-describedby="login-status" className="t-resize steplab-form mt-7" onSubmit={submit}>
+        <TransitionForm aria-describedby="login-status" className="mt-7" onSubmit={submit}>
           <div className="space-y-2">
             <label className="flex items-center justify-between text-[13px] font-medium leading-[19px] text-foreground" htmlFor="login-email">
               <span>{labels.email}</span>
@@ -171,7 +171,7 @@ export function LoginScreen() {
           </div> : null}
 
           <Button className="mt-6 h-[43px] w-full rounded-[10px] bg-foreground text-[13px] font-medium text-primary-foreground hover:bg-strong-hover" disabled={busy} type="submit"><TransitionText>{busy ? labels.wait : submitLabel}</TransitionText>{mode === "signin" && !busy ? <AppIcon name="arrowRight" className="size-4" /> : null}</Button>
-        </form>
+        </TransitionForm>
 
         {mode === "signin" ? <>
           <div className="my-6 flex items-center gap-3 text-[11px] text-subtle-foreground"><span aria-hidden="true" className="h-px flex-1 bg-border" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-border" /></div>
@@ -191,4 +191,3 @@ export function LoginScreen() {
     </AuthShell>
   );
 }
-
