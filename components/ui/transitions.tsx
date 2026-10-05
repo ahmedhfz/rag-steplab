@@ -1,6 +1,6 @@
 "use client";
 
-import { Children, cloneElement, createElement, isValidElement, useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type HTMLAttributes, type ReactNode, type RefObject } from "react";
+import { Children, cloneElement, isValidElement, useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type HTMLAttributes, type ReactNode, type RefObject } from "react";
 
 import { cn } from "@/lib/utils";
 import { enterTransition, reduceTransitions, revealPanel, transitionMs } from "@/lib/transitions";
@@ -53,15 +53,17 @@ export function SuccessCheck({ className }: { className?: string }) {
 
 /** Never retain a previous run/document merely to animate its exit. */
 export function TransitionPanel({ children, className, transitionKey, as = "div", ...props }: HTMLAttributes<HTMLElement> & { transitionKey?: string | number | null; as?: "div" | "section" | "article" | "span" }) {
-  const ref = useRef<HTMLElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  const Tag = as;
   useLayoutEffect(() => {
     if (ref.current) revealPanel(ref.current);
   }, [transitionKey]);
-  return createElement(as, { ...props, className: cn("t-panel-slide steplab-panel", className), "data-open": "true", ref }, children);
+  return <Tag {...props} className={cn("t-panel-slide steplab-panel", className)} data-open="true" ref={ref}>{children}</Tag>;
 }
 
 /** Closing retains only the surface, with interaction disabled immediately. */
 export function TransitionSurface({ open, kind, children, className, as = "div", surfaceRef, ...props }: HTMLAttributes<HTMLElement> & { open: boolean; kind: "modal" | "dropdown" | "panel"; as?: "div" | "aside"; surfaceRef?: RefObject<HTMLElement | null>; "data-origin"?: string }) {
+  const Tag = as;
   const [present, setPresent] = useState(open);
   const ref = useRef<HTMLElement>(null);
   if (open && !present) setPresent(true);
@@ -83,7 +85,7 @@ export function TransitionSurface({ open, kind, children, className, as = "div",
     return () => clearTimeout(timer);
   }, [open, kind, present]);
   if (!open && !present) return null;
-  return createElement(as, { ...props, ref: (element: HTMLElement | null) => { ref.current = element; if (surfaceRef) surfaceRef.current = element; }, className: cn(kind === "panel" ? "t-panel-slide steplab-panel" : `t-${kind}`, className) }, children);
+  return <Tag {...props} inert={!open} ref={(element) => { ref.current = element; if (surfaceRef) surfaceRef.current = element; }} className={cn(kind === "panel" ? "t-panel-slide steplab-panel" : `t-${kind}`, className)}>{children}</Tag>;
 }
 
 /** Native summary keyboard behaviour is retained, including controlled open. */
@@ -100,7 +102,7 @@ export function TransitionDetails({ children, className, open, onToggle, variant
     ? cloneElement(summary, { className: cn(summary.props.className, "t-acc-head") }, Children.map(summary.props.children, (child) => isValidElement<{ name?: string; className?: string }>(child) && child.props.name === "chevronDown" ? cloneElement(child, { className: cn(child.props.className, "t-acc-chevron") }) : child)) : summary;
   return <details {...props} className={cn("steplab-disclosure", variant === "accordion" && "t-acc", className)} data-open={String(expanded)} open={expanded} onToggle={(event) => {
     const next = event.currentTarget.open;
-    const panel = panelRef.current;
+    const panel = variant === "dropdown" ? event.currentTarget.querySelector<HTMLDivElement>(".t-dropdown") : panelRef.current;
     if (panel && variant === "dropdown") {
       if (cleanupTimer.current) clearTimeout(cleanupTimer.current);
       panel.classList.remove("is-open", "is-closing");
@@ -116,7 +118,7 @@ export function TransitionDetails({ children, className, open, onToggle, variant
     onToggle?.(event);
   }}>{header}{variant === "accordion"
     ? <div className="t-acc-panel" inert={!expanded} ref={panelRef}><div className="t-acc-panel-inner">{nodes.slice(1)}</div></div>
-    : <div inert={!expanded}>{nodes.slice(1).map((node, index) => isValidElement<HTMLAttributes<HTMLElement>>(node) ? cloneElement(node, { className: cn(node.props.className, "t-dropdown", expanded && "is-open", closing && "is-closing"), "data-origin": "top-right", ref: panelRef } as HTMLAttributes<HTMLElement>, node.props.children) : <span key={index}>{node}</span>)}</div>}
+    : <div inert={!expanded}>{nodes.slice(1).map((node, index) => isValidElement<HTMLAttributes<HTMLElement>>(node) ? cloneElement(node, { className: cn(node.props.className, "t-dropdown", expanded && "is-open", closing && "is-closing"), "data-origin": "top-right" } as HTMLAttributes<HTMLElement>, node.props.children) : <span key={index}>{node}</span>)}</div>}
   </details>;
 }
 

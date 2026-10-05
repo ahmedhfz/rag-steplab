@@ -3,7 +3,7 @@
 import { TransitionDetails, TransitionText } from "@/components/ui/transitions";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { TransitionDialogContent } from "@/components/ui/transition-surface";
 
@@ -51,6 +51,7 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
   const { documents, activeDocumentId, persistenceStatus, persistenceError, selectPersistedDocument, deletePersistedDocument } = useDocumentPipeline();
   const [documentPendingDelete, setDocumentPendingDelete] = useState<PersistedDocument | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const deleteOrigin = useRef<HTMLElement | null>(null);
   const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const labels = locale === "tr"
@@ -108,6 +109,7 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
       };
 
   const requestDelete = (document: PersistedDocument) => {
+    deleteOrigin.current = window.document.activeElement instanceof HTMLElement ? window.document.activeElement : null;
     setDeleteError(null);
     setDocumentPendingDelete(document);
     setDeleteDialogOpen(true);
@@ -242,7 +244,7 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                   {documentPendingDelete ? (
                     <DialogPrimitive.Portal>
                       <DialogPrimitive.Overlay className="steplab-overlay fixed inset-0 z-50 bg-overlay/35 dark:bg-overlay/65" data-testid="delete-document-overlay" />
-                      <TransitionDialogContent onCloseAutoFocus={() => { setDocumentPendingDelete(null); setDeleteError(null); }} className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-border bg-card p-5 shadow-2xl focus:outline-none sm:p-6" data-testid="delete-document-dialog">
+                      <TransitionDialogContent onCloseAutoFocus={(event) => { if (deleteOrigin.current?.isConnected) { event.preventDefault(); deleteOrigin.current.focus(); } setDocumentPendingDelete(null); setDeleteError(null); }} className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-border bg-card p-5 shadow-2xl focus:outline-none sm:p-6" data-testid="delete-document-dialog">
                         <div className="flex items-start justify-between gap-4">
                           <DialogPrimitive.Title className="text-base font-semibold text-foreground">{labels.deleteTitle}</DialogPrimitive.Title>
                           <DialogPrimitive.Close asChild>

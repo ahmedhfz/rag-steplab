@@ -12,7 +12,7 @@ export function useRadixTransition(ref: RefObject<HTMLDivElement | null>, kind: 
     if (!element) return;
     const sync = () => {
       const closing = element.dataset.state === "closed";
-      element.inert = closing;
+      element.toggleAttribute("inert", closing);
       element.classList.remove("is-open", "is-closing");
       if (!closing) void element.offsetWidth;
       element.classList.add(closing ? "is-closing" : "is-open");
