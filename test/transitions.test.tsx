@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SlidingTabs, TransitionDetails, TransitionPanel, TransitionSurface, TransitionText } from "@/components/ui/transitions";
 import { transitionMs } from "@/lib/transitions";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 afterEach(() => { cleanup(); vi.useRealTimers(); document.documentElement.style.removeProperty("--panel-close-dur"); });
 
@@ -77,5 +78,18 @@ describe("transitions.dev state adapters", () => {
     expect(transitionMs("--panel-close-dur", 150)).toBe(350);
     document.documentElement.style.setProperty("--panel-close-dur", "250ms");
     expect(transitionMs("--panel-close-dur", 150)).toBe(250);
+  });
+
+  it("attaches dropdown motion when an initially closed Radix select mounts its portal", async () => {
+    render(<Select defaultValue="a"><SelectTrigger aria-label="Document"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="a">First</SelectItem><SelectItem value="b">Second</SelectItem></SelectContent></Select>);
+    const trigger = screen.getByRole("combobox", { name: "Document" });
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    const list = await screen.findByRole("listbox");
+    expect(list).toHaveClass("t-dropdown", "is-open");
+    expect(list).not.toHaveAttribute("inert");
+    fireEvent.keyDown(list, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("listbox")).not.toBeInTheDocument());
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    expect(await screen.findByRole("listbox")).toHaveClass("is-open");
   });
 });
