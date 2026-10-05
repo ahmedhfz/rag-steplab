@@ -1,6 +1,7 @@
 "use client";
 
-import { motion } from "motion/react";
+import { IconSwap, SuccessCheck, TransitionText } from "@/components/ui/transitions";
+
 
 import { usePreferences } from "@/components/preferences-provider";
 import { AppIcon } from "@/components/ui/app-icon";
@@ -20,29 +21,10 @@ const stateStyles: Record<PipelineStepState, string> = {
 };
 
 function StateIcon({ state }: { state: PipelineStepState }) {
-  if (state === "Completed") {
-    return (
-      <motion.span
-        animate={{ opacity: 1, scale: 1 }}
-        initial={{ opacity: 0, scale: 0.7 }}
-        transition={{ type: "spring", stiffness: 480, damping: 22 }}
-      >
-        <AppIcon name="completed" className="size-4" />
-      </motion.span>
-    );
-  }
+  if (state === "Completed") return <SuccessCheck className="size-4" />;
   if (state === "Not started") return <AppIcon name="circle" className="size-4" />;
   if (state === "Ready") return <AppIcon name="ready" className="size-4" />;
-  if (state === "Processing") {
-    return (
-      <motion.span
-        animate={{ rotate: 360 }}
-        transition={{ duration: 0.9, ease: "linear", repeat: Infinity }}
-      >
-        <AppIcon name="loading" className="size-4" />
-      </motion.span>
-    );
-  }
+  if (state === "Processing") return <AppIcon name="loading" className="size-4 animate-spin" />;
   if (state === "Error") return <AppIcon name="warning" className="size-4" />;
   if (state === "Skipped") return <AppIcon name="minus" className="size-4" />;
   if (state === "Stale") return <AppIcon name="history" className="size-4" />;
@@ -54,8 +36,9 @@ export function StatusIndicator({ state, compact = false }: { state: PipelineSte
   const copy = UI_COPY[preferences.locale];
   return (
     <span className={cn("inline-flex items-center gap-1.5 text-xs font-medium", stateStyles[state])}>
-      <StateIcon key={state} state={state} />
-      {!compact && copy.status[state]}
+      <IconSwap active={state === "Completed"} first={<StateIcon state={state === "Completed" ? "Ready" : state} />} second={state === "Completed" ? <SuccessCheck className="size-4" /> : null} />
+      {!compact && <TransitionText>{copy.status[state]}</TransitionText>}
     </span>
   );
 }
+

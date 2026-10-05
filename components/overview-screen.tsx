@@ -1,5 +1,7 @@
 "use client";
 
+import { TransitionDetails, TransitionPanel, TransitionText } from "@/components/ui/transitions";
+
 import Link from "next/link";
 import { useState } from "react";
 
@@ -428,7 +430,7 @@ export function OverviewScreen() {
                     <SelectContent>{pipelines.map((pipeline) => <SelectItem className={selectorItemClass} key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-            <details className="relative self-end" data-testid="pipeline-management">
+            <TransitionDetails className="relative self-end" data-testid="pipeline-management" variant="dropdown">
               <summary className="flex h-[42px] cursor-pointer list-none items-center justify-between gap-3 rounded-[10px] border border-input bg-card px-3 text-xs font-medium text-muted-foreground outline-none hover:border-hover-border hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/25">
                 <span>{labels.managePipeline}</span>
                 <AppIcon name="chevronDown" className="size-3.5 text-subtle-foreground" />
@@ -439,7 +441,7 @@ export function OverviewScreen() {
                 <Button disabled={!activePipeline} onClick={beginRenamePipeline} size="sm" variant="outline">{labels.rename}</Button>
                 <Button disabled={!activePipeline} onClick={() => { setEditing(null); setConfirmDelete(true); }} size="sm" variant="ghost">{labels.remove}</Button>
               </div>
-            </details>
+            </TransitionDetails>
           </div>
 
           <div className="mt-3.5 grid min-w-0 gap-3 border-t border-border pt-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" data-testid="continue-surface">
@@ -448,7 +450,7 @@ export function OverviewScreen() {
                 <p className="text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.66px] text-subtle-foreground">{labels.continueTitle}</p>
                 <StatusIndicator state={overviewModel.continuation.state} />
               </div>
-              <p className="mt-1 truncate text-xs text-muted-foreground">{labels.nextStep}: <span className="font-medium text-foreground">{continuationText.nextStep}</span></p>
+              <p className="mt-1 truncate text-xs text-muted-foreground">{labels.nextStep}: <span className="font-medium text-foreground"><TransitionText>{continuationText.nextStep}</TransitionText></span></p>
             </div>
             <Button asChild className="h-[42px] min-w-0 gap-2 rounded-[10px] px-4 text-sm" data-testid="overview-continue-action">
               <Link href={overviewModel.continuation.href}>{continuationText.action}<AppIcon name="arrowRight" className="size-4" /></Link>
@@ -456,23 +458,23 @@ export function OverviewScreen() {
           </div>
 
           {editing ? (
-            <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-border pt-4" data-testid="pipeline-name-editor">
+            <TransitionPanel className="mt-4 flex flex-wrap items-end gap-2 border-t border-border pt-4" data-testid="pipeline-name-editor">
               <label className="sr-only" htmlFor="overview-pipeline-name">{labels.namePlaceholder}</label>
               <Input autoFocus className="max-w-sm" id="overview-pipeline-name" maxLength={100} onChange={(event) => setPipelineName(event.target.value)} placeholder={labels.namePlaceholder} value={pipelineName} />
               <Button disabled={!pipelineName.trim()} onClick={() => void savePipelineName()} size="sm">{labels.save}</Button>
               <Button onClick={() => setEditing(null)} size="sm" variant="ghost">{labels.cancel}</Button>
-            </div>
+            </TransitionPanel>
           ) : null}
 
           {confirmDelete && activePipeline ? (
-            <div aria-describedby="delete-pipeline-description" aria-labelledby="delete-pipeline-title" aria-modal="true" className="mt-4 rounded-[10px] border border-warning-border bg-warning-subtle p-4" data-testid="delete-pipeline-dialog" role="dialog">
+            <TransitionPanel aria-describedby="delete-pipeline-description" aria-labelledby="delete-pipeline-title" aria-modal="true" className="mt-4 rounded-[10px] border border-warning-border bg-warning-subtle p-4" data-testid="delete-pipeline-dialog" role="dialog">
               <h2 className="text-sm font-semibold" id="delete-pipeline-title">{labels.remove}</h2>
               <p className="mt-1 text-sm text-muted-foreground" id="delete-pipeline-description">{labels.confirmDelete}</p>
               <div className="mt-3 flex gap-2">
                 <Button onClick={() => setConfirmDelete(false)} size="sm" variant="outline">{labels.cancel}</Button>
                 <Button onClick={() => { void deletePipeline(activePipeline.id); setConfirmDelete(false); }} size="sm" variant="destructive">{labels.remove}</Button>
               </div>
-            </div>
+            </TransitionPanel>
           ) : null}
 
           {activeDocumentId && !activePipeline ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{labels.noActivePipeline}</p> : null}
@@ -508,3 +510,4 @@ export function OverviewScreen() {
     </div>
   );
 }
+

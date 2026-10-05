@@ -1,6 +1,7 @@
 "use client";
 
-import { motion } from "motion/react";
+import { SuccessCheck, TransitionDetails, TransitionPanel, TransitionText } from "@/components/ui/transitions";
+
 
 import { Badge } from "@/components/ui/badge";
 import { AppIcon } from "@/components/ui/app-icon";
@@ -27,7 +28,7 @@ const statusStyles: Record<PipelineOperationStatus, string> = {
 
 function StatusIcon({ status }: { status: PipelineOperationStatus }) {
   if (status === "processing") return <AppIcon name="loading" className="size-3 animate-spin" />;
-  if (status === "completed") return <AppIcon name="completed" className="size-3" />;
+  if (status === "completed") return <SuccessCheck className="size-3" />;
   if (status === "skipped") return <AppIcon name="minus" className="size-3" />;
   if (status === "error") return <AppIcon name="warning" className="size-3" />;
   if (status === "stale") return <AppIcon name="history" className="size-3" />;
@@ -39,7 +40,7 @@ export function OperationStatusBadge({ status, locale }: { status: PipelineOpera
   return (
     <Badge className={cn("gap-1 rounded-md font-medium", statusStyles[status])} variant="outline">
       <StatusIcon status={status} />
-      {statusCopy[locale][status]}
+      <TransitionText>{statusCopy[locale][status]}</TransitionText>
     </Badge>
   );
 }
@@ -58,11 +59,8 @@ export function StageSection({
   children: React.ReactNode;
 }) {
   return (
-    <motion.section
-      animate={{ opacity: 1, y: 0 }}
+    <TransitionPanel as="section"
       className="border-t border-border px-4 py-7 sm:px-8"
-      initial={{ opacity: 0, y: 4 }}
-      transition={{ duration: 0.16, ease: "easeOut" }}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -72,7 +70,7 @@ export function StageSection({
         <OperationStatusBadge locale={locale} status={status} />
       </div>
       <div className="mt-5">{children}</div>
-    </motion.section>
+    </TransitionPanel>
   );
 }
 
@@ -83,13 +81,13 @@ export function RunMetadata({ run, locale }: { run: RunSummary; locale: AppLocal
   const upstream = Object.entries(run.upstream).filter((entry): entry is [string, string] => Boolean(entry[1]));
   return (
     <div className="grid gap-3 border border-border bg-technical p-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
-      <div><div className="text-subtle-foreground">{labels.run}</div><div className="mt-1 font-medium text-foreground">{run.status === "completed" ? labels.compatible : run.status}</div><details className="mt-2"><summary className="cursor-pointer text-[10px] text-muted-foreground">{locale === "tr" ? "Teknik kimlik" : "Technical ID"}</summary><p className="mt-1 break-all font-mono text-[10px] text-muted-foreground">{run.id}</p></details></div>
+      <div><div className="text-subtle-foreground">{labels.run}</div><div className="mt-1 font-medium text-foreground">{run.status === "completed" ? labels.compatible : run.status}</div><TransitionDetails className="mt-2"><summary className="cursor-pointer text-[10px] text-muted-foreground">{locale === "tr" ? "Teknik kimlik" : "Technical ID"}</summary><p className="mt-1 break-all font-mono text-[10px] text-muted-foreground">{run.id}</p></TransitionDetails></div>
       <div><div className="text-subtle-foreground">{labels.duration}</div><div className="mt-1 font-medium text-foreground">{run.timing.durationMs === null ? "—" : `${run.timing.durationMs} ms`}</div></div>
-      <div><div className="text-subtle-foreground">{labels.lineage}</div><div className="mt-1 text-foreground">{upstream.length ? `${upstream.length} ${locale === "tr" ? "üst akış çıktısı" : `upstream output${upstream.length === 1 ? "" : "s"}`}` : "—"}</div><details className="mt-2"><summary className="cursor-pointer text-[10px] text-muted-foreground">{locale === "tr" ? "Kaynakları göster" : "Show sources"}</summary><div className="mt-1 space-y-1 break-all font-mono text-[10px] text-muted-foreground">{upstream.length ? upstream.map(([key, value]) => <div key={key}>{key}: {value}</div>) : "—"}</div></details></div>
-      <details>
+      <div><div className="text-subtle-foreground">{labels.lineage}</div><div className="mt-1 text-foreground">{upstream.length ? `${upstream.length} ${locale === "tr" ? "üst akış çıktısı" : `upstream output${upstream.length === 1 ? "" : "s"}`}` : "—"}</div><TransitionDetails className="mt-2"><summary className="cursor-pointer text-[10px] text-muted-foreground">{locale === "tr" ? "Kaynakları göster" : "Show sources"}</summary><div className="mt-1 space-y-1 break-all font-mono text-[10px] text-muted-foreground">{upstream.length ? upstream.map(([key, value]) => <div key={key}>{key}: {value}</div>) : "—"}</div></TransitionDetails></div>
+      <TransitionDetails>
         <summary className="cursor-pointer font-medium text-muted-foreground">{labels.config}</summary>
         <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-5 text-muted-foreground">{JSON.stringify(run.config, null, 2)}</pre>
-      </details>
+      </TransitionDetails>
       {!run.isCompatible && <p className="text-warning sm:col-span-2 lg:col-span-4" role="status"><AppIcon name="history" className="mr-1 inline size-3.5" />{labels.incompatible}</p>}
     </div>
   );
@@ -99,13 +97,13 @@ export function LearningHint({ locale, children }: { locale: AppLocale; children
   const { preferences } = usePreferences();
   if (!preferences.showLearningHints) return null;
   return (
-    <details className="rounded-[10px] border border-brand-subtle bg-accent">
+    <TransitionDetails className="rounded-[10px] border border-brand-subtle bg-accent">
       <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-accent-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/25">
         <span>{locale === "tr" ? "Bu neden önemli?" : "Why this matters"}</span>
         <AppIcon name="chevronDown" className="size-3.5 shrink-0 text-subtle-foreground" />
       </summary>
       <div className="border-t border-brand-subtle px-3 py-2 text-xs leading-5 text-accent-foreground/75" role="note">{children}</div>
-    </details>
+    </TransitionDetails>
   );
 }
 
@@ -135,3 +133,4 @@ export function EmptyPipelineState({ children }: { children: React.ReactNode }) 
     </div>
   );
 }
+

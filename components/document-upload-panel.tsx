@@ -1,5 +1,7 @@
 "use client";
 
+import { IconSwap } from "@/components/ui/transitions";
+
 import { useRef, useState } from "react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
@@ -7,6 +9,7 @@ import { usePreferences } from "@/components/preferences-provider";
 import { AppIcon } from "@/components/ui/app-icon";
 import { type AppCopy, UI_COPY } from "@/lib/copy";
 import { formatDocumentFileSize, validatePdfFile, type DocumentFileValidationError } from "@/lib/document-file";
+import { shakeValidation } from "@/lib/transitions";
 import { cn } from "@/lib/utils";
 
 function validationMessage(error: DocumentFileValidationError, copy: AppCopy["overview"]) {
@@ -18,6 +21,7 @@ export function DocumentUploadPanel() {
   const { preferences } = usePreferences();
   const copy = UI_COPY[preferences.locale];
   const { addDocument } = useDocumentPipeline();
+  const dropRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [validationError, setValidationError] = useState<DocumentFileValidationError | null>(null);
@@ -36,7 +40,7 @@ export function DocumentUploadPanel() {
     setSelectedFile(nextFile);
     setValidationError(nextValidationError);
     setSubmitError(null);
-    if (nextValidationError) return;
+    if (nextValidationError) { shakeValidation(dropRef.current); return; }
 
     setIsSubmitting(true);
     try {
@@ -61,6 +65,7 @@ export function DocumentUploadPanel() {
           isSubmitting && "cursor-wait",
         )}
         data-testid="pdf-drop-zone"
+        ref={dropRef}
         onClick={() => { if (!isSubmitting) fileInputRef.current?.click(); }}
         onDragEnter={(event) => { event.preventDefault(); if (!isSubmitting) setDragActive(true); }}
         onDragLeave={(event) => { event.preventDefault(); if (event.currentTarget === event.target) setDragActive(false); }}
@@ -69,7 +74,7 @@ export function DocumentUploadPanel() {
         type="button"
       >
         <span className="grid size-10 place-items-center rounded-[12px] bg-card text-brand shadow-[0_1px_1.5px_rgba(0,0,0,0.08)]">
-          {isSubmitting ? <AppIcon name="loading" className="size-[22px] animate-spin" /> : <AppIcon name="upload" className="size-[22px]" />}
+          <IconSwap active={isSubmitting} first={<AppIcon name="upload" className="size-[22px]" />} second={<AppIcon name="loading" className="size-[22px] animate-spin" />} />
         </span>
         <span className="mt-3 text-[15px] font-medium leading-[22.5px] text-foreground">
           {isSubmitting
@@ -102,3 +107,4 @@ export function DocumentUploadPanel() {
     </div>
   );
 }
+

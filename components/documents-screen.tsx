@@ -1,8 +1,9 @@
 "use client";
 
+import { SlidingTabs, TransitionDetails, TransitionNumber, TransitionPanel } from "@/components/ui/transitions";
+
 import Link from "next/link";
 import { useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { DocumentUploadPanel } from "@/components/document-upload-panel";
@@ -49,15 +50,11 @@ export function ParseRunSelector({ locale }: { locale: "en" | "tr" }) {
 
 function EmptyState({ children }: { children: React.ReactNode }) {
   return (
-    <motion.div
-      animate={{ opacity: 1, y: 0 }}
-      aria-live="polite"
+    <TransitionPanel aria-live="polite"
       className="flex min-h-32 items-center justify-center border-y border-border px-6 py-8 text-center text-sm text-muted-foreground"
-      initial={{ opacity: 0, y: 5 }}
-      transition={{ duration: 0.18, ease: "easeOut" }}
     >
       {children}
-    </motion.div>
+    </TransitionPanel>
   );
 }
 
@@ -71,25 +68,19 @@ export function SummaryGrid({ copy, result }: { copy: AppCopy["documents"]; resu
   ] as const;
 
   return (
-    <motion.dl
-      animate={{ opacity: 1, y: 0 }}
+    <dl
       className="grid grid-cols-2 gap-3 sm:grid-cols-5"
-      initial={{ opacity: 0, y: 5 }}
-      transition={{ duration: 0.18, ease: "easeOut" }}
     >
-      {fields.map(([label, value], index) => (
-        <motion.div
-          animate={{ opacity: 1, y: 0 }}
+      {fields.map(([label, value]) => (
+        <TransitionPanel
           className="rounded-[10px] border border-border bg-card px-3 py-2"
-          initial={{ opacity: 0, y: 5 }}
           key={label}
-          transition={{ duration: 0.16, delay: index * 0.035, ease: "easeOut" }}
         >
           <dt className="text-[11px] text-subtle-foreground">{label}</dt>
-          <dd className="mt-1 text-lg font-semibold">{value}</dd>
-        </motion.div>
+          <dd className="mt-1 text-lg font-semibold"><TransitionNumber>{value}</TransitionNumber></dd>
+        </TransitionPanel>
       ))}
-    </motion.dl>
+    </dl>
   );
 }
 
@@ -165,16 +156,11 @@ function TableElement({ element }: { element: ParsedElement }) {
   );
 }
 
-function StructuredElement({ copy, element, index }: { copy: AppCopy["documents"]; element: ParsedElement; index: number }) {
+function StructuredElement({ copy, element }: { copy: AppCopy["documents"]; element: ParsedElement }) {
   const { preferences } = usePreferences();
   return (
-    <motion.article
-      animate={{ opacity: 1, x: 0 }}
+    <TransitionPanel as="article" transitionKey={element.id}
       className="border-b border-border px-4 py-5 last:border-b-0 sm:px-6"
-      exit={{ opacity: 0, x: -5 }}
-      initial={{ opacity: 0, x: 5 }}
-      layout
-      transition={{ duration: 0.18, delay: index * 0.035, ease: "easeOut" }}
     >
       <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
         <span className="rounded-md border border-border bg-technical px-2 py-1">{copy.elementTypes[element.type]}</span>
@@ -188,7 +174,7 @@ function StructuredElement({ copy, element, index }: { copy: AppCopy["documents"
         <p className="whitespace-pre-wrap text-sm leading-6 text-foreground">{element.text}</p>
       )}
       <OcrSourceDetails element={element} locale={preferences.locale} />
-    </motion.article>
+    </TransitionPanel>
   );
 }
 
@@ -262,7 +248,7 @@ function ContentOutline({ copy, entries, selectedId, onSelect }: { copy: AppCopy
                 style={{ paddingLeft: entry.level ? `${Math.min(entry.level, 4) * 0.75 + 0.75}rem` : undefined }}
                 type="button"
               >
-                {selected ? <motion.span aria-hidden="true" className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-brand" layoutId="parsed-outline-active" transition={{ type: "spring", stiffness: 500, damping: 35 }} /> : null}
+                {selected ? <TransitionPanel as="span" aria-hidden="true" className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-brand" transitionKey={selectedId} /> : null}
                 <span className="block truncate">{entry.label}</span>
                 {entry.pageNumber !== null ? <span className="mt-1 block text-[10px] text-subtle-foreground">{copy.page} {entry.pageNumber}</span> : null}
               </button>
@@ -284,9 +270,9 @@ function StructuredSectionInspector({ copy, elements }: { copy: AppCopy["documen
         <h3 className="mt-1 text-base font-semibold text-foreground">{copy.parsedElements}</h3>
         <p className="mt-1 text-xs text-muted-foreground">{elements.length} {copy.pageElements}</p>
       </div>
-      <AnimatePresence initial={false} mode="popLayout">
-        {elements.map((element, index) => <StructuredElement copy={copy} element={element} index={index} key={element.id} />)}
-      </AnimatePresence>
+      <div>
+        {elements.map((element) => <StructuredElement copy={copy} element={element} key={element.id} />)}
+      </div>
     </div>
   );
 }
@@ -299,7 +285,7 @@ export function DeveloperOutput({ copy, result }: { copy: AppCopy["documents"]; 
   ];
 
   return (
-    <details className="rounded-[10px] border border-border bg-card">
+    <TransitionDetails className="rounded-[10px] border border-border bg-card">
       <summary className="flex h-[46px] cursor-pointer list-none items-center justify-between px-4 text-[13px] font-medium text-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/25 sm:px-5">
         <span>{copy.markdown === "Markdown" ? "Developer output — Markdown & JSON" : "Geliştirici çıktısı — Markdown ve JSON"}</span>
         <AppIcon name="chevronDown" className="size-3.5 text-subtle-foreground" />
@@ -307,15 +293,15 @@ export function DeveloperOutput({ copy, result }: { copy: AppCopy["documents"]; 
       <div className="border-t border-border">
         {!result ? <p className="px-4 py-4 text-xs text-muted-foreground">{copy.parsedViewsUnavailable}</p> : (
           <>
-            <div aria-label={copy.viewMode} className="flex gap-1 border-b bg-technical px-4 py-2" role="group">
+            <SlidingTabs value={activeView} aria-label={copy.viewMode} className="flex gap-1 border-b bg-technical px-4 py-2" role="group">
               {viewOptions.map((view) => <Button aria-pressed={activeView === view.key} key={view.key} onClick={() => setActiveView(view.key)} size="sm" variant={activeView === view.key ? "secondary" : "ghost"}>{view.label}</Button>)}
-            </div>
+            </SlidingTabs>
             {activeView === "markdown" ? <pre className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-muted-foreground" data-testid="parsed-markdown">{result.markdown}</pre> : null}
             {activeView === "json" ? <pre className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-muted-foreground" data-testid="parsed-json">{JSON.stringify(result.structured, null, 2)}</pre> : null}
           </>
         )}
       </div>
-    </details>
+    </TransitionDetails>
   );
 }
 
@@ -350,21 +336,21 @@ export function ParsedContentTab({ copy, result, showDeveloperOutput = true }: {
         </div>
         {!result ? <p className="border-b border-border-subtle px-5 py-3 text-xs text-muted-foreground" id="parsed-view-disabled-reason">{copy.parsedViewsUnavailable}</p> : null}
         {activeView === "structured" ? <StructuredSectionInspector copy={copy} elements={selectedElements} /> : null}
-        {showDeveloperOutput ? <details className="border-t border-border" onToggle={(event) => setDeveloperOutputOpen(event.currentTarget.open)} open={developerOutputOpen}>
+        {showDeveloperOutput ? <TransitionDetails className="border-t border-border" onToggle={(event) => setDeveloperOutputOpen(event.currentTarget.open)} open={developerOutputOpen}>
           <summary className="cursor-pointer list-none px-4 py-4 text-sm font-semibold text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/25 sm:px-6">{copy.markdown === "Markdown" ? "Developer output" : "Geliştirici çıktısı"}</summary>
           <div className="border-t border-border">
-            <div aria-describedby={!result ? "parsed-view-disabled-reason" : undefined} aria-label={copy.viewMode} className="flex flex-wrap gap-1 border-b bg-technical px-4 py-2 sm:px-6" role="group">
+            <SlidingTabs value={activeView} aria-describedby={!result ? "parsed-view-disabled-reason" : undefined} aria-label={copy.viewMode} className="flex flex-wrap gap-1 border-b bg-technical px-4 py-2 sm:px-6" role="group">
               {viewOptions.map((view) => <Button aria-pressed={activeView === view.key} disabled={!result} key={view.key} onClick={() => selectView(view.key)} size="sm" variant={activeView === view.key ? "secondary" : "ghost"}>{view.label}</Button>)}
-            </div>
+            </SlidingTabs>
             {!result ? <p className="px-4 py-4 text-xs text-muted-foreground sm:px-6">{copy.noParsedElements}</p> : activeView === "markdown" ? (
               <pre className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-muted-foreground sm:px-6" data-testid="parsed-markdown">{result.markdown}</pre>
             ) : activeView === "json" ? (
               <pre className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-muted-foreground sm:px-6" data-testid="parsed-json">{JSON.stringify(result.structured, null, 2)}</pre>
             ) : null}
           </div>
-        </details> : <div aria-label={copy.viewMode} className="sr-only" role="group">
+        </TransitionDetails> : <SlidingTabs value={activeView} aria-label={copy.viewMode} className="sr-only" role="group">
           {viewOptions.map((view) => <Button aria-pressed={activeView === view.key} disabled={!result} key={view.key} onClick={() => selectView(view.key)} size="sm" variant="ghost">{view.label}</Button>)}
-        </div>}
+        </SlidingTabs>}
       </section>
     </div>
   );
@@ -401,3 +387,4 @@ export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
     </div>
   );
 }
+

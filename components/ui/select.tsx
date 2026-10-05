@@ -3,6 +3,8 @@
 import * as React from "react"
 import { Select as SelectPrimitive } from "radix-ui"
 
+import { TransitionSelectContent } from "@/components/ui/transition-surface"
+
 import { AppIcon } from "@/components/ui/app-icon"
 import { cn } from "@/lib/utils"
 
@@ -45,10 +47,10 @@ function SelectContent({
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
   return (
     <SelectPrimitive.Portal>
-      <SelectPrimitive.Content
+      <TransitionSelectContent
         align={align}
         className={cn(
-          "relative z-50 max-h-[min(280px,var(--radix-select-content-available-height))] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-[10px] border border-border bg-popover text-popover-foreground shadow-lg shadow-overlay/8 dark:shadow-overlay/40 data-[side=bottom]:translate-y-1 data-[side=top]:-translate-y-1 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
+          "relative z-50 max-h-[min(280px,var(--radix-select-content-available-height))] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-[10px] border border-border bg-popover text-popover-foreground shadow-lg shadow-overlay/8 dark:shadow-overlay/40 data-[side=bottom]:translate-y-1 data-[side=top]:-translate-y-1",
           className,
         )}
         data-slot="select-content"
@@ -58,7 +60,7 @@ function SelectContent({
         <SelectPrimitive.Viewport className="p-1">
           {children}
         </SelectPrimitive.Viewport>
-      </SelectPrimitive.Content>
+      </TransitionSelectContent>
     </SelectPrimitive.Portal>
   )
 }
@@ -88,3 +90,4 @@ function SelectItem({
 }
 
 export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue }
+

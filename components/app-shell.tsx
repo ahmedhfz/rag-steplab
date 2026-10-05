@@ -1,9 +1,11 @@
 "use client";
 
+import { TransitionPanel, TransitionSurface } from "@/components/ui/transitions";
+
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { AnimatePresence, MotionConfig, motion } from "motion/react";
+import { MotionConfig } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuthBootstrap } from "@/components/auth-provider";
@@ -102,10 +104,10 @@ type UserMenuProps = {
 };
 
 function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
-  const [openView, setOpenView] = useState<"menu" | "guides" | "help" | null>(null);
+  const [openView, setOpenView] = useState<"menu" | "guides" | "help">("menu");
+  const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const isOpen = openView !== null;
   const displayName = user.name ?? user.email ?? copy.productName;
   const initials = getInitials(user.name, user.email);
 
@@ -113,7 +115,7 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
     if (!isOpen) return;
 
     function handlePointerDown(event: PointerEvent) {
-      if (!containerRef.current?.contains(event.target as Node)) setOpenView(null);
+      if (!containerRef.current?.contains(event.target as Node)) setIsOpen(false);
     }
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -121,7 +123,7 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
 
       event.preventDefault();
       if (openView === "menu") {
-        setOpenView(null);
+        setIsOpen(false);
         triggerRef.current?.focus();
       } else {
         setOpenView("menu");
@@ -137,12 +139,12 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
   }, [isOpen, openView]);
 
   function closeAfterNavigation() {
-    setOpenView(null);
+    setIsOpen(false);
     onNavigate?.();
   }
 
   async function handleSignOut() {
-    setOpenView(null);
+    setIsOpen(false);
     await onSignOut();
   }
 
@@ -153,7 +155,7 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
         aria-haspopup="dialog"
         aria-label={`${displayName} — ${copy.common.accountMenu}`}
         className="flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/20"
-        onClick={() => setOpenView(isOpen ? null : "menu")}
+        onClick={() => { setIsOpen(!isOpen); setOpenView("menu"); }}
         ref={triggerRef}
         type="button"
       >
@@ -164,17 +166,12 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
         </span>
       </button>
 
-      <AnimatePresence initial={false}>
-        {isOpen && (
-          <motion.div
-            animate={{ opacity: 1, y: 0 }}
+      <TransitionSurface kind="dropdown" open={isOpen} data-origin="bottom-left"
             aria-label={copy.common.accountMenu}
             className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-50 overflow-hidden rounded-[12px] border border-border bg-card p-1.5 shadow-lg shadow-foreground/8"
-            exit={{ opacity: 0, y: 4 }}
-            initial={{ opacity: 0, y: 4 }}
             role="dialog"
-            transition={{ duration: 0.14, ease: "easeOut" }}
           >
+            <TransitionPanel transitionKey={openView}>
             {openView === "menu" && (
               <>
                 <div className="mb-1 border-b border-border px-2.5 pb-2.5 pt-1">
@@ -218,9 +215,8 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
                 </Link>
               </div>
             )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </TransitionPanel>
+      </TransitionSurface>
     </div>
   );
 }
@@ -379,39 +375,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         id="mobile-navigation"
         onKeyDown={trapMobileFocus}
       >
-        <AnimatePresence initial={false}>
-          {mobileOpen && (
-            <motion.button
-              aria-label={copy.common.close}
-              animate={{ opacity: 1 }}
-              className="pointer-events-auto absolute inset-0 bg-black/20"
-              exit={{ opacity: 0 }}
-              initial={{ opacity: 0 }}
-              key="mobile-backdrop"
-              onClick={() => setMobileOpen(false)}
-              type="button"
-            />
-          )}
-          {mobileOpen && (
-            <motion.aside
-              animate={{ opacity: 1, x: 0 }}
-              aria-label={copy.common.primaryNavigation}
-              aria-modal="true"
-              className="pointer-events-auto relative h-full w-[min(86vw,320px)] border-r border-border bg-card"
-              exit={{ opacity: 0, x: -20 }}
-              initial={{ opacity: 0, x: -20 }}
-              key="mobile-panel"
-              ref={mobilePanelRef}
-              role="dialog"
-              transition={{ duration: 0.18, ease: "easeOut" }}
-            >
-              <Button aria-label={copy.common.close} autoFocus className="absolute right-3 top-4 z-10" onClick={() => setMobileOpen(false)} ref={mobileCloseButtonRef} size="icon" variant="ghost">
-                <AppIcon name="close" className="size-5" />
-              </Button>
-              <Sidebar copy={copy} onNavigate={() => setMobileOpen(false)} onSignOut={signOut} pathname={pathname} user={authUser} />
-            </motion.aside>
-          )}
-        </AnimatePresence>
+        <TransitionSurface className="steplab-backdrop absolute inset-0" kind="modal" open={mobileOpen}>
+          <button aria-label={copy.common.close} className="absolute inset-0 bg-overlay/20" onClick={() => setMobileOpen(false)} tabIndex={-1} type="button" />
+        </TransitionSurface>
+        <TransitionSurface as="aside" aria-label={copy.common.primaryNavigation} aria-modal="true" className="relative h-full w-[min(86vw,320px)] border-r border-border bg-card" kind="panel" open={mobileOpen} role="dialog" surfaceRef={mobilePanelRef}>
+          <Button aria-label={copy.common.close} autoFocus className="absolute right-3 top-4 z-10" onClick={() => setMobileOpen(false)} ref={mobileCloseButtonRef} size="icon" variant="ghost"><AppIcon name="close" className="size-5" /></Button>
+          <Sidebar copy={copy} onNavigate={() => setMobileOpen(false)} onSignOut={signOut} pathname={pathname} user={authUser} />
+        </TransitionSurface>
       </div>
 
       <div className="w-full min-w-0 xl:pl-[248px]">
@@ -432,3 +402,4 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     </MotionConfig>
   );
 }
+

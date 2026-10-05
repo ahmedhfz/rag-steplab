@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "./transitions.css";
+@import "./transition-adapters.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -227,13 +229,6 @@ summary:focus-visible,
   outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
-@keyframes page-transition-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.page-transition { animation: page-transition-in 200ms ease-out both; }
-
 @media (prefers-reduced-motion: reduce) {
   .page-transition { animation: none; }
   *, *::before, *::after {
@@ -243,3 +238,4 @@ summary:focus-visible,
     transition-duration: 0.01ms !important;
   }
 }
+
