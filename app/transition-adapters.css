@@ -1,5 +1,11 @@
 /* Geometry/state bridges for the verbatim transitions.dev recipes.
    The recipe selectors and keyframes remain in transitions.css. */
+/* Remove demo-only geometry; screen utilities then supply their original
+   padding, height, gaps, surfaces and corners in the utilities layer. */
+@layer components {
+  .steplab-tabs.t-tabs { padding: 0; gap: 0; background: transparent; border-radius: 0; }
+  .steplab-tabs > .t-tab { height: auto; padding: 0; border-radius: 0; }
+}
 :root {
   --tabs-text-muted: var(--muted-foreground);
   --tabs-text-active: var(--foreground);
@@ -34,6 +40,7 @@
 .steplab-tabs.t-tabs > button[aria-checked="true"],
 .steplab-tabs.t-tabs > label:has([data-state="checked"]) { background: transparent; box-shadow: none; }
 .steplab-tabs.t-tabs > .t-tabs-pill { border-radius: inherit; }
+.steplab-auth-tabs { --tabs-pill-bg: var(--secondary); }
 .steplab-tabs-underline { --tabs-pill-bg: var(--brand); }
 .steplab-tabs-underline > button { border-bottom-color: transparent; }
 .steplab-tabs-underline > .t-tabs-pill { border-radius: 0; }
