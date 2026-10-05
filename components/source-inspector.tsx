@@ -84,7 +84,7 @@ export function SourceInspector({ documentId, parseResult, pageNumbers = [], sou
                 {sourceUrl ? <iframe className="t-skel-content steplab-source-content h-full min-h-[45vh] w-full" data-ready={previewReady} onLoad={() => setPreviewReady(true)} src={`${sourceUrl}${sourceFragment}`} title={labels.title} /> : null}
               </div> : <p className="p-5 text-sm text-muted-foreground">{labels.unavailable}</p>}
             </div>
-            <TransitionPanel as="section" transitionKey={selectedRegion?.pageNumber ?? selectedPage} className="border-t border-border p-4 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 sm:p-5">
+            <TransitionPanel as="aside" transitionKey={selectedRegion?.pageNumber ?? selectedPage} className="border-t border-border p-4 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 sm:p-5">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-subtle-foreground">{labels.provenance}</h3>
               <p className="mt-2 flex flex-wrap items-center gap-1 text-sm text-foreground"><span>Document</span><AppIcon name="arrowRight" className="size-3.5 text-subtle-foreground" /><span>{selectedPage ? `${labels.page} ${selectedPage}` : labels.page}</span><AppIcon name="arrowRight" className="size-3.5 text-subtle-foreground" /><span>Parse element</span><AppIcon name="arrowRight" className="size-3.5 text-subtle-foreground" /><span>Chunk</span><AppIcon name="arrowRight" className="size-3.5 text-subtle-foreground" /><span>Retrieval/Context</span><AppIcon name="arrowRight" className="size-3.5 text-subtle-foreground" /><span>Citation</span></p>
               {headingPath.length ? <p className="mt-3 text-xs text-muted-foreground">{headingPath.join(" › ")}</p> : null}

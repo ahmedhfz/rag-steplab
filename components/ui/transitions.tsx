@@ -52,7 +52,7 @@ export function SuccessCheck({ className }: { className?: string }) {
 }
 
 /** Never retain a previous run/document merely to animate its exit. */
-export function TransitionPanel({ children, className, transitionKey, as = "div", ...props }: HTMLAttributes<HTMLElement> & { transitionKey?: string | number | null; as?: "div" | "section" | "article" | "span" }) {
+export function TransitionPanel({ children, className, transitionKey, as = "div", ...props }: HTMLAttributes<HTMLElement> & { transitionKey?: string | number | null; as?: "div" | "section" | "article" | "span" | "aside" }) {
   const ref = useRef<HTMLDivElement>(null);
   const Tag = as;
   useLayoutEffect(() => {
