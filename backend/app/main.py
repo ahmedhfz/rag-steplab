@@ -49,7 +49,7 @@ from .document_pipelines import (
     update_document_pipeline as update_named_pipeline,
 )
 from .gemini import EMBEDDING_FORMAT_VERSION
-from .repository import get_repository
+from .repository import _expired_run_update, get_repository
 from .storage import get_storage
 from .schemas import (
     ApiError,
@@ -323,6 +323,11 @@ def _dispatch_queued_parse(parse: dict[str, Any]) -> dict[str, Any]:
 def _reconcile_terminal_worker_failure(parse: dict[str, Any]) -> dict[str, Any]:
     """Collapse a hard Modal termination into the public failed contract."""
 
+    expired = _expired_run_update(parse, parse=True)
+    if expired:
+        return get_repository().fail_parse(
+            parse["id"], expired["error_code"], expired["error_message"], status="interrupted"
+        ) or parse
     settings = get_settings()
     if (
         settings.app_env not in {"production", "staging"}

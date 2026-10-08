@@ -122,3 +122,175 @@ def test_scoped_heavy_run_admission_is_durable_per_user_and_owner_isolated():
 
     isolated = second.create_parse_run(second_document["id"])
     assert isolated["status"] == "queued"
+
+
+@pytest.mark.parametrize("kind", ["parse", "embedding", "experiment", "evaluation"])
+@pytest.mark.parametrize("expired", [False, True])
+def test_admission_reconciles_abandoned_runs_but_preserves_live_work(kind, expired):
+    repository = InMemoryRepository()
+    owner = uuid.uuid4()
+    document = repository.scoped(owner).create_document(
+        {"file_name": "timeout.pdf", "media_type": "application/pdf", "size_bytes": 1},
+        "documents", "timeout.pdf", "timeout-sha",
+    )
+    current = now_utc()
+    row = {
+        "id": "old-run", "document_id": document["id"], "dataset_id": "dataset",
+        "status": "queued" if kind == "parse" else "running",
+        "started_at": None, "created_at": current - timedelta(days=29) if expired else current,
+        "lease_expires_at": None, "identity_claimed": True,
+    }
+    repository.datasets["dataset"] = {"id": "dataset", "document_id": document["id"]}
+    store = {"parse": repository.parses, "embedding": repository.embedding_runs,
+             "experiment": repository.experiments, "evaluation": repository.evaluations}[kind]
+    store[row["id"]] = row
+    foreign = {**row, "id": "foreign", "document_id": "other-document", "dataset_id": "other-dataset"}
+    store[foreign["id"]] = foreign
+    if expired:
+        repository._assert_user_heavy_run_available(owner)
+        assert row["status"] == "interrupted"
+        assert row["completed_at"] >= current
+        assert row["duration_ms"] is None
+        if kind != "parse":
+            assert row["identity_claimed"] is None
+        # Legacy workers without tokens must not resurrect abandoned runs.
+        if kind == "experiment":
+            assert repository.complete_experiment(row["id"]) is None
+            assert repository.update_experiment_stage(row["id"], "generation", {}) is None
+        if kind == "evaluation":
+            assert repository.update_evaluation(row["id"], {"status": "completed"}) is None
+    else:
+        with pytest.raises(ApiProblem, match="Another expensive operation"):
+            repository._assert_user_heavy_run_available(owner)
+        assert row["status"] in {"queued", "running"}
+    assert foreign["status"] in {"queued", "running"}
+
+
+def test_explicit_lease_takes_precedence_over_old_creation_time():
+    from app.repository import _expired_run_update
+
+    current = now_utc()
+    row = {"status": "running", "created_at": current - timedelta(days=29),
+           "lease_expires_at": current + timedelta(seconds=1)}
+    assert _expired_run_update(row, now=current) == {}
+    assert _expired_run_update(row, now=row["lease_expires_at"])["status"] == "interrupted"
+
+
+def test_expired_parse_can_be_restarted_on_the_same_document():
+    repository = InMemoryRepository()
+    scoped = repository.scoped(uuid.uuid4())
+    document = scoped.create_document(
+        {"file_name": "parse.pdf", "media_type": "application/pdf", "size_bytes": 1},
+        "documents", "parse.pdf", "parse-sha",
+    )
+    first = scoped.create_parse_run(document["id"])
+    repository.parses[first["id"]]["created_at"] = now_utc() - timedelta(days=29)
+    assert scoped.find_inflight_parse(document["id"]) is None
+    second = scoped.create_parse_run(document["id"])
+    assert second["id"] != first["id"]
+    assert repository.parses[first["id"]]["status"] == "interrupted"
+    assert second["status"] == "queued"
+
+
+@pytest.mark.parametrize("live", [False, True])
+def test_sql_admission_uses_shared_expiry_rule_and_owner_scoped_row_locks(live):
+    from sqlalchemy.dialects import postgresql
+    from app.models import ParseRun, EmbeddingRun, ExperimentRun, EvaluationRun
+    from app.repository import SqlAlchemyRepository
+
+    owner = uuid.uuid4()
+    current = now_utc()
+    models = (ParseRun, EmbeddingRun, ExperimentRun, EvaluationRun)
+    rows = {model: SimpleNamespace(status="running", started_at=None,
+            created_at=current - timedelta(days=29), lease_expires_at=None) for model in models}
+    if live:
+        rows[ExperimentRun].lease_expires_at = current + timedelta(minutes=5)
+
+    class Session:
+        def execute(self, statement, params):
+            assert "pg_advisory_xact_lock" in str(statement)
+            assert params["owner_user_id"] == str(owner)
+
+        def scalars(self, statement):
+            model = statement.column_descriptions[0]["entity"]
+            compiled = statement.compile(dialect=postgresql.dialect())
+            sql = str(compiled)
+            assert "documents.owner_user_id =" in sql
+            assert owner in compiled.params.values()
+            assert f"FOR UPDATE OF {model.__tablename__}" in sql
+            if model is EvaluationRun:
+                assert "evaluation_datasets.document_id" in sql
+            return [rows[model]]
+
+        def flush(self):
+            pass
+
+    if live:
+        with pytest.raises(ApiProblem) as blocked:
+            SqlAlchemyRepository._assert_user_heavy_run_available(Session(), owner)
+        assert blocked.value.code == "user_run_limit_reached"
+        assert rows[ExperimentRun].status == "running"
+    else:
+        SqlAlchemyRepository._assert_user_heavy_run_available(Session(), owner)
+        assert all(row.status == "interrupted" for row in rows.values())
+        assert all(row.duration_ms is None for row in rows.values())
+
+
+def test_expired_retry_cannot_bypass_another_live_run():
+    repository = InMemoryRepository()
+    owner = uuid.uuid4()
+    scoped = repository.scoped(owner)
+    document = scoped.create_document(
+        {"file_name": "retry.pdf", "media_type": "application/pdf", "size_bytes": 1},
+        "documents", "retry.pdf", "retry-sha",
+    )
+    request = {"document_id": document["id"], "chunk_run_id": "chunk", "query": "question",
+               "target_stage": "generation", "experiment_fingerprint": "retry",
+               "status": "queued", "lease_token": str(uuid.uuid4()),
+               "lease_expires_at": now_utc() + timedelta(minutes=5)}
+    old, _ = scoped.claim_experiment(request)
+    repository.experiments[old["id"]]["lease_expires_at"] = now_utc() - timedelta(seconds=1)
+    # Simulate another live job already present when the old identity is retried.
+    live = {**repository.experiments[old["id"]], "id": "live", "experiment_fingerprint": "live",
+            "lease_expires_at": now_utc() + timedelta(minutes=5)}
+    repository.experiments["live"] = live
+    with pytest.raises(ApiProblem) as blocked:
+        scoped.claim_experiment(request)
+    assert blocked.value.code == "user_run_limit_reached"
+    assert live["status"] == "queued"
+    repository.fail_experiment("live", "test", "finished")
+    retried, claimed = scoped.claim_experiment(request)
+    assert claimed and retried["status"] == "queued"
+    assert retried["identity_claimed"] is True
+
+
+def test_parse_polling_expires_abandoned_queue_without_modal(monkeypatch):
+    from app.main import _reconcile_terminal_worker_failure
+    from app.config import PARSE_RUN_TIMEOUT_SECONDS
+
+    repository = InMemoryRepository()
+    document = repository.create_document(
+        {"file_name": "poll.pdf", "media_type": "application/pdf", "size_bytes": 1},
+        "documents", "poll.pdf", "poll-sha",
+    )
+    run = repository.create_parse_run(document["id"])
+    repository.parses[run["id"]]["created_at"] = now_utc() - timedelta(seconds=PARSE_RUN_TIMEOUT_SECONDS + 1)
+    monkeypatch.setattr("app.main.get_repository", lambda: repository)
+    result = _reconcile_terminal_worker_failure(repository.get_parse_row(run["id"]))
+    assert result["status"] == "interrupted"
+    assert result["error_code"] == "parse_timeout"
+    assert result["duration_ms"] is None
+
+
+def test_parse_timeout_rechecks_state_after_worker_starts():
+    repository = InMemoryRepository()
+    document = repository.create_document(
+        {"file_name": "race.pdf", "media_type": "application/pdf", "size_bytes": 1},
+        "documents", "race.pdf", "race-sha",
+    )
+    run = repository.create_parse_run(document["id"])
+    repository.parses[run["id"]]["created_at"] = now_utc() - timedelta(days=29)
+    repository.mark_parse_running(run["id"])
+    result = repository.fail_parse(run["id"], "parse_timeout", "expired snapshot", status="interrupted")
+    assert result["status"] == "running"
+    assert result["error_code"] is None

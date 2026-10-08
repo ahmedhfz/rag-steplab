@@ -22,7 +22,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from .chunking import TOKENIZER_VERSION, chunker_version_for_strategy, config_hash
-from .config import get_settings, pipeline_lease_duration_seconds
+from .config import PARSE_RUN_TIMEOUT_SECONDS, get_settings, pipeline_lease_duration_seconds
 from .db import session_scope
 from .errors import ApiProblem
 from .models import (
@@ -85,10 +85,36 @@ def _lease_expired(row: dict[str, Any], now: datetime | None = None) -> bool:
     expiry = row.get("lease_expires_at")
     if isinstance(expiry, datetime):
         return expiry <= current
-    started = row.get("started_at")
+    started = row.get("started_at") or row.get("created_at")
     if not isinstance(started, datetime):
         return False
     return started + timedelta(seconds=pipeline_lease_duration_seconds(get_settings())) <= current
+
+
+def _expired_run_update(row: dict[str, Any], *, parse: bool = False, now: datetime | None = None) -> dict[str, Any]:
+    """Close abandoned runs without deleting history or inventing execution time."""
+    if row.get("status") not in {"queued", "running"}:
+        return {}
+    current = now or now_utc()
+    if parse:
+        started = row.get("started_at") or row.get("created_at")
+        expired = isinstance(started, datetime) and started + timedelta(seconds=PARSE_RUN_TIMEOUT_SECONDS) <= current
+    else:
+        expired = _lease_expired(row, current)
+    if not expired:
+        return {}
+    values = {
+        "status": "interrupted",
+        "error_code": "parse_timeout" if parse else "worker_lease_expired",
+        "error_message": "The run exceeded its execution deadline before completion.",
+        "completed_at": current,
+        # The worker's actual stop time is unknown; wall time since creation
+        # would misleadingly report weeks of execution for a legacy orphan.
+        "duration_ms": None,
+    }
+    if not parse:
+        values.update(identity_claimed=None, lease_token=None, lease_expires_at=None)
+    return values
 
 
 def simple_fts_terms(query: str) -> list[str]:
@@ -732,31 +758,22 @@ class InMemoryRepository(Repository):
         document_ids = {
             row["id"] for row in self.documents.values() if row.get("owner_user_id") == owner
         }
-        active = any(
-            row.get("document_id") in document_ids and row.get("status") in {"queued", "running"}
-            for row in self.parses.values()
-        )
-        active = active or any(
-            row.get("document_id") in document_ids
-            and row.get("status") == "running"
-            and not _lease_expired(row)
-            for row in self.embedding_runs.values()
-        )
-        active = active or any(
-            row.get("document_id") in document_ids
-            and row.get("status") in {"queued", "running"}
-            and not _lease_expired(row)
-            for row in self.experiments.values()
-        )
         dataset_ids = {
             row["id"] for row in self.datasets.values() if row.get("document_id") in document_ids
         }
-        active = active or any(
-            row.get("dataset_id") in dataset_ids
-            and row.get("status") in {"queued", "running"}
-            and not _lease_expired(row)
-            for row in self.evaluations.values()
-        )
+        active = False
+        current = now_utc()
+        for store, key, ids, parse in (
+            (self.parses, "document_id", document_ids, True),
+            (self.embedding_runs, "document_id", document_ids, False),
+            (self.experiments, "document_id", document_ids, False),
+            (self.evaluations, "dataset_id", dataset_ids, False),
+        ):
+            for row in store.values():
+                if row.get(key) not in ids:
+                    continue
+                row.update(_expired_run_update(row, parse=parse, now=current))
+                active = active or row.get("status") in {"queued", "running"}
         if active:
             raise ApiProblem(
                 429,
@@ -860,6 +877,9 @@ class InMemoryRepository(Repository):
 
     def find_inflight_parse(self, document_id):
         with self._lock:
+            for row in self.parses.values():
+                if row["document_id"] == document_id:
+                    row.update(_expired_run_update(row, parse=True))
             rows = [
                 row
                 for row in self.parses.values()
@@ -950,6 +970,8 @@ class InMemoryRepository(Repository):
             if row is None:
                 return None
             if row["status"] in {"completed", "failed", "interrupted"}:
+                return copy.deepcopy(row)
+            if code == "parse_timeout" and not _expired_run_update(row, parse=True):
                 return copy.deepcopy(row)
             completed_at = now_utc()
             row.update(
@@ -1382,6 +1404,9 @@ class InMemoryRepository(Repository):
             )
             if existing is not None:
                 if existing.get("status") == "running" and _lease_expired(existing):
+                    self._assert_user_heavy_run_available(admission_owner_user_id)
+                    existing["identity_claimed"] = True
+                    existing["status"] = "running"
                     started_at = now_utc()
                     existing.update(
                         {
@@ -1570,6 +1595,9 @@ class InMemoryRepository(Repository):
             )
             if existing is not None:
                 if durable and _lease_expired(existing):
+                    if not bypass_user_admission:
+                        self._assert_user_heavy_run_available(admission_owner_user_id)
+                    existing["identity_claimed"] = True
                     existing.update(
                         {
                             "status": "queued",
@@ -1604,6 +1632,8 @@ class InMemoryRepository(Repository):
             row = self.experiments.get(experiment_id)
             if row is None:
                 return None
+            if row.get("status") == "interrupted":
+                return None
             if lease_token is not None and (
                 str(row.get("lease_token")) != str(lease_token) or _lease_expired(row)
             ):
@@ -1617,6 +1647,8 @@ class InMemoryRepository(Repository):
         with self._lock:
             row = self.experiments.get(experiment_id)
             if row is None:
+                return None
+            if row.get("status") == "interrupted":
                 return None
             if lease_token is not None and (
                 str(row.get("lease_token")) != str(lease_token) or _lease_expired(row)
@@ -1636,6 +1668,8 @@ class InMemoryRepository(Repository):
         with self._lock:
             row = self.experiments.get(experiment_id)
             if row is None:
+                return None
+            if row.get("status") == "interrupted":
                 return None
             if lease_token is not None and (
                 str(row.get("lease_token")) != str(lease_token) or _lease_expired(row)
@@ -1752,6 +1786,8 @@ class InMemoryRepository(Repository):
             )
             if existing is not None:
                 if durable and _lease_expired(existing):
+                    self._assert_user_heavy_run_available(admission_owner_user_id)
+                    existing["identity_claimed"] = True
                     existing.update(
                         {
                             "status": "queued",
@@ -1793,6 +1829,8 @@ class InMemoryRepository(Repository):
         with self._lock:
             row = self.evaluations.get(run_id)
             if row is None:
+                return None
+            if row.get("status") == "interrupted":
                 return None
             if lease_token is not None and (
                 str(row.get("lease_token")) != str(lease_token) or _lease_expired(row)
@@ -1892,21 +1930,7 @@ class InMemoryRepository(Repository):
             row = store.get(run_id)
             if row is None:
                 return None
-            if row.get("status") not in {"queued", "running"} or not _lease_expired(row):
-                return copy.deepcopy(row)
-            completed_at = now_utc()
-            row.update(
-                {
-                    "status": "interrupted",
-                    "identity_claimed": None,
-                    "error_code": "worker_lease_expired",
-                    "error_message": "The pipeline worker lease expired before completion.",
-                    "completed_at": completed_at,
-                    "lease_token": None,
-                    "lease_expires_at": None,
-                    "duration_ms": duration_ms_between(row.get("started_at"), completed_at),
-                }
-            )
+            row.update(_expired_run_update(row))
             return copy.deepcopy(row)
 
     def get_evaluation_row(self, run_id):
@@ -1955,44 +1979,33 @@ class SqlAlchemyRepository(Repository):
     def _assert_user_heavy_run_available(cls, session, owner_user_id: uuid.UUID | str | None) -> None:
         if owner_user_id is None:
             return
-        owner = str(owner_user_id)
         cls._lock_user_admission(session, owner_user_id)
-        active = session.execute(
-            text(
-                """
-                select exists (
-                    select 1
-                    from rag_lab.parse_runs pr
-                    join rag_lab.documents d on d.id = pr.document_id
-                    where d.owner_user_id = cast(:owner_user_id as uuid)
-                      and pr.status in ('queued', 'running')
-                    union all
-                    select 1
-                    from rag_lab.embedding_runs er
-                    join rag_lab.documents d on d.id = er.document_id
-                    where d.owner_user_id = cast(:owner_user_id as uuid)
-                      and er.status = 'running'
-                      and (er.lease_expires_at is null or er.lease_expires_at > now())
-                    union all
-                    select 1
-                    from rag_lab.experiment_runs xr
-                    join rag_lab.documents d on d.id = xr.document_id
-                    where d.owner_user_id = cast(:owner_user_id as uuid)
-                      and xr.status in ('queued', 'running')
-                      and (xr.lease_expires_at is null or xr.lease_expires_at > now())
-                    union all
-                    select 1
-                    from rag_lab.evaluation_runs vr
-                    join rag_lab.evaluation_datasets ds on ds.id = vr.dataset_id
-                    join rag_lab.documents d on d.id = ds.document_id
-                    where d.owner_user_id = cast(:owner_user_id as uuid)
-                      and vr.status in ('queued', 'running')
-                      and (vr.lease_expires_at is null or vr.lease_expires_at > now())
-                )
-                """
-            ),
-            {"owner_user_id": owner},
-        ).scalar_one()
+        owner = uuid.UUID(str(owner_user_id))
+        active = False
+        current = now_utc()
+        for model in (ParseRun, EmbeddingRun, ExperimentRun, EvaluationRun):
+            query = select(model)
+            if model is EvaluationRun:
+                query = query.join(EvaluationDataset, EvaluationDataset.id == model.dataset_id)
+                query = query.join(Document, Document.id == EvaluationDataset.document_id)
+            else:
+                query = query.join(Document, Document.id == model.document_id)
+            rows = session.scalars(
+                query.where(Document.owner_user_id == owner, model.status.in_(["queued", "running"]))
+                .order_by(model.id)
+                .with_for_update(of=model)
+            )
+            for row in rows:
+                payload = {
+                    "status": row.status,
+                    "started_at": row.started_at,
+                    "created_at": row.created_at,
+                    "lease_expires_at": getattr(row, "lease_expires_at", None),
+                }
+                for key, value in _expired_run_update(payload, parse=model is ParseRun, now=current).items():
+                    setattr(row, key, value)
+                active = active or row.status in {"queued", "running"}
+        session.flush()
         if active:
             raise ApiProblem(
                 429,
@@ -2096,6 +2109,12 @@ class SqlAlchemyRepository(Repository):
                     .with_for_update()
                 ).first()
                 if existing is not None:
+                    for key, value in _expired_run_update(self._parse_dict(existing), parse=True).items():
+                        setattr(existing, key, value)
+                    session.flush()
+                    if existing.status == "interrupted":
+                        existing = None
+                if existing is not None:
                     raise ApiProblem(
                         409,
                         "parse_already_in_progress",
@@ -2133,12 +2152,19 @@ class SqlAlchemyRepository(Repository):
                 select(ParseRun)
                 .where(ParseRun.document_id == document_id, ParseRun.status.in_(["queued", "running"]))
                 .order_by(ParseRun.created_at.desc())
+                .with_for_update()
             ).first()
+            if row is not None:
+                for key, value in _expired_run_update(self._parse_dict(row), parse=True).items():
+                    setattr(row, key, value)
+                session.flush()
+                if row.status == "interrupted":
+                    return None
             return self._parse_dict(row) if row else None
 
     def set_parse_dispatch(self, run_id, dispatch_id):
         with session_scope() as session:
-            row = session.get(ParseRun, run_id)
+            row = session.get(ParseRun, run_id, with_for_update=True)
             if row is None:
                 return None
             row.dispatch_id = dispatch_id
@@ -2147,7 +2173,7 @@ class SqlAlchemyRepository(Repository):
 
     def mark_parse_running(self, run_id):
         with session_scope() as session:
-            row = session.get(ParseRun, run_id)
+            row = session.get(ParseRun, run_id, with_for_update=True)
             if row is None:
                 return None
             if row.status == "queued":
@@ -2158,7 +2184,7 @@ class SqlAlchemyRepository(Repository):
 
     def update_parse_progress(self, run_id, progress, phase):
         with session_scope() as session:
-            row = session.get(ParseRun, run_id)
+            row = session.get(ParseRun, run_id, with_for_update=True)
             if row is None:
                 return None
             if row.status in {"completed", "failed", "interrupted"}:
@@ -2174,7 +2200,7 @@ class SqlAlchemyRepository(Repository):
         if payload.get("structured") is None or payload.get("summary") is None:
             raise ValueError("completed parse payload is missing normalized content")
         with session_scope() as session:
-            row = session.get(ParseRun, run_id)
+            row = session.get(ParseRun, run_id, with_for_update=True)
             if row is None:
                 return None
             if row.status == "completed" or row.status in {"failed", "interrupted"}:
@@ -2205,10 +2231,12 @@ class SqlAlchemyRepository(Repository):
         if status not in {"failed", "interrupted"}:
             raise ValueError("parse failure status must be failed or interrupted")
         with session_scope() as session:
-            row = session.get(ParseRun, run_id)
+            row = session.get(ParseRun, run_id, with_for_update=True)
             if row is None:
                 return None
             if row.status in {"completed", "failed", "interrupted"}:
+                return self._parse_dict(row)
+            if code == "parse_timeout" and not _expired_run_update(self._parse_dict(row), parse=True):
                 return self._parse_dict(row)
             completed_at = now_utc()
             row.status = status
@@ -3103,6 +3131,9 @@ class SqlAlchemyRepository(Repository):
             if existing is not None:
                 payload = self._embedding_dict(existing)
                 if existing.status == "running" and _lease_expired(payload):
+                    self._assert_user_heavy_run_available(session, admission_owner_user_id)
+                    existing.identity_claimed = True
+                    existing.status = "running"
                     renewed_at = now_utc()
                     existing.lease_token = uuid.uuid4()
                     existing.lease_expires_at = renewed_at + timedelta(seconds=pipeline_lease_duration_seconds(get_settings()))
@@ -3149,6 +3180,9 @@ class SqlAlchemyRepository(Repository):
                 raise ApiProblem(409, "artifact_in_progress", "The embedding artifact is currently being created.")
             payload = self._embedding_dict(run)
             if run.status == "running" and _lease_expired(payload):
+                self._assert_user_heavy_run_available(session, admission_owner_user_id)
+                run.identity_claimed = True
+                run.status = "running"
                 renewed_at = now_utc()
                 run.lease_token = uuid.uuid4()
                 run.lease_expires_at = renewed_at + timedelta(seconds=pipeline_lease_duration_seconds(get_settings()))
@@ -3425,6 +3459,9 @@ class SqlAlchemyRepository(Repository):
             if existing is not None:
                 existing_payload = self._exp_dict(existing)
                 if durable and _lease_expired(existing_payload):
+                    if not bypass_user_admission:
+                        self._assert_user_heavy_run_available(session, admission_owner_user_id)
+                    existing.identity_claimed = True
                     existing.status = requested_status
                     existing.lease_token = lease_token_value
                     existing.lease_expires_at = row.get("lease_expires_at")
@@ -3468,6 +3505,9 @@ class SqlAlchemyRepository(Repository):
                 raise ApiProblem(409, "experiment_in_progress", "The experiment is currently being created.")
             existing_payload = self._exp_dict(existing)
             if durable and _lease_expired(existing_payload):
+                if not bypass_user_admission:
+                    self._assert_user_heavy_run_available(session, admission_owner_user_id)
+                existing.identity_claimed = True
                 existing.status = requested_status
                 existing.lease_token = lease_token_value
                 existing.lease_expires_at = row.get("lease_expires_at")
@@ -3489,6 +3529,8 @@ class SqlAlchemyRepository(Repository):
             ).first()
             if row is None:
                 return None
+            if row.status == "interrupted":
+                return None
             if lease_token is not None and (
                 str(row.lease_token) != str(lease_token) or _lease_expired(self._exp_dict(row))
             ):
@@ -3505,6 +3547,8 @@ class SqlAlchemyRepository(Repository):
                 select(ExperimentRun).where(ExperimentRun.id == experiment_id).with_for_update()
             ).first()
             if row is None:
+                return None
+            if row.status == "interrupted":
                 return None
             if lease_token is not None and (
                 str(row.lease_token) != str(lease_token) or _lease_expired(self._exp_dict(row))
@@ -3528,6 +3572,8 @@ class SqlAlchemyRepository(Repository):
                 select(ExperimentRun).where(ExperimentRun.id == experiment_id).with_for_update()
             ).first()
             if row is None:
+                return None
+            if row.status == "interrupted":
                 return None
             if lease_token is not None and (
                 str(row.lease_token) != str(lease_token) or _lease_expired(self._exp_dict(row))
@@ -3677,6 +3723,8 @@ class SqlAlchemyRepository(Repository):
             ).first()
             if entity is None:
                 return None
+            if entity.status == "interrupted":
+                return None
             if lease_token is not None and (
                 str(entity.lease_token) != str(lease_token) or _lease_expired(self._eval_dict(entity))
             ):
@@ -3728,6 +3776,8 @@ class SqlAlchemyRepository(Repository):
             if existing is not None:
                 existing_payload = self._eval_dict(existing)
                 if durable and _lease_expired(existing_payload):
+                    self._assert_user_heavy_run_available(session, admission_owner_user_id)
+                    existing.identity_claimed = True
                     existing.status = requested_status
                     existing.lease_token = lease_token_value
                     existing.lease_expires_at = row.get("lease_expires_at")
@@ -3770,6 +3820,8 @@ class SqlAlchemyRepository(Repository):
                 raise ApiProblem(409, "evaluation_in_progress", "The evaluation is currently being created.")
             existing_payload = self._eval_dict(existing)
             if durable and _lease_expired(existing_payload):
+                self._assert_user_heavy_run_available(session, admission_owner_user_id)
+                existing.identity_claimed = True
                 existing.status = requested_status
                 existing.lease_token = lease_token_value
                 existing.lease_expires_at = row.get("lease_expires_at")
@@ -3905,17 +3957,8 @@ class SqlAlchemyRepository(Repository):
             if entity is None:
                 return None
             payload = self._exp_dict(entity) if kind == "experiment" else self._eval_dict(entity)
-            if entity.status not in {"queued", "running"} or not _lease_expired(payload):
-                return payload
-            completed_at = now_utc()
-            entity.status = "interrupted"
-            entity.identity_claimed = None
-            entity.error_code = "worker_lease_expired"
-            entity.error_message = "The pipeline worker lease expired before completion."
-            entity.completed_at = completed_at
-            entity.lease_token = None
-            entity.lease_expires_at = None
-            entity.duration_ms = duration_ms_between(entity.started_at, completed_at)
+            for key, value in _expired_run_update(payload).items():
+                setattr(entity, key, value)
             session.flush()
             return self._exp_dict(entity) if kind == "experiment" else self._eval_dict(entity)
 
