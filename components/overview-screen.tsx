@@ -1,11 +1,14 @@
 "use client";
 
 import { TransitionDetails, TransitionPanel, TransitionText } from "@/components/ui/transitions";
+import { TransitionDialogContent } from "@/components/ui/transition-surface";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { Dialog as DialogPrimitive } from "radix-ui";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
+import { SampleDocumentButton } from "@/components/sample-document-button";
 import { LearningHint, PipelineErrorMessage } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
 import { StatusIndicator } from "@/components/status-indicator";
@@ -265,6 +268,9 @@ export function OverviewScreen() {
   const [editing, setEditing] = useState<"create" | "rename" | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [pipelineName, setPipelineName] = useState("");
+  const [managementBusy, setManagementBusy] = useState(false);
+  const [managementError, setManagementError] = useState<string | null>(null);
+  const managementMenuRef = useRef<HTMLDetailsElement>(null);
 
   const labels = preferences.locale === "tr"
     ? {
@@ -355,6 +361,7 @@ export function OverviewScreen() {
     selectedParseRunId,
   });
   const pipelineState = overviewModel.pipelineState;
+  const isFirstUse = persistenceStatus === "available" && documents.length === 0;
   const continuationText = continuationCopy[preferences.locale][overviewModel.continuation.kind];
 
   const journeyLabels: Record<PipelineStepKey, string> = {
@@ -382,24 +389,49 @@ export function OverviewScreen() {
 
   async function savePipelineName() {
     const name = pipelineName.trim();
-    if (!name || !activeDocumentId) return;
-    if (editing === "create") await createPipeline(name);
-    if (editing === "rename" && activePipeline) await renamePipeline(activePipeline.id, name);
-    setEditing(null);
-    setPipelineName("");
+    if (!name || !activeDocumentId || managementBusy) return;
+    setManagementBusy(true);
+    setManagementError(null);
+    try {
+      const result = editing === "create" ? await createPipeline(name) : editing === "rename" && activePipeline ? await renamePipeline(activePipeline.id, name) : null;
+      if (!result) {
+        setManagementError(preferences.locale === "tr" ? "Pipeline kaydedilemedi. Tekrar deneyin." : "The pipeline could not be saved. Try again.");
+        return;
+      }
+      setEditing(null);
+      setPipelineName("");
+    } finally {
+      setManagementBusy(false);
+    }
+  }
+
+  async function confirmPipelineDelete() {
+    if (!activePipeline || managementBusy) return;
+    setManagementBusy(true);
+    setManagementError(null);
+    try {
+      if (await deletePipeline(activePipeline.id)) setConfirmDelete(false);
+      else setManagementError(preferences.locale === "tr" ? "Pipeline silinemedi. Tekrar deneyin." : "The pipeline could not be deleted. Try again.");
+    } finally {
+      setManagementBusy(false);
+    }
   }
 
   function beginCreatePipeline() {
     setConfirmDelete(false);
+    setManagementError(null);
     setEditing("create");
     setPipelineName("");
+    if (managementMenuRef.current) managementMenuRef.current.open = false;
   }
 
   function beginRenamePipeline() {
     if (!activePipeline) return;
     setConfirmDelete(false);
+    setManagementError(null);
     setEditing("rename");
     setPipelineName(activePipeline.name);
+    if (managementMenuRef.current) managementMenuRef.current.open = false;
   }
 
   return (
@@ -407,9 +439,26 @@ export function OverviewScreen() {
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4" data-testid="figma-overview-main">
         <header className="min-h-[82px] w-full" data-testid="figma-overview-header">
           <h1 className="m-0 text-[28px] font-semibold leading-[34px] tracking-[-0.56px] text-foreground">{copy.overview.title}</h1>
-          <p className="mt-[6px] w-full max-w-[640px] text-sm leading-[21px] text-muted-foreground">{labels.description}</p>
+          <p className="mt-[6px] w-full max-w-[640px] text-sm leading-[21px] text-muted-foreground">{isFirstUse ? (preferences.locale === "tr" ? "Bir PDF'nin RAG pipeline boyunca nasıl işlendiğini ve cevabın hangi kaynaklara dayandığını görün." : "See how a PDF moves through a RAG pipeline and which sources support the final answer.") : labels.description}</p>
         </header>
 
+        {isFirstUse ? <section className="mt-5 rounded-[16px] border-[1.712px] border-border bg-card p-5 sm:p-6" data-testid="overview-first-use">
+          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-brand">{preferences.locale === "tr" ? "İlk adım" : "Start here"}</p>
+          <h2 className="mt-2 text-xl font-semibold tracking-[-0.02em] text-foreground">{preferences.locale === "tr" ? "Bir dokümanla başlayın" : "Begin with a document"}</h2>
+          <p className="mt-2 max-w-[700px] text-sm leading-6 text-muted-foreground">{preferences.locale === "tr" ? "Kendi PDF'nizi ekleyin veya dört sayfalık kurgusal örnekle akışı deneyin. Önce parsing, ardından chunking ve retrieval sonuçlarını inceleyebilirsiniz." : "Add your own PDF or try the four-page fictional sample. Inspect parsing, then chunks and retrieval results as you go."}</p>
+          <ol className="mt-5 grid gap-3 sm:grid-cols-3">
+            {(
+              preferences.locale === "tr"
+                ? ["PDF ekle", "Aşamaları incele", "Kaynaklı cevap al"]
+                : ["Add a PDF", "Inspect each stage", "Get a sourced answer"]
+            ).map((step, index) => <li className="flex items-center gap-3 rounded-[10px] border border-border bg-surface-subtle px-3 py-3 text-sm font-medium text-foreground" key={step}><span className="grid size-7 shrink-0 place-items-center rounded-full bg-accent text-xs font-semibold text-brand">{index + 1}</span>{step}</li>)}
+          </ol>
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <SampleDocumentButton primary />
+            <Button asChild variant="outline"><Link href="/documents">{preferences.locale === "tr" ? "Kendi PDF'ni ekle" : "Add your own PDF"}<AppIcon className="size-4" name="arrowRight" /></Link></Button>
+          </div>
+          <p className="mt-3 text-xs leading-5 text-muted-foreground">{preferences.locale === "tr" ? "Örnek kurgusaldır. Kendi dosyalarınız hesabınıza kaydedilir; kişisel veya gizli içerik yüklemeyin." : "The sample is fictional. Your own files are saved to your account; avoid uploading personal or confidential content."}</p>
+        </section> : <>
         <section className="mt-5 rounded-[16px] border-[1.712px] border-border bg-card p-4" data-testid="workspace-control-plane">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <p className="text-[13px] font-semibold uppercase leading-[19.5px] tracking-[0.78px] text-subtle-foreground">{labels.workspace}</p>
@@ -430,16 +479,16 @@ export function OverviewScreen() {
                     <SelectContent>{pipelines.map((pipeline) => <SelectItem className={selectorItemClass} key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-            <TransitionDetails className="relative self-end" data-testid="pipeline-management" variant="dropdown">
+            <TransitionDetails className="relative self-end" data-testid="pipeline-management" ref={managementMenuRef} variant="dropdown">
               <summary className="flex h-[42px] cursor-pointer list-none items-center justify-between gap-3 rounded-[10px] border border-input bg-card px-3 text-xs font-medium text-muted-foreground outline-none hover:border-hover-border hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/25">
                 <span>{labels.managePipeline}</span>
                 <AppIcon name="chevronDown" className="size-3.5 text-subtle-foreground" />
               </summary>
               <div className="absolute right-0 z-20 mt-2 flex w-[min(28rem,calc(100vw-4rem))] flex-wrap gap-2 rounded-[10px] border border-border bg-card p-3 shadow-lg">
-                <Button disabled={!activeDocumentId || persistenceStatus !== "available"} onClick={beginCreatePipeline} size="sm" variant="secondary">{labels.newPipeline}</Button>
+                <Button disabled={!activeDocumentId || persistenceStatus !== "available" || managementBusy} onClick={beginCreatePipeline} size="sm" variant="secondary">{labels.newPipeline}</Button>
                 {activePipeline ? <Button onClick={() => void selectPipeline(null)} size="sm" variant="ghost" data-testid="clear-pipeline-selection">{labels.clearPipeline}</Button> : null}
-                <Button disabled={!activePipeline} onClick={beginRenamePipeline} size="sm" variant="outline">{labels.rename}</Button>
-                <Button disabled={!activePipeline} onClick={() => { setEditing(null); setConfirmDelete(true); }} size="sm" variant="ghost">{labels.remove}</Button>
+                <Button disabled={!activePipeline || managementBusy} onClick={beginRenamePipeline} size="sm" variant="outline">{labels.rename}</Button>
+                <Button disabled={!activePipeline || managementBusy} onClick={() => { setEditing(null); setManagementError(null); setConfirmDelete(true); if (managementMenuRef.current) managementMenuRef.current.open = false; }} size="sm" variant="ghost">{labels.remove}</Button>
               </div>
             </TransitionDetails>
           </div>
@@ -461,21 +510,26 @@ export function OverviewScreen() {
             <TransitionPanel className="mt-4 flex flex-wrap items-end gap-2 border-t border-border pt-4" data-testid="pipeline-name-editor">
               <label className="sr-only" htmlFor="overview-pipeline-name">{labels.namePlaceholder}</label>
               <Input autoFocus className="max-w-sm" id="overview-pipeline-name" maxLength={100} onChange={(event) => setPipelineName(event.target.value)} placeholder={labels.namePlaceholder} value={pipelineName} />
-              <Button disabled={!pipelineName.trim()} onClick={() => void savePipelineName()} size="sm">{labels.save}</Button>
-              <Button onClick={() => setEditing(null)} size="sm" variant="ghost">{labels.cancel}</Button>
+              <Button disabled={!pipelineName.trim() || managementBusy} onClick={() => void savePipelineName()} size="sm">{managementBusy ? (preferences.locale === "tr" ? "Kaydediliyor…" : "Saving…") : labels.save}</Button>
+              <Button disabled={managementBusy} onClick={() => { setEditing(null); setManagementError(null); }} size="sm" variant="ghost">{labels.cancel}</Button>
             </TransitionPanel>
           ) : null}
 
-          {confirmDelete && activePipeline ? (
-            <TransitionPanel aria-describedby="delete-pipeline-description" aria-labelledby="delete-pipeline-title" aria-modal="true" className="mt-4 rounded-[10px] border border-warning-border bg-warning-subtle p-4" data-testid="delete-pipeline-dialog" role="dialog">
-              <h2 className="text-sm font-semibold" id="delete-pipeline-title">{labels.remove}</h2>
-              <p className="mt-1 text-sm text-muted-foreground" id="delete-pipeline-description">{labels.confirmDelete}</p>
-              <div className="mt-3 flex gap-2">
-                <Button onClick={() => setConfirmDelete(false)} size="sm" variant="outline">{labels.cancel}</Button>
-                <Button onClick={() => { void deletePipeline(activePipeline.id); setConfirmDelete(false); }} size="sm" variant="destructive">{labels.remove}</Button>
-              </div>
-            </TransitionPanel>
-          ) : null}
+          <DialogPrimitive.Root onOpenChange={(open) => { if (!open && !managementBusy) { setConfirmDelete(false); setManagementError(null); } }} open={confirmDelete && Boolean(activePipeline)}>
+            {activePipeline ? <DialogPrimitive.Portal>
+              <DialogPrimitive.Overlay className="steplab-overlay fixed inset-0 z-50 bg-overlay/35 dark:bg-overlay/65" />
+              <TransitionDialogContent className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-border bg-card p-5 shadow-2xl focus:outline-none sm:p-6" data-testid="delete-pipeline-dialog">
+                <DialogPrimitive.Title className="text-base font-semibold text-foreground">{labels.remove}</DialogPrimitive.Title>
+                <DialogPrimitive.Description className="mt-2 text-sm leading-6 text-muted-foreground">{activePipeline.name} — {labels.confirmDelete}</DialogPrimitive.Description>
+                {managementError ? <p className="mt-3 text-sm text-destructive" role="alert">{managementError}</p> : null}
+                <div className="mt-5 flex justify-end gap-2">
+                  <DialogPrimitive.Close asChild><Button disabled={managementBusy} size="sm" variant="outline">{labels.cancel}</Button></DialogPrimitive.Close>
+                  <Button disabled={managementBusy} onClick={() => void confirmPipelineDelete()} size="sm" variant="destructive">{managementBusy ? (preferences.locale === "tr" ? "Siliniyor…" : "Deleting…") : labels.remove}</Button>
+                </div>
+              </TransitionDialogContent>
+            </DialogPrimitive.Portal> : null}
+          </DialogPrimitive.Root>
+          {editing && managementError ? <p className="mt-2 text-sm text-destructive" role="alert">{managementError}</p> : null}
 
           {activeDocumentId && !activePipeline ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{labels.noActivePipeline}</p> : null}
           {!activeDocumentId && documents.length > 0 ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{labels.selectDocumentForPipeline}</p> : null}
@@ -483,6 +537,7 @@ export function OverviewScreen() {
           {persistenceStatus === "unavailable" ? <div className="mt-4 border-t border-border pt-3"><p className="text-xs leading-5 text-destructive">{labels.unavailable}</p><PipelineErrorMessage message={persistenceError?.message} /></div> : null}
           {persistenceStatus === "available" && documents.length === 0 ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{labels.empty}</p> : null}
         </section>
+        </>}
 
         <section className="mt-6 rounded-[16px] border-[1.712px] border-border bg-card px-5 pb-4 pt-5" data-testid="figma-overview-pipeline">
           <div className="flex min-h-[22px] w-full items-center justify-between gap-4">

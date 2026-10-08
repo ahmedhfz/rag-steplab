@@ -23,7 +23,7 @@ jobs:
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
     steps:
       - name: Checkout full history
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -106,7 +106,7 @@ jobs:
 
       - name: Set up Python
         if: steps.classify.outputs.backend == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -121,7 +121,14 @@ jobs:
           set -euo pipefail
           python -m pip install --disable-pip-version-check pip-audit==2.10.0
           # requirements-worker.txt includes the base backend requirements.
-          python -m pip_audit --progress-spinner off -r backend/requirements-worker.txt
+          # Docling 2.117.0 advisories cover non-PDF backends/KServe/plugins; fixed
+          # releases (>=2.132.0) drop PDF text. See docs/deployment.md before removing.
+          docling_ignores=(
+            PYSEC-2026-4189 PYSEC-2026-4190 PYSEC-2026-4191 PYSEC-2026-4192 PYSEC-2026-4193
+            PYSEC-2026-4194 PYSEC-2026-4195 PYSEC-2026-4196 CVE-2026-105748 CVE-2026-105751
+          )
+          python -m pip_audit --progress-spinner off -r backend/requirements-worker.txt \
+            "${docling_ignores[@]/#/--ignore-vuln=}"
           python -m pip_audit --progress-spinner off -r backend/requirements-ci.txt
 
       - name: Run all backend unit and contract tests
@@ -130,7 +137,7 @@ jobs:
 
       - name: Install Supabase CLI
         if: steps.classify.outputs.database == 'true'
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@v3
         with:
           version: 2.116.0
 
@@ -153,7 +160,7 @@ jobs:
       - name: Restore Playwright Chromium
         if: steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true' || steps.classify.outputs.production_visual == 'true'
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -195,7 +202,7 @@ jobs:
 
       - name: Upload Playwright failure artifacts
         if: failure() && (steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true' || steps.classify.outputs.production_visual == 'true')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-pr-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

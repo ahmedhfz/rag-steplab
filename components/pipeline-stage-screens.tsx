@@ -46,8 +46,8 @@ function ArtifactHistory({
   kind: "chunk" | "embedding";
 }) {
   const labels = locale === "tr"
-    ? { empty: "Bu upstream için henüz run yok.", selected: "Kullanımda", inspected: "İnceleniyor", active: "Varsayılan", historical: "Geçmiş", status: "Durum", upstream: "Upstream", inspect: "İncele", use: "Pipeline'da kullan" }
-    : { empty: "No runs exist for this upstream yet.", selected: "In use", inspected: "Inspecting", active: "Default", historical: "Historical", status: "Status", upstream: "Upstream", inspect: "Inspect", use: "Use in pipeline" };
+    ? { empty: "Bu aşama için henüz sonuç yok.", selected: "Kullanımda", inspected: "İnceleniyor", active: "Varsayılan", historical: "Geçmiş", status: "Durum", inspect: "İncele", use: "Pipeline'da kullan" }
+    : { empty: "No result for this stage yet.", selected: "In use", inspected: "Inspecting", active: "Default", historical: "Historical", status: "Status", inspect: "Inspect", use: "Use in pipeline" };
   if (!runs.length) return null;
 
   return (
@@ -71,7 +71,7 @@ function ArtifactHistory({
                     {run.id === defaultId ? <span className="rounded-full bg-success-subtle px-1.5 py-0.5 text-[10px] text-success">{labels.active}</span> : null}
                     {run.historicalLineage ? <span className="rounded-full bg-warning-subtle px-1.5 py-0.5 text-[10px] text-warning">{labels.historical}</span> : null}
                   </div>
-                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground"><span>{labels.status}: {runStatusLabel(run, locale)}</span><span>{labels.upstream}: {Object.values(run.upstream).filter(Boolean).length ? `${Object.values(run.upstream).filter(Boolean).length} ${locale === "tr" ? "artifact" : "artifacts"}` : "—"}</span></div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">{labels.status}: {runStatusLabel(run, locale)}</div>
                   {run.error?.message ? <p className="mt-1 text-xs text-destructive">{run.error.message}</p> : null}
                   {!run.isCompatible && run.compatibilityReason ? <p className="mt-1 text-xs text-warning">{run.compatibilityReason}</p> : null}
                 </div>
@@ -123,7 +123,7 @@ export function ChunkingScreen() {
   return (
     <div className="min-w-0 overflow-x-clip bg-background" data-testid="chunking-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
-        <StageHeader description={labels.description} eyebrow="Build" title="Chunking" />
+        <StageHeader description={labels.description} eyebrow={locale === "tr" ? "Hazırla" : "Build"} title="Chunking" />
         <div className="mt-3 w-fit max-w-full overflow-hidden rounded-[14px] border border-border bg-card [&>[data-testid=pipeline-context-bar]]:border-b-0">
           <PipelineContextBar showLineage={false} />
         </div>
@@ -149,7 +149,7 @@ export function EmbeddingsScreen() {
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <StageHeader
           description={labels.description}
-          eyebrow="Build"
+          eyebrow={locale === "tr" ? "Hazırla" : "Build"}
           title="Embeddings"
         />
         <div className="mt-3 w-fit max-w-full overflow-hidden rounded-[14px] border border-border bg-card [&>[data-testid=pipeline-context-bar]]:border-b-0">

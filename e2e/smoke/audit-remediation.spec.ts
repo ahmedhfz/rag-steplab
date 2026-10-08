@@ -8,7 +8,7 @@ test("@critical desktop reports focus and strategy keyboard navigation", async (
   await installSeededApi(page);
   await page.goto("/parse");
   await selectSeededDocument(page);
-  await page.getByRole("button", { name: "Reports", exact: true }).click();
+  await page.getByRole("button", { name: "View results", exact: true }).click();
   await expect(page.getByTestId("parse-result-summary")).toBeFocused();
   await page.goto("/chunking");
   const radios = page.getByRole("radiogroup").getByRole("radio");

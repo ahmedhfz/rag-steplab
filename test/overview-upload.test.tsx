@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 describe("Phase 6B document ownership", () => {
-  it("shows workspace controls and the Figma-first journey without upload or parse actions", async () => {
+  it("shows a useful first step and the Journey before the first document", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       const payload = url.endsWith("/capabilities") ? capabilities : { items: [] };
       return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }));
@@ -29,23 +29,36 @@ describe("Phase 6B document ownership", () => {
     renderWithPipeline(<OverviewScreen />);
 
     expect(screen.getByRole("heading", { name: "Build your RAG, one step at a time." })).toBeInTheDocument();
-    expect(screen.getByTestId("workspace-control-plane")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("overview-first-use")).toBeInTheDocument());
+    expect(screen.queryByTestId("workspace-control-plane")).not.toBeInTheDocument();
     expect(screen.queryByTestId("overview-lineage")).not.toBeInTheDocument();
-    expect(screen.getByTestId("pipeline-management")).not.toHaveAttribute("open");
-    fireEvent.click(screen.getByText("Manage pipeline"));
-    expect(screen.getByRole("button", { name: "New pipeline" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Rename" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Delete" })).toBeVisible();
-    expect(screen.getByTestId("continue-surface")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try a sample PDF" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Add your own PDF" })).toHaveAttribute("href", "/documents");
+    expect(screen.getByText(/Your own files are saved to your account/)).toBeVisible();
     expect(screen.queryByTestId("current-setup")).not.toBeInTheDocument();
     expect(screen.getByTestId("overview-journey-compact")).toContainElement(screen.getAllByText("Build Context")[1]);
     expect(screen.getAllByText("Retrieval").length).toBeGreaterThanOrEqual(1);
-    await waitFor(() => expect(screen.getByText(/No documents yet/)).toBeInTheDocument());
-    expect(screen.getByTestId("overview-continue-action")).toHaveAttribute("href", "/documents");
-    expect(screen.getByTestId("overview-continue-action")).toHaveTextContent("Select a document");
+    expect(screen.queryByTestId("overview-continue-action")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Add PDF|Choose PDF|Parse Document|Reparse/i })).not.toBeInTheDocument();
     expect(screen.queryByTestId("activity-timeline")).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/documents/"))).toBe(false);
+  });
+
+  it("uploads the shipped sample through the normal document endpoint without starting parsing", async () => {
+    const user = userEvent.setup();
+    const sample = { id: "sample-1", fileName: "rag-steplab-sample-city-bikes.pdf", mediaType: "application/pdf", sizeBytes: 100, pageCount: 0, sha256: "ee26ecb099d9a1fba771ce9b4f8e82664a4b6982e5dec7a638350fa1e3e7b8a7", activeParseRunId: null, activeChunkRunId: null, activeEmbeddingRunId: null, createdAt: null, updatedAt: null };
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url === "/samples/rag-steplab-sample-city-bikes.pdf") return Promise.resolve(new Response("%PDF-1.4 sample", { status: 200, headers: { "Content-Type": "application/pdf" } }));
+      if (url.endsWith("/documents") && init?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ document: sample, reusedDocument: false }), { status: 201 }));
+      const payload = url.endsWith("/capabilities") ? capabilities : url.endsWith("/documents/sample-1/summary") ? { ...sample, parseRuns: [], chunkRuns: [], embeddingRuns: [], experiments: [], evaluationDatasets: [] } : { items: [] };
+      return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithPipeline(<OverviewScreen />);
+    await user.click(await screen.findByRole("button", { name: "Try a sample PDF" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url, request]) => String(url).endsWith("/documents") && (request as RequestInit | undefined)?.method === "POST")).toBe(true));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/parse-runs"))).toBe(false);
+    await waitFor(() => expect(screen.getByTestId("workspace-control-plane")).toBeInTheDocument());
   });
 
   it("uploads from the clickable drop zone without parsing", async () => {
@@ -165,13 +178,13 @@ describe("Phase 6B document ownership", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderWithPipeline(<DocumentsScreen />);
 
-    await waitFor(() => expect(screen.getAllByRole("button", { name: "Open document: active.pdf" }).length).toBeGreaterThan(0));
-    await user.click(screen.getAllByRole("button", { name: "Open document: active.pdf" })[0]);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Select document: active.pdf" }).length).toBeGreaterThan(0));
+    await user.click(screen.getAllByRole("button", { name: "Select document: active.pdf" })[0]);
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/documents/document-active/summary"))).toBe(true));
     await user.click(screen.getAllByRole("button", { name: "Delete: active.pdf" })[0]);
     await user.click(within(screen.getByTestId("delete-document-dialog")).getByRole("button", { name: "Delete" }));
 
-    await waitFor(() => expect(screen.getAllByRole("button", { name: "Open document: next.pdf" }).length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Select document: next.pdf" }).length).toBeGreaterThan(0));
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/documents/document-next/summary"))).toBe(true));
     expect(screen.queryByText("active.pdf", { exact: true })).not.toBeInTheDocument();
   });

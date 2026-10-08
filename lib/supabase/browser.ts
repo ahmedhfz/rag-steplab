@@ -27,9 +27,9 @@ export async function getSupabaseAccessToken(): Promise<string | null> {
   return data.session?.access_token ?? null;
 }
 
-export function supabaseAuthErrorMessage(error: unknown): string {
+export function supabaseAuthErrorMessage(error: unknown, locale: "en" | "tr" = "tr"): string {
   const value = error instanceof Error ? error.message.toLowerCase() : "";
-  if (value.includes("configuration_missing")) return "Kimlik doğrulama yapılandırması eksik.";
-  if (value.includes("session_unavailable")) return "Oturum doğrulanamadı. Lütfen tekrar deneyin.";
-  return "İşlem tamamlanamadı. Lütfen tekrar deneyin.";
+  if (value.includes("configuration_missing")) return locale === "tr" ? "Kimlik doğrulama yapılandırması eksik." : "Authentication is not configured.";
+  if (value.includes("session_unavailable")) return locale === "tr" ? "Oturum doğrulanamadı. Lütfen tekrar deneyin." : "Your session could not be verified. Please try again.";
+  return locale === "tr" ? "İşlem tamamlanamadı. Lütfen tekrar deneyin." : "The request could not be completed. Please try again.";
 }

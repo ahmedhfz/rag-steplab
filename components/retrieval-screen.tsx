@@ -18,9 +18,17 @@ import { UI_COPY } from "@/lib/copy";
 import type { ExperimentRun, ExperimentSummary, ExperimentTargetStage, RetrievalMode, StageReuseMetadata } from "@/lib/rag-api-types";
 import { clearQuestionTransition } from "@/lib/transitions";
 import { firstBlocker } from "@/lib/blockers";
+import { sampleForHash } from "@/lib/sample-documents";
 
 type PlaygroundStage = "retrieval" | "reranking" | "context" | "generation";
 type Locale = "en" | "tr";
+
+function lastAvailableStage(run: ExperimentRun): PlaygroundStage {
+  if (run.stageResults.generation) return "generation";
+  if (run.stageResults.context) return "context";
+  if (run.stageResults.reranking?.executed) return "reranking";
+  return "retrieval";
+}
 
 function ExperimentStageTrace({
   activeStage,
@@ -54,8 +62,8 @@ function ExperimentStageTrace({
   };
 
   return (
-    <ol aria-label={locale === "tr" ? "Experiment aşamaları" : "Experiment stages"} className="relative" data-testid="experiment-stage-trace">
-      <li className="relative flex min-h-[37px] items-center gap-2 rounded-[10px] px-1.5 py-1.5">
+    <ol aria-label={locale === "tr" ? "Experiment aşamaları" : "Experiment stages"} className="relative flex gap-1 overflow-x-auto pb-1 lg:block lg:overflow-visible lg:pb-0" data-testid="experiment-stage-trace">
+      <li className="relative hidden min-h-[37px] items-center gap-2 rounded-[10px] px-1.5 py-1.5 lg:flex">
         <span aria-hidden="true" className="grid size-6 shrink-0 place-items-center rounded-full bg-secondary text-muted-foreground"><AppIcon name="retrieve" className="size-3" /></span>
         <div className="min-w-0"><p className="text-[13px] font-medium text-foreground">{labels.query}</p><span className="sr-only">{run?.query || (locale === "tr" ? "Çalıştırılmayı bekliyor" : "Waiting to run")}</span></div>
       </li>
@@ -65,9 +73,9 @@ function ExperimentStageTrace({
         const state = statusFor(stage);
         const textClass = skipped ? "text-subtle-foreground" : result ? "text-success" : state === labels.failed ? "text-destructive" : "text-muted-foreground";
         return (
-          <li className="relative min-h-[37px]" key={stage}>
-            <span aria-hidden="true" className="absolute bottom-0 left-[13px] top-0 w-px bg-border" />
-            <button aria-pressed={activeStage === stage} className={`relative z-10 flex min-h-[37px] w-full items-center gap-3 rounded-[10px] px-3 py-2 text-left ${activeStage === stage ? "bg-accent" : "hover:bg-technical"}`} onClick={() => onSelect(stage)} type="button">
+          <li className="relative min-h-[37px] shrink-0 lg:shrink" key={stage}>
+            <span aria-hidden="true" className="absolute bottom-0 left-[13px] top-0 hidden w-px bg-border lg:block" />
+            <button aria-pressed={activeStage === stage} className={`relative z-10 flex min-h-[37px] min-w-[128px] items-center gap-2 rounded-[10px] px-3 py-2 text-left lg:w-full lg:min-w-0 lg:gap-3 ${activeStage === stage ? "bg-accent" : "hover:bg-technical"}`} onClick={() => onSelect(stage)} type="button">
               <span aria-hidden="true" className={`size-3 shrink-0 rounded-full border-2 border-card ${skipped ? "bg-subtle-foreground" : result ? "bg-success" : state === labels.failed ? "bg-destructive" : "bg-brand"}`} />
               <span className={`min-w-0 flex-1 truncate text-[13px] ${activeStage === stage ? "font-medium text-accent-foreground" : "font-normal text-foreground"}`}>{stage === "generation" ? labels.answer : labels[stage]}</span>
               <span className={`shrink-0 font-mono text-[12px] ${textClass}`}>{skipped ? state : result && typeof result.durationMs === "number" ? `${result.durationMs} ms` : state}</span>
@@ -357,7 +365,9 @@ export function RetrievalScreen() {
   const questionRef = useRef<HTMLDivElement>(null);
   const clearCleanup = useRef<(() => void) | null>(null);
   useEffect(() => () => clearCleanup.current?.(), []);
+  const historySelectionRef = useRef<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const selectedSample = sampleForHash(activeDocument?.sha256);
   const restoreDraft = useCallback((run: ExperimentRun) => {
     const retrieval = objectValue(run.config.retrieval);
     setQuestion(run.query);
@@ -375,6 +385,10 @@ export function RetrievalScreen() {
     if (!experimentRun || experimentRun.id === draftRunIdRef.current) return;
     draftRunIdRef.current = experimentRun.id;
     restoreDraft(experimentRun);
+    if (historySelectionRef.current === experimentRun.id) {
+      setActiveStage(lastAvailableStage(experimentRun));
+      historySelectionRef.current = null;
+    }
     setCopyStatus("idle");
   }, [experimentRun, restoreDraft]);
   useEffect(() => {
@@ -404,12 +418,12 @@ export function RetrievalScreen() {
   const labels = preferences.locale === "tr" ? {
     target: "Hedef aşama", retrieval: "Retrieval", retrievalControl: "Retrieval", reranking: "Reranking", context: "Context construction", generation: "Generation", runExperiment: "Deneyi çalıştır", advanced: "Gelişmiş ayarlar",
     candidateCount: "Rerank aday sayısı", tokenBudget: "Context token bütçesi", temperature: "Temperature", originalRank: "İlk sıra", rerankedPosition: "Reranked pozisyon", selected: "Seçildi", excluded: "Elendi", reason: "Karar", tokens: "Token",
-    answer: "Cevap", citations: "Citations", citationValid: "Citation reference valid", citationInvalid: "Citation reference incelenmeli", history: "Run history", compare: "Karşılaştır", selectedRuns: "Seçili run", candidates: "Aday", skipped: "Atlandı", details: "Ayrıntılar", configuration: "Yapılandırma", provenance: "Provenance", output: "Output", identifiers: "Identifiers",
+    answer: "Cevap", citations: "Citations", history: "Run history", compare: "Karşılaştır", selectedRuns: "Seçili run", candidates: "Aday", skipped: "Atlandı", details: "Ayrıntılar", configuration: "Yapılandırma", provenance: "Provenance", output: "Output", identifiers: "Identifiers",
     reused: "Yeniden kullanıldı", executed: "Çalıştırıldı", load: "Yükle", continue: "Devam et", runAgain: "Generation'ı tekrar çalıştır", exactReuse: "Aynı experiment yüklendi", viewing: "Görüntüleniyor", unsaved: "Kaydedilmemiş değişiklikler", running: "Deney çalışıyor…", blocked: "Aksiyon bekliyor", goTo: "Git", currentActions: "Aksiyonlar", noRun: "Bu aşama için henüz çıktı yok.", noAnswer: "Bu experiment için cevap çıktısı yok.", noCandidates: "Bu aşama için aday çıktısı yok.",
   } : {
     target: "Target stage", retrieval: "Retrieval", retrievalControl: "Retrieval", reranking: "Reranking", context: "Context construction", generation: "Generation", runExperiment: "Run experiment", advanced: "Advanced settings",
     candidateCount: "Rerank candidate count", tokenBudget: "Context token budget", temperature: "Temperature", originalRank: "Original rank", rerankedPosition: "Reranked position", selected: "Selected", excluded: "Excluded", reason: "Decision", tokens: "Tokens",
-    answer: "Answer", citations: "Citations", citationValid: "Citation reference valid", citationInvalid: "Citation reference needs review", history: "Run history", compare: "Compare", selectedRuns: "Selected runs", candidates: "Candidates", skipped: "Skipped", details: "Details", configuration: "Configuration", provenance: "Provenance", output: "Output", identifiers: "Identifiers",
+    answer: "Answer", citations: "Citations", history: "Run history", compare: "Compare", selectedRuns: "Selected runs", candidates: "Candidates", skipped: "Skipped", details: "Details", configuration: "Configuration", provenance: "Provenance", output: "Output", identifiers: "Identifiers",
     reused: "Reused", executed: "Executed", load: "Load", continue: "Continue", runAgain: "Run generation again", exactReuse: "Exact experiment loaded", viewing: "Viewing", unsaved: "Unsaved changes", running: "Running experiment…", blocked: "Action blocked", goTo: "Go to", currentActions: "Actions", noRun: "No output for this stage yet.", noAnswer: "No answer output is available for this experiment.", noCandidates: "No candidate output is available for this stage.",
   };
   const workspaceCopy = preferences.locale === "tr"
@@ -477,6 +491,16 @@ export function RetrievalScreen() {
     setCompareIds((current) => current.includes(runId) ? current.filter((id) => id !== runId) : current.length < 2 ? [...current, runId] : [current[1], runId]);
   }
 
+  function loadHistoryRun(run: ExperimentRun | ExperimentSummary) {
+    if (experimentRun?.id === run.id) {
+      restoreDraft(experimentRun);
+      setActiveStage(lastAvailableStage(experimentRun));
+      return;
+    }
+    historySelectionRef.current = run.id;
+    void loadExperiment(run.id);
+  }
+
   return (
     <div className="min-w-0 overflow-x-clip bg-background" data-testid="playground-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
@@ -501,6 +525,11 @@ export function RetrievalScreen() {
             </div>
             {!canAsk ? <span className="sr-only" id="ask-disabled-reason">{blockerMessage}</span> : null}
           </form>
+
+          {selectedSample ? <div className="mx-3 mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3" data-testid="sample-questions">
+            <span className="mr-1 text-xs font-medium text-muted-foreground">{preferences.locale === "tr" ? "Örnek sorular" : "Sample questions"}</span>
+            {selectedSample.questions.map((suggestion) => <button className="rounded-full border border-border px-3 py-1.5 text-left text-xs text-foreground transition-colors hover:border-accent-border hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25" key={suggestion} onClick={() => setQuestion(suggestion)} type="button">{suggestion}</button>)}
+          </div> : null}
 
           <div className="mt-3 grid grid-cols-[max-content_max-content_max-content] items-end gap-3 border-t border-border px-3 pt-3 max-sm:grid-cols-2" data-testid="playground-primary-controls">
             <fieldset className="min-w-0 max-sm:col-span-2">
@@ -549,7 +578,7 @@ export function RetrievalScreen() {
           <div className="mt-7 grid gap-5 lg:grid-cols-[260px_minmax(0,1fr)]" data-testid="playground-stage-layout">
             <aside className="min-w-0" data-testid="playground-stage-rail">
               <p className="text-[13px] font-semibold uppercase tracking-[0.05em] text-subtle-foreground">{workspaceCopy.stageTrace}</p>
-              <div className="mt-3 rounded-[16px] border border-border bg-card p-4"><ExperimentStageTrace activeStage={activeStage} locale={preferences.locale} onSelect={setActiveStage} rerankerEnabled={rerankerEnabled} run={experimentRun} /></div>
+              <div className="mt-3 rounded-[16px] border border-border bg-card p-2 lg:p-4"><ExperimentStageTrace activeStage={activeStage} locale={preferences.locale} onSelect={setActiveStage} rerankerEnabled={rerankerEnabled} run={experimentRun} /></div>
             </aside>
 
             <TransitionPanel as="section" transitionKey={`${experimentRun?.id}:${activeStage}:${results?.[activeStage]?.durationMs}`} className="min-w-0" data-testid="playground-stage-content">
@@ -574,14 +603,14 @@ export function RetrievalScreen() {
 
               {activeStage === "generation" ? <>
                 <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-[18px] font-semibold text-foreground">{labels.answer}</h2><p className="mt-1 max-w-[560px] text-[13.5px] leading-5 text-muted-foreground">{workspaceCopy.answerDescription}</p></div>{results?.generation ? <span className="inline-flex items-center gap-1.5 rounded-full bg-success-subtle px-3 py-1 text-[12px] font-medium text-success"><AppIcon name="completed" className="size-3.5" />{workspaceCopy.complete}</span> : null}</div>
-                {results?.generation ? <><div className="mt-5 rounded-[16px] border border-border bg-card p-5" data-testid="playground-answer"><StageReuseBadge detailsLabel={labels.details} executedLabel={labels.executed} reusedLabel={labels.reused} stage="generation" reuse={results.generation.reuse} />{results.generation.insufficientContext && !results.generation.answer.trim() ? <div className="mt-3 rounded-[12px] border border-warning-border bg-warning-subtle p-4" data-testid="playground-insufficient-context" role="status"><h3 className="text-[14px] font-semibold text-warning">{preferences.locale === "tr" ? "Yeterli context bulunamadı" : "Not enough context to answer"}</h3><p className="mt-1 text-sm leading-5 text-warning">{preferences.locale === "tr" ? "Bu deney, kaynaklarda doğrulanabilir bir cevap üretmek için yeterli içerik bulamadı." : "This experiment did not find enough grounded context to produce an answer."}</p></div> : <p className="mt-3 whitespace-pre-wrap break-words text-base leading-[26px] text-foreground">{results.generation.answer}</p>}</div>{results.generation.citations.length ? <div className="mt-5"><h3 className="text-[13px] font-semibold text-foreground">{labels.citations}</h3><div className="mt-2 overflow-hidden rounded-[12px] border border-border bg-card"><div className="divide-y divide-border">{results.generation.citations.map((citation) => <div className="flex flex-wrap items-center gap-3 p-3" key={citation.citationId}><span className="grid size-6 shrink-0 place-items-center rounded-full bg-accent font-mono text-[12px] text-accent-foreground">{citation.citationId.replace(/\D/g, "") || "?"}</span><span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{citation.quote || citation.citationId}</span><span className="shrink-0 text-[12px] text-subtle-foreground">p.{citation.pageNumbers.join(", ") || "—"}</span><span className={citation.valid ? "rounded-full bg-success-subtle px-2 py-1 text-[11px] font-medium text-success" : "rounded-full bg-destructive-subtle px-2 py-1 text-[11px] font-medium text-destructive"}>{citation.valid ? labels.citationValid : labels.citationInvalid}</span><SourceInspector documentId={activeDocument?.id ?? null} pageNumbers={citation.pageNumbers} parseResult={parseResult} sourceElementIds={citation.sourceElementIds} triggerAriaLabel={citation.citationId} triggerLabel={citation.citationId} /></div>)}</div></div></div> : null}<ExperimentDetails locale={preferences.locale} run={experimentRun} /></> : <div className="mt-5 rounded-[16px] border border-border bg-card p-6 text-sm text-muted-foreground">{labels.noAnswer}</div>}
+                  {results?.generation ? <><div className="mt-5 rounded-[16px] border border-border bg-card p-5" data-testid="playground-answer"><StageReuseBadge detailsLabel={labels.details} executedLabel={labels.executed} reusedLabel={labels.reused} stage="generation" reuse={results.generation.reuse} />{results.generation.insufficientContext && !results.generation.answer.trim() ? <div className="mt-3 rounded-[12px] border border-warning-border bg-warning-subtle p-4" data-testid="playground-insufficient-context" role="status"><h3 className="text-[14px] font-semibold text-warning">{preferences.locale === "tr" ? "Yeterli context bulunamadı" : "Not enough context to answer"}</h3><p className="mt-1 text-sm leading-5 text-warning">{preferences.locale === "tr" ? "Bu deney, kaynaklarda doğrulanabilir bir cevap üretmek için yeterli içerik bulamadı." : "This experiment did not find enough grounded context to produce an answer."}</p></div> : <p className="mt-3 whitespace-pre-wrap break-words text-base leading-[26px] text-foreground">{results.generation.answer}</p>}</div>{results.generation.citations.length ? <div className="mt-5"><h3 className="text-[13px] font-semibold text-foreground">{labels.citations}</h3><div className="mt-2 overflow-hidden rounded-[12px] border border-border bg-card"><div className="divide-y divide-border">{results.generation.citations.map((citation) => <div className="flex flex-wrap items-center gap-3 p-3" key={citation.citationId}><span className="grid size-6 shrink-0 place-items-center rounded-full bg-accent font-mono text-[12px] text-accent-foreground">{citation.citationId.replace(/\D/g, "") || "?"}</span><span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{citation.quote || citation.citationId}</span><span className="shrink-0 text-[12px] text-subtle-foreground">p.{citation.pageNumbers.join(", ") || "—"}</span><span className={citation.valid ? "rounded-full bg-success-subtle px-2 py-1 text-[11px] font-medium text-success" : "rounded-full bg-destructive-subtle px-2 py-1 text-[11px] font-medium text-destructive"} title={preferences.locale === "tr" ? "Bu durum kaynak bağlantısını kontrol eder; cevabın doğruluğunu garanti etmez." : "This checks the source reference, not the factual accuracy of the answer."}>{citation.valid ? (preferences.locale === "tr" ? "Referans bulundu" : "Reference found") : (preferences.locale === "tr" ? "Referansı incele" : "Check reference")}</span><SourceInspector documentId={activeDocument?.id ?? null} pageNumbers={citation.pageNumbers} parseResult={parseResult} sourceElementIds={citation.sourceElementIds} triggerAriaLabel={citation.citationId} triggerLabel={citation.citationId} /></div>)}</div></div></div> : null}<ExperimentDetails locale={preferences.locale} run={experimentRun} /></> : <div className="mt-5 rounded-[16px] border border-border bg-card p-6 text-sm text-muted-foreground">{labels.noAnswer}</div>}
               </> : null}
             </TransitionPanel>
           </div>
           <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-3" data-testid="playground-current-actions"><span className="mr-1 text-[13px] font-medium text-foreground">{labels.currentActions}</span>{(experimentRun?.status === "queued" || experimentRun?.status === "running") && experimentStatus !== "processing" ? <Button onClick={() => void resumeRunTracking("experiment")} size="sm" variant="outline">{preferences.locale === "tr" ? "Takibi sürdür" : "Resume tracking"}</Button> : null}{copyStatus !== "idle" ? <span role="status"><TransitionText>{copyStatus === "copied" ? (preferences.locale === "tr" ? "Trace kopyalandı." : "Trace copied.") : (preferences.locale === "tr" ? "Kopyalanamadı. Tekrar deneyin." : "Copy failed. Try again.")}</TransitionText></span> : null}{canContinue ? <Button className="gap-2" onClick={() => void continueExperiment()} size="sm" variant="outline">{labels.continue}</Button> : null}{results?.generation ? <Button className="gap-2" disabled={!canRerunGeneration} onClick={() => void rerunGeneration()} size="sm" variant="outline">{labels.runAgain}</Button> : null}<Button className="gap-2" onClick={() => void copyTrace()} size="sm" variant="outline"><AppIcon name="copy" className="size-4" />{copy.retrieval.copyTrace}</Button></div>
         </> : null}
 
-        {experimentHistory.length ? <TransitionDetails className="mt-6 rounded-[12px] border border-border bg-card" data-testid="playground-history"><summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-[13px] font-medium text-foreground"><span>{labels.history}</span><span className="text-xs font-normal text-subtle-foreground">{experimentHistory.length}</span></summary><div className="border-t border-border p-3"><div className="space-y-2">{experimentHistory.map((run, index) => { const retrieval = objectValue(run.config.retrieval); const reranking = objectValue(run.config.reranking); const candidateCountValue = isExperimentDetail(run) ? run.stageResults.retrieval?.candidates.length ?? 0 : run.candidateCount ?? 0; return <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border p-3" key={run.id}><label className="flex shrink-0 items-center gap-2"><TransitionCheckbox aria-label={`${labels.compare} ${experimentIdentity(run, index + 1)}`} checked={compareIds.includes(run.id)} disabled={!compareIds.includes(run.id) && compareIds.length >= 2} onChange={() => toggleCompare(run.id)} type="checkbox" /><span className="sr-only">{labels.compare}</span></label><div className="min-w-0 flex-1"><p className="truncate text-[13px] font-medium text-foreground">{run.query || experimentIdentity(run, index + 1)}</p><p className="mt-1 text-[11.5px] text-subtle-foreground">{experimentRetrievalMode(run.config)} · {copy.retrieval.topK} {String(retrieval.topK ?? "—")} · {Boolean(reranking.enabled) ? (preferences.locale === "tr" ? "Reranker açık" : "Reranker on") : (preferences.locale === "tr" ? "Reranker kapalı" : "Reranker off")} · {formatRunTimestamp(run, preferences.locale) ?? "—"} · {run.timing.durationMs === null ? "—" : `${run.timing.durationMs} ms`} · {candidateCountValue} {labels.candidates.toLowerCase()}</p></div><Button aria-label={`${labels.load} ${experimentIdentity(run, index + 1)}`} onClick={() => { if (experimentRun?.id === run.id) restoreDraft(experimentRun); void loadExperiment(run.id); }} size="sm" variant="ghost">{labels.load}</Button></div>; })}</div>{selectedComparisonRuns.length ? <div className="mt-3 grid gap-3 border-t border-border pt-3 md:grid-cols-2"><p className="sr-only">{labels.selectedRuns}: {compareIds.length}/2</p>{selectedComparisonRuns.map((run, index) => <div className="rounded-[10px] border border-border p-3" key={run.id}><div className="text-xs font-semibold text-accent-foreground">{experimentIdentity(run, index + 1)}</div><dl className="mt-2 grid grid-cols-2 gap-2 text-xs"><div><dt className="text-subtle-foreground">{copy.retrieval.mode}</dt><dd className="mt-1">{experimentRetrievalMode(run.config)}</dd></div><div><dt className="text-subtle-foreground">{labels.candidates}</dt><dd className="mt-1">{run.stageResults.retrieval?.candidates.length ?? 0}</dd></div><div><dt className="text-subtle-foreground">{labels.citations}</dt><dd className="mt-1">{run.stageResults.generation?.citations.filter((citation) => citation.valid).length ?? 0}</dd></div></dl></div>)}</div> : null}</div></TransitionDetails> : null}
+        {experimentHistory.length ? <TransitionDetails className="mt-6 rounded-[12px] border border-border bg-card" data-testid="playground-history"><summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-[13px] font-medium text-foreground"><span>{labels.history}</span><span className="text-xs font-normal text-subtle-foreground">{experimentHistory.length}</span></summary><div className="border-t border-border p-3"><div className="space-y-2">{experimentHistory.map((run, index) => { const retrieval = objectValue(run.config.retrieval); const reranking = objectValue(run.config.reranking); const candidateCountValue = isExperimentDetail(run) ? run.stageResults.retrieval?.candidates.length ?? 0 : run.candidateCount ?? 0; return <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border p-3" key={run.id}><label className="flex shrink-0 items-center gap-2"><TransitionCheckbox aria-label={`${labels.compare} ${experimentIdentity(run, index + 1)}`} checked={compareIds.includes(run.id)} disabled={!compareIds.includes(run.id) && compareIds.length >= 2} onChange={() => toggleCompare(run.id)} type="checkbox" /><span className="sr-only">{labels.compare}</span></label><div className="min-w-0 flex-1"><p className="truncate text-[13px] font-medium text-foreground">{run.query || experimentIdentity(run, index + 1)}</p><p className="mt-1 text-[11.5px] text-subtle-foreground">{experimentRetrievalMode(run.config)} · {copy.retrieval.topK} {String(retrieval.topK ?? "—")} · {Boolean(reranking.enabled) ? (preferences.locale === "tr" ? "Reranker açık" : "Reranker on") : (preferences.locale === "tr" ? "Reranker kapalı" : "Reranker off")} · {formatRunTimestamp(run, preferences.locale) ?? "—"} · {run.timing.durationMs === null ? "—" : `${run.timing.durationMs} ms`} · {candidateCountValue} {labels.candidates.toLowerCase()}</p></div><Button aria-label={`${labels.load} ${experimentIdentity(run, index + 1)}`} onClick={() => loadHistoryRun(run)} size="sm" variant="ghost">{labels.load}</Button></div>; })}</div>{selectedComparisonRuns.length ? <div className="mt-3 grid gap-3 border-t border-border pt-3 md:grid-cols-2"><p className="sr-only">{labels.selectedRuns}: {compareIds.length}/2</p>{selectedComparisonRuns.map((run, index) => <div className="rounded-[10px] border border-border p-3" key={run.id}><div className="text-xs font-semibold text-accent-foreground">{experimentIdentity(run, index + 1)}</div><dl className="mt-2 grid grid-cols-2 gap-2 text-xs"><div><dt className="text-subtle-foreground">{copy.retrieval.mode}</dt><dd className="mt-1">{experimentRetrievalMode(run.config)}</dd></div><div><dt className="text-subtle-foreground">{labels.candidates}</dt><dd className="mt-1">{run.stageResults.retrieval?.candidates.length ?? 0}</dd></div><div><dt className="text-subtle-foreground">{labels.citations}</dt><dd className="mt-1">{run.stageResults.generation?.citations.filter((citation) => citation.valid).length ?? 0}</dd></div></dl></div>)}</div> : null}</div></TransitionDetails> : null}
       </div>
     </div>
   );

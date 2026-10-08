@@ -6,6 +6,7 @@ import { useRef, useState } from "react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { usePreferences } from "@/components/preferences-provider";
+import { SampleDocumentButton } from "@/components/sample-document-button";
 import { AppIcon } from "@/components/ui/app-icon";
 import { type AppCopy, UI_COPY } from "@/lib/copy";
 import { formatDocumentFileSize, validatePdfFile, type DocumentFileValidationError } from "@/lib/document-file";
@@ -104,6 +105,10 @@ export function DocumentUploadPanel() {
       />
       {validationError ? <p className="mt-3 text-sm text-destructive" id="document-upload-feedback" role="alert">{validationMessage(validationError, copy.overview)}</p> : null}
       {submitError ? <p className="mt-3 text-sm text-destructive" id="document-upload-feedback" role="alert">{submitError} <span className="block text-xs">{labels.retry}</span></p> : null}
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <p className="max-w-[520px] text-xs leading-5 text-muted-foreground">{preferences.locale === "tr" ? "Yüklediğiniz PDF hesabınıza kaydedilir. Kişisel veya gizli içerik yerine örnek doküman kullanabilirsiniz." : "Uploaded PDFs are saved to your account. Use the sample instead of personal or confidential content."}</p>
+        <SampleDocumentButton />
+      </div>
     </div>
   );
 }

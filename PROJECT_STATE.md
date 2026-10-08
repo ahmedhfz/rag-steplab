@@ -12,3 +12,8 @@ davranışı kod, yapılandırma ve release kanıtından doğrulayın.
   3472,25 MiB peak RSS ölçümü kaydedilmiştir. Bu tarihsel ölçüm daha büyük veya
   görsel yoğunluğu yüksek PDF'ler için güvenli bir sınır oluşturmaz; böyle bir
   iddia öncesinde daha geniş ve temsili benchmark gerekir.
+- Docling `2.117.0`'da tutuluyor: bu sürümün on advisory'si CI audit'inde
+  gerekçeli muaf (`docs/deployment.md`). Düzeltilmiş 2.132.0/2.135.0 sürümleri
+  TR örnek PDF'inin 4. sayfasında ham çıktıda iki paragraf kaybettiği için
+  alınmadı; yeni Docling sürümü içerik kaybı olmadan doğrulanınca muafiyet
+  kaldırılmalıdır.

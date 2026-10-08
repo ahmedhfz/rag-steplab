@@ -48,7 +48,7 @@ describe("artifact reuse UX contract", () => {
     render(<ChunksPipeline locale="en" stage="chunking" />);
     await user.click(screen.getByRole("button", { name: "Run chunking" }));
 
-    expect(await screen.findByTestId("chunk-reuse-notice")).toHaveTextContent("The existing artifact was reused.");
+    expect(await screen.findByTestId("chunk-reuse-notice")).toHaveTextContent("Previous output was reused.");
   });
 
   it("does not infer reuse from a normal create response", async () => {
@@ -68,6 +68,6 @@ describe("artifact reuse UX contract", () => {
     render(<ChunksPipeline locale="en" stage="embeddings" />);
     await user.click(screen.getByRole("button", { name: "Create embeddings" }));
 
-    expect(await screen.findByTestId("embedding-reuse-notice")).toHaveTextContent("The existing artifact was reused.");
+    expect(await screen.findByTestId("embedding-reuse-notice")).toHaveTextContent("Previous output was reused.");
   });
 });

@@ -425,7 +425,7 @@ export function EvaluationScreen() {
               {selectedDataset ? <p className="mt-0.5 text-[11px] text-muted-foreground">v{selectedDataset.version} · {selectedDataset.caseCount} {labels.cases}</p> : null}
             </div>
             <div className="min-w-0 md:flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{labels.configSummary}</p><p className="mt-1 break-words text-[13px] font-medium text-foreground" data-testid="evaluation-config-summary">{activeConfigSummary}</p></div>
-            <div className="self-start md:ml-auto md:self-auto">{evaluationDatasets.length ? statusPill(labels.datasetReady) : statusPill(preferences.locale === "tr" ? "Hazır" : "Ready", "ready")}</div>
+            <div className="self-start md:ml-auto md:self-auto">{selectedDataset ? statusPill(labels.datasetReady) : statusPill(preferences.locale === "tr" ? "Dataset gerekli" : "Dataset needed", "muted")}</div>
           </div>
         </section>
 

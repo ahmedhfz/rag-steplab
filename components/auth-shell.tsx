@@ -52,7 +52,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
         <div className="grid w-full max-w-[1040px] overflow-hidden rounded-[24px] border-[1.5px] border-border bg-card shadow-[0_20px_40px_rgba(23,20,22,0.07)] md:min-h-[620px] md:grid-cols-2 lg:h-[668px]">
           <section className="relative hidden min-h-[420px] min-w-0 flex-col overflow-hidden bg-accent p-4 md:flex lg:p-5" data-testid="auth-hero-panel">
             <div className="relative min-h-0 flex-1 overflow-hidden rounded-[18px]" data-testid="auth-hero">
-              <Image alt={labels.heroAlt} className="object-contain" data-testid="auth-hero-image" fill priority sizes="(max-width: 1023px) 50vw, 520px" src={UI_ASSETS.illustrations.login} />
+              <Image alt={labels.heroAlt} className="object-contain" data-testid="auth-hero-image" fill priority sizes="(max-width: 1023px) 50vw, 520px" src={preferences.locale === "tr" ? UI_ASSETS.illustrations.login : UI_ASSETS.illustrations.loginEn} />
             </div>
           </section>
 

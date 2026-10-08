@@ -5,6 +5,7 @@ export const UI_ASSETS = {
   },
   illustrations: {
     login: "/assets/illustrations/login-hero.png",
+    loginEn: "/assets/illustrations/login-hero-en.png",
     documents: "/assets/illustrations/documents.png",
     parsing: "/assets/illustrations/parsing.png",
     chunking: "/assets/illustrations/chunking.png",

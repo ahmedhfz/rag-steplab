@@ -69,7 +69,8 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
         uploaded: "Yüklendi",
         active: "Aktif",
         actions: "İşlemler",
-        open: "Dokümanı aç",
+        open: "Dokümanı seç",
+        continue: "Parsing'e devam et",
         menu: "Diğer işlemler",
         openParse: "Parsed içeriği aç",
         openChunks: "Chunk'ları aç",
@@ -95,7 +96,8 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
         uploaded: "Uploaded",
         active: "Active",
         actions: "Actions",
-        open: "Open document",
+        open: "Select document",
+        continue: "Continue to Parsing",
         menu: "More actions",
         openParse: "Open parsed content",
         openChunks: "Open chunks",
@@ -132,11 +134,11 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
 
   return (
     <section aria-label={labels.title} className="mt-8 min-w-0" data-testid="document-library">
-      <div className="flex h-[26px] items-center justify-between gap-3">
+      <div className="flex min-h-[26px] flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold leading-[26px] tracking-[-0.02em] text-foreground">{labels.title}</h2>
         </div>
-        {documents.length > 0 ? <span className="text-[13px] leading-[19.5px] text-muted-foreground">{documents.length} {locale === "tr" ? "doküman" : documents.length === 1 ? "document" : "documents"}</span> : null}
+        {documents.length > 0 ? <div className="flex flex-wrap items-center gap-3"><span className="text-[13px] leading-[19.5px] text-muted-foreground">{documents.length} {locale === "tr" ? "doküman" : documents.length === 1 ? "document" : "documents"}</span>{activeDocumentId ? <Link className="inline-flex items-center gap-1 text-[13px] font-medium text-brand outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/25" href="/parse">{labels.continue}<AppIcon className="size-3.5" name="arrowRight" /></Link> : null}</div> : null}
       </div>
       <div className="mt-4">
         {persistenceStatus === "checking" ? <EmptyPipelineState>{labels.loading}</EmptyPipelineState> :
