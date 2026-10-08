@@ -48,3 +48,11 @@ def test_production_health_check_uses_the_routing_region_endpoint():
     assert "  push:" not in ci_workflow
     assert '      - "backend/app/**"' in workflow
     assert "backend/tests/**" not in workflow
+
+
+def test_parse_reconciliation_budget_covers_modal_execution_and_startup():
+    from app.config import PARSE_RUN_TIMEOUT_SECONDS
+
+    assert PARSE_RUN_TIMEOUT_SECONDS == (
+        modal_app.worker_options["timeout"] + modal_app.worker_options["startup_timeout"] + 120
+    )
