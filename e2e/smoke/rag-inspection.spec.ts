@@ -40,11 +40,11 @@ test("@critical Playground stage rail, provenance ve Source Inspector contractı
   await page.getByRole("button", { name: "Inspect source" }).first().click();
   const mobileDialog = page.getByRole("dialog", { name: "Source inspector" });
   await expect(mobileDialog).toBeVisible();
-  const mobileDialogRect = await mobileDialog.evaluate((element) => {
+  const mobileDialogRect = () => mobileDialog.evaluate((element) => {
     const { x, y, width, height } = element.getBoundingClientRect();
     return { x, y, width, height };
   });
-  expect(mobileDialogRect).toMatchObject({ x: 0, y: 0, width: 390, height: 844 });
+  await expect.poll(mobileDialogRect).toMatchObject({ x: 0, y: 0, width: 390, height: 844 });
   await expect(mobileDialog.locator("aside")).toBeVisible();
   const evidenceTop = await mobileDialog.getByTestId("source-inspector-evidence").evaluate((element) => element.getBoundingClientRect().top);
   const previewTop = await mobileDialog.getByTestId("source-inspector-preview").evaluate((element) => element.getBoundingClientRect().top);

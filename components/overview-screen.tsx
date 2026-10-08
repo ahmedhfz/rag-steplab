@@ -1,5 +1,8 @@
 "use client";
 
+import { TransitionDetails, TransitionPanel, TransitionText } from "@/components/ui/transitions";
+import { TransitionDialogContent } from "@/components/ui/transition-surface";
+
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
@@ -476,7 +479,7 @@ export function OverviewScreen() {
                     <SelectContent>{pipelines.map((pipeline) => <SelectItem className={selectorItemClass} key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-            <details className="relative self-end" data-testid="pipeline-management" ref={managementMenuRef}>
+            <TransitionDetails className="relative self-end" data-testid="pipeline-management" ref={managementMenuRef} variant="dropdown">
               <summary className="flex h-[42px] cursor-pointer list-none items-center justify-between gap-3 rounded-[10px] border border-input bg-card px-3 text-xs font-medium text-muted-foreground outline-none hover:border-hover-border hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/25">
                 <span>{labels.managePipeline}</span>
                 <AppIcon name="chevronDown" className="size-3.5 text-subtle-foreground" />
@@ -487,7 +490,7 @@ export function OverviewScreen() {
                 <Button disabled={!activePipeline || managementBusy} onClick={beginRenamePipeline} size="sm" variant="outline">{labels.rename}</Button>
                 <Button disabled={!activePipeline || managementBusy} onClick={() => { setEditing(null); setManagementError(null); setConfirmDelete(true); if (managementMenuRef.current) managementMenuRef.current.open = false; }} size="sm" variant="ghost">{labels.remove}</Button>
               </div>
-            </details>
+            </TransitionDetails>
           </div>
 
           <div className="mt-3.5 grid min-w-0 gap-3 border-t border-border pt-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" data-testid="continue-surface">
@@ -496,7 +499,7 @@ export function OverviewScreen() {
                 <p className="text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.66px] text-subtle-foreground">{labels.continueTitle}</p>
                 <StatusIndicator state={overviewModel.continuation.state} />
               </div>
-              <p className="mt-1 truncate text-xs text-muted-foreground">{labels.nextStep}: <span className="font-medium text-foreground">{continuationText.nextStep}</span></p>
+              <p className="mt-1 truncate text-xs text-muted-foreground">{labels.nextStep}: <span className="font-medium text-foreground"><TransitionText>{continuationText.nextStep}</TransitionText></span></p>
             </div>
             <Button asChild className="h-[42px] min-w-0 gap-2 rounded-[10px] px-4 text-sm" data-testid="overview-continue-action">
               <Link href={overviewModel.continuation.href}>{continuationText.action}<AppIcon name="arrowRight" className="size-4" /></Link>
@@ -504,18 +507,18 @@ export function OverviewScreen() {
           </div>
 
           {editing ? (
-            <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-border pt-4" data-testid="pipeline-name-editor">
+            <TransitionPanel className="mt-4 flex flex-wrap items-end gap-2 border-t border-border pt-4" data-testid="pipeline-name-editor">
               <label className="sr-only" htmlFor="overview-pipeline-name">{labels.namePlaceholder}</label>
               <Input autoFocus className="max-w-sm" id="overview-pipeline-name" maxLength={100} onChange={(event) => setPipelineName(event.target.value)} placeholder={labels.namePlaceholder} value={pipelineName} />
               <Button disabled={!pipelineName.trim() || managementBusy} onClick={() => void savePipelineName()} size="sm">{managementBusy ? (preferences.locale === "tr" ? "Kaydediliyor…" : "Saving…") : labels.save}</Button>
               <Button disabled={managementBusy} onClick={() => { setEditing(null); setManagementError(null); }} size="sm" variant="ghost">{labels.cancel}</Button>
-            </div>
+            </TransitionPanel>
           ) : null}
 
           <DialogPrimitive.Root onOpenChange={(open) => { if (!open && !managementBusy) { setConfirmDelete(false); setManagementError(null); } }} open={confirmDelete && Boolean(activePipeline)}>
             {activePipeline ? <DialogPrimitive.Portal>
-              <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-overlay/35 dark:bg-overlay/65" />
-              <DialogPrimitive.Content className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-border bg-card p-5 shadow-2xl focus:outline-none sm:p-6" data-testid="delete-pipeline-dialog">
+              <DialogPrimitive.Overlay className="steplab-overlay fixed inset-0 z-50 bg-overlay/35 dark:bg-overlay/65" />
+              <TransitionDialogContent className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-border bg-card p-5 shadow-2xl focus:outline-none sm:p-6" data-testid="delete-pipeline-dialog">
                 <DialogPrimitive.Title className="text-base font-semibold text-foreground">{labels.remove}</DialogPrimitive.Title>
                 <DialogPrimitive.Description className="mt-2 text-sm leading-6 text-muted-foreground">{activePipeline.name} — {labels.confirmDelete}</DialogPrimitive.Description>
                 {managementError ? <p className="mt-3 text-sm text-destructive" role="alert">{managementError}</p> : null}
@@ -523,7 +526,7 @@ export function OverviewScreen() {
                   <DialogPrimitive.Close asChild><Button disabled={managementBusy} size="sm" variant="outline">{labels.cancel}</Button></DialogPrimitive.Close>
                   <Button disabled={managementBusy} onClick={() => void confirmPipelineDelete()} size="sm" variant="destructive">{managementBusy ? (preferences.locale === "tr" ? "Siliniyor…" : "Deleting…") : labels.remove}</Button>
                 </div>
-              </DialogPrimitive.Content>
+              </TransitionDialogContent>
             </DialogPrimitive.Portal> : null}
           </DialogPrimitive.Root>
           {editing && managementError ? <p className="mt-2 text-sm text-destructive" role="alert">{managementError}</p> : null}
@@ -562,3 +565,4 @@ export function OverviewScreen() {
     </div>
   );
 }
+

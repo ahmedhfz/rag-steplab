@@ -1,5 +1,7 @@
 "use client";
 
+import { TransitionDetails } from "@/components/ui/transitions";
+
 import Link from "next/link";
 
 import { ChunkingWorkspace, EmbeddingWorkspace } from "@/components/chunks-pipeline";
@@ -50,7 +52,7 @@ function ArtifactHistory({
 
   return (
     <section className="mt-8" data-testid={`${kind}-history`}>
-      <details className="rounded-[12px] border-[1.712px] border-border bg-card">
+      <TransitionDetails className="rounded-[12px] border-[1.712px] border-border bg-card">
         <summary className="flex h-[46px] cursor-pointer list-none items-center justify-between px-4 text-[13px] font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/25 sm:px-5">
           <span>{title} ({runs.length})</span><AppIcon name="chevronDown" className="size-3.5 text-subtle-foreground" />
         </summary>
@@ -81,7 +83,7 @@ function ArtifactHistory({
             );
           })}
         </div>
-      </details>
+      </TransitionDetails>
     </section>
   );
 }
@@ -160,3 +162,4 @@ export function EmbeddingsScreen() {
     </div>
   );
 }
+

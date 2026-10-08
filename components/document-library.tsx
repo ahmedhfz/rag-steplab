@@ -1,8 +1,11 @@
 "use client";
 
+import { TransitionDetails, TransitionText } from "@/components/ui/transitions";
+
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
+import { TransitionDialogContent } from "@/components/ui/transition-surface";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { EmptyPipelineState, PipelineErrorMessage } from "@/components/pipeline-learning-ui";
@@ -47,6 +50,8 @@ function formatUpdatedAt(value: string | null, locale: AppLocale) {
 export function DocumentLibrary({ locale }: { locale: AppLocale }) {
   const { documents, activeDocumentId, persistenceStatus, persistenceError, selectPersistedDocument, deletePersistedDocument } = useDocumentPipeline();
   const [documentPendingDelete, setDocumentPendingDelete] = useState<PersistedDocument | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const deleteOrigin = useRef<HTMLElement | null>(null);
   const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const labels = locale === "tr"
@@ -106,8 +111,10 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
       };
 
   const requestDelete = (document: PersistedDocument) => {
+    deleteOrigin.current = window.document.activeElement instanceof HTMLElement ? window.document.activeElement : null;
     setDeleteError(null);
     setDocumentPendingDelete(document);
+    setDeleteDialogOpen(true);
   };
 
   const confirmDelete = async () => {
@@ -117,7 +124,7 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
     setDeleteError(null);
     try {
       await deletePersistedDocument(target.id);
-      setDocumentPendingDelete(null);
+      setDeleteDialogOpen(false);
     } catch (error) {
       setDeleteError(error instanceof Error && error.message ? error.message : labels.deleteFailed);
     } finally {
@@ -199,7 +206,7 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                                     <p className="break-words text-sm font-medium leading-5 text-foreground">{document.fileName}</p>
                                     <p className="mt-0.5 text-xs leading-[18px] text-subtle-foreground">PDF</p>
                                   </div>
-                                  <details className="relative shrink-0">
+                                  <TransitionDetails className="relative shrink-0" variant="dropdown">
                                     <summary aria-label={`${labels.menu}: ${document.fileName}`} className="grid size-10 cursor-pointer list-none place-items-center rounded-[9px] text-muted-foreground outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-ring/25 [&::-webkit-details-marker]:hidden">
                                       <AppIcon name="moreHorizontal" className="size-4" />
                                     </summary>
@@ -208,7 +215,7 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                                       <Link className="flex min-h-10 items-center justify-between gap-3 rounded-[7px] px-2.5 text-sm text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25" href="/chunking" onClick={() => void selectPersistedDocument(document.id)}>{labels.openChunks}<AppIcon name="arrowUpRight" className="size-3.5 text-brand" /></Link>
                                       <button aria-label={`${labels.delete}: ${document.fileName}`} className="flex min-h-10 w-full items-center justify-center rounded-[7px] px-2.5 text-destructive hover:bg-destructive-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25 disabled:pointer-events-none disabled:opacity-50" disabled={deletingDocumentId === document.id} onClick={() => requestDelete(document)} title={labels.delete} type="button"><AppIcon name="trash" className="size-4" /></button>
                                     </div>
-                                  </details>
+                                  </TransitionDetails>
                                 </div>
                                 <div className="mt-3"><DocumentStatusBadge locale={locale} status={status} /></div>
                                 <dl className="mt-4 grid grid-cols-3 gap-2 border-t border-border-subtle pt-3">
@@ -231,16 +238,15 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                 <DialogPrimitive.Root
                   onOpenChange={(open) => {
                     if (!open && deletingDocumentId === null) {
-                      setDocumentPendingDelete(null);
-                      setDeleteError(null);
+                      setDeleteDialogOpen(false);
                     }
                   }}
-                  open={Boolean(documentPendingDelete)}
+                  open={deleteDialogOpen}
                 >
                   {documentPendingDelete ? (
                     <DialogPrimitive.Portal>
-                      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-overlay/35 dark:bg-overlay/65" data-testid="delete-document-overlay" />
-                      <DialogPrimitive.Content className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-border bg-card p-5 shadow-2xl focus:outline-none sm:p-6" data-testid="delete-document-dialog">
+                      <DialogPrimitive.Overlay className="steplab-overlay fixed inset-0 z-50 bg-overlay/35 dark:bg-overlay/65" data-testid="delete-document-overlay" />
+                      <TransitionDialogContent onCloseAutoFocus={(event) => { if (deleteOrigin.current?.isConnected) { event.preventDefault(); deleteOrigin.current.focus(); } setDocumentPendingDelete(null); setDeleteError(null); }} className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-border bg-card p-5 shadow-2xl focus:outline-none sm:p-6" data-testid="delete-document-dialog">
                         <div className="flex items-start justify-between gap-4">
                           <DialogPrimitive.Title className="text-base font-semibold text-foreground">{labels.deleteTitle}</DialogPrimitive.Title>
                           <DialogPrimitive.Close asChild>
@@ -253,9 +259,9 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
                           <DialogPrimitive.Close asChild>
                             <Button disabled={deletingDocumentId !== null} size="sm" type="button" variant="outline">{labels.cancel}</Button>
                           </DialogPrimitive.Close>
-                          <Button disabled={deletingDocumentId !== null} onClick={() => void confirmDelete()} size="sm" variant="destructive">{deletingDocumentId ? labels.deleting : labels.delete}</Button>
+                          <Button disabled={deletingDocumentId !== null} onClick={() => void confirmDelete()} size="sm" variant="destructive"><TransitionText>{deletingDocumentId ? labels.deleting : labels.delete}</TransitionText></Button>
                         </div>
-                      </DialogPrimitive.Content>
+                      </TransitionDialogContent>
                     </DialogPrimitive.Portal>
                   ) : null}
                 </DialogPrimitive.Root>
@@ -265,3 +271,4 @@ export function DocumentLibrary({ locale }: { locale: AppLocale }) {
     </section>
   );
 }
+

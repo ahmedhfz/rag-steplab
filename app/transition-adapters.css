@@ -1,0 +1,83 @@
+/* Geometry/state bridges for the verbatim transitions.dev recipes.
+   The recipe selectors and keyframes remain in transitions.css. */
+/* Remove demo-only geometry; screen utilities then supply their original
+   padding, height, gaps, surfaces and corners in the utilities layer. */
+@layer components {
+  .steplab-tabs.t-tabs { padding: 0; gap: 0; background: transparent; border-radius: 0; }
+  .steplab-tabs > .t-tab { height: auto; padding: 0; border-radius: 0; }
+}
+:root {
+  --tabs-text-muted: var(--muted-foreground);
+  --tabs-text-active: var(--foreground);
+  --tabs-bar-bg: var(--secondary);
+  --tabs-pill-bg: var(--card);
+  --think-base: currentColor;
+  --think-highlight: var(--foreground);
+}
+
+.steplab-panel { --panel-translate-y: 8px; --panel-blur: 0px; }
+.steplab-thinking { text-align: start; max-width: 100%; }
+.steplab-thinking .t-think-text { text-align: start; }
+.steplab-success { --check-y-amount: 4px; --check-blur-from: 2px; --check-rotate-from: 12deg; }
+
+/* Native details owns open/keyboard semantics. On supporting browsers its
+   anonymous contents stays painted for the recipe's closing grid tween. */
+.steplab-disclosure::details-content { content-visibility: visible; }
+.steplab-disclosure.t-acc[data-open="false"] > .t-acc-panel { grid-template-rows: 0fr; }
+.steplab-disclosure.t-acc[data-open="true"] > .t-acc-panel { grid-template-rows: 1fr; }
+.steplab-disclosure.t-acc > .t-acc-panel > .t-acc-panel-inner { min-height: 0; }
+.steplab-disclosure.t-acc[data-open="false"] > .t-acc-panel > .t-acc-panel-inner { opacity: 0; filter: blur(2px); }
+.steplab-disclosure.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1; filter: blur(0); }
+.steplab-disclosure.t-acc[data-open="false"] > summary .t-acc-chevron { transform: scaleY(1); }
+.steplab-disclosure.t-acc[data-open="true"] > summary .t-acc-chevron { transform: scaleY(-1); }
+.steplab-disclosure:not(.t-acc):not([open]) > div { visibility: hidden; transition: visibility 0s linear var(--dropdown-close-dur); }
+.steplab-disclosure:not(.t-acc)[open] > div { visibility: visible; }
+
+/* Preserve each screen's sizing, padding and theme rather than the demo bar. */
+.steplab-tabs.t-tabs > button, .steplab-tabs.t-tabs > label { position: relative; z-index: 1; }
+.steplab-tabs.t-tabs > button[aria-pressed="true"],
+.steplab-tabs.t-tabs > button[aria-selected="true"],
+.steplab-tabs.t-tabs > button[aria-checked="true"],
+.steplab-tabs.t-tabs > label:has([data-state="checked"]) { background: transparent; box-shadow: none; }
+.steplab-tabs.t-tabs > .t-tabs-pill { border-radius: inherit; }
+.steplab-auth-tabs { --tabs-pill-bg: var(--secondary); }
+.steplab-tabs-underline { --tabs-pill-bg: var(--brand); }
+.steplab-tabs-underline > button { border-bottom-color: transparent; }
+.steplab-tabs-underline > .t-tabs-pill { border-radius: 0; }
+
+/* Radix Presence waits for a CSS animation, not a transition. This marker
+   animation keeps the portal mounted while the unchanged recipe closes. */
+@keyframes steplab-presence { from { --steplab-presence: 0; } to { --steplab-presence: 1; } }
+.t-modal[data-state="closed"] { animation: steplab-presence var(--modal-close-dur) linear; }
+.t-dropdown[data-state="closed"] { animation: steplab-presence var(--dropdown-close-dur) linear; }
+.steplab-overlay[data-state="open"] { animation: steplab-overlay-in var(--modal-open-dur) var(--modal-ease) both; }
+.steplab-overlay[data-state="closed"] { animation: steplab-overlay-out var(--modal-close-dur) var(--modal-ease) both; pointer-events: none; }
+@keyframes steplab-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes steplab-overlay-out { from { opacity: 1; } to { opacity: 0; } }
+.steplab-select { transform-origin: var(--radix-select-content-transform-origin); }
+.steplab-backdrop { --modal-scale: 1; --modal-scale-close: 1; }
+
+.steplab-page-slide > .t-page { position: relative; inset: auto; min-width: 0; }
+.steplab-page-slide { --page-blur: 0px; }
+.steplab-switch { --toggle-travel: 16px; }
+
+.steplab-checkbox { display: inline-grid; position: relative; width: 16px; height: 16px; flex-shrink: 0; }
+.steplab-checkbox-input { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.steplab-checkbox-mark { border: 1px solid var(--input); border-radius: 3px; color: var(--primary-foreground); background: var(--card); pointer-events: none; }
+.steplab-checkbox-mark[aria-checked="true"] { background: var(--brand); border-color: var(--brand); }
+.steplab-checkbox-input:focus-visible + .steplab-checkbox-mark { outline: 2px solid var(--ring); outline-offset: 2px; }
+.steplab-checkbox-input:disabled + .steplab-checkbox-mark { opacity: 0.5; }
+.steplab-checkbox-input:disabled { cursor: not-allowed; }
+.steplab-checkbox-mark svg { display: block; width: 100%; height: 100%; }
+
+.steplab-source-skeleton { pointer-events: none; }
+.steplab-source-content:not([data-ready="true"]) { pointer-events: none; }
+.steplab-clear .t-clear-mirror { white-space: pre-wrap; align-items: start; padding: 8px 12px; }
+.dark .t-clear-glow { mix-blend-mode: screen; }
+.steplab-form.t-resize { interpolate-size: allow-keywords; }
+
+@media (prefers-reduced-motion: reduce) {
+  .steplab-disclosure:not(.t-acc):not([open]) > div { transition: none; }
+  .steplab-overlay { animation-duration: 0.01ms !important; }
+  .steplab-clear .t-clear-mirror { display: none; }
+}

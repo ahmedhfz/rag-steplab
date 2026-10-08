@@ -1,5 +1,7 @@
 "use client";
 
+import { SlidingTabs, ThinkingText, TransitionDetails, TransitionNumber, TransitionPanel, TransitionText } from "@/components/ui/transitions";
+
 import { useState } from "react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
@@ -50,13 +52,13 @@ function ChunkInspector({ run, labels, documentId, parseResult }: { run: ChunkRu
           }) : <p className="px-4 py-6 text-center text-xs leading-5 text-muted-foreground">{labels.noMatches}</p>}
         </div>
       </aside>
-      <article className="min-w-0" data-testid="chunk-inspector-detail">
+      <TransitionPanel as="article" transitionKey={`${run.id}:${selectedChunk.id}`} className="min-w-0" data-testid="chunk-inspector-detail">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b-[1.712px] border-border px-6 py-4">
           <div><span className="inline-flex rounded-[6px] bg-secondary px-2 py-1 font-mono text-xs text-accent-foreground">{labels.chunk} {selectedChunk.ordinal + 1}</span><p className="mt-3 text-xs text-subtle-foreground">{selectedChunk.headingPath.length ? selectedChunk.headingPath.join(" › ") : labels.selectedChunk}</p></div>
           <SourceInspector documentId={documentId} headingPath={selectedChunk.headingPath} pageNumbers={selectedChunk.pageNumbers} parseResult={parseResult} sourceElementIds={selectedChunk.sourceElementIds} triggerLabel={labels.viewSource} />
         </div>
         <div className="p-6"><div className="flex flex-wrap gap-3 font-mono text-xs text-subtle-foreground"><span>{selectedChunk.tokenCount} {labels.token}</span><span>·</span><span>{labels.pages} {selectedChunk.pageNumbers.join(", ") || "—"}</span><span>·</span><span>{selectedChunk.sourceElementIds.length} {labels.elements}</span></div><p className="mt-5 border-t-[1.712px] border-border pt-5 whitespace-pre-wrap break-words text-sm leading-6 text-foreground">{selectedChunk.text}</p><dl className="mt-6 grid gap-4 border-t-[1.712px] border-border pt-5 text-xs sm:grid-cols-3"><div><dt className="text-subtle-foreground">{labels.elements}</dt><dd className="mt-1 font-medium text-foreground">{selectedChunk.sourceElementIds.length}</dd></div><div><dt className="text-subtle-foreground">{labels.sourceElements}</dt><dd className="mt-1 break-all font-mono font-medium text-foreground">{selectedChunk.sourceElementIds.join(", ") || "—"}</dd></div><div><dt className="text-subtle-foreground">{labels.chunkId}</dt><dd className="mt-1 break-all font-mono font-medium text-foreground">{selectedChunk.id}</dd></div></dl></div>
-      </article>
+      </TransitionPanel>
     </div>
   );
 }
@@ -71,12 +73,12 @@ function EmbeddingLineage({ chunkCount, run, locale }: { chunkCount: number | nu
     <div className="grid gap-3 sm:grid-cols-[minmax(0,max-content)_max-content_minmax(0,max-content)] sm:items-center sm:justify-start sm:gap-5" data-testid="embedding-lineage">
       <div className="flex min-w-0 items-center gap-3" data-testid="embedding-primary-result">
         <AppIcon name="document" className="size-5 shrink-0 text-muted-foreground" />
-        <div className="min-w-0"><p className="truncate text-sm font-semibold text-foreground">{count ?? "—"} {labels.chunks}</p><p className="mt-1 truncate text-xs text-muted-foreground">{labels.input}</p></div>
+        <div className="min-w-0"><p className="truncate text-sm font-semibold text-foreground"><TransitionNumber>{count ?? "—"}</TransitionNumber> {labels.chunks}</p><p className="mt-1 truncate text-xs text-muted-foreground">{labels.input}</p></div>
       </div>
       <span aria-hidden="true" className="hidden text-center text-lg text-subtle-foreground sm:block"><AppIcon name="arrowRight" className="size-4" /></span>
       <div className="flex min-w-0 items-center gap-3" data-testid="embedding-output-result">
         <AppIcon name="embed" className={`size-5 shrink-0 ${run ? "text-brand" : "text-muted-foreground"}`} />
-        <div className="min-w-0"><p className="truncate text-sm font-semibold text-foreground">{embeddingCount ?? "—"} {labels.embeddings}</p><p className="mt-1 truncate text-xs text-muted-foreground">{run ? labels.output : labels.pending}</p></div>
+        <div className="min-w-0"><p className="truncate text-sm font-semibold text-foreground"><TransitionNumber>{embeddingCount ?? "—"}</TransitionNumber> {labels.embeddings}</p><p className="mt-1 truncate text-xs text-muted-foreground">{run ? labels.output : labels.pending}</p></div>
       </div>
     </div>
   );
@@ -148,16 +150,16 @@ export function ChunksPipeline({ locale, showAction = true, stage = "both" }: { 
         <section className="w-full max-w-[760px] rounded-[14px] border border-border bg-card p-4 sm:w-fit" data-testid="embedding-action-card">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-5">
           {showAction ? <div className="min-w-0 shrink-0">
-              <Button aria-busy={embeddingStatus === "processing"} aria-describedby={!canEmbed ? "embedding-run-disabled-reason" : undefined} className="h-9 gap-2 rounded-[9px] px-3.5 text-[13px]" data-testid="embedding-run-action" disabled={!canEmbed} onClick={() => void handleEmbedding()}><AppIcon name="play" className="size-3.5" />{embeddingStatus === "processing" ? labels.creating : labels.create}</Button>
+              <Button aria-busy={embeddingStatus === "processing"} aria-describedby={!canEmbed ? "embedding-run-disabled-reason" : undefined} className="h-9 gap-2 rounded-[9px] px-3.5 text-[13px]" data-testid="embedding-run-action" disabled={!canEmbed} onClick={() => void handleEmbedding()}><AppIcon name="play" className="size-3.5" /><TransitionText>{embeddingStatus === "processing" ? labels.creating : labels.create}</TransitionText></Button>
             </div> : null}
           <div className="min-w-0 flex-1 sm:border-l sm:border-border sm:pl-5"><EmbeddingLineage chunkCount={selectedChunkCount} locale={locale} run={embeddingRun} /></div>
         </div>
         {!canEmbed && embeddingStatus !== "processing" && embeddingBlocker ? <p className="mt-2 text-xs leading-5 text-muted-foreground" data-testid="embedding-blocker" id="embedding-run-disabled-reason" role="status">{embeddingBlocker.message}</p> : null}
         </section>
-        {embeddingStatus === "processing" ? <div className="mt-4 rounded-[10px] border-[1.712px] border-border bg-card p-4 text-xs text-muted-foreground" role="status"><div className="h-1.5 overflow-hidden rounded-full bg-border"><div className="h-full w-1/3 animate-pulse rounded-full bg-brand" /></div><p className="mt-2">{selectedChunkCount ?? "—"} {labels.embeddingProgress}</p></div> : null}
+        {embeddingStatus === "processing" ? <div className="mt-4 rounded-[10px] border-[1.712px] border-border bg-card p-4 text-xs text-muted-foreground" role="status"><div className="h-1.5 overflow-hidden rounded-full bg-border"><div className="h-full w-1/3 animate-pulse rounded-full bg-brand" /></div><p className="mt-2">{selectedChunkCount ?? "—"} <ThinkingText>{labels.embeddingProgress}</ThinkingText></p></div> : null}
         <PipelineErrorMessage message={embeddingError?.message} />
         {reuseNotice === "embedding" ? <p className="mt-4 rounded-[10px] border border-success-border bg-success-subtle px-3 py-2 text-xs text-success" data-testid="embedding-reuse-notice" role="status"><AppIcon name="completed" className="mr-1 inline size-3.5" />{labels.reuseNotice}</p> : null}
-        {embeddingRun ? <section className="mt-5" data-testid="embedding-result-details"><p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{labels.resultSummary}</p><dl className="mt-2 grid gap-3 border-y border-border py-2.5 sm:grid-cols-3"><div><dt className="text-[10px] uppercase tracking-[0.04em] text-subtle-foreground">{labels.count}</dt><dd className="mt-0.5 text-lg font-semibold leading-6 text-foreground">{embeddingRun.embeddingCount}</dd></div><div><dt className="text-[10px] uppercase tracking-[0.04em] text-subtle-foreground">{labels.model}</dt><dd className="mt-0.5 break-words text-[13px] font-medium text-foreground">{embeddingRun.model || "Gemini Embedding"}</dd></div><div><dt className="text-[10px] uppercase tracking-[0.04em] text-subtle-foreground">{labels.dimensions}</dt><dd className="mt-0.5 text-lg font-semibold leading-6 text-foreground">{embeddingRun.dimensions}</dd></div></dl><details className="mt-3 rounded-[10px] border border-border bg-card" data-testid="embedding-details"><summary className="flex min-h-10 cursor-pointer items-center justify-between gap-3 px-3.5 py-2 text-[12.5px] font-medium text-foreground">{labels.details}<AppIcon name="chevronDown" className="size-3.5 text-subtle-foreground" /></summary><div className="border-t border-border p-3.5"><dl className="grid gap-3 text-xs sm:grid-cols-3"><div><dt className="text-subtle-foreground">{labels.storage}</dt><dd className="mt-1 font-medium">{labels.ready}</dd></div><div><dt className="text-subtle-foreground">{locale === "tr" ? "Provenance" : "Provenance"}</dt><dd className="mt-1 font-medium">{locale === "tr" ? "Mevcut chunk run" : "Current chunk run"}</dd></div><div><dt className="text-subtle-foreground">{labels.format}</dt><dd className="mt-1 break-words font-medium">{embeddingRun.embeddingFormatVersion}</dd></div></dl></div></details></section> : null}
+        {embeddingRun ? <section className="mt-5" data-testid="embedding-result-details"><p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{labels.resultSummary}</p><dl className="mt-2 grid gap-3 border-y border-border py-2.5 sm:grid-cols-3"><div><dt className="text-[10px] uppercase tracking-[0.04em] text-subtle-foreground">{labels.count}</dt><dd className="mt-0.5 text-lg font-semibold leading-6 text-foreground"><TransitionNumber>{embeddingRun.embeddingCount}</TransitionNumber></dd></div><div><dt className="text-[10px] uppercase tracking-[0.04em] text-subtle-foreground">{labels.model}</dt><dd className="mt-0.5 break-words text-[13px] font-medium text-foreground">{embeddingRun.model || "Gemini Embedding"}</dd></div><div><dt className="text-[10px] uppercase tracking-[0.04em] text-subtle-foreground">{labels.dimensions}</dt><dd className="mt-0.5 text-lg font-semibold leading-6 text-foreground">{embeddingRun.dimensions}</dd></div></dl><TransitionDetails className="mt-3 rounded-[10px] border border-border bg-card" data-testid="embedding-details"><summary className="flex min-h-10 cursor-pointer items-center justify-between gap-3 px-3.5 py-2 text-[12.5px] font-medium text-foreground">{labels.details}<AppIcon name="chevronDown" className="size-3.5 text-subtle-foreground" /></summary><div className="border-t border-border p-3.5"><dl className="grid gap-3 text-xs sm:grid-cols-3"><div><dt className="text-subtle-foreground">{labels.storage}</dt><dd className="mt-1 font-medium">{labels.ready}</dd></div><div><dt className="text-subtle-foreground">{locale === "tr" ? "Provenance" : "Provenance"}</dt><dd className="mt-1 font-medium">{locale === "tr" ? "Mevcut chunk run" : "Current chunk run"}</dd></div><div><dt className="text-subtle-foreground">{labels.format}</dt><dd className="mt-1 break-words font-medium">{embeddingRun.embeddingFormatVersion}</dd></div></dl></div></TransitionDetails></section> : null}
       </div>
     );
   }
@@ -169,7 +171,7 @@ export function ChunksPipeline({ locale, showAction = true, stage = "both" }: { 
           <div className="min-w-0 xl:pr-5">
             <h2 className="text-base font-semibold leading-[22px] text-foreground">{labels.strategy}</h2>
             <p className="mt-1 text-[13px] leading-5 text-muted-foreground">{labels.chunkDescription}</p>
-            <div aria-label={labels.strategy} className="mt-3 inline-flex max-w-full flex-wrap items-center gap-1 rounded-[10px] border border-border bg-secondary p-1" role="radiogroup">
+            <SlidingTabs value={strategy} aria-label={labels.strategy} className="mt-3 inline-flex max-w-full flex-wrap items-center gap-1 rounded-[10px] border border-border bg-secondary p-1" role="radiogroup">
               {(Object.keys(strategyNames) as ChunkStrategy[]).map((option) => { const selected = strategy === option; return <button aria-checked={selected} className={`h-9 rounded-[7px] px-3 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25 ${selected ? "bg-card text-accent-foreground shadow-sm" : "text-muted-foreground hover:bg-card/70 hover:text-foreground"}`} key={option} tabIndex={selected ? 0 : -1} onKeyDown={(event) => {
                 const options = Object.keys(strategyNames) as ChunkStrategy[];
                 const offset = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
@@ -179,7 +181,7 @@ export function ChunksPipeline({ locale, showAction = true, stage = "both" }: { 
                 setStrategy(options[next]);
                 (event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next])?.focus();
               }} onClick={() => setStrategy(option)} role="radio" type="button"><span>{strategyNames[option][locale]}</span><span className="sr-only">{selected ? "selected" : ""}</span></button>; })}
-            </div>
+            </SlidingTabs>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">{strategyNotes[strategy][locale]}</p>
           </div>
           <div className="mt-4 min-w-0 border-t border-border pt-4 xl:mt-0 xl:border-l xl:border-t-0 xl:pl-5 xl:pt-0">
@@ -199,3 +201,4 @@ export function ChunksPipeline({ locale, showAction = true, stage = "both" }: { 
     </div>
   );
 }
+
