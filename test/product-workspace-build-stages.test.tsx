@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pipeline = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
@@ -264,6 +264,29 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(screen.getByRole("button", { name: "Delete" })).toBeVisible();
   });
 
+  it("keeps the pipeline editor open when saving fails", async () => {
+    pipeline.value = { ...createPipelineValue(), createPipeline: vi.fn(async () => null) };
+    renderScreen(<OverviewScreen />);
+    fireEvent.click(screen.getByText("Manage pipeline"));
+    fireEvent.click(screen.getByRole("button", { name: "New pipeline" }));
+    fireEvent.change(screen.getByPlaceholderText("Pipeline name"), { target: { value: "Test pipeline" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("The pipeline could not be saved"));
+    expect(screen.getByTestId("pipeline-name-editor")).toBeVisible();
+  });
+
+  it("keeps pipeline deletion reviewable after a failed request", async () => {
+    pipeline.value = { ...createPipelineValue(), deletePipeline: vi.fn(async () => false) };
+    renderScreen(<OverviewScreen />);
+    fireEvent.click(screen.getByText("Manage pipeline"));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    const dialog = screen.getByTestId("delete-pipeline-dialog");
+    expect(dialog).toHaveTextContent("Structure Aware");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent("The pipeline could not be deleted"));
+    expect(dialog).toBeVisible();
+  });
+
   it("keeps the active document and pipeline context visible on Parsing", () => {
     renderScreen(<ParseScreen />);
 
@@ -273,7 +296,7 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(screen.getByTestId("pipeline-context-document-selector")).toHaveTextContent("annual-report.pdf");
     expect(screen.getByTestId("pipeline-context-pipeline-selector")).toHaveTextContent("Structure Aware");
     expect(screen.getByTestId("parse-workspace-controls")).toContainElement(screen.getByTestId("parse-document-status"));
-    expect(screen.getByTestId("parse-document-status")).toHaveTextContent("Parse Completed");
+    expect(screen.getByTestId("parse-document-status")).toHaveTextContent("Parse completed");
     expect(screen.getByTestId("parse-reports-action")).toBeDisabled();
     expect(screen.queryByRole("navigation", { name: "Indexing lineage" })).not.toBeInTheDocument();
     expect(screen.queryByTestId("parse-next-action")).not.toBeInTheDocument();

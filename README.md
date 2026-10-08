@@ -21,6 +21,22 @@ kullanılabilir. Auth ve owner-scoped persistence kullanıcı verisini yalıtır
 Retrieved document metni modele verilmiş talimat değil, güvenilmeyen veridir.
 Kişisel veya hassas PDF'leri public deployment'a yüklemeyin.
 
+## İlk deneme
+
+Giriş yaptıktan sonra Overview'da **Örnek PDF ile dene** seçeneğini kullanın
+veya kendi PDF'nizi ekleyin; ardından dokümanı Parse → Chunking → Embeddings
+aşamalarında işleyip Playground ve Evaluation'a geçin. `public/samples/`
+altındaki TR/EN kurgusal kent bisikleti PDF'leri normal upload ve gerçek
+pipeline'ı kullanır; örnek düğmesi sahte parse, chunk veya cevap üretmez. Örnek
+sorular yalnız seçili dokümanın SHA-256 değeri bu dosyalardan biriyle eşleşirse
+gösterilir. Parse ve sonraki provider aşamaları servis erişimi gerektirir ve
+maliyet doğurabilir.
+
+Örnek PDF'lerin deterministik üretimi ve doğrulaması için
+[scripts/sample-fonts/README.md](scripts/sample-fonts/README.md) dosyasına
+bakın; içerik değişirse `lib/sample-documents.ts` içindeki SHA-256 değerlerini
+de güncelleyin.
+
 ## Yerelde çalıştırma
 
 Environment ve backend bağımlılıklarını [backend/README.md](backend/README.md)

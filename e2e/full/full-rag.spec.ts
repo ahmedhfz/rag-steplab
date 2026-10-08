@@ -23,7 +23,7 @@ test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğ
   // Upload sonrası document detail hydration kısa süre sonra parse aksiyonunu
   // enable eder; retry'da backend checkpoint'i zaten tamamlanmış olabilir.
   const parseButton = page.getByRole("button", { name: /^Parse$/ });
-  const reparsedDocumentButton = page.getByRole("button", { name: "Reparse", exact: true });
+  const reparsedDocumentButton = page.getByRole("button", { name: "Parse again", exact: true });
   const completedProgress = page.getByRole("progressbar", { name: /Progress 100%/ });
   await expect.poll(async () => {
     if ((await completedProgress.count()) > 0) return "completed";
@@ -35,7 +35,7 @@ test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğ
   if (!parseAlreadyCompleted) {
     await parseButton.click();
     await expect(page.getByRole("progressbar")).toBeVisible();
-    await expect(page.getByText(/Queued|Worker started|Docling starting|Source loaded/).first()).toBeVisible();
+    await expect(page.getByText(/Queued|Started|Reading document|Source loaded/).first()).toBeVisible();
     await expect(page.getByRole("progressbar", { name: /Progress 100%/ })).toBeVisible({ timeout: 15 * 60 * 1_000 });
   }
   await expect(page.getByText("ORBIT-731", { exact: false }).first()).toBeVisible();

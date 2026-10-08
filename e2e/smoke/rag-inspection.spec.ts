@@ -28,14 +28,11 @@ test("@critical Playground stage rail, provenance ve Source Inspector contractı
   await page.getByRole("button", { name: "Inspect source" }).first().click();
   const dialog = page.getByRole("dialog", { name: "Source inspector" });
   await expect(dialog).toBeVisible();
-  const provenance = dialog.locator("aside > p").first();
-  await expect(provenance).toContainText("Document");
-  await expect(provenance).toContainText("Page 1");
-  await expect(provenance).toContainText("Parse element");
-  await expect(provenance).toContainText("Chunk");
-  await expect(provenance).toContainText("Retrieval/Context");
-  await expect(provenance).toContainText("Citation");
-  await expect(provenance.locator("svg")).toHaveCount(5);
+  const evidence = dialog.getByTestId("source-inspector-evidence");
+  await expect(evidence).toContainText("Source evidence");
+  await expect(evidence).toContainText("Page 1");
+  await expect(evidence).toContainText("laboratory beacon code is ORBIT-731");
+  await expect(evidence).not.toContainText("Retrieval/Context");
   await expect(dialog.locator("iframe")).toHaveAttribute("src", /#page=1$/);
   await page.getByRole("button", { name: "Close" }).click();
 
@@ -49,6 +46,9 @@ test("@critical Playground stage rail, provenance ve Source Inspector contractı
   });
   expect(mobileDialogRect).toMatchObject({ x: 0, y: 0, width: 390, height: 844 });
   await expect(mobileDialog.locator("aside")).toBeVisible();
+  const evidenceTop = await mobileDialog.getByTestId("source-inspector-evidence").evaluate((element) => element.getBoundingClientRect().top);
+  const previewTop = await mobileDialog.getByTestId("source-inspector-preview").evaluate((element) => element.getBoundingClientRect().top);
+  expect(evidenceTop).toBeLessThan(previewTop);
   await expect(mobileDialog.locator("details").first()).toBeVisible();
   await page.screenshot({ path: "output/playwright/responsive-shell/source-inspector-390.png", fullPage: true });
   await page.keyboard.press("Escape");
@@ -56,7 +56,7 @@ test("@critical Playground stage rail, provenance ve Source Inspector contractı
   await page.setViewportSize({ width: 1441, height: 1041 });
 
   await page.getByRole("button", { name: /Answer/ }).click();
-  await expect(page.getByText("Citation reference valid", { exact: true })).toBeVisible();
+  await expect(page.getByText("Reference found", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "S1" }).click();
   await expect(page.getByRole("dialog", { name: "Source inspector" })).toContainText("laboratory beacon code is ORBIT-731");
   await expect(page.getByTestId("playground-screen")).not.toContainText("persisted backend");
@@ -204,6 +204,8 @@ test("Geçmiş experiment yüklemek aktif indexing pipeline'ı değiştirmez", a
   const history = page.getByTestId("playground-history");
   await history.locator("summary").click();
   await history.getByRole("button", { name: "Load Experiment 1" }).click();
+  await expect(page.getByTestId("experiment-stage-trace").getByRole("button", { name: /^Answer/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("playground-stage-content")).toContainText("Answer");
   await expect(page.getByTestId("playground-run-state")).toContainText("Viewing");
   await expect(page.getByTestId("playground-run-state")).toContainText("Exact experiment loaded");
   await expect(page.getByTestId("playground-run-state")).not.toContainText("Unsaved changes");

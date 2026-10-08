@@ -60,9 +60,9 @@ test("@critical parse lifecycle gerçek UI progress, phase ve elapsed durumları
 
   await page.goto("/parse");
   await selectSeededDocument(page);
-  await page.getByRole("button", { name: "Reparse" }).click();
+  await page.getByRole("button", { name: "Parse again" }).click();
   await expect(page.getByRole("progressbar", { name: /Progress 0%/ })).toBeVisible();
-  await expect(page.getByText("Docling starting", { exact: true })).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByText("Reading document", { exact: true })).toBeVisible({ timeout: 5_000 });
   await expect(page.getByRole("progressbar", { name: /Progress 100%/ })).toBeVisible({ timeout: 8_000 });
   await expect(page.getByText("ORBIT-731", { exact: false }).first()).toBeVisible();
   await expect(page.getByText("Elapsed", { exact: true })).toBeVisible();
@@ -82,7 +82,7 @@ test("@critical chunk ve embedding UI yalnız ilgili katmanın seeded contractı
 
   await page.goto("/embeddings");
   await page.getByRole("button", { name: "Create embeddings" }).click();
-  await expect(page.getByRole("status")).toContainText("progress is indeterminate");
+  await expect(page.getByText("1 chunks are being embedded. Individual chunk progress is not available.", { exact: true })).toBeVisible();
   await page.getByTestId("embedding-details").locator("summary").click();
   await expect(page.getByText("gemini-embedding-2", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("768", { exact: true }).first()).toBeVisible();

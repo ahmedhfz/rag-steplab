@@ -12,9 +12,9 @@ Figma node'ları yapı ve desktop geometriyi doğrular. Runtime state'in kaynağ
 
 ## Kapsanan state'ler
 
-`e2e/visual/figma-production.spec.ts` aşağıdaki mevcut 16 Light state'i `1441 × 1041` desktop viewport'unda çalıştırır:
+`e2e/visual/figma-production.spec.ts` aşağıdaki 17 Light state'i `1441 × 1041` desktop viewport'unda çalıştırır:
 
-- Overview: canonical active pipeline
+- Overview: first-use/no document ve canonical active pipeline
 - Documents: populated library
 - Parsing: completed result
 - Chunking: config/no result ve completed result
@@ -32,7 +32,9 @@ Bunlara tam bir Light × Dark matrisi oluşturmadan altı yüksek sinyalli Dark 
 - Settings
 - Auth Login
 
-Aynı spec signup ve forgot-password auth ekranlarını route inventory olarak screenshot'lamayı sürdürür. Upload/dropzone, parse loading/error/retry, management, Playground aksiyonları ve auth/protected smoke mevcut seeded smoke/auth testleriyle korunur.
+Aynı spec signup ve forgot-password auth ekranlarını route inventory olarak screenshot'lamayı sürdürür. Reset-password için mobil Light/TR ve desktop Dark/EN form geometrisi ve screenshot kontrol edilir; bu iki state yeni pixel baseline eklemez. Upload/dropzone, parse loading/error/retry, management, Playground aksiyonları ve auth/protected smoke mevcut seeded smoke/auth testleriyle korunur. `e2e/smoke/sample-document.spec.ts` shipped TR/EN örneklerin normal API upload'ını, seçimini, açık parse gerektirmesini ve yalnız doğru SHA-256 seçiliyken soru gösterilmesini doğrular.
+
+First-use Overview referansı, yeni kullanıcı akışına ait kasıtlı bir ürün kararıdır; Figma'daki populated Overview node'unun birebir karşılığı olduğu iddia edilmez. Örnek PDF yüklemesi ve devamındaki işlemler mevcut gerçek doküman/pipeline sözleşmelerini kullanır.
 
 ## Geometry ve pixel gate
 
