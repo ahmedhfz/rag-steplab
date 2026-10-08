@@ -153,7 +153,7 @@ jobs:
       - name: Restore Playwright Chromium
         if: steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true' || steps.classify.outputs.production_visual == 'true'
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -195,7 +195,7 @@ jobs:
 
       - name: Upload Playwright failure artifacts
         if: failure() && (steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true' || steps.classify.outputs.production_visual == 'true')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-pr-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
