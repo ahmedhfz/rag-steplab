@@ -83,7 +83,7 @@ async function assertCompleteDesktopJourney(page: Page) {
   expect(nodeStateAndX.map(({ state }) => state)).toEqual(expectedStates);
   expect(nodeStateAndX.slice(1).every(({ x }, index) => x > nodeStateAndX[index].x)).toBe(true);
 
-  const completedIconColor = await chunkGlyph.evaluate((element) => getComputedStyle(element).backgroundColor);
+  const completedIconColor = await chunkGlyph.evaluate((element) => getComputedStyle(element).color);
   expect(completedIconColor).toBe("rgb(63, 122, 85)");
   await expect(canvas).toHaveAttribute("viewBox", "0 0 1054.1 199.975");
   await expect(canvas).toHaveAttribute("preserveAspectRatio", "none");

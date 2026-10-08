@@ -82,7 +82,7 @@ test("@critical chunk ve embedding UI yalnız ilgili katmanın seeded contractı
 
   await page.goto("/embeddings");
   await page.getByRole("button", { name: "Create embeddings" }).click();
-  await expect(page.getByText("1 chunks are being embedded. Individual chunk progress is not available.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("1 chunks are being embedded. Individual chunk progress is not available.");
   await page.getByTestId("embedding-details").locator("summary").click();
   await expect(page.getByText("gemini-embedding-2", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("768", { exact: true }).first()).toBeVisible();
