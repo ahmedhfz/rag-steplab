@@ -28,15 +28,18 @@ bilinçli tasarım değişikliği kapsamında yapılır; başarısız testi geç
 1. Değişiklik etkisini ve istenen kanıtı seçin. Yerel, Preview ve production
    hedeflerini `E2E_BASE_URL`, `E2E_API_BASE_URL`, Supabase hedefi ve test hesabıyla
    birlikte değerlendirin; localhost frontend hosted API/auth kullanabilir.
-2. Credential **adlarını** README'den kontrol edin; değerleri yazdırmayın.
-   `e2e:bootstrap`/`e2e:user` dış kullanıcı state'ini değiştirebilir. Mevcut hazır
-   hesabı kullanın; eksik setup yeni operasyon yetkisi olmadan çalıştırılmaz.
+2. `e2e:bootstrap`/`e2e:user` dış kullanıcı state'ini değiştirebilir; hedef ve
+   yetkiyi önceden doğrulayın. E2E credential isimleri
+   `E2E_USER_EMAIL`, `E2E_USER_PASSWORD`, `E2E_SUPABASE_SECRET_KEY`;
+   protected Preview bypass secret'ı `VERCEL_AUTOMATION_BYPASS_SECRET`'tır.
+   Değerleri loglamayın; bypass secret'ını URL veya trace'e koymayın. Bootstrap
+   değerleri ignored `.env.e2e.local` dosyasına yazar.
 3. Deployment doğrulaması isteniyorsa SHA ve hedef URL ilişkisini doğrulayın.
    Manual Heavy validation non-full profiller için exact Vercel deployment arar;
    full-RAG sabit production URL kullanır. Seçili ref canlı SHA kanıtı değildir.
 4. Auth state ve raporlar ignored `output/playwright/` altında kalır; `.auth/`
-   artifact paylaşımına dahil edilmez. Ayrıntılar [README](../../../README.md)
-   ve `.github/workflows/e2e-full.yml` içindedir.
+   artifact paylaşımına dahil edilmez. Artifact ve cleanup ayrıntıları
+   `scripts/e2e.mjs` ve `.github/workflows/e2e-full.yml` içindedir.
 
 ## Hosted full-RAG
 

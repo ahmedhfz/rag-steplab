@@ -97,6 +97,11 @@ class Settings:
     docling_parser_version: str = "docling-2.117.0"
 
 
+PARSE_WORKER_TIMEOUT_SECONDS = 900
+PARSE_WORKER_STARTUP_TIMEOUT_SECONDS = 300
+PARSE_RUN_TIMEOUT_SECONDS = PARSE_WORKER_TIMEOUT_SECONDS + PARSE_WORKER_STARTUP_TIMEOUT_SECONDS + 120
+
+
 def pipeline_lease_duration_seconds(settings: Settings) -> int:
     """Bound the lease by the real worker/provider execution budget.
 
