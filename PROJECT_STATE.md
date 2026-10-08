@@ -1,6 +1,6 @@
 # Project State
 
-Last updated: 2026-09-21
+Last updated: 2026-10-02
 
 ## Current Status
 
@@ -44,7 +44,8 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
 
 - Takılmış ağır işler için zaman aşımı ve expired retry admission düzeltmesi
   `51b9459` ile main'e alındı. Bu kayıt kendi başına production release kanıtı değildir.
-- Public-beta UI polish yerel çalışma ağacında: ilk kullanım ve örnek PDF akışı,
+- Public-beta UI polish `feature/kamu-beta-arayuz-polish` branch'ine push edildi
+  ve PR #119 açıldı: ilk kullanım ve örnek PDF akışı,
   TR/EN login anlatımı, Build aksiyon/engelleyici metinleri, Playground citation
   ve Source Inspector kanıt sırası, Evaluation hazırlık durumu. Seeded görsel ve
   etkileşim doğrulaması gerçek provider kalite kanıtı sayılmaz.
@@ -88,14 +89,16 @@ manuel workflow'dur. Bu özet canlı servis sağlığı veya güncel test geçi�
 
 ## Current Work
 
-Public-beta UI polish yerel feature branch'te tamamlandı; push, merge ve deploy
-yapılmadı. TR/EN, tema, responsive ve seeded visual kontrolleriyle
-doğrulanıyor; hosted provider veya production corpus kalite koşusu yapılmadı.
+Public-beta UI polish PR #119 açık ve draft durumunda; branch push edildi ve
+Vercel Preview mevcut. Örnek PDF içeriği/tekrarlanabilir üretimi, ilk kullanım
+E2E kapsamı ve reset-password tutarlılığı review düzeltmeleriyle doğrulanıyor.
+Bu PR production'a merge veya deploy edilmedi; hosted provider ya da
+production corpus kalite koşusu yapılmadı.
 
 ## Next
 
-Tam yerel polish doğrulamasını bitirip değişiklikleri gözden geçirmek; ardından
-normal PR/release kararı ve gerçek kullanıcı geri bildirimi. Yeni OCR kalite ölçümleri yalnızca
+PR #119 review düzeltmelerini ve yerel doğrulamayı tamamlamak; ardından
+review/release kararı ve gerçek kullanıcı geri bildirimi. Yeni OCR kalite ölçümleri yalnızca
 etiketli örnekler ve açık kapsam kararıyla genişletilecek.
 
 ## Open Questions

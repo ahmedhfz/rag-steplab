@@ -26,6 +26,17 @@ Amaç yalnızca sonuç üretmek değil; kullanılan ayarların, ara çıktılar�
 
 TR/EN için depoda dört sayfalık, seçilebilir metin içeren kurgusal kent bisikleti PDF'leri bulunur (`public/samples/`). Örnek sorular yalnızca bu dosyalardan biri gerçekten seçiliyken gösterilir; örnek düğmesi sahte parse, chunk veya cevap üretmez. PDF hesaba eklendikten sonra normal özel depolama ve gerçek pipeline kullanılır. Kendi PDF'nizi yüklemeden önce paylaşım ve gizlilik koşullarını gözden geçirin; hassas belgeleri public beta'da kullanmayın. Parse ve sonraki provider aşamaları servis erişimi gerektirir ve kullanım maliyeti doğurabilir.
 
+Örnek PDF'ler başlık, paragraf, liste, küçük tablo ve tarih/sayı içerir; önerilen sorular yalnız UI'da bulunur. SHA-256 eşleşmesi dosya adından bağımsızdır. Üretim için Python 3.13 ve sabitlenmiş bağımlılıkları kullanın:
+
+```bash
+python -m pip install -r scripts/requirements-samples.txt
+python scripts/generate-sample-documents.py
+python scripts/generate-sample-documents.py --check
+python scripts/test_sample_documents.py
+```
+
+Bağımlılıkları bir virtual environment'a kurmanız önerilir. Generator, depoda lisansıyla bulunan Lato fontlarını (`scripts/sample-fonts/`, SIL OFL 1.1) ve sabit PDF metadata'sını kullanır; işletim sistemindeki fontlara ihtiyaç duymaz. `--check` taze üretimi committed PDF'lerle byte düzeyinde karşılaştırır. İçerik değiştiğinde `lib/sample-documents.ts` SHA-256 değerlerini de güncelleyin; Vitest shipped dosyaların bu değerlerle eşleşmesini doğrular.
+
 ## Mevcut durum
 
 İlk uçtan uca, gerçek ve kalıcı learning pipeline hazırdır:

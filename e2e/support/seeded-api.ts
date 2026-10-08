@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 
 import type { Page, Route } from "@playwright/test";
 
@@ -38,6 +39,8 @@ export type SeededApiOptions = {
   longNames?: boolean;
   theme?: "system" | "light" | "dark";
   ocrDiagnostics?: boolean;
+  locale?: "tr" | "en";
+  sampleUpload?: boolean;
 };
 
 export const seededStressNames = {
@@ -450,11 +453,17 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
   let pipelineRevision = 1;
   let embeddingAvailable = true;
   let documentDeleted = false;
+  const uploads: { fileName: string; mediaType: string; bytes: Buffer; sha256: string }[] = [];
+  const uploadedDocuments: (Omit<typeof document, "activeParseRunId" | "activeChunkRunId" | "activeEmbeddingRunId" | "latestParseStatus"> & {
+    activeParseRunId: string | null; activeChunkRunId: string | null; activeEmbeddingRunId: string | null;
+    latestParseStatus: string | null;
+  })[] = [];
+  const parseRequests: string[] = [];
 
-  await page.addInitScript(({ theme }) => {
+  await page.addInitScript(({ theme, locale }) => {
     // İlk navigation'da temizle; sonraki route navigation'larında seçili lineage korunmalıdır.
     if (!window.sessionStorage.getItem("rag-steplab-e2e-seeded-reset-v1")) {
-      window.localStorage.setItem("rag-steplab.preferences.v3", JSON.stringify({ locale: "en", showLearningHints: true, theme }));
+      window.localStorage.setItem("rag-steplab.preferences.v3", JSON.stringify({ locale, showLearningHints: true, theme }));
       window.localStorage.removeItem("rag-steplab.preferences.v2");
       window.localStorage.removeItem("rag-steplab.preferences.v1");
       for (const key of Object.keys(window.localStorage)) {
@@ -464,7 +473,7 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
       }
       window.sessionStorage.setItem("rag-steplab-e2e-seeded-reset-v1", "1");
     }
-  }, { theme: options.theme ?? "light" });
+  }, { theme: options.theme ?? "light", locale: options.locale ?? "en" });
 
   await page.route("**/*", async (route) => {
     const request = route.request();
@@ -492,6 +501,56 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
     }
 
     if (pathname === "/capabilities") return json(route, { embeddingModel: embedding.model, embeddingDimensions: 768, generationModel: experiment.stageResults.generation.model, rerankModel: "gemini-flash-lite-latest", judgeModel: "gemini-flash-lite-latest", embeddingFormatVersion: embedding.embeddingFormatVersion, limits: { maxTopK: 20 } });
+    if (options.sampleUpload) {
+      if (pathname === "/documents" && method === "GET") return json(route, { items: uploadedDocuments });
+      if (pathname === "/documents" && method === "POST") {
+        const multipart = await new Request(request.url(), {
+          method: "POST", headers: { "content-type": request.headers()["content-type"] },
+          body: new Uint8Array(request.postDataBuffer()!),
+        }).formData();
+        const file = multipart.get("file");
+        if (!file || typeof file === "string") return json(route, { error: "Missing PDF multipart file" }, 422);
+        const bytes = Buffer.from(await file.arrayBuffer());
+        const sha256 = createHash("sha256").update(bytes).digest("hex");
+        uploads.push({ fileName: file.name, mediaType: file.type, bytes, sha256 });
+        const uploaded = { ...document, id: `e2e-uploaded-${uploads.length}`, fileName: file.name,
+          sizeBytes: bytes.length, sha256, pageCount: 0, activeParseRunId: null,
+          activeChunkRunId: null, activeEmbeddingRunId: null, latestParseStatus: null };
+        uploadedDocuments.push(uploaded);
+        return json(route, { document: uploaded, reusedDocument: false }, 201);
+      }
+      const uploaded = uploadedDocuments.find((item) => pathname.startsWith(`/documents/${item.id}/`));
+      if (uploaded) {
+        const uploadedParseId = `${uploaded.id}-parse`;
+        const uploadedPipeline = { ...current.pipeline, id: `${uploaded.id}-pipeline`, documentId: uploaded.id,
+          parseRunId: uploaded.activeParseRunId, chunkRunId: null, embeddingRunId: null };
+        if (pathname.endsWith("/pipelines") && method === "GET") return json(route, [uploadedPipeline]);
+        if (pathname.endsWith("/summary")) return json(route, { ...current.summary, ...uploaded,
+          parseRuns: uploaded.activeParseRunId ? [{ ...runBase, id: uploadedParseId, runNumber: 1,
+            phase: "completed", progress: 100, upstream: { documentId: uploaded.id, parseRunId: null, chunkRunId: null, embeddingRunId: null } }] : [],
+          chunkRuns: [], embeddingRuns: [], experiments: [], evaluationDatasets: [], evaluationRuns: [] });
+        if (pathname.endsWith("/parse") && method === "POST") {
+          parseRequests.push(uploaded.id);
+          uploaded.activeParseRunId = uploadedParseId;
+          uploaded.latestParseStatus = "completed";
+          return json(route, { id: uploadedParseId, parseRunId: uploadedParseId, documentId: uploaded.id,
+            status: "queued", progress: 0, phase: "queued", reusedDocument: true }, 202);
+        }
+      }
+      const parsedDocument = uploadedDocuments.find((item) => pathname === `/parse-runs/${item.id}-parse`);
+      if (parsedDocument) {
+        // Deterministic seeded output validates explicit parsing, not Docling/sample content quality.
+        return json(route, { id: parsedDocument.activeParseRunId, documentId: parsedDocument.id,
+          status: "completed", progress: 100, phase: "completed", result: { ...selectedParseResult,
+            documentId: parsedDocument.id, parseRunId: parsedDocument.activeParseRunId,
+            document: { ...selectedParseResult.document, id: parsedDocument.id, fileName: parsedDocument.fileName,
+              sizeBytes: parsedDocument.sizeBytes } } });
+      }
+      const pipelineDocument = uploadedDocuments.find((item) => pathname === `/document-pipelines/${item.id}-pipeline`);
+      if (pipelineDocument && method === "PATCH") return json(route, { ...current.pipeline,
+        id: `${pipelineDocument.id}-pipeline`, documentId: pipelineDocument.id,
+        ...request.postDataJSON(), revision: 2 });
+    }
     if (pathname === "/documents" && method === "GET") return json(route, { items: documentDeleted || scenario === "fresh" ? [] : [current.document] });
     if (pathname === "/documents" && method === "POST") return json(route, { document: current.document, reusedDocument: true }, 200);
     if (pathname === `/documents/${documentId}` && method === "DELETE") {
@@ -576,6 +635,7 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
 
     await route.continue();
   });
+  return { uploads, parseRequests };
 }
 
 export const seededIds = { documentId, parseRunId, chunkRunId, embeddingRunId, experimentId, datasetId, evaluationRunId, evaluationRunIdB };

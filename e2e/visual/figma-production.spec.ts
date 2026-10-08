@@ -446,6 +446,61 @@ test.describe("canonical desktop auth route inventory", () => {
     await captureAndCompare(page, state);
   });
 
+  test.describe("authenticated reset-password form", () => {
+    // Reset route requires the authenticated recovery session; keep its guard intact.
+    test.use({ storageState: "output/playwright/.auth/user.json" });
+    for (const state of [
+      { key: "auth-reset-mobile-light-tr", viewport: { width: 390, height: 844 }, locale: "tr", theme: "light" },
+      { key: "auth-reset-desktop-dark-en", viewport, locale: "en", theme: "dark" },
+    ] as const) {
+      test(`${state.key} preserves reset form geometry`, async ({ page }) => {
+        const labels = state.locale === "tr"
+          ? { form: "Şifre yenileme formu", title: "Yeni şifre oluştur", password: "Yeni şifre", submit: "Şifreyi güncelle" }
+          : { form: "Password reset form", title: "Create a new password", password: "New password", submit: "Update password" };
+
+        await page.setViewportSize(state.viewport);
+        await page.emulateMedia({ colorScheme: state.theme, reducedMotion: "reduce" });
+        await installSeededApi(page, { scenario: "fresh", locale: state.locale, theme: state.theme });
+        await page.goto("/auth/reset-password", { waitUntil: "networkidle" });
+
+        const html = page.locator("html");
+        await expect(html).toHaveAttribute("lang", state.locale);
+        await expect(html).toHaveClass(state.theme === "dark" ? /\bdark\b/ : /^(?!.*\bdark\b)/);
+        await expect(html).toHaveCSS("color-scheme", state.theme);
+        await expect(page.getByRole("heading", { name: labels.title, level: 1 })).toBeVisible();
+
+        const form = page.getByRole("region", { name: labels.form });
+        const password = page.getByLabel(labels.password, { exact: true });
+        const confirmation = page.locator("#reset-password-confirmation");
+        const submit = page.getByRole("button", { name: labels.submit });
+        const cardBounds = await rect(page.locator("main > div"));
+        const formBounds = await rect(form);
+        const passwordBounds = await rect(password);
+        const submitBounds = await rect(submit);
+        const headingBounds = await rect(page.getByRole("heading", { name: labels.title, level: 1 }));
+        const confirmationBounds = await rect(confirmation);
+        const minimumControlWidth = state.viewport.width < 768 ? 300 : 350;
+
+        expect(cardBounds.x).toBeGreaterThanOrEqual(0);
+        expect(cardBounds.x + cardBounds.width).toBeLessThanOrEqual(state.viewport.width);
+        expect(passwordBounds.width).toBeGreaterThanOrEqual(minimumControlWidth);
+        expect(Math.abs(passwordBounds.x - formBounds.x)).toBeLessThanOrEqual(1);
+        expect(Math.abs(passwordBounds.width - formBounds.width)).toBeLessThanOrEqual(1);
+        expect(Math.abs(submitBounds.x - formBounds.x)).toBeLessThanOrEqual(1);
+        expect(Math.abs(submitBounds.width - formBounds.width)).toBeLessThanOrEqual(1);
+        expect(passwordBounds.y).toBeGreaterThan(headingBounds.y + headingBounds.height);
+        expect(confirmationBounds.y).toBeGreaterThan(passwordBounds.y + passwordBounds.height);
+        expect(submitBounds.y - (confirmationBounds.y + confirmationBounds.height)).toBeGreaterThanOrEqual(23);
+        expect(submitBounds.y + submitBounds.height).toBeLessThanOrEqual(state.viewport.height);
+        await expect(html).toHaveJSProperty("scrollWidth", state.viewport.width);
+
+        await settle(page);
+        await mkdir(artifactDirectory, { recursive: true });
+        await page.screenshot({ animations: "disabled", caret: "hide", path: path.join(artifactDirectory, `${state.key}.png`) });
+      });
+    }
+  });
+
   for (const route of [
     ["auth-login", "/login", "Sign in"],
     ["auth-signup", "/login", "Create account"],
