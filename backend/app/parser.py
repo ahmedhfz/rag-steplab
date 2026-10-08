@@ -195,7 +195,9 @@ def _build_document_converter(artifacts_path: Path | None = None) -> Any:
 
     if pipeline_options is None:
         raise ApiProblem(503, "ocr_configuration_unavailable", "The pinned PDF pipeline is unavailable.")
+    # Uploads are PDF-only; keep Docling's non-PDF backends unreachable.
     return DocumentConverter(
+        allowed_formats=[InputFormat.PDF],
         format_options={
             InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
         }

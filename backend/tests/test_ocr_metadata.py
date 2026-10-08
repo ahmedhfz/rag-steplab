@@ -93,7 +93,8 @@ def test_converter_explicitly_selects_pdf_aware_turkish_onnx_profile(tmp_path, m
             self.pipeline_options = pipeline_options
 
     class DummyConverter:
-        def __init__(self, *, format_options):
+        def __init__(self, *, allowed_formats, format_options):
+            self.allowed_formats = allowed_formats
             self.format_to_options = format_options
 
     monkeypatch.setattr(parser, "InputFormat", NS(PDF="pdf"))
@@ -107,6 +108,7 @@ def test_converter_explicitly_selects_pdf_aware_turkish_onnx_profile(tmp_path, m
     monkeypatch.setattr(parser, "model_root", lambda: tmp_path)
 
     converter = parser._build_document_converter()
+    assert converter.allowed_formats == ["pdf"]
     pipeline = converter.format_to_options["pdf"].pipeline_options
     ocr = pipeline.kwargs["ocr_options"]
     assert pipeline.kwargs["do_ocr"] is True

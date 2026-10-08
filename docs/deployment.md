@@ -120,7 +120,15 @@ HSTS uygulama tarafından tekrar
 ve release smoke'ta response header olarak ayrıca doğrulanmalıdır.
 
 CI, production npm dependency audit'i ile worker/base ve CI Python requirement
-audit'lerini çalıştırır. Dependabot npm, pip ve GitHub Actions için haftalık,
+audit'lerini çalıştırır. Worker audit'i `docling==2.117.0` için yayımlanan on
+advisory'yi (`ci.yml` içindeki liste) bilinçli olarak muaf tutar: bunlar HTML,
+LaTeX, OpenDocument, METS-GBS, Docling JSON backend'leri, KServe OCR ve plugin
+yükleme yollarını etkiler. Upload `%PDF-` imzası ister ve converter
+`allowed_formats=[PDF]` ile kısıtlıdır. Düzeltilmiş sürümler (2.132.0 ve
+2.135.0, `docling-ibm-models` 4.x) örnek TR PDF'inin 4. sayfasındaki iki
+paragrafı ham Docling çıktısında düşürdüğünden yükseltme yapılmadı; yeni Docling
+sürümü aynı örnekte içerik kaybetmediği doğrulanınca muafiyet kaldırılır.
+Dependabot npm, pip ve GitHub Actions için haftalık,
 bounded PR üretir. Repository private ve GitHub Code Scanning etkin olmadığı
 için bu değişiklik CodeQL workflow'u eklemez; ücretsiz uygunluk doğrulanmadan
 Advanced Security gerektiren bir gate zorunlu kılınmaz.
