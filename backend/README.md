@@ -137,8 +137,12 @@ ile korur. Benchmark modu public API'de varsayılan olarak kapalıdır; yalnız
 kontrollü internal koşularda server-side `BENCHMARK_EVALUATION_ENABLED=true`
 ile açılır. `EvaluationCase.expectedOutcome=insufficient_context`, relevant
 element ID'si olmayan no-answer case'idir. Bu case'lerin Hit@K, Recall@K,
-Precision@K ve MRR değerleri aggregate retrieval ortalamasına dahil edilmez;
-abstention doğruluğu ayrı raporlanır.
+Precision@K ve MRR case değerleri `null` olur ve aggregate retrieval ortalamasına
+dahil edilmez; abstention doğruluğu ayrı raporlanır. Insufficient-context
+generation `insufficientContext=true`, boş `answer`, `segments` ve `citations`
+döndürür; kullanıcıya gösterilecek açıklama locale katmanında üretilir. Arayüz
+bu `null` değerleri `0` değil `N/A`/`—` göstermeli ve retrieval-eligible case
+sayısını belirtmelidir.
 
 `citationValidity`, üretilen citation ID'lerinin o generation çağrısına verilen
 context içinde bulunup bulunmadığını ölçer (`context_id_membership_v1`). Claim
@@ -146,6 +150,10 @@ entailment veya faithfulness ölçümü değildir; groundedness/faithfulness ayr
 metriklerdir. Gemini generation, reranking ve judge çağrıları resmi JSON schema
 ile sınırlandırılır, ancak uygulama tarafındaki JSON parse ve semantic
 validation katmanı korunur.
+
+Reranker'ın `rerankRank`/`rank` değerleri gerçek sıralı pozisyondur. Geriye dönük
+`rerankScore` alanı ordinal bir uyumluluk değeridir, confidence veya relevance
+olasılığı değildir (`rerankScoreSemantics=deprecated_ordinal_not_confidence`).
 
 Reranking ve generation prompt'ları retrieved document/chunk metnini güvenilmeyen
 veri olarak sınırlar; dokümanın içindeki komutlar sistem veya kullanıcı talimatı
