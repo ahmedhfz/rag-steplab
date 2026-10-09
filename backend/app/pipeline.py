@@ -33,6 +33,7 @@ from .chunking import (
 from .config import Settings, get_settings, pipeline_lease_duration_seconds
 from .errors import ApiProblem
 from .gemini import EMBEDDING_FORMAT_VERSION, GeminiService, document_embedding_text
+from .lineage import resolve_from_rows, select_pipeline
 from .quality import compute_retrieval_metrics
 from .repository import (
     Repository,
@@ -791,6 +792,7 @@ def create_chunk_run(document_id: str, request: ChunkRunRequest, *, repository: 
                     claim["id"],
                     "artifact_incomplete",
                     "The existing chunk artifact is incomplete and cannot be reused.",
+                    unfenced=True,
                 )
                 raise ApiProblem(409, "artifact_incomplete", "The existing chunk artifact is incomplete and cannot be reused.")
             claim["reused_artifact"] = True
@@ -839,6 +841,7 @@ def create_embedding_run(document_id: str, chunk_run_id: str | None, *, reposito
                     claim["id"],
                     "artifact_incomplete",
                     "The existing embedding artifact is incomplete and cannot be reused.",
+                    unfenced=True,
                 )
                 raise ApiProblem(409, "artifact_incomplete", "The existing embedding artifact is incomplete and cannot be reused.")
             claim["reused_artifact"] = True
@@ -1331,18 +1334,56 @@ def _stage_target(target: str) -> list[str]:
     return STAGE_ORDER[: STAGE_ORDER.index(target) + 1]
 
 
+def _selected_pipeline(repository: Repository, document_id: str, pipeline_id: str | None) -> dict[str, Any] | None:
+    pipeline = select_pipeline(repository.list_document_pipeline_rows(document_id) or [], pipeline_id)
+    if pipeline_id and pipeline is None:
+        raise ApiProblem(404, "document_pipeline_not_found", "The selected pipeline was not found.")
+    return pipeline
+
+
+def _in_use_lineage(repository: Repository, document: dict[str, Any], pipeline: dict[str, Any] | None) -> dict[str, Any]:
+    """Resolve the canonical in-use lineage from the lightweight projection."""
+
+    bundle = repository.get_document_summary_bundle(document["id"]) or {}
+    return resolve_from_rows(
+        document,
+        pipeline,
+        parses=bundle.get("parses", []),
+        chunks=bundle.get("chunks", []),
+        embeddings=bundle.get("embeddings", []),
+    )
+
+
+def _resolve_run_selection(
+    repository: Repository,
+    document: dict[str, Any],
+    pipeline: dict[str, Any] | None,
+    chunk_run_id: str | None,
+    embedding_run_id: str | None,
+) -> tuple[str | None, str | None]:
+    """Explicit ids win; otherwise use the pipeline's in-use lineage.
+
+    ``documents.active_*`` is only consulted through the lineage resolver, so
+    a default embedding is never paired with chunks from another lineage.
+    """
+
+    if chunk_run_id and embedding_run_id:
+        return chunk_run_id, embedding_run_id
+    lineage = _in_use_lineage(repository, document, pipeline)
+    selected_chunk = chunk_run_id or lineage["chunk_run_id"]
+    if embedding_run_id:
+        return selected_chunk, embedding_run_id
+    selected_embedding = lineage["embedding_run_id"] if selected_chunk == lineage["chunk_run_id"] else None
+    return selected_chunk, selected_embedding
+
+
 def _prepare_experiment_lineage(
     request: ExperimentCreateRequest,
     repository: Repository,
     settings: Settings,
 ) -> tuple[dict[str, Any], str, str | None, dict[str, Any] | None, dict[str, Any]]:
     document = _document_or_404(repository, request.document_id)
-    pipelines = repository.list_document_pipeline_rows(request.document_id) or []
-    pipeline = next((item for item in pipelines if item.get("id") == request.pipeline_id), None) if request.pipeline_id else None
-    if request.pipeline_id and pipeline is None:
-        raise ApiProblem(404, "document_pipeline_not_found", "The selected pipeline was not found.")
-    if pipeline is None and pipelines:
-        pipeline = next((item for item in pipelines if item.get("name") == "Default Pipeline"), pipelines[0])
+    pipeline = _selected_pipeline(repository, request.document_id, request.pipeline_id)
     if pipeline is None:
         pipeline = repository.create_document_pipeline({
             "owner_user_id": document.get("owner_user_id"),
@@ -1352,11 +1393,12 @@ def _prepare_experiment_lineage(
             "chunk_run_id": None,
             "embedding_run_id": None,
         })
-    chunk_run_id = request.chunk_run_id or pipeline.get("chunk_run_id") or document.get("active_chunk_run_id")
+    chunk_run_id, embedding_run_id = _resolve_run_selection(
+        repository, document, pipeline, request.chunk_run_id, request.embedding_run_id
+    )
     if not chunk_run_id:
         raise ApiProblem(409, "chunks_required", "Create chunks before running an experiment.")
     _require_compatible_chunk(repository, request.document_id, chunk_run_id)
-    embedding_run_id = request.embedding_run_id or pipeline.get("embedding_run_id") or document.get("active_embedding_run_id")
     if request.retrieval.mode in {"dense", "hybrid"} and not embedding_run_id:
         raise ApiProblem(409, "embedding_required", "Dense or hybrid retrieval requires embeddings.")
     embedding = None
@@ -2000,7 +2042,9 @@ def queue_experiment(
             **_safe_model_dump(request),
             "pipelineContext": pipeline_context,
             "_execution": {
-                "seedStageResults": seed_stage_results or {},
+                # A terminal seed experiment is immutable, so the worker reads
+                # its stage results by id instead of duplicating them here.
+                "seedStageResults": {} if seed_experiment_id else (seed_stage_results or {}),
                 "seedExperimentId": seed_experiment_id,
                 "continuedFromExperimentId": continued_from_experiment_id,
                 "forceGeneration": force_generation,
@@ -2049,6 +2093,12 @@ def run_queued_experiment(
                 return None
         _document = _document_or_404(repository, persisted["document_id"])
         execution = (persisted.get("config") or {}).get("_execution") or {}
+        seed_stage_results = execution.get("seedStageResults") or None
+        if not seed_stage_results and execution.get("seedExperimentId"):
+            seed = repository.get_experiment_row(execution["seedExperimentId"])
+            if seed is None or seed.get("document_id") != persisted["document_id"]:
+                raise ApiProblem(409, "seed_experiment_missing", "The experiment being continued is no longer available.")
+            seed_stage_results = seed.get("stage_results") or None
         request_data = copy.deepcopy(persisted.get("config") or {})
         request_data.pop("_execution", None)
         request_data.pop("pipelineContext", None)
@@ -2076,7 +2126,7 @@ def run_queued_experiment(
             chunk_run_id=chunk_run_id,
             embedding_run_id=embedding_run_id,
             embedding=embedding,
-            seed_stage_results=execution.get("seedStageResults") or None,
+            seed_stage_results=seed_stage_results,
             seed_experiment_id=execution.get("seedExperimentId"),
             force_generation=bool(execution.get("forceGeneration", False)),
             lease_token=lease_token,
@@ -2221,11 +2271,41 @@ def create_dataset(request: EvaluationDatasetRequest, *, repository: Repository 
     repository = repository or get_repository()
     _require_write(repository, get_settings())
     document = _document_or_404(repository, request.document_id)
-    parse_id = request.parse_run_id or document.get("active_parse_run_id")
+    parse_id = request.parse_run_id
+    if not parse_id:
+        pipeline = _selected_pipeline(repository, request.document_id, request.pipeline_id)
+        parse_id = _in_use_lineage(repository, document, pipeline)["parse_run_id"]
     if not parse_id:
         raise ApiProblem(409, "parse_required", "Parse the document before creating an evaluation dataset.")
-    _require_compatible_parse(repository, request.document_id, parse_id)
+    parse = _require_compatible_parse(repository, request.document_id, parse_id)
+    _require_known_relevant_elements(request, parse)
     return repository.save_dataset(request, parse_id)
+
+
+def _parse_element_ids(structured: dict[str, Any] | None) -> set[str]:
+    structured = structured or {}
+    ids = {str(element.get("id")) for element in structured.get("elements") or [] if element.get("id")}
+    for page in structured.get("pages") or []:
+        ids.update(str(element.get("id")) for element in page.get("elements") or [] if element.get("id"))
+    return ids
+
+
+def _require_known_relevant_elements(request: EvaluationDatasetRequest, parse: dict[str, Any]) -> None:
+    """A golden set may only reference elements of the parse it is bound to."""
+
+    known = _parse_element_ids(parse.get("structured"))
+    unknown = sorted({
+        element_id
+        for case in request.cases
+        for element_id in case.relevant_element_ids
+        if element_id not in known
+    })
+    if unknown:
+        raise ApiProblem(
+            422,
+            "evaluation_elements_unknown",
+            f"{len(unknown)} relevant element id(s) do not belong to the selected parse run.",
+        )
 
 
 def _evaluation_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -2344,7 +2424,17 @@ def queue_evaluation(request: EvaluationRunRequest, *, repository: Repository | 
     dataset = repository.get_dataset_row(request.dataset_id)
     if dataset is None:
         raise ApiProblem(404, "dataset_not_found", "The evaluation dataset was not found.")
-    _document_or_404(repository, dataset["document_id"])
+    document = _document_or_404(repository, dataset["document_id"])
+    # Snapshot the in-use lineage at queue time: the fingerprint then names the
+    # exact chunks/embeddings, so a completed evaluation of an older pipeline
+    # lineage is never returned for the current one, and a later pipeline edit
+    # cannot change what this queued run executes.
+    pipeline = _selected_pipeline(repository, dataset["document_id"], request.pipeline_id)
+    chunk_run_id, embedding_run_id = _resolve_run_selection(
+        repository, document, pipeline, request.chunk_run_id, request.embedding_run_id
+    )
+    if chunk_run_id:
+        request = request.model_copy(update={"chunk_run_id": chunk_run_id, "embedding_run_id": embedding_run_id})
     evaluation_fingerprint = _fingerprint({
         "schema": "evaluation-fingerprint-v1",
         "datasetId": request.dataset_id,
@@ -2395,6 +2485,9 @@ def run_queued_evaluation(
             raise ApiProblem(404, "evaluation_run_not_found", "The evaluation run was not found.")
         if not lease_token and persisted.get("status") not in {"queued", "running"}:
             return _evaluation_response(persisted)
+        if persisted.get("config"):
+            # The persisted config carries the lineage snapshot taken at queue time.
+            request = EvaluationRunRequest.model_validate(persisted["config"])
         lease_token = lease_token or persisted.get("lease_token")
         if lease_token:
             if repository.start_pipeline_worker(
@@ -2449,19 +2542,15 @@ def create_evaluation(
         )
     document = _document_or_404(repository, dataset["document_id"])
     _require_compatible_parse(repository, dataset["document_id"], dataset["parse_run_id"])
-    pipelines = repository.list_document_pipeline_rows(dataset["document_id"]) or []
-    pipeline = next((item for item in pipelines if item.get("id") == request.pipeline_id), None) if request.pipeline_id else None
-    if request.pipeline_id and pipeline is None:
-        raise ApiProblem(404, "document_pipeline_not_found", "The selected pipeline was not found.")
-    if pipeline is None and pipelines:
-        pipeline = next((item for item in pipelines if item.get("name") == "Default Pipeline"), pipelines[0])
-    selected_chunk_id = request.chunk_run_id or (pipeline or {}).get("chunk_run_id") or document.get("active_chunk_run_id")
+    pipeline = _selected_pipeline(repository, dataset["document_id"], request.pipeline_id)
+    selected_chunk_id, selected_embedding_id = _resolve_run_selection(
+        repository, document, pipeline, request.chunk_run_id, request.embedding_run_id
+    )
     if not selected_chunk_id:
         raise ApiProblem(409, "chunks_required", "Create chunks for the dataset parse before evaluating it.")
     selected_chunk = _require_compatible_chunk(repository, dataset["document_id"], selected_chunk_id)
     if selected_chunk["parse_run_id"] != dataset["parse_run_id"]:
         raise _lineage_problem("The evaluation dataset parse and selected chunks are incompatible.")
-    selected_embedding_id = request.embedding_run_id or (pipeline or {}).get("embedding_run_id") or document.get("active_embedding_run_id")
     if request.retrieval.mode in {"dense", "hybrid"} and not selected_embedding_id:
         raise ApiProblem(409, "embedding_required", "Dense or hybrid evaluation requires embeddings for the selected chunks.")
     if selected_embedding_id:

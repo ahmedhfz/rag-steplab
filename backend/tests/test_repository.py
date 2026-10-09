@@ -47,25 +47,25 @@ def test_inmemory_artifact_terminal_timing_is_server_observed():
     chunk_claim, claimed = _claim_chunk(repository, document["id"], parse["id"], config)
     assert claimed is True
     repository.chunk_runs[chunk_claim["id"]]["started_at"] = now_utc() - timedelta(seconds=1)
-    chunk = repository.complete_chunk_run(chunk_claim["id"], [_chunk_draft()])
+    chunk = repository.complete_chunk_run(chunk_claim["id"], [_chunk_draft()], chunk_claim["lease_token"])
     assert chunk["duration_ms"] >= 1000
 
     embedding_claim, claimed = repository.claim_embedding_run(document["id"], chunk["id"], "gemini-embedding-2", 768, "format-v1")
     assert claimed is True
     repository.embedding_runs[embedding_claim["id"]]["started_at"] = now_utc() - timedelta(seconds=1)
-    embedding = repository.complete_embedding_run(embedding_claim["id"], [], effective_model="gemini-embedding-2")
+    embedding = repository.complete_embedding_run(embedding_claim["id"], [], effective_model="gemini-embedding-2", lease_token=embedding_claim["lease_token"])
     assert embedding["duration_ms"] >= 1000
 
     failed_chunk_claim, claimed = _claim_chunk(repository, document["id"], parse["id"], {**config, "chunk_size_tokens": 65})
     assert claimed is True
     repository.chunk_runs[failed_chunk_claim["id"]]["started_at"] = now_utc() - timedelta(seconds=1)
-    failed_chunk = repository.fail_chunk_run(failed_chunk_claim["id"], "chunk_failed", "test")
+    failed_chunk = repository.fail_chunk_run(failed_chunk_claim["id"], "chunk_failed", "test", failed_chunk_claim["lease_token"])
     assert failed_chunk["duration_ms"] >= 1000
 
     failed_embedding_claim, claimed = repository.claim_embedding_run(document["id"], failed_chunk_claim["id"], "gemini-embedding-2", 768, "format-v1")
     assert claimed is True
     repository.embedding_runs[failed_embedding_claim["id"]]["started_at"] = now_utc() - timedelta(seconds=1)
-    failed_embedding = repository.fail_embedding_run(failed_embedding_claim["id"], "embedding_failed", "test")
+    failed_embedding = repository.fail_embedding_run(failed_embedding_claim["id"], "embedding_failed", "test", failed_embedding_claim["lease_token"])
     assert failed_embedding["duration_ms"] >= 1000
 
 

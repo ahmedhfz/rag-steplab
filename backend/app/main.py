@@ -10,8 +10,10 @@ from typing import Any
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import get_settings
 from .auth import CurrentUser, get_current_user
@@ -41,7 +43,6 @@ from .pipeline import (
     queue_parse_upload,
     queue_reparse_document,
     persist_document_upload,
-    run_lineage_compatibility,
     SUPPORTED_NORMALIZED_SCHEMA_VERSION,
 )
 from .document_pipelines import (
@@ -49,6 +50,7 @@ from .document_pipelines import (
     update_document_pipeline as update_named_pipeline,
 )
 from .gemini import EMBEDDING_FORMAT_VERSION
+from .lineage import is_historical, resolve_from_rows, select_pipeline
 from .repository import _expired_run_update, get_repository
 from .storage import get_storage
 from .schemas import (
@@ -122,6 +124,47 @@ async def api_problem_handler(_: Request, problem: ApiProblem) -> JSONResponse:
     return JSONResponse(status_code=problem.status_code, content=payload.model_dump(by_alias=True), headers=problem.headers)
 
 
+_HTTP_ERROR_CODES = {
+    401: "authentication_required",
+    403: "forbidden",
+    404: "not_found",
+    405: "method_not_allowed",
+    413: "request_too_large",
+}
+
+
+def _validation_message(errors: list[dict[str, Any]]) -> str:
+    """Summarise the first validation error without echoing the submitted value."""
+
+    if not errors:
+        return "The request is invalid."
+    first = errors[0]
+    parts = list(first.get("loc", ()))
+    if parts and parts[0] in {"body", "query", "path", "header"}:
+        parts = parts[1:]
+    location = ".".join(str(part) for part in parts)
+    message = str(first.get("msg") or "Invalid value.").removeprefix("Value error, ")
+    return f"{location}: {message}" if location else message
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    payload = ErrorResponse(error=ApiError(code="request_invalid", message=_validation_message(list(exc.errors()))))
+    return JSONResponse(status_code=422, content=payload.model_dump(by_alias=True))
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+    code = _HTTP_ERROR_CODES.get(exc.status_code, "http_error")
+    message = exc.detail if isinstance(exc.detail, str) and exc.detail else "The request could not be completed."
+    payload = ErrorResponse(error=ApiError(code=code, message=message))
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=payload.model_dump(by_alias=True),
+        headers=getattr(exc, "headers", None),
+    )
+
+
 @app.exception_handler(Exception)
 async def unexpected_error_handler(_: Request, __: Exception) -> JSONResponse:
     return JSONResponse(
@@ -155,13 +198,47 @@ def _camelize(value: Any) -> Any:
     return value
 
 
-def _public_run_row(row: dict[str, Any]) -> dict[str, Any]:
+def _public_status(status: str | None, *, default: str = "failed") -> str:
+    # interrupted is intentionally an internal DB state only.
+    return "failed" if status == "interrupted" else (status or default)
+
+
+def _public_error(row: dict[str, Any], kind: str) -> tuple[str | None, str | None]:
+    """Keep a run's own failure code; only parse keeps the parse_interrupted code."""
+
+    code = row.get("error_code")
+    message = row.get("error_message")
+    if row.get("status") == "interrupted":
+        if kind == "parse":
+            code = "parse_interrupted"
+            message = message or "The parse run was interrupted before completion."
+        else:
+            code = code or "worker_interrupted"
+            message = message or "The worker was interrupted before completion."
+    return code, message
+
+
+def _public_run_row(
+    row: dict[str, Any],
+    *,
+    kind: str = "experiment",
+) -> dict[str, Any]:
     """Remove worker-only credentials and execution bookkeeping from DTOs."""
 
     result = copy.deepcopy(row)
     result.pop("lease_token", None)
     if isinstance(result.get("config"), dict):
-        result["config"].pop("_execution", None)
+        execution = result["config"].pop("_execution", None)
+        if kind == "experiment" and isinstance(execution, dict):
+            # Provenance the browser needs survives the durable worker round-trip.
+            if result.get("continued_from_experiment_id") is None and execution.get("continuedFromExperimentId"):
+                result["continued_from_experiment_id"] = execution["continuedFromExperimentId"]
+            if "generation_rerun" not in result:
+                result["generation_rerun"] = bool(execution.get("forceGeneration", False))
+    result["error_code"], result["error_message"] = _public_error(row, kind)
+    result["status"] = _public_status(row.get("status"))
+    if kind == "experiment":
+        result["reused_experiment"] = bool(result.get("reused_experiment", False))
     return result
 
 
@@ -176,13 +253,23 @@ def _durable_pipeline_response(kind: str, row: dict[str, Any], repository) -> JS
 
     current = repository.get_experiment_row(row["id"]) if kind == "experiment" else repository.get_evaluation_row(row["id"])
     current = current or row
+    # Reuse/continuation is request-level provenance, not a column of the
+    # persisted row; the queue response carries it and it must survive here.
+    request_flags = {
+        key: row[key]
+        for key in ("reused_experiment", "continued_from_experiment_id", "generation_rerun")
+        if row.get(key) is not None
+    }
+
+    def respond(status_code: int, value: dict[str, Any]) -> JSONResponse:
+        payload = _public_run_row({**value, **request_flags}, kind=kind)
+        return JSONResponse(status_code=status_code, content=jsonable_encoder(_camelize(payload)))
+
     status = current.get("status")
-    if status == "completed":
-        return JSONResponse(status_code=200, content=jsonable_encoder(_camelize(_public_run_row(current))))
     if status not in {"queued", "running"}:
-        return JSONResponse(status_code=200, content=jsonable_encoder(_camelize(_public_run_row(current))))
+        return respond(200, current)
     if current.get("dispatch_id"):
-        return JSONResponse(status_code=202, content=jsonable_encoder(_camelize(_public_run_row(current))))
+        return respond(202, current)
     lease_token = current.get("lease_token")
     if not lease_token:
         raise ApiProblem(409, "worker_lease_missing", "The queued pipeline run has no fencing lease.")
@@ -191,7 +278,7 @@ def _durable_pipeline_response(kind: str, row: dict[str, Any], repository) -> JS
     if reserved is None:
         raise ApiProblem(409, "worker_lease_lost", "The pipeline run lease was lost before dispatch reservation.")
     if reserved.get("dispatch_id") != reservation_id:
-        return JSONResponse(status_code=202, content=jsonable_encoder(_camelize(_public_run_row(reserved))))
+        return respond(202, reserved)
     try:
         dispatch_id = dispatch_pipeline_run(kind, current["id"], str(lease_token), settings=get_settings())
         dispatched = repository.set_pipeline_dispatch(
@@ -204,8 +291,7 @@ def _durable_pipeline_response(kind: str, row: dict[str, Any], repository) -> JS
         if dispatched is None:
             latest = repository.get_experiment_row(current["id"]) if kind == "experiment" else repository.get_evaluation_row(current["id"])
             if latest is not None and latest.get("status") in {"queued", "running", "completed"}:
-                status_code = 200 if latest.get("status") == "completed" else 202
-                return JSONResponse(status_code=status_code, content=jsonable_encoder(_camelize(_public_run_row(latest))))
+                return respond(200 if latest.get("status") == "completed" else 202, latest)
             raise ApiProblem(409, "worker_lease_lost", "The pipeline run lease was lost before dispatch was recorded.")
     except ApiProblem:
         raise
@@ -218,7 +304,7 @@ def _durable_pipeline_response(kind: str, row: dict[str, Any], repository) -> JS
             "The pipeline worker could not be started.",
         )
         raise ApiProblem(503, "pipeline_dispatch_failed", "The pipeline worker could not be started.") from exc
-    return JSONResponse(status_code=202, content=jsonable_encoder(_camelize(_public_run_row(dispatched))))
+    return respond(202, dispatched)
 
 
 def _guarded(function, *args, **kwargs):
@@ -243,8 +329,7 @@ def _document_metadata(row: dict[str, Any]) -> DocumentMetadata:
 
 
 def _public_parse_status(status: str | None) -> str:
-    # interrupted is intentionally an internal DB state only.
-    return "failed" if status == "interrupted" else (status or "failed")
+    return _public_status(status)
 
 
 def _parse_progress(parse: dict[str, Any]) -> int:
@@ -527,62 +612,6 @@ def document_parse_run(document_id: str, run_id: str, user: CurrentUser = Depend
     return _parse_response(document, parse)
 
 
-def _run_summary_dict(row: dict[str, Any], document: dict[str, Any], repository) -> dict[str, Any]:
-    compatible, compatibility_reason = run_lineage_compatibility(
-        repository,
-        document,
-        row,
-        settings=get_settings(),
-    )
-    if "structured" in row:
-        historical = row["id"] != document.get("active_parse_run_id")
-    elif "strategy" in row:
-        historical = row["id"] != document.get("active_chunk_run_id") or row.get("parse_run_id") != document.get("active_parse_run_id")
-    elif "dimensions" in row:
-        historical = row["id"] != document.get("active_embedding_run_id") or row.get("chunk_run_id") != document.get("active_chunk_run_id")
-    else:
-        historical = row.get("chunk_run_id") != document.get("active_chunk_run_id")
-        if row.get("embedding_run_id") is not None:
-            historical = historical or row.get("embedding_run_id") != document.get("active_embedding_run_id")
-    raw_status = row.get("status", "completed")
-    status = _public_parse_status(raw_status)
-    error_code = row.get("error_code")
-    error_message = row.get("error_message")
-    if raw_status == "interrupted":
-        error_code = "parse_interrupted"
-        error_message = error_message or "The parse run was interrupted before completion."
-    public_duration = row.get("duration_ms")
-    if public_duration == 0:
-        public_duration = None
-    return _camelize({
-        "id": row["id"],
-        "createdAt": row.get("created_at"),
-        "status": status,
-        "progress": _parse_progress(row) if "structured" in row else None,
-        # Kept as a wire-compatible alias for older clients. It no longer
-        # means "not active"; only a broken/incomplete lineage is stale.
-        "isStale": not compatible,
-        "isCompatible": compatible,
-        "compatibilityReason": compatibility_reason,
-        "historicalLineage": bool(historical and row.get("status") == "completed"),
-        "upstream": {
-            "documentId": row.get("document_id"),
-            "parseRunId": row.get("parse_run_id"),
-            "chunkRunId": row.get("chunk_run_id"),
-            "embeddingRunId": row.get("embedding_run_id"),
-        },
-        "config": row.get("config", {}),
-        "timing": {
-            "startedAt": row.get("started_at"),
-            "completedAt": row.get("completed_at"),
-            "durationMs": public_duration,
-        },
-        "error": {"code": error_code, "message": error_message}
-        if error_code and error_message
-        else None,
-    })
-
-
 def _summary_lineage_compatibility(
     row: dict[str, Any],
     document: dict[str, Any],
@@ -650,34 +679,34 @@ def _summary_lineage_compatibility(
     return True, None
 
 
-def _summary_run_dict(row: dict[str, Any], document: dict[str, Any], bundle: dict[str, Any]) -> dict[str, Any]:
+def _bundle_lineage(bundle: dict[str, Any], pipeline_id: str | None = None) -> dict[str, Any]:
+    """Resolve the in-use lineage of one summary bundle (see ``app.lineage``)."""
+
+    pipeline = select_pipeline(bundle.get("pipelines") or [], pipeline_id)
+    if pipeline_id and pipeline is None:
+        raise ApiProblem(404, "document_pipeline_not_found", "The pipeline was not found.")
+    return resolve_from_rows(
+        bundle["document"],
+        pipeline,
+        parses=bundle.get("parses", []),
+        chunks=bundle.get("chunks", []),
+        embeddings=bundle.get("embeddings", []),
+    )
+
+
+def _summary_run_dict(
+    row: dict[str, Any],
+    document: dict[str, Any],
+    bundle: dict[str, Any],
+    lineage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     compatible, compatibility_reason = _summary_lineage_compatibility(row, document, bundle)
-    kind = row.get("kind")
-    active_key = {
-        "parse": "active_parse_run_id",
-        "chunk": "active_chunk_run_id",
-        "embedding": "active_embedding_run_id",
-    }.get(kind)
-    if kind == "parse":
-        historical = row.get("id") != document.get(active_key or "")
-        progress = _parse_progress(row)
-    elif kind == "chunk":
-        historical = row.get("id") != document.get("active_chunk_run_id") or row.get("parse_run_id") != document.get("active_parse_run_id")
-        progress = None
-    elif kind == "embedding":
-        historical = row.get("id") != document.get("active_embedding_run_id") or row.get("chunk_run_id") != document.get("active_chunk_run_id")
-        progress = None
-    else:
-        historical = row.get("chunk_run_id") != document.get("active_chunk_run_id") or (
-            row.get("embedding_run_id") is not None and row.get("embedding_run_id") != document.get("active_embedding_run_id")
-        )
-        progress = None
+    kind = row.get("kind") or "experiment"
+    lineage = lineage if lineage is not None else _bundle_lineage(bundle)
+    historical = is_historical(kind, row, lineage)
+    progress = _parse_progress(row) if kind == "parse" else None
     raw_status = row.get("status", "completed")
-    error_code = row.get("error_code")
-    error_message = row.get("error_message")
-    if raw_status == "interrupted":
-        error_code = "parse_interrupted"
-        error_message = error_message or "The parse run was interrupted before completion."
+    error_code, error_message = _public_error(row, kind)
     public_duration = row.get("duration_ms")
     if public_duration == 0:
         public_duration = None
@@ -691,7 +720,7 @@ def _summary_run_dict(row: dict[str, Any], document: dict[str, Any], bundle: dic
         "isStale": not compatible,
         "isCompatible": compatible,
         "compatibilityReason": compatibility_reason,
-        "historicalLineage": bool(historical and raw_status == "completed"),
+        "historicalLineage": historical,
         "upstream": {
             "documentId": row.get("document_id"),
             "parseRunId": row.get("parse_run_id"),
@@ -851,28 +880,29 @@ def list_documents(user: CurrentUser = Depends(get_current_user)) -> dict[str, A
 
 
 @app.get("/documents/{document_id}")
-def get_document(document_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+def get_document(
+    document_id: str,
+    pipeline_id: str | None = Query(default=None, alias="pipelineId"),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Legacy detail: the summary projection plus the in-use artifact bodies."""
+
     repository = _user_repository(user)
-    document = repository.get_document_row(document_id)
-    if document is None:
+    bundle = repository.get_document_summary_bundle(document_id, owner_user_id=user.id)
+    if bundle is None:
         raise ApiProblem(404, "document_not_found", "The document was not found.")
-    parses = repository.list_parse_rows(document_id)
-    chunks = repository.list_chunk_rows(document_id)
-    embeddings = repository.list_embedding_rows(document_id)
-    experiments = repository.list_experiment_rows(document_id)
-    active_parse = next((row for row in parses if row["id"] == document.get("active_parse_run_id")), None)
-    active_chunk = next((row for row in chunks if row["id"] == document.get("active_chunk_run_id")), None)
-    active_embedding = next((row for row in embeddings if row["id"] == document.get("active_embedding_run_id")), None)
-    return _camelize({
-        **_document_list_item(document),
-        "parseRuns": [_run_summary_dict(row, document, repository) for row in parses],
-        "chunkRuns": [{**_run_summary_dict(row, document, repository), "strategy": row.get("strategy"), "chunkCount": row.get("chunk_count", 0)} for row in chunks],
-        "embeddingRuns": [{**_run_summary_dict(row, document, repository), "model": row.get("model"), "dimensions": row.get("dimensions"), "embeddingFormatVersion": row.get("embedding_format_version"), "embeddingCount": row.get("embedding_count", 0), "effectiveModel": row.get("effective_model")} for row in embeddings],
-        "experiments": [_run_summary_dict(row, document, repository) for row in experiments],
+    payload = _document_summary_payload(bundle, pipeline_id)
+    lineage = payload["activeLineage"]
+    document = bundle["document"]
+    active_parse = repository.get_parse_row(lineage["parseRunId"]) if lineage["parseRunId"] else None
+    active_chunk = repository.get_chunk_row(lineage["chunkRunId"]) if lineage["chunkRunId"] else None
+    active_embedding = repository.get_embedding_row(lineage["embeddingRunId"]) if lineage["embeddingRunId"] else None
+    payload.update({
         "activeParseRun": _persisted_parse_response(document, active_parse) if active_parse else None,
-        "activeChunkRun": active_chunk,
-        "activeEmbeddingRun": active_embedding,
+        "activeChunkRun": _public_artifact_row(active_chunk) if active_chunk else None,
+        "activeEmbeddingRun": _public_artifact_row(active_embedding) if active_embedding else None,
     })
+    return _camelize(payload)
 
 
 @app.delete("/documents/{document_id}", status_code=204)
@@ -888,23 +918,49 @@ def delete_document(document_id: str, user: CurrentUser = Depends(get_current_us
     return Response(status_code=204)
 
 
+def _active_lineage_dict(lineage: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "pipelineId": lineage.get("pipeline_id"),
+        "parseRunId": lineage.get("parse_run_id"),
+        "chunkRunId": lineage.get("chunk_run_id"),
+        "embeddingRunId": lineage.get("embedding_run_id"),
+        "sources": dict(lineage.get("sources") or {}),
+    }
+
+
+def _document_summary_payload(bundle: dict[str, Any], pipeline_id: str | None) -> dict[str, Any]:
+    document = bundle["document"]
+    lineage = _bundle_lineage(bundle, pipeline_id)
+    return {
+        **_document_list_item(document),
+        # Canonical in-use lineage of the requested (or default) saved
+        # pipeline. ``historicalLineage`` on every run is relative to it.
+        "activeLineage": _active_lineage_dict(lineage),
+        "pipelines": [
+            _document_pipeline_response(row).model_dump(by_alias=True, mode="json")
+            for row in bundle.get("pipelines") or []
+        ],
+        "parseRuns": [_summary_run_dict(row, document, bundle, lineage) for row in bundle["parses"]],
+        "chunkRuns": [_summary_run_dict(row, document, bundle, lineage) for row in bundle["chunks"]],
+        "embeddingRuns": [_summary_run_dict(row, document, bundle, lineage) for row in bundle["embeddings"]],
+        "experiments": [_summary_run_dict(row, document, bundle, lineage) for row in bundle["experiments"]],
+        "evaluationDatasets": [_summary_dataset_dict(row) for row in bundle["datasets"]],
+        "evaluationRuns": [_summary_document_evaluation_dict(row) for row in bundle["evaluations"]],
+    }
+
+
 @app.get("/documents/{document_id}/summary")
-def get_document_summary(document_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+def get_document_summary(
+    document_id: str,
+    pipeline_id: str | None = Query(default=None, alias="pipelineId"),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     """Return the hot-path document projection without artifact bodies."""
     repository = _user_repository(user)
     bundle = repository.get_document_summary_bundle(document_id, owner_user_id=user.id)
     if bundle is None:
         raise ApiProblem(404, "document_not_found", "The document was not found.")
-    document = bundle["document"]
-    return _camelize({
-        **_document_list_item(document),
-        "parseRuns": [_summary_run_dict(row, document, bundle) for row in bundle["parses"]],
-        "chunkRuns": [_summary_run_dict(row, document, bundle) for row in bundle["chunks"]],
-        "embeddingRuns": [_summary_run_dict(row, document, bundle) for row in bundle["embeddings"]],
-        "experiments": [_summary_run_dict(row, document, bundle) for row in bundle["experiments"]],
-        "evaluationDatasets": [_summary_dataset_dict(row) for row in bundle["datasets"]],
-        "evaluationRuns": [_summary_document_evaluation_dict(row) for row in bundle["evaluations"]],
-    })
+    return _camelize(_document_summary_payload(bundle, pipeline_id))
 
 
 @app.get("/documents/{document_id}/source-url")
@@ -1045,18 +1101,33 @@ def _run_queued_experiment_and_release(request: ExperimentCreateRequest, experim
 
 
 @app.get("/experiments")
-def list_experiments(document_id: str | None = Query(default=None, alias="documentId"), user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+def list_experiments(
+    document_id: str | None = Query(default=None, alias="documentId"),
+    pipeline_id: str | None = Query(default=None, alias="pipelineId"),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     repository = _user_repository(user)
     if document_id is not None:
         bundle = repository.get_document_summary_bundle(document_id, owner_user_id=user.id)
         if bundle is None:
             raise ApiProblem(404, "document_not_found", "The document was not found.")
-        items = [_summary_run_dict(row, bundle["document"], bundle) for row in bundle["experiments"]]
+        lineage = _bundle_lineage(bundle, pipeline_id)
+        items = [_summary_run_dict(row, bundle["document"], bundle, lineage) for row in bundle["experiments"]]
     else:
-        items = [
-            _summary_run_dict(row, {"id": row.get("document_id")}, {"experiments": [], "parses": [], "chunks": [], "embeddings": []})
-            for row in repository.list_experiment_summary_rows(owner_user_id=user.id)
-        ]
+        # Lineage compatibility needs each run's own document projection; the
+        # cache keeps this to one projection query per document.
+        bundles: dict[str, tuple[dict[str, Any], dict[str, Any]] | None] = {}
+        items = []
+        for row in repository.list_experiment_summary_rows(owner_user_id=user.id):
+            row_document_id = row.get("document_id")
+            if row_document_id not in bundles:
+                bundle = repository.get_document_summary_bundle(row_document_id, owner_user_id=user.id)
+                bundles[row_document_id] = (bundle, _bundle_lineage(bundle)) if bundle is not None else None
+            entry = bundles[row_document_id]
+            if entry is None:
+                continue
+            bundle, lineage = entry
+            items.append(_summary_run_dict(row, bundle["document"], bundle, lineage))
     return {"items": _camelize(items)}
 
 
@@ -1194,7 +1265,7 @@ def get_evaluation_run(run_id: str, user: CurrentUser = Depends(get_current_user
     row = repository.reconcile_pipeline_lease("evaluation", run_id)
     if row is None:
         raise ApiProblem(404, "evaluation_run_not_found", "The evaluation run was not found.")
-    return _camelize(_public_run_row(row))
+    return _camelize(_public_run_row(row, kind="evaluation"))
 
 
 @app.get("/evaluation/runs/{run_id}/status")

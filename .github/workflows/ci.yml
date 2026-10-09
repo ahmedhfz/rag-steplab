@@ -152,6 +152,36 @@ jobs:
           supabase test db --local
           supabase db lint --local --schema rag_lab --fail-on error
 
+      # Backend repository SQL (lease/fencing, ON CONFLICT, advisory locks,
+      # cascades, owner isolation) against the migrated schema, connected as
+      # the least-privilege runtime role.
+      - name: Install Supabase CLI for PostgreSQL repository tests
+        if: steps.classify.outputs.backend == 'true' && steps.classify.outputs.database != 'true'
+        uses: supabase/setup-cli@v3
+        with:
+          version: 2.116.0
+
+      - name: Run PostgreSQL repository integration tests
+        if: steps.classify.outputs.backend == 'true'
+        shell: bash
+        env:
+          # Local, ephemeral Supabase defaults; libpq reads the password from
+          # PGPASSWORD so no credential-shaped URL is tracked.
+          RAG_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:54322/postgres?sslmode=disable
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.classify.outputs.database }}" != "true" ]; then
+            supabase db start
+            supabase db reset --local --no-seed
+          fi
+          python -m pytest -m postgres backend/tests
+
+      - name: Stop local Supabase for PostgreSQL repository tests
+        if: always() && steps.classify.outputs.backend == 'true' && steps.classify.outputs.database != 'true'
+        continue-on-error: true
+        run: supabase stop --project-id rag-steplab --no-backup
+
       - name: Stop local Supabase
         if: always() && steps.classify.outputs.database == 'true'
         continue-on-error: true
