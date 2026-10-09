@@ -234,7 +234,7 @@ node scripts/smoke.mjs
 
 Semantic gate 8 sayfa, 9–11 tablo, 24–28 gerçek başlık, page provenance ve
 `BAT-S12`, `INV-T17`, `12,84 GWh`, `%17,6`, `%25` marker'larını doğrular. Full
-gate üç chunk stratejisi, embedding, dense/keyword/hybrid-RRF, rerank, context,
+gate üç chunk stratejisi, embedding, dense/keyword/hybrid, rerank, context,
 grounded generation/citations, evaluation, history ve lineage compatibility
 zincirini yürütür. Production normalization sonucu tablo sayısı sıfırsa parse
 `docling_tables_missing` ile failed olur; lightweight fallback çalıştırılmaz.

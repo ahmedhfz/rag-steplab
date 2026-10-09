@@ -151,6 +151,43 @@ metriklerdir. Gemini generation, reranking ve judge çağrıları resmi JSON sch
 ile sınırlandırılır, ancak uygulama tarafındaki JSON parse ve semantic
 validation katmanı korunur.
 
+Evaluation sözleşmesi (`generation-metrics-v2`, `evaluation-fingerprint-v2`):
+
+- Üst düzey Hit/Precision/Recall/MRR rerank öncesi retrieval listesini ölçer
+  (`retrievalMetricsStage=retrieval`); `stageRetrievalMetrics.reranking` rerank
+  sonrası top-k'yı, `.context` generation'a gerçekten giren chunk'ları ölçer.
+- `faithfulness`/`answerRelevance`/`answerCorrectness` yalnız LLM judge açıkken
+  dolar (`method=gemini_generation_metrics_v2`, temperature 0, rubrikli ve
+  untrusted JSON izolasyonlu prompt). Judge kapalıyken yalnız tanısal
+  `lexicalOverlap` (`citation_token_overlap_v1`) raporlanır; farklı `method`
+  değerleri karşılaştırılmamalıdır. Cevap segmenti olmayan case'lerde generation
+  metrikleri `null` olur ve judge çağrılmaz.
+- Generation sonucu `outcome` taşır: `answered`, `insufficient_context` veya
+  `grounding_rejected`. Son durum, modelin cevap verdiği ama deterministic
+  validator'ın kaynakta olmayan bir değeri reddettiğidir; yetersiz context
+  sayılmaz ve no-answer case'inde doğru abstention değildir.
+- Citation/provider kaynaklı tek case hatası evaluation'ı düşürmez: case
+  `status=failed` ve `errorCode` ile kaydedilir, `citation_invalid` için
+  `citationValidity=0`. Tüm case'ler başarısızsa evaluation
+  `evaluation_cases_failed` ile failed olur. Başarısız case içeren veya mutable
+  (`-latest`) model kullanan evaluation yeniden kullanılmaz.
+
+Hybrid retrieval sıralaması aday havuzu içinde min-max normalize edilmiş dense
+(0.7) ve keyword (0.3) skorlarının ağırlıklı toplamıdır; `score` göreli bir
+tanısal değerdir (`scoreSemantics`), olasılık değildir. RRF kullanılmaz
+(`rrfScore`/`rrfK` geriye uyumluluk için `null`). Keyword dalı `simple` FTS
+üzerinde OR sorgusudur; Türkçe/İngilizce bağlaç ve soru kelimeleri sorgudan
+çıkarılır. Yerel/in-memory yol PostgreSQL `ts_rank` formülünü birebir uygular.
+Reranker her adayın en fazla 512 yerel token'ını görür; kırpılan adaylar
+`rerankInputTruncated`, modelin sıralamadığı adaylar `rankedBy=retrieval_fallback`
+ile işaretlenir.
+
+`recursive_token` paragraf → satır → cümle → yan cümle → kelime sınırlarında
+böler; token penceresi yalnız tek başına sığmayan bir kelimede ve UTF-8 güvenli
+olarak kullanılır. Parse, `DOCLING_MAX_NUM_PAGES` (varsayılan 200) üstündeki
+PDF'i `page_limit_exceeded`, `DOCLING_DOCUMENT_TIMEOUT_SECONDS` (varsayılan
+780) aşımını `docling_timeout` ile reddeder; kısmi parse kaydedilmez.
+
 Reranker'ın `rerankRank`/`rank` değerleri gerçek sıralı pozisyondur. Geriye dönük
 `rerankScore` alanı ordinal bir uyumluluk değeridir, confidence veya relevance
 olasılığı değildir (`rerankScoreSemantics=deprecated_ordinal_not_confidence`).
