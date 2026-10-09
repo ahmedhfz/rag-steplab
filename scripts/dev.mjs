@@ -126,6 +126,9 @@ if (useHostedApi) {
     "--app-dir",
     "backend",
     "--reload",
+    // Varsayılan izleme kökü repo köküdür (node_modules, .next, output dahil).
+    "--reload-dir",
+    "backend",
     "--port",
     "8000",
   ]);

@@ -194,3 +194,30 @@ kullanıcısı silinse de object cleanup tamamlanana kadar korunur.
 ```powershell
 .venv\Scripts\python.exe -m pytest
 ```
+
+CI ayrıca `python -m ruff check .` ve `python -m mypy` çalıştırır (backend dizininde;
+kurallar `ruff.toml` ve `mypy.ini`'de, mevcut ihlaller dosya bazlı baseline'dır).
+
+Summary endpoint ölçümleri sözleşme değil, isteğe bağlı tanıdır:
+`npm run perf:summary` hosted/local API'de gerçek bir dokümanın `/summary` yanıt
+boyutu ve süresini ölçer (`RAG_API_BASE_URL`, `RAG_API_TOKEN`, `RAG_DOCUMENT_ID`);
+`npm run perf:summary:fixture` aynı ölçümü in-memory TestClient fixture'ıyla yapar
+ve backend bağımlılıkları kurulu, PATH'teki `python`'ı kullanır.
+
+## Python bağımlılık lock'ları
+
+İnsan tarafından düzenlenen girdiler `requirements*.in` dosyalarıdır. `requirements*.txt`
+dosyaları `uv pip compile --universal --generate-hashes` ile üretilen hash'li lock'lardır;
+elle düzenlenmez. Modal API/worker image'ları ve CI aynı lock'ları kurar, pip hash'leri
+zorunlu kılar. Runtime pin'leri (`requirements.txt`) CI, worker ve dev lock'larında
+birebir aynı tutulur; Modal SDK sürümünün tek kaynağı `requirements.in`'dir.
+
+```powershell
+node ../.github/scripts/python-locks.mjs                              # girdiler değişince
+node ../.github/scripts/python-locks.mjs -- --upgrade-package pyjwt  # tek paketi yükselt
+node ../.github/scripts/python-locks.mjs --check                      # CI kontrolü
+```
+
+Script `uv`'yi PATH'te bekler (`requirements-ci.txt` içinde gelir). Worker lock'u Modal'ın
+linux/x86_64 ortamı için CPU-only torch wheel'ini URL + hash ile sabitler. Dependabot `uv`
+ekosistemiyle `.in` → `.txt` derlemesini aynı başlık seçenekleriyle kendisi yapar.

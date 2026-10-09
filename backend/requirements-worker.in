@@ -1,0 +1,19 @@
+# Docling parse worker girdileri; runtime pin'leri requirements.txt ile aynı kalır.
+-c requirements.txt
+# Modal worker'ı linux/x86_64'tür: PyPI'nin CUDA'lı linux wheel'i yerine hash'li CPU wheel'i.
+# Diğer platformlarda (yerel geliştirme) PyPI wheel'i zaten CPU build'idir.
+torch @ https://download-r2.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-cp313-cp313-manylinux_2_28_x86_64.whl#sha256=3fbf9c9d1f3c10c2d59d04aca426dee9ccc6ceb32d255c61e93acc3b4f75fae6 ; sys_platform == 'linux' and platform_machine == 'x86_64'
+torch==2.13.0 ; sys_platform != 'linux' or platform_machine != 'x86_64'
+torchvision @ https://download-r2.pytorch.org/whl/cpu/torchvision-0.28.0%2Bcpu-cp313-cp313-manylinux_2_28_x86_64.whl#sha256=c6373ec4c2f922e89f45ac91889404d312ba29a31f205b0ad9a725a3894ca246 ; sys_platform == 'linux' and platform_machine == 'x86_64'
+torchvision==0.28.0 ; sys_platform != 'linux' or platform_machine != 'x86_64'
+# Docling 2.117.0 bilinçli olarak sabit; bkz. docs/deployment.md ve .github/dependabot.yml ignore kuralı.
+docling==2.117.0
+rapidocr==3.9.2
+onnxruntime==1.30.0
+docling-core==2.91.0
+docling-parse==7.13.0
+docling-ibm-models==3.14.0
+# Transitive güvenlik tabanı (PYSEC-2026-3929, PYSEC-2026-4174 5.10.0'da düzeltildi). docling-ibm-models
+# macOS'ta transformers'ı <5.9 ile sınırladığı için taban yalnız Modal/CI/Windows platformlarına uygulanır.
+transformers>=5.10.0 ; sys_platform != 'darwin'
+transformers>=5.4,<5.9 ; sys_platform == 'darwin'

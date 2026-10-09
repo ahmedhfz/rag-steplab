@@ -21,8 +21,11 @@ export default async function globalSetup() {
   }
 
   if (!bypassSecret) {
+    const dependabotHint = process.env.GITHUB_ACTOR === "dependabot[bot]"
+      ? " Dependabot runs only receive Dependabot secrets; add it under Settings → Secrets and variables → Dependabot."
+      : "";
     throw new Error(
-      "Protected Vercel Preview E2E requires VERCEL_AUTOMATION_BYPASS_SECRET.",
+      `Protected Vercel Preview E2E requires VERCEL_AUTOMATION_BYPASS_SECRET.${dependabotHint}`,
     );
   }
 
