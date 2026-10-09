@@ -84,6 +84,17 @@ class Settings:
     pipeline_worker_timeout_seconds: int = 1800
     pipeline_worker_startup_timeout_seconds: int = 300
     pipeline_lease_grace_seconds: int = 120
+    # Hosted embedding runs execute on the durable pipeline worker. A request
+    # without ?async=true waits at most this long for the terminal state
+    # (well below the 150 s Modal web redirect and 300 s function limits).
+    embedding_sync_wait_seconds: int = 100
+    # Re-dispatch a queued run whose "dispatching-*" reservation was never
+    # replaced by a real Modal call id (API container died in between).
+    dispatch_reservation_ttl_seconds: int = 60
+    # Storage cleanup outbox retry policy.
+    storage_cleanup_max_attempts: int = 8
+    storage_cleanup_backoff_base_seconds: int = 30
+    storage_cleanup_backoff_max_seconds: int = 6 * 3600
     max_file_size_bytes: int = 50 * 1024 * 1024
     # Modal ve Docling değerleri deploy sırasında environment'tan gelir.
     # Varsayılanlar local import/test akışını belirli bir platforma kilitlemez.
@@ -123,6 +134,28 @@ def pipeline_lease_duration_seconds(settings: Settings) -> int:
         + operation_budget
         + settings.pipeline_lease_grace_seconds
     )
+
+
+# The chunk run executes synchronously inside one API request; the Modal web
+# function timeout is its hard execution bound.
+API_REQUEST_TIMEOUT_SECONDS = 300
+
+
+def chunk_lease_duration_seconds(settings: Settings) -> int:
+    return API_REQUEST_TIMEOUT_SECONDS + settings.pipeline_lease_grace_seconds
+
+
+def embedding_batch_lease_seconds(settings: Settings) -> int:
+    """Lease renewed before every provider batch: one batch's retry envelope + grace."""
+
+    attempts = max(0, settings.gemini_max_retries) + 1
+    return max(1, settings.gemini_timeout_seconds) * attempts + attempts * 2 + settings.pipeline_lease_grace_seconds
+
+
+def embedding_claim_lease_seconds(settings: Settings) -> int:
+    """The first lease also covers dispatch and worker cold start."""
+
+    return settings.pipeline_worker_startup_timeout_seconds + embedding_batch_lease_seconds(settings)
 
 
 @lru_cache(maxsize=1)
@@ -166,6 +199,11 @@ def get_settings() -> Settings:
         pipeline_worker_timeout_seconds=max(60, _int("PIPELINE_WORKER_TIMEOUT_SECONDS", 1800)),
         pipeline_worker_startup_timeout_seconds=max(30, _int("PIPELINE_WORKER_STARTUP_TIMEOUT_SECONDS", 300)),
         pipeline_lease_grace_seconds=max(10, _int("PIPELINE_LEASE_GRACE_SECONDS", 120)),
+        embedding_sync_wait_seconds=max(0, min(140, _int("EMBEDDING_SYNC_WAIT_SECONDS", 100))),
+        dispatch_reservation_ttl_seconds=max(10, _int("DISPATCH_RESERVATION_TTL_SECONDS", 60)),
+        storage_cleanup_max_attempts=max(1, _int("STORAGE_CLEANUP_MAX_ATTEMPTS", 8)),
+        storage_cleanup_backoff_base_seconds=max(1, _int("STORAGE_CLEANUP_BACKOFF_BASE_SECONDS", 30)),
+        storage_cleanup_backoff_max_seconds=max(1, _int("STORAGE_CLEANUP_BACKOFF_MAX_SECONDS", 6 * 3600)),
         max_file_size_bytes=max(1, _int("MAX_FILE_SIZE_BYTES", 50 * 1024 * 1024)),
         modal_app_name=os.getenv("MODAL_APP_NAME", "rag-steplab-api"),
         modal_parse_function_name=os.getenv("MODAL_PARSE_FUNCTION_NAME", "parse_worker"),

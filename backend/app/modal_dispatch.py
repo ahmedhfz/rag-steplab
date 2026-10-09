@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor
 
 from .config import Settings, get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class ModalDispatchError(RuntimeError):
@@ -30,12 +33,12 @@ def dispatch_local_parse_run(parse_run_id: str) -> str:
     return f"local-{parse_run_id}"
 
 
-def parse_call_terminal_failure(dispatch_id: str) -> bool:
+def call_terminal_failure(dispatch_id: str) -> bool:
     """Return true only when Modal reports a durable terminal call failure.
 
     Poll timeouts, expired output retention, authentication, and connectivity
     errors are deliberately treated as unknown. They must not turn a healthy
-    durable parse run into a false failure.
+    durable run into a false failure.
     """
 
     try:
@@ -56,8 +59,14 @@ def parse_call_terminal_failure(dispatch_id: str) -> bool:
         modal.exception.UserCodeException,
     ):
         return True
-    except modal.exception.Error:
+    except Exception:
+        # Transport/auth/SDK errors are "unknown", never a 500 on a poll.
+        logger.warning("modal_call_status_unknown dispatch_id=%s", dispatch_id, exc_info=True)
         return False
+
+
+# Backwards-compatible name used by the parse polling path.
+parse_call_terminal_failure = call_terminal_failure
 
 
 def dispatch_parse_run(parse_run_id: str, *, settings: Settings | None = None) -> str:
@@ -76,6 +85,7 @@ def dispatch_parse_run(parse_run_id: str, *, settings: Settings | None = None) -
         )
         call = function.spawn(parse_run_id)
     except Exception as exc:  # Modal SDK errors must become a visible failed run.
+        logger.warning("modal_parse_dispatch_failed parse_run_id=%s", parse_run_id, exc_info=True)
         raise ModalDispatchError("Modal could not accept the parse job.") from exc
 
     dispatch_id = getattr(call, "object_id", None) or getattr(call, "id", None)
@@ -113,6 +123,7 @@ def dispatch_pipeline_run(
         function = modal.Function.from_name(settings.modal_app_name, "pipeline_worker")
         call = function.spawn(kind, run_id, lease_token)
     except Exception as exc:
+        logger.warning("modal_pipeline_dispatch_failed kind=%s run_id=%s", kind, run_id, exc_info=True)
         raise ModalDispatchError("Modal could not accept the pipeline job.") from exc
     dispatch_id = getattr(call, "object_id", None) or getattr(call, "id", None)
     return str(dispatch_id or "modal-submitted")

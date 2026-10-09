@@ -28,7 +28,7 @@ class MemoryStorage:
         # authenticated backend proxy instead.
         return None
 
-    def remove(self, path: str) -> None:
+    def remove(self, path: str, bucket: str | None = None) -> None:
         self.objects.pop(path, None)
 
 
@@ -71,9 +71,11 @@ class SupabaseStorage:
             # supabase-py version cannot create a signed URL.
             return None
 
-    def remove(self, path: str) -> None:
+    def remove(self, path: str, bucket: str | None = None) -> None:
+        """Remove one object; ``bucket`` is the bucket recorded with the object."""
+
         try:
-            self._client.storage.from_(self._bucket).remove([path])
+            self._client.storage.from_(bucket or self._bucket).remove([path])
         except Exception as exc:
             message = str(exc).lower()
             if "404" in message or "not found" in message:

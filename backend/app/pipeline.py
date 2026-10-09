@@ -30,10 +30,11 @@ from .chunking import (
     config_hash,
     effective_config,
 )
-from .config import Settings, get_settings, pipeline_lease_duration_seconds
+from .config import Settings, embedding_batch_lease_seconds, get_settings, pipeline_lease_duration_seconds
 from .errors import ApiProblem
 from .gemini import EMBEDDING_FORMAT_VERSION, GeminiService, document_embedding_text
 from .lineage import resolve_from_rows, select_pipeline
+from .maintenance import process_storage_cleanup
 from .quality import compute_retrieval_metrics
 from .repository import (
     Repository,
@@ -432,14 +433,7 @@ def _delete_document_with_storage_cleanup(repository: Repository, document_id: s
                 # The caller's original failure remains the useful error here.
                 pass
         return
-    try:
-        get_storage().remove(cleanup["storage_path"])
-    except ApiProblem as exc:
-        repository.fail_storage_cleanup(cleanup["id"], exc.code)
-    except Exception:
-        repository.fail_storage_cleanup(cleanup["id"], "storage_delete_failed")
-    else:
-        repository.complete_storage_cleanup(cleanup["id"])
+    process_storage_cleanup(repository, cleanup)
 
 
 def _queue_parse_for_document(
@@ -768,7 +762,9 @@ def create_chunk_run(document_id: str, request: ChunkRunRequest, *, repository: 
     repository = repository or get_repository()
     _require_write(repository, get_settings())
     document = _document_or_404(repository, document_id)
-    parse_id = request.parse_run_id or document.get("active_parse_run_id")
+    parse_id = request.parse_run_id or _in_use_lineage(
+        repository, document, _selected_pipeline(repository, document_id, None)
+    )["parse_run_id"]
     if not parse_id:
         raise ApiProblem(409, "parse_required", "Parse the document before chunking it.")
     parse = _require_compatible_parse(repository, document_id, parse_id)
@@ -818,15 +814,24 @@ def create_chunk_run(document_id: str, request: ChunkRunRequest, *, repository: 
         raise
 
 
-def create_embedding_run(document_id: str, chunk_run_id: str | None, *, repository: Repository | None = None) -> dict[str, Any]:
-    repository = repository or get_repository()
-    settings = get_settings()
-    _require_write(repository, settings)
+def _claim_embedding(
+    document_id: str,
+    chunk_run_id: str | None,
+    repository: Repository,
+    settings: Settings,
+) -> tuple[dict[str, Any], bool]:
+    """Resolve lineage and claim the embedding identity.
+
+    Returns ``(row, True)`` when this caller owns execution, a reusable
+    completed artifact with ``reused_artifact=True``, or ``(row, False)`` for
+    an identical run that is still in progress.
+    """
+
     document = _document_or_404(repository, document_id)
-    chunk_id = chunk_run_id or document.get("active_chunk_run_id")
+    chunk_id = chunk_run_id or _in_use_lineage(repository, document, _selected_pipeline(repository, document_id, None))["chunk_run_id"]
     if not chunk_id:
         raise ApiProblem(409, "chunks_required", "Create chunks before embedding them.")
-    chunk_run = _require_compatible_chunk(repository, document_id, chunk_id)
+    _require_compatible_chunk(repository, document_id, chunk_id)
     claim, claimed = repository.claim_embedding_run(
         document_id,
         chunk_id,
@@ -834,30 +839,45 @@ def create_embedding_run(document_id: str, chunk_run_id: str | None, *, reposito
         settings.gemini_embedding_dimensions,
         EMBEDDING_FORMAT_VERSION,
     )
-    if not claimed:
-        if claim.get("status") == "completed":
-            if not _complete_embedding_artifact(repository, claim):
-                repository.fail_embedding_run(
-                    claim["id"],
-                    "artifact_incomplete",
-                    "The existing embedding artifact is incomplete and cannot be reused.",
-                    unfenced=True,
-                )
-                raise ApiProblem(409, "artifact_incomplete", "The existing embedding artifact is incomplete and cannot be reused.")
-            claim["reused_artifact"] = True
-            return claim
-        raise ApiProblem(409, "artifact_in_progress", "The embedding artifact with this identity is currently being created.")
+    if not claimed and claim.get("status") == "completed":
+        if not _complete_embedding_artifact(repository, claim):
+            repository.fail_embedding_run(
+                claim["id"],
+                "artifact_incomplete",
+                "The existing embedding artifact is incomplete and cannot be reused.",
+                unfenced=True,
+            )
+            raise ApiProblem(409, "artifact_incomplete", "The existing embedding artifact is incomplete and cannot be reused.")
+        claim["reused_artifact"] = True
+    return claim, claimed
+
+
+def _embed_claimed_run(
+    repository: Repository,
+    claim: dict[str, Any],
+    lease_token: str,
+    settings: Settings,
+) -> dict[str, Any]:
+    """Compute and persist one claimed embedding run under its fencing lease.
+
+    The lease is renewed before every provider batch, so a dead worker is
+    visible after one batch budget instead of the whole-run budget.
+    """
+
+    run_id = claim["id"]
+    batch_lease = embedding_batch_lease_seconds(settings)
     try:
-        chunks = repository.get_chunks_for_embedding(chunk_id)
+        chunks = repository.get_chunks_for_embedding(claim["chunk_run_id"])
         service = GeminiService(settings)
         inputs = [document_embedding_text(chunk["text"], chunk.get("heading_path")) for chunk in chunks]
         vectors: list[list[float]] = []
         effective_model: str | None = None
-        if inputs:
-            for offset in range(0, len(inputs), 16):
-                batch, metadata = service.embed_documents(inputs[offset : offset + 16])
-                vectors.extend(batch)
-                effective_model = effective_model or getattr(metadata, "effective_model", None)
+        for offset in range(0, len(inputs), 16):
+            if repository.renew_pipeline_lease("embedding", run_id, lease_token, batch_lease) is None:
+                raise ApiProblem(409, "worker_lease_lost", "The embedding worker lease was lost.")
+            batch, metadata = service.embed_documents(inputs[offset : offset + 16])
+            vectors.extend(batch)
+            effective_model = effective_model or getattr(metadata, "effective_model", None)
         if len(vectors) != len(chunks):
             raise ApiProblem(503, "embedding_result_invalid", "Gemini did not return one embedding per chunk.")
         input_hashes = {
@@ -865,27 +885,69 @@ def create_embedding_run(document_id: str, chunk_run_id: str | None, *, reposito
             for chunk, input_text in zip(chunks, inputs)
         }
         completed = repository.complete_embedding_run(
-            claim["id"],
+            run_id,
             [(chunk["id"], vector) for chunk, vector in zip(chunks, vectors)],
             input_hashes,
             effective_model,
-            claim.get("lease_token"),
+            lease_token,
         )
         if completed is None:
-            raise ApiProblem(500, "persistence_failed", "The embedding run could not be completed.")
+            raise ApiProblem(409, "worker_lease_lost", "The embedding run lease was lost before completion.")
         completed["reused_artifact"] = False
         return completed
     except ApiProblem as exc:
-        repository.fail_embedding_run(claim["id"], exc.code, exc.message, claim.get("lease_token"))
+        repository.fail_embedding_run(run_id, exc.code, exc.message, lease_token)
         raise
     except Exception:
         repository.fail_embedding_run(
-            claim["id"],
+            run_id,
             "embedding_run_failed",
             "The embedding run failed before producing a completed artifact.",
-            claim.get("lease_token"),
+            lease_token,
         )
         raise
+
+
+def create_embedding_run(document_id: str, chunk_run_id: str | None, *, repository: Repository | None = None) -> dict[str, Any]:
+    """Development/test path: compute inside the request."""
+
+    repository = repository or get_repository()
+    settings = get_settings()
+    _require_write(repository, settings)
+    claim, claimed = _claim_embedding(document_id, chunk_run_id, repository, settings)
+    if claim.get("reused_artifact"):
+        return claim
+    if not claimed:
+        raise ApiProblem(409, "artifact_in_progress", "The embedding artifact with this identity is currently being created.")
+    return _embed_claimed_run(repository, claim, claim["lease_token"], settings)
+
+
+def queue_embedding_run(document_id: str, chunk_run_id: str | None, *, repository: Repository | None = None) -> dict[str, Any]:
+    """Hosted path: persist the claim; the durable pipeline worker computes it.
+
+    An identical run that is already in progress is returned as-is so a retry
+    attaches to it instead of failing with ``artifact_in_progress``.
+    """
+
+    repository = repository or get_repository()
+    settings = get_settings()
+    _require_write(repository, settings)
+    claim, _claimed = _claim_embedding(document_id, chunk_run_id, repository, settings)
+    claim.setdefault("reused_artifact", False)
+    return claim
+
+
+def run_embedding_worker(run_id: str, lease_token: str, *, repository: Repository | None = None) -> dict[str, Any] | None:
+    repository = repository or get_repository()
+    settings = get_settings()
+    started = repository.start_pipeline_worker("embedding", run_id, lease_token, embedding_batch_lease_seconds(settings))
+    if started is None:
+        # Stale dispatch (token rotated, lease lost or run already terminal).
+        return None
+    try:
+        return _embed_claimed_run(repository, started, lease_token, settings)
+    except ApiProblem:
+        return None
 
 
 def _dot_cosine(left: list[float], right: list[float]) -> float:
@@ -2774,4 +2836,6 @@ def run_pipeline_worker(kind: str, run_id: str, lease_token: str) -> dict[str, A
             raise ApiProblem(404, "evaluation_run_not_found", "The evaluation run was not found.")
         request = EvaluationRunRequest.model_validate(row.get("config") or {})
         return run_queued_evaluation(request, run_id, repository=repository, lease_token=lease_token)
+    if kind == "embedding":
+        return run_embedding_worker(run_id, lease_token, repository=repository)
     raise ApiProblem(400, "pipeline_kind_invalid", "The pipeline worker kind is invalid.")

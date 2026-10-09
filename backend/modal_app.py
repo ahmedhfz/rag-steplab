@@ -137,11 +137,31 @@ def parse_worker(parse_run_id: str) -> dict[str, Any]:
 
 @app.function(**pipeline_options)
 def pipeline_worker(kind: str, run_id: str, lease_token: str) -> dict[str, Any] | None:
-    """Execute one persisted experiment/evaluation under a fencing lease."""
+    """Execute one persisted embedding/experiment/evaluation under a fencing lease."""
 
     from app.pipeline import run_pipeline_worker
 
     return run_pipeline_worker(kind, run_id, lease_token)
+
+
+# Owner-independent recovery: drains the storage cleanup outbox (deleted
+# private PDFs) and terminalizes runs whose worker died or was never started.
+maintenance_options: dict[str, Any] = {
+    "image": api_image,
+    "secrets": api_secrets,
+    "cpu": 0.25,
+    "memory": 512,
+    "min_containers": 0,
+    "max_containers": 1,
+    "timeout": 300,
+}
+
+
+@app.function(**maintenance_options, schedule=modal.Period(minutes=10))
+def maintenance_sweeper() -> dict[str, Any]:
+    from app.maintenance import run_maintenance
+
+    return run_maintenance()
 
 
 @app.function(**worker_options)
@@ -244,7 +264,10 @@ def local_manifest() -> dict[str, Any]:
         "volume": MODEL_VOLUME_NAME,
         "modelMountPath": MODEL_MOUNT_PATH,
         "modelArtifactsPath": MODEL_ARTIFACTS_PATH,
-        "functions": ["api_eu", "api", "parse_worker", "pipeline_worker", "benchmark_parse", "prefetch_docling_models"],
+        "functions": [
+            "api_eu", "api", "parse_worker", "pipeline_worker", "maintenance_sweeper",
+            "benchmark_parse", "prefetch_docling_models",
+        ],
         "workerProfile": {"cpu": 2.0, "memoryMiB": 4096, "minContainers": 0, "maxContainers": 1, "timeoutSeconds": 900},
         "pipelineWorkerProfile": {
             "cpu": 1.0,

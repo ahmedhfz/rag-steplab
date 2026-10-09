@@ -340,8 +340,9 @@ select ok(
 
 select ok(
   not (select relrowsecurity from pg_class where oid = 'rag_lab.storage_cleanups'::regclass)
-  and to_regclass('rag_lab.ix_storage_cleanups_owner_pending') is not null,
-  'cleanup outbox is backend-private and indexed by owner pending state'
+  and to_regclass('rag_lab.ix_storage_cleanups_owner_due') is not null
+  and to_regclass('rag_lab.ix_storage_cleanups_due') is not null,
+  'cleanup outbox is backend-private and indexed by owner and global due state'
 );
 
 select ok(

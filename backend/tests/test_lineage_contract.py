@@ -29,10 +29,10 @@ class FakeGemini:
         pass
 
     def embed_documents(self, texts):
-        return [[1.0, 0.0, 0.0] for _ in texts], FakeMetadata()
+        return [[1.0] + [0.0] * 767 for _ in texts], FakeMetadata()
 
     def embed_query(self, _query):
-        return [1.0, 0.0, 0.0], FakeMetadata()
+        return [1.0] + [0.0] * 767, FakeMetadata()
 
 
 def setup_function():
