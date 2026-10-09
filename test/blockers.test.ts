@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getPipelineAvailability } from "@/lib/blockers";
+import { blocker, getPipelineAvailability } from "@/lib/blockers";
 
 const completedRun = {
   id: "chunk-1",
@@ -65,5 +65,27 @@ describe("pipeline availability contract", () => {
       retrievalMode: "keyword",
     });
     expect(keyword.allowed).toBe(true);
+  });
+
+  it("never reports a lineage blocker while the workspace is still loading", () => {
+    const loading = getPipelineAvailability("en", "retrieval", { document: null, workspaceStatus: "loading", persistenceStatus: "available" });
+    expect(loading).toMatchObject({ allowed: false, code: "loading", href: null });
+    expect(getPipelineAvailability("en", "chunk", { document: null, persistenceStatus: "checking" })).toMatchObject({ code: "loading" });
+    expect(getPipelineAvailability("en", "chunk", { document: null, workspaceStatus: "ready", persistenceStatus: "available" })).toMatchObject({ code: "missing_document" });
+    expect(getPipelineAvailability("en", "chunk", { document: { id: "document-1" }, workspaceStatus: "unavailable" })).toMatchObject({ code: "backend_unavailable" });
+  });
+
+  it("names the missing dataset name and links Playground blockers to the current route", () => {
+    expect(blocker("en", "missing_dataset_name")).toEqual({ code: "missing_dataset_name", message: "Enter a dataset name." });
+    expect(blocker("tr", "missing_dataset_name").message).toBe("Bir dataset adı girin.");
+    expect(getPipelineAvailability("en", "retrieval", {
+      document: { id: "document-1" },
+      selection: { selectedParseRunId: "parse-1", selectedChunkRunId: "chunk-1", selectedEmbeddingRunId: null },
+      parseRun: { id: "parse-1", status: "completed", isCompatible: true },
+      chunkRun: completedRun,
+      retrievalMode: "keyword",
+      hasQuestion: false,
+      persistenceStatus: "available",
+    })).toMatchObject({ code: "missing_question", href: "/playground" });
   });
 });
