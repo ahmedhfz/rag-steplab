@@ -60,6 +60,28 @@ describe("LoginScreen Supabase auth flows", () => {
     expect(mocks.refresh).toHaveBeenCalledOnce();
   });
 
+  it("returns to a same-origin deep link after sign-in and ignores hostile next values", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/login?next=%2Fevaluation%3Ftab%3Dresults");
+    const view = render(<LoginScreen />);
+
+    expect(screen.getByRole("link", { name: "Google ile devam et" })).toHaveAttribute("href", "/auth/google?next=%2Fevaluation%3Ftab%3Dresults");
+    await user.type(screen.getByLabelText("E-posta"), "user@example.com");
+    await user.type(screen.getByLabelText("Şifre"), "password1234");
+    await user.click(screen.getByRole("button", { name: "Giriş yap" }));
+    expect(mocks.replace).toHaveBeenCalledWith("/evaluation?tab=results");
+
+    view.unmount();
+    mocks.replace.mockClear();
+    window.history.replaceState({}, "", "/login?next=%2F%2Fevil.example");
+    render(<LoginScreen />);
+    expect(screen.getByRole("link", { name: "Google ile devam et" })).toHaveAttribute("href", "/auth/google");
+    await user.type(screen.getByLabelText("E-posta"), "user@example.com");
+    await user.type(screen.getByLabelText("Şifre"), "password1234");
+    await user.click(screen.getByRole("button", { name: "Giriş yap" }));
+    expect(mocks.replace).toHaveBeenCalledWith("/");
+  });
+
   it("starts signup with an email confirmation redirect", async () => {
     const user = userEvent.setup();
     render(<LoginScreen />);
