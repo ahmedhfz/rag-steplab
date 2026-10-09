@@ -9,11 +9,11 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 
-CHUNKER_VERSION = "rag-steplab-chunker-v1"
+CHUNKER_VERSION = "rag-steplab-chunker-v2"
 CHUNKER_VERSIONS = {
     "fixed_token": CHUNKER_VERSION,
-    "recursive_token": "rag-steplab-recursive-chunker-v3",
-    "structure_aware": "rag-steplab-structure-chunker-v3",
+    "recursive_token": "rag-steplab-recursive-chunker-v4",
+    "structure_aware": "rag-steplab-structure-chunker-v4",
 }
 
 
@@ -50,6 +50,13 @@ class LocalTokenizer:
         if self._encoder is not None:
             return self._encoder.decode(values)
         return "".join(chr(value) for value in values)
+
+    def token_bytes(self, tokens: Iterable[int]) -> list[bytes]:
+        """Return raw token bytes; byte-level BPE may split one character."""
+
+        if self._encoder is not None:
+            return [self._encoder.decode_single_token_bytes(value) for value in tokens]
+        return [chr(value).encode("utf-8") for value in tokens]
 
     def count(self, text: str) -> int:
         return len(self.encode(text))
@@ -141,32 +148,82 @@ def _validate_config(config: Any) -> tuple[int, int]:
     return size, overlap
 
 
+@dataclass(frozen=True)
+class _TokenStream:
+    tokens: list[int]
+    owners: list[int]
+    # Byte offset of every token start plus the final byte length. Windows are
+    # cut on these offsets and then aligned to UTF-8 character starts, so a
+    # byte-level BPE token boundary inside "ş" or "ı" never yields U+FFFD.
+    offsets: list[int]
+    data: bytes
+
+
+def _token_stream(texts: list[str]) -> _TokenStream:
+    tokens: list[int] = []
+    owners: list[int] = []
+    for index, text in enumerate(texts):
+        if index:
+            separator = TOKENIZER.encode("\n\n")
+            tokens.extend(separator)
+            owners.extend([-1] * len(separator))
+        encoded = TOKENIZER.encode(text)
+        tokens.extend(encoded)
+        owners.extend([index] * len(encoded))
+    offsets = [0]
+    parts: list[bytes] = []
+    for value in TOKENIZER.token_bytes(tokens):
+        parts.append(value)
+        offsets.append(offsets[-1] + len(value))
+    return _TokenStream(tokens=tokens, owners=owners, offsets=offsets, data=b"".join(parts))
+
+
+def _char_start(data: bytes, position: int) -> int:
+    while 0 < position < len(data) and (data[position] & 0xC0) == 0x80:
+        position -= 1
+    return position
+
+
+def _stream_text(stream: _TokenStream, start: int, end: int) -> str:
+    left = _char_start(stream.data, stream.offsets[start])
+    right = _char_start(stream.data, stream.offsets[end])
+    return stream.data[left:right].decode("utf-8").strip()
+
+
+def _token_windows(stream: _TokenStream, size: int, overlap: int) -> list[tuple[int, int, str]]:
+    """Return UTF-8 safe ``(start, end, text)`` windows of at most ``size`` tokens.
+
+    A character split across two tokens belongs to the window where it starts.
+    Re-encoding a cut substring can differ from the source token slice, so the
+    window shrinks until its persisted text honours the token-size contract.
+    """
+
+    windows: list[tuple[int, int, str]] = []
+    total = len(stream.tokens)
+    start = 0
+    while start < total:
+        end = min(start + size, total)
+        text = _stream_text(stream, start, end)
+        while end > start + 1 and TOKENIZER.count(text) > size:
+            end -= 1
+            text = _stream_text(stream, start, end)
+        windows.append((start, end, text))
+        if end >= total:
+            break
+        start = max(start + 1, end - overlap)
+    return windows
+
+
 def _window_drafts(
     records: list[ElementRecord], size: int, overlap: int, *, ordinal_start: int = 0
 ) -> list[ChunkDraft]:
-    """Create windows from token segments while retaining exact provenance."""
+    """Create fixed token windows while retaining exact provenance."""
 
-    token_values: list[int] = []
-    segment_indexes: list[int] = []
-    for index, record in enumerate(records):
-        if index:
-            separator = TOKENIZER.encode("\n\n")
-            token_values.extend(separator)
-            segment_indexes.extend([-1] * len(separator))
-        encoded = TOKENIZER.encode(record.text)
-        token_values.extend(encoded)
-        segment_indexes.extend([index] * len(encoded))
-
-    if not token_values:
-        return []
-    step = max(1, size - overlap)
+    stream = _token_stream([record.text for record in records])
     drafts: list[ChunkDraft] = []
-    start = 0
     ordinal = ordinal_start
-    while start < len(token_values):
-        end = min(start + size, len(token_values))
-        text = TOKENIZER.decode(token_values[start:end]).strip()
-        indexes = sorted({idx for idx in segment_indexes[start:end] if idx >= 0})
+    for start, end, text in _token_windows(stream, size, overlap):
+        indexes = sorted({idx for idx in stream.owners[start:end] if idx >= 0})
         source = [records[idx] for idx in indexes]
         if text and source:
             pages = sorted({page for record in source for page in record.page_numbers})
@@ -183,52 +240,54 @@ def _window_drafts(
                 )
             )
             ordinal += 1
-        if end >= len(token_values):
-            break
-        start += step
     return drafts
 
 
-def _recursive_group_records(record: ElementRecord, size: int) -> list[ElementRecord]:
-    text = record.text
+@dataclass(frozen=True)
+class _Piece:
+    """A natural-boundary text unit that is already within the chunk size."""
+
+    record: ElementRecord
+    text: str
+    # Separator used before this piece when the previous piece is part of the
+    # same element; pieces of different elements are separated by a blank line.
+    joiner: str = "\n\n"
+
+
+# Recursive separator hierarchy: paragraph -> line -> sentence -> clause ->
+# word. Only a single word longer than the chunk size reaches token windows.
+_SEPARATORS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\n\s*\n"), "\n\n"),
+    (re.compile(r"\n"), "\n"),
+    (re.compile(r"(?<=[.!?…])\s+"), " "),
+    (re.compile(r"(?<=[,;:])\s+"), " "),
+    (re.compile(r"\s+"), " "),
+)
+
+
+def _split_text(text: str, size: int, level: int = 0, joiner: str = "\n\n") -> list[tuple[str, str]]:
+    """Split text at the coarsest natural boundary that fits ``size``."""
+
     if TOKENIZER.count(text) <= size:
-        return [record]
-    if record.type == "table":
-        table_groups = _split_table_record(record, size)
-        if table_groups:
-            return table_groups
-    pieces = [piece.strip() for piece in re.split(r"\n\s*\n|(?<=[.!?])\s+|\n|(?<=,|;)\s+|\s+", text) if piece.strip()]
-    if not pieces:
-        return [record]
-    # Greedily group semantic pieces, then use token windows only for a single
-    # oversized piece. This exposes the recursive boundary without hiding it.
-    groups: list[str] = []
-    current = ""
-    for piece in pieces:
-        candidate = f"{current} {piece}".strip()
-        if current and TOKENIZER.count(candidate) > size:
-            groups.append(current)
-            current = piece
-        else:
-            current = candidate
-    if current:
-        groups.append(current)
-    result: list[ElementRecord] = []
-    for group in groups:
-        result.append(
-            ElementRecord(
-                id=record.id,
-                type=record.type,
-                text=group,
-                page_numbers=record.page_numbers,
-                level=record.level,
-                heading_path=record.heading_path,
-            )
-        )
-    return result
+        return [(joiner, text)]
+    for index in range(level, len(_SEPARATORS)):
+        pattern, separator = _SEPARATORS[index]
+        parts = [part.strip() for part in pattern.split(text) if part.strip()]
+        if len(parts) > 1:
+            result: list[tuple[str, str]] = []
+            for position, part in enumerate(parts):
+                result.extend(_split_text(part, size, index + 1, joiner if position == 0 else separator))
+            return result
+    # No natural boundary is left (for example a very long URL or identifier).
+    windows = _token_windows(_token_stream([text]), size, 0)
+    return [
+        (joiner if position == 0 else "", window_text)
+        for position, (_, _, window_text) in enumerate(windows)
+        if window_text
+    ]
 
 
-def _split_table_record(record: ElementRecord, size: int) -> list[ElementRecord]:
+def _split_table_record(record: ElementRecord, size: int) -> list[str]:
     """Split Markdown tables by complete rows and repeat their header."""
 
     lines = [line.strip() for line in record.text.splitlines() if line.strip()]
@@ -248,64 +307,138 @@ def _split_table_record(record: ElementRecord, size: int) -> list[ElementRecord]
             current.append(row)
             continue
         # A single pathological row cannot retain the Markdown table shape;
-        # fall back to the normal recursive splitter for that row only.
+        # fall back to the natural-boundary splitter for that row only.
         if len(current) > len(header):
             groups.append("\n".join(current))
-            current = header[:]
-        if TOKENIZER.count("\n".join(current + [row])) > size:
-            groups.extend(
-                piece.text
-                for piece in _recursive_group_records(
-                    ElementRecord(
-                        id=record.id,
-                        type="paragraph",
-                        text=row,
-                        page_numbers=record.page_numbers,
-                        level=record.level,
-                        heading_path=record.heading_path,
-                    ),
-                    size,
-                )
-            )
-            current = header[:]
-        else:
-            current.append(row)
+        groups.extend(text for _, text in _split_text(row, size))
+        current = header[:]
     if len(current) > len(header):
         groups.append("\n".join(current))
-    return [
-        ElementRecord(
-            id=record.id,
-            type=record.type,
-            text=group,
-            page_numbers=record.page_numbers,
-            level=record.level,
-            heading_path=record.heading_path,
-        )
-        for group in groups
-        if group.strip()
-    ]
+    return [group for group in groups if group.strip()]
+
+
+def _record_pieces(record: ElementRecord, size: int) -> list[_Piece]:
+    if TOKENIZER.count(record.text) <= size:
+        return [_Piece(record=record, text=record.text)]
+    if record.type == "table":
+        groups = _split_table_record(record, size)
+        if groups:
+            return [
+                _Piece(record=record, text=text, joiner="\n\n" if position == 0 else joiner)
+                for group in groups
+                for position, (joiner, text) in enumerate(_split_text(group, size))
+            ]
+    return [_Piece(record=record, text=text, joiner=joiner) for joiner, text in _split_text(record.text, size)]
+
+
+def _join_pieces(pieces: list[_Piece]) -> str:
+    parts: list[str] = []
+    for index, piece in enumerate(pieces):
+        if index:
+            same_record = pieces[index - 1].record.id == piece.record.id
+            parts.append(piece.joiner if same_record else "\n\n")
+        parts.append(piece.text)
+    return "".join(parts).strip()
+
+
+def _overlap_tail(pieces: list[_Piece], overlap: int) -> list[_Piece]:
+    """Carry up to ``overlap`` tokens, cutting a long piece only at a word start."""
+
+    if overlap <= 0:
+        return []
+    tail: list[_Piece] = []
+    for piece in reversed(pieces):
+        candidate = [piece] + tail
+        if TOKENIZER.count(_join_pieces(candidate)) <= overlap:
+            tail = candidate
+            continue
+        if piece.record.type != "table":
+            # A shorter suffix never needs more tokens, so binary-search the
+            # longest word-aligned suffix that still fits the overlap budget.
+            starts = [match.start() for match in re.finditer(r"\S+", piece.text)][1:]
+            low, high, best = 0, len(starts) - 1, None
+            while low <= high:
+                middle = (low + high) // 2
+                suffix = _Piece(record=piece.record, text=piece.text[starts[middle]:], joiner=piece.joiner)
+                if TOKENIZER.count(_join_pieces([suffix] + tail)) <= overlap:
+                    best = suffix
+                    high = middle - 1
+                else:
+                    low = middle + 1
+            if best is not None:
+                tail = [best] + tail
+        break
+    return tail
+
+
+def _draft_from_pieces(pieces: list[_Piece], ordinal: int) -> ChunkDraft | None:
+    text = _join_pieces(pieces)
+    if not text:
+        return None
+    records: list[ElementRecord] = []
+    for piece in pieces:
+        if all(record.id != piece.record.id for record in records):
+            records.append(piece.record)
+    return ChunkDraft(
+        ordinal=ordinal,
+        text=text,
+        page_numbers=sorted({page for record in records for page in record.page_numbers}),
+        source_element_ids=[record.id for record in records],
+        heading_path=list(records[-1].heading_path or records[0].heading_path),
+        token_count=TOKENIZER.count(text),
+        character_count=len(text),
+    )
+
+
+def _pack_pieces(
+    pieces: list[_Piece],
+    size: int,
+    overlap: int,
+    *,
+    ordinal_start: int = 0,
+) -> list[ChunkDraft]:
+    """Greedily pack natural pieces; never cut inside a piece or a table row."""
+
+    drafts: list[ChunkDraft] = []
+    current: list[_Piece] = []
+
+    def emit(values: list[_Piece]) -> None:
+        draft = _draft_from_pieces(values, ordinal_start + len(drafts))
+        if draft is not None:
+            drafts.append(draft)
+
+    for piece in pieces:
+        if not current or TOKENIZER.count(_join_pieces(current + [piece])) <= size:
+            current = current + [piece]
+            continue
+        # A heading belongs with the content after it: move trailing headings
+        # forward when they fit instead of ending a chunk on a bare heading.
+        moved = 0
+        while len(current) - moved > 1 and current[-1 - moved].record.type == "heading":
+            moved += 1
+        if moved and TOKENIZER.count(_join_pieces(current[-moved:] + [piece])) <= size:
+            emit(current[:-moved])
+            current = current[-moved:] + [piece]
+            continue
+        emit(current)
+        # Shrink (not drop) the overlap when the next piece leaves less room.
+        budget = min(overlap, size - TOKENIZER.count(_join_pieces([piece])) - 2)
+        current = _overlap_tail(current, budget) + [piece]
+        while len(current) > 1 and TOKENIZER.count(_join_pieces(current)) > size:
+            current.pop(0)
+    if current:
+        emit(current)
+    return drafts
 
 
 def _recursive(records: list[ElementRecord], size: int, overlap: int) -> list[ChunkDraft]:
-    # Keep semantic boundaries as source segments, but run one continuous
-    # token window over the whole document so overlap cannot reset at every
-    # paragraph or recursive group.
-    segments: list[ElementRecord] = []
+    # Elements are paragraph-level boundaries. Oversized elements descend to
+    # line, sentence, clause and word boundaries; the packer then fills chunks
+    # without cutting inside those pieces and carries a word-aligned overlap.
+    pieces: list[_Piece] = []
     for record in records:
-        segments.extend(_recursive_group_records(record, size))
-    drafts = _window_drafts(segments, size, overlap)
-    return [
-        ChunkDraft(
-            ordinal=index,
-            text=draft.text,
-            page_numbers=draft.page_numbers,
-            source_element_ids=draft.source_element_ids,
-            heading_path=draft.heading_path,
-            token_count=draft.token_count,
-            character_count=draft.character_count,
-        )
-        for index, draft in enumerate(drafts)
-    ]
+        pieces.extend(_record_pieces(record, size))
+    return _pack_pieces(pieces, size, overlap)
 
 
 def _structure_aware(records: list[ElementRecord], size: int, overlap: int) -> list[ChunkDraft]:
@@ -346,82 +479,19 @@ def _structure_aware(records: list[ElementRecord], size: int, overlap: int) -> l
 
     result: list[ChunkDraft] = []
     for section in sections:
-        combined = "\n\n".join(record.text for record in section)
-        if TOKENIZER.count(combined) <= size:
-            source = section
-            result.append(
-                ChunkDraft(
-                    ordinal=len(result),
-                    text=combined.strip(),
-                    page_numbers=sorted({p for r in source for p in r.page_numbers}),
-                    source_element_ids=[r.id for r in source],
-                    heading_path=list(source[-1].heading_path or source[0].heading_path),
-                    token_count=TOKENIZER.count(combined.strip()),
-                    character_count=len(combined.strip()),
-                )
-            )
-            continue
-        # Preserve the section boundary while allowing overlap across semantic
-        # records. Tables are split only between complete Markdown rows.
-        segments: list[ElementRecord] = []
-        for record in section:
-            segments.extend(_recursive_group_records(record, size))
-        for draft in _pack_semantic_segments(segments, size, overlap, ordinal_start=len(result)):
-            result.append(draft)
-    return result
-
-
-def _draft_from_records(records: list[ElementRecord], ordinal: int) -> ChunkDraft | None:
-    text = "\n\n".join(record.text for record in records).strip()
-    if not text:
-        return None
-    return ChunkDraft(
-        ordinal=ordinal,
-        text=text,
-        page_numbers=sorted({page for record in records for page in record.page_numbers}),
-        source_element_ids=[record.id for record in records],
-        heading_path=list(records[-1].heading_path or records[0].heading_path),
-        token_count=TOKENIZER.count(text),
-        character_count=len(text),
-    )
-
-
-def _pack_semantic_segments(
-    segments: list[ElementRecord],
-    size: int,
-    overlap: int,
-    *,
-    ordinal_start: int = 0,
-) -> list[ChunkDraft]:
-    """Pack records without cutting a table/list row at a token boundary."""
-
-    drafts: list[ChunkDraft] = []
-    current: list[ElementRecord] = []
-    for segment in segments:
-        candidate = current + [segment]
-        if current and TOKENIZER.count("\n\n".join(item.text for item in candidate)) > size:
-            draft = _draft_from_records(current, ordinal_start + len(drafts))
+        whole = [_Piece(record=record, text=record.text) for record in section]
+        if TOKENIZER.count(_join_pieces(whole)) <= size:
+            draft = _draft_from_pieces(whole, len(result))
             if draft is not None:
-                drafts.append(draft)
-            carry: list[ElementRecord] = []
-            carried_tokens = 0
-            for previous in reversed(current):
-                previous_tokens = TOKENIZER.count(previous.text)
-                if carried_tokens + previous_tokens > overlap:
-                    break
-                carry.insert(0, previous)
-                carried_tokens += previous_tokens
-            current = carry + [segment]
-            if TOKENIZER.count("\n\n".join(item.text for item in current)) > size:
-                # The segment itself should already be bounded. If the overlap
-                # made it exceed the limit, drop the overlap before emitting.
-                current = [segment]
-        else:
-            current = candidate
-    draft = _draft_from_records(current, ordinal_start + len(drafts))
-    if draft is not None:
-        drafts.append(draft)
-    return drafts
+                result.append(draft)
+            continue
+        # Preserve the section boundary while packing natural pieces with a
+        # word-aligned overlap. Tables are split only between complete rows.
+        pieces: list[_Piece] = []
+        for record in section:
+            pieces.extend(_record_pieces(record, size))
+        result.extend(_pack_pieces(pieces, size, overlap, ordinal_start=len(result)))
+    return result
 
 
 def chunk_structured(structured: Any, strategy: str, config: Any) -> list[ChunkDraft]:
