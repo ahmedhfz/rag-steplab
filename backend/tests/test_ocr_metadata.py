@@ -44,7 +44,7 @@ def test_bottom_left_cells_are_converted_to_pdf_top_left():
     assert metadata["source_regions"][0].bbox == [0, 10, 20, 20]
 
 
-def test_table_caption_ocr_contribution_makes_table_mixed():
+def test_unmatched_table_caption_box_is_not_ocr_evidence():
     caption = NS(
         prov=[
             NS(
@@ -58,8 +58,21 @@ def test_table_caption_ocr_contribution_makes_table_mixed():
         captions=[NS(resolve=lambda _document: caption)],
     )
     metadata = _source_metadata(item, NS(pages={}), {1: [cell("native", 0, False)]})
+    # The caption box has no matched cell, so its origin is unknown; a native
+    # table must not be presented as "native PDF + OCR".
+    assert metadata["source_origin"] == "native_pdf"
+    assert [region.origin for region in metadata["source_regions"]] == ["native_pdf", "unknown"]
+
+
+def test_table_caption_with_ocr_cell_makes_table_mixed():
+    caption = NS(prov=[NS(page_no=1, bbox=NS(l=100, t=0, r=200, b=30, coord_origin="TOPLEFT"))])
+    item = NS(
+        prov=[NS(page_no=1, bbox=NS(l=0, t=0, r=60, b=30, coord_origin="TOPLEFT"))],
+        captions=[NS(resolve=lambda _document: caption)],
+    )
+    metadata = _source_metadata(item, NS(pages={}), {1: [cell("native", 0, False), cell("başlık", 120, True, .9)]})
     assert metadata["source_origin"] == "mixed"
-    assert any(region.origin == "ocr" for region in metadata["source_regions"])
+    assert [region.origin for region in metadata["source_regions"]] == ["native_pdf", "ocr"]
 
 
 def test_ocr_evidence_wins_over_unmatched_geometry_box():
@@ -67,7 +80,7 @@ def test_ocr_evidence_wins_over_unmatched_geometry_box():
         prov=[
             NS(
                 page_no=1,
-                bbox=NS(l=5, t=5, r=50, b=12, coord_origin="TOPLEFT"),
+                bbox=NS(l=5, t=5, r=50, b=25, coord_origin="TOPLEFT"),
             )
         ]
     )
@@ -113,6 +126,9 @@ def test_converter_explicitly_selects_pdf_aware_turkish_onnx_profile(tmp_path, m
     ocr = pipeline.kwargs["ocr_options"]
     assert pipeline.kwargs["do_ocr"] is True
     assert pipeline.kwargs["force_backend_text"] is False
+    assert pipeline.kwargs["enable_remote_services"] is False
+    assert pipeline.kwargs["allow_external_plugins"] is False
+    assert pipeline.kwargs["document_timeout"] == 780.0
     assert ocr.kwargs["mode"] == "pdf_aware_layout_regions"
     assert ocr.kwargs["lang"] == ["tr"]
     assert ocr.kwargs["backend"] == "onnxruntime"

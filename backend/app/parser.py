@@ -2,7 +2,7 @@ import math
 import os
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from statistics import median
@@ -58,6 +58,18 @@ class _TextLine:
     left: float
     height: float
     font_key: str
+
+
+@dataclass
+class _LayoutMemo:
+    """Per-document cache for typography lookups during normalization.
+
+    Converting every textline cell to top-left coordinates for every heading
+    candidate made attached-label detection quadratic on long PDFs.
+    """
+
+    page_boxes: dict[int, list[tuple[float, float, float, float]] | None] = field(default_factory=dict)
+    heights: dict[int, float | None] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -135,6 +147,13 @@ def _build_document_converter(artifacts_path: Path | None = None) -> Any:
             # Keep Docling's PDF-first merge: native text wins where it exists;
             # OCR fills image/non-text regions selected by the pipeline.
             "force_backend_text": False,
+            # Stop before the Modal hard timeout; a partial result is rejected
+            # in parse_pdf_file instead of being saved as a complete parse.
+            "document_timeout": float(get_settings().docling_document_timeout_seconds),
+            # Defaults today, pinned explicitly: no third-party plugin loading
+            # and no remote model/API calls from the parse worker.
+            "enable_remote_services": False,
+            "allow_external_plugins": False,
         }
         if artifacts_path is not None:
             kwargs["artifacts_path"] = str(artifacts_path)
@@ -238,9 +257,24 @@ def parse_pdf_file(
         artifacts_path = Path(configured_artifacts).expanduser() if configured_artifacts else None
         converter_warm = _converter_cache_key(artifacts_path) in _converter_cache
         report_progress(25, "docling_starting")
+        max_pages = settings.docling_max_num_pages
+        page_total = _pdf_page_count(path)
+        if page_total is not None and page_total > max_pages:
+            raise ApiProblem(
+                422,
+                "page_limit_exceeded",
+                f"The PDF has {page_total} pages; the parser accepts at most {max_pages}.",
+            )
         converter = _get_document_converter(artifacts_path)
         report_progress(30, "docling_ready")
-        conversion_result = converter.convert(path)
+        conversion_result = converter.convert(path, max_num_pages=max_pages)
+        timeout_check = getattr(conversion_result, "has_timeout_errors", None)
+        if callable(timeout_check) and timeout_check():
+            raise ApiProblem(
+                422,
+                "docling_timeout",
+                "Docling exceeded the document processing time limit; no partial parse was saved.",
+            )
         report_progress(72, "docling_converted")
         document = getattr(conversion_result, "document", None)
         if document is None:
@@ -293,6 +327,23 @@ def parse_pdf_file(
             "ocr": _ocr_manifest,
         },
     )
+
+
+def _pdf_page_count(path: Path) -> int | None:
+    """Read the page count cheaply so over-limit PDFs fail with a clear code."""
+
+    try:
+        import pypdfium2
+
+        document = pypdfium2.PdfDocument(str(path))
+        try:
+            return len(document)
+        finally:
+            document.close()
+    except Exception:
+        # Docling still enforces ``max_num_pages``; an unreadable header is
+        # reported by its normal conversion error path.
+        return None
 
 
 def _docling_version() -> str:
@@ -421,6 +472,7 @@ def build_structured_content(document: Any, *, parsed_pages: Iterable[Any] = ())
     heading_heights: dict[int, list[float]] = {}
     last_heading: tuple[int, float | None] | None = None
     content_since_heading = True
+    memo = _LayoutMemo()
 
     for index, item in enumerate(items):
         element_type = _element_type(item)
@@ -429,7 +481,14 @@ def build_structured_content(document: Any, *, parsed_pages: Iterable[Any] = ())
         following = items[index + 1] if index + 1 < len(items) else None
         if element_type == "heading" and (
             _is_local_heading(item, document, tables)
-            or _is_attached_label(item, following, document, page_cells, items[index + 1 :])
+            or _is_attached_label(
+                item,
+                following,
+                document,
+                page_cells,
+                (items[position] for position in range(index + 1, len(items))),
+                memo=memo,
+            )
         ):
             element_type = "paragraph"
 
@@ -472,8 +531,9 @@ def build_structured_content(document: Any, *, parsed_pages: Iterable[Any] = ())
                 heading_heights,
                 last_heading,
                 content_since_heading,
+                memo=memo,
             )
-            height = _line_height(item, document, page_cells)
+            height = _line_height(item, document, page_cells, memo)
             if height is not None:
                 heading_heights.setdefault(level, []).append(height)
             last_heading = (level, height)
@@ -526,8 +586,9 @@ def _source_metadata(item: Any, document: Any, page_cells: dict) -> dict:
     boxes: list[tuple[tuple[int, float, float, float, float], str]] = [
         (box, "unknown") for box in _item_boxes(item, document)
     ]
-    # Table Markdown includes resolved caption text. A caption may be a
-    # separate OCR item, so carry that contribution into the table's origin.
+    # Table Markdown includes resolved caption text, so the caption's cells
+    # contribute to the table's origin. Its box alone is not OCR evidence:
+    # only a matched cell with ``from_ocr=True`` can claim OCR.
     for reference in getattr(item, "captions", []) or []:
         resolver = getattr(reference, "resolve", None)
         if not callable(resolver):
@@ -536,7 +597,7 @@ def _source_metadata(item: Any, document: Any, page_cells: dict) -> dict:
             caption = resolver(document)
         except Exception:
             continue
-        boxes.extend((box, "ocr") for box in _item_boxes(caption, document))
+        boxes.extend((box, "unknown") for box in _item_boxes(caption, document))
     for (page, left, top, right, bottom), box_origin in boxes:
         page_item = (getattr(document, "pages", {}) or {}).get(page)
         page_height = getattr(getattr(page_item, "size", None), "height", None)
@@ -675,21 +736,48 @@ def _reorder_semantic_blocks(
     return [pair for block in reordered for pair in block]
 
 
-def _line_height(item: Any, document: Any, page_cells: dict[int, list[Any]]) -> float | None:
+def _page_cell_boxes(
+    document: Any,
+    page_cells: dict[int, list[Any]],
+    page: int,
+    memo: _LayoutMemo | None = None,
+) -> list[tuple[float, float, float, float]] | None:
+    if memo is not None and page in memo.page_boxes:
+        return memo.page_boxes[page]
+    page_item = (getattr(document, "pages", {}) or {}).get(page)
+    page_height = getattr(getattr(page_item, "size", None), "height", None)
+    boxes: list[tuple[float, float, float, float]] | None = None
+    if page_height is not None:
+        boxes = []
+        for cell in page_cells.get(page, []):
+            box = cell.to_bounding_box().to_top_left_origin(page_height)
+            boxes.append((box.l, box.t, box.r, box.b))
+    if memo is not None:
+        memo.page_boxes[page] = boxes
+    return boxes
+
+
+def _line_height(
+    item: Any,
+    document: Any,
+    page_cells: dict[int, list[Any]],
+    memo: _LayoutMemo | None = None,
+) -> float | None:
+    if memo is not None and id(item) in memo.heights:
+        return memo.heights[id(item)]
     heights = []
     for page, left, top, right, bottom in _item_boxes(item, document):
-        page_item = (getattr(document, "pages", {}) or {}).get(page)
-        page_height = getattr(getattr(page_item, "size", None), "height", None)
-        if page_height is None:
-            continue
-        for cell in page_cells.get(page, []):
-            box = cell.to_bounding_box()
-            box = box.to_top_left_origin(page_height)
-            area = (box.r - box.l) * (box.b - box.t)
-            intersection = max(0, min(right, box.r) - max(left, box.l)) * max(0, min(bottom, box.b) - max(top, box.t))
+        for box_left, box_top, box_right, box_bottom in _page_cell_boxes(document, page_cells, page, memo) or []:
+            area = (box_right - box_left) * (box_bottom - box_top)
+            intersection = max(0, min(right, box_right) - max(left, box_left)) * max(
+                0, min(bottom, box_bottom) - max(top, box_top)
+            )
             if area > 0 and intersection >= area * 0.8:
-                heights.append(box.b - box.t)
-    return median(heights) if heights else None
+                heights.append(box_bottom - box_top)
+    result = median(heights) if heights else None
+    if memo is not None:
+        memo.heights[id(item)] = result
+    return result
 
 
 def _repair_wrapped_time_range(
@@ -752,6 +840,8 @@ def _is_attached_label(
     document: Any,
     page_cells: dict[int, list[Any]],
     candidates: Iterable[Any] = (),
+    *,
+    memo: _LayoutMemo | None = None,
 ) -> bool:
     text = _item_text(item)
     sentence_like = text.rstrip().endswith((".", "!", "?"))
@@ -761,19 +851,28 @@ def _is_attached_label(
         return False
     if (len(text) > 80 or len(text.split()) > 10) and not sentence_like:
         return False
-    possible_paragraphs = [
-        candidate
-        for candidate in (following, *tuple(candidates))
-        if candidate is not None and _element_type(candidate) == "paragraph"
-    ]
-    height = _line_height(item, document, page_cells)
+    height = _line_height(item, document, page_cells, memo)
     # Boldness alone is not structure. Require body-sized text AND a tight,
     # aligned continuation. Without source typography, keep Docling's decision.
     height_limit = 1.35 if sentence_like else 1.05
     if height is None:
         return False
-    for paragraph in possible_paragraphs:
-        body_height = _line_height(paragraph, document, page_cells)
+    item_pages = set(_page_numbers(item))
+    last_page = max(item_pages) if item_pages else None
+    seen: set[int] = set()
+    for paragraph in _chain_candidates(following, candidates):
+        if id(paragraph) in seen:
+            continue
+        seen.add(id(paragraph))
+        paragraph_pages = _page_numbers(paragraph)
+        # An attached continuation shares the label's page. Items arrive in
+        # reading order, so the scan stops at the first later-page item
+        # instead of walking the rest of the document for every heading.
+        if paragraph_pages and last_page is not None and min(paragraph_pages) > last_page:
+            break
+        if _element_type(paragraph) != "paragraph" or not item_pages.intersection(paragraph_pages):
+            continue
+        body_height = _line_height(paragraph, document, page_cells, memo)
         if body_height is None or height > body_height * height_limit:
             continue
         for page, left, top, right, bottom in _item_boxes(item, document):
@@ -787,6 +886,14 @@ def _is_attached_label(
                 if below or inline:
                     return True
     return False
+
+
+def _chain_candidates(following: Any, candidates: Iterable[Any]) -> Iterable[Any]:
+    if following is not None:
+        yield following
+    for candidate in candidates:
+        if candidate is not None:
+            yield candidate
 
 
 def _is_local_heading(item: Any, document: Any, tables: list[Any]) -> bool:
@@ -915,6 +1022,8 @@ def _infer_heading_level(
     heading_heights: dict[int, list[float]],
     last_heading: tuple[int, float | None] | None,
     content_since_heading: bool,
+    *,
+    memo: _LayoutMemo | None = None,
 ) -> int:
     numbered = _numbered_heading_level(text)
     if numbered is not None:
@@ -923,7 +1032,7 @@ def _infer_heading_level(
     if isinstance(item_level, int) and item_level > 1:
         return min(item_level, 6)
 
-    height = _line_height(item, document, page_cells)
+    height = _line_height(item, document, page_cells, memo)
     if height is None or not heading_heights:
         return item_level if isinstance(item_level, int) and item_level > 0 else 1
 
