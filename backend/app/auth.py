@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+import threading
+import time
 import uuid
 from dataclasses import dataclass
 from functools import lru_cache
@@ -40,16 +43,62 @@ def _settings_auth_values() -> tuple[str, str, str]:
     return issuer, settings.supabase_jwt_audience, jwks_url
 
 
+_KID_PATTERN = re.compile(r"^[A-Za-z0-9._:\-]{1,128}$")
+_UNKNOWN_KID_TTL_SECONDS = 60.0
+_JWKS_REFRESH_INTERVAL_SECONDS = 5.0
+_kid_lock = threading.Lock()
+_unknown_kids: dict[str, float] = {}
+_last_jwks_refresh = 0.0
+
+
+def _match_key(keys, kid: str):
+    return next((key for key in keys if getattr(key, "key_id", None) == kid), None)
+
+
+def _signing_key(client, token: str, kid: str):
+    """Resolve a signing key without letting unknown kids hammer the JWKS endpoint.
+
+    Cached keys are tried first; a refresh for an unseen kid happens at most
+    once per interval process-wide, and an unknown kid is negatively cached.
+    """
+
+    global _last_jwks_refresh
+    now = time.monotonic()
+    with _kid_lock:
+        if _unknown_kids.get(kid, 0.0) > now:
+            raise _unauthorized("The access token is invalid or expired.")
+    get_keys = getattr(client, "get_signing_keys", None)
+    if get_keys is None:  # pragma: no cover - non-PyJWT test doubles
+        return client.get_signing_key_from_jwt(token)
+    key = _match_key(get_keys(), kid)
+    if key is not None:
+        return key
+    with _kid_lock:
+        allowed = now - _last_jwks_refresh >= _JWKS_REFRESH_INTERVAL_SECONDS
+        if allowed:
+            _last_jwks_refresh = now
+    key = _match_key(get_keys(refresh=True), kid) if allowed else None
+    if key is None:
+        with _kid_lock:
+            if len(_unknown_kids) > 1024:
+                _unknown_kids.clear()
+            _unknown_kids[kid] = now + _UNKNOWN_KID_TTL_SECONDS
+        raise _unauthorized("The access token is invalid or expired.")
+    return key
+
+
 def verify_access_token(token: str) -> CurrentUser:
     if not token or len(token) > 8192:
         raise _unauthorized("The access token is invalid.")
     issuer, audience, jwks_url = _settings_auth_values()
     try:
-        signing_key = _jwks_client(jwks_url).get_signing_key_from_jwt(token)
         header = jwt.get_unverified_header(token)
         algorithm = header.get("alg")
-        if algorithm not in {"ES256", "RS256"}:
+        kid = header.get("kid")
+        # Reject before any network work: only asymmetric Supabase keys.
+        if algorithm not in {"ES256", "RS256"} or not isinstance(kid, str) or not _KID_PATTERN.match(kid):
             raise _unauthorized("The access token is invalid.")
+        signing_key = _signing_key(_jwks_client(jwks_url), token, kid)
         claims = jwt.decode(
             token,
             signing_key.key,
@@ -84,4 +133,8 @@ def get_current_user(authorization: str | None = Header(default=None)) -> Curren
 
 
 def clear_auth_caches() -> None:
-    _jwks_client.cache_clear()
+    global _last_jwks_refresh
+    getattr(_jwks_client, "cache_clear", lambda: None)()
+    with _kid_lock:
+        _unknown_kids.clear()
+        _last_jwks_refresh = 0.0

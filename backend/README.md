@@ -8,6 +8,19 @@ PDF → private Storage → 202 parse run → Modal API/worker → full Docling
 → grounded generation/citations → evaluation
 ```
 
+## Yükleme sınırları
+
+`POST /documents` ve `POST /documents/parse` için bir ASGI guard, multipart gövde
+okunmadan önce bearer token'ı doğrular ve `Content-Length`'i (chunked gövdede akan
+bayt sayısını) `MAX_FILE_SIZE_BYTES` + 1 MiB ile sınırlar. `%PDF-` imzası yalnız
+dosya başında kabul edilir (önünde en çok 8 bayt BOM/boşluk); gzip/zip/bzip2/xz/7z
+imzaları reddedilir, çünkü Docling format tespiti PDF allowlist'inden önce çalışır.
+Dosya adı en çok 255 karakterdir. Kullanıcı başına `MAX_DOCUMENTS_PER_USER`
+(varsayılan 200) ve `MAX_STORAGE_BYTES_PER_USER` (varsayılan 2 GiB) kotası vardır
+(0 kapatır; eşzamanlı yüklemelerde bir doküman aşılabilir). JWKS'te bilinmeyen
+`kid` 60 sn negatif cache'lenir ve zorunlu yenileme süreç başına 5 sn'de bir ile
+sınırlıdır; `ES256`/`RS256` dışı algoritmalar anahtar çekilmeden reddedilir.
+
 ## Async parse sözleşmesi
 
 `POST /documents/parse` ve persisted doküman için `POST
@@ -138,6 +151,15 @@ Local Supabase stack ile şema rebuild'i:
 supabase start
 supabase db reset --local --no-seed
 ```
+
+Runtime rolü `rag_steplab_app` oturumları `statement_timeout=30s`,
+`lock_timeout=5s` ve `idle_in_transaction_session_timeout=60s` ile sınırlıdır;
+repository transaction'ları sağlayıcı çağrısı kapsamaz. `extensions` şemasında
+bu role ayrı EXECUTE verilmez (pgvector PUBLIC ile çalışır).
+
+`GET /documents/{id}/workspace?pipelineId=` summary, pipeline'lar ve kullanımdaki
+parse çıktısını tek çağrıda döndürür; chunk/embedding gövdeleri kendi
+endpoint'lerinde kalır.
 
 Uygulamanın local `DATABASE_URL` fallback'i korunur; Supabase CLI local
 stack'i uygulamanın zorunlu runtime dependency'si değildir. Production

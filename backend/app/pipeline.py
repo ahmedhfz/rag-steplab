@@ -524,6 +524,7 @@ def persist_document_upload(
     existing = repository.get_document_by_sha256(digest)
     if existing is not None:
         return existing, True
+    _require_upload_quota(repository, settings, len(content))
 
     storage_path = f"{new_id()}/{digest}.pdf"
     storage = get_storage()
@@ -554,6 +555,19 @@ def persist_document_upload(
                 pass
         raise
     return document, False
+
+
+def _require_upload_quota(repository: Repository, settings: Settings, size_bytes: int) -> None:
+    """Per-user document/byte quota (soft: concurrent uploads may overshoot by one)."""
+
+    owner = getattr(repository, "owner_user_id", None)
+    if owner is None or not (settings.max_documents_per_user or settings.max_storage_bytes_per_user):
+        return
+    count, stored = repository.owner_document_usage(owner)
+    if settings.max_documents_per_user and count >= settings.max_documents_per_user:
+        raise ApiProblem(403, "document_quota_exceeded", "The document limit for this account has been reached.")
+    if settings.max_storage_bytes_per_user and stored + size_bytes > settings.max_storage_bytes_per_user:
+        raise ApiProblem(403, "storage_quota_exceeded", "The storage limit for this account has been reached.")
 
 
 def queue_parse_upload(

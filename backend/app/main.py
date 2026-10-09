@@ -61,6 +61,7 @@ from .maintenance import (
 )
 from .repository import _expired_run_update, get_repository
 from .storage import get_storage
+from .upload_guard import UploadGuardMiddleware
 from .schemas import (
     ApiError,
     CapabilitiesResponse,
@@ -105,6 +106,17 @@ app = FastAPI(
     openapi_url=None if _hide_api_docs else "/openapi.json",
     dependencies=[Depends(require_writes_enabled)],
 )
+def _preauthenticate(authorization: str | None) -> CurrentUser:
+    """Same identity check as the route dependency (honours test overrides)."""
+
+    override = app.dependency_overrides.get(get_current_user)
+    if override is not None:
+        return override()
+    return get_current_user(authorization)
+
+
+# Added before CORS so rejected uploads still carry CORS headers.
+app.add_middleware(UploadGuardMiddleware, authenticate=_preauthenticate)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_origins),
@@ -180,15 +192,35 @@ async def unexpected_error_handler(_: Request, __: Exception) -> JSONResponse:
     )
 
 
+MAX_FILE_NAME_LENGTH = 255
+# Archive/compression magic numbers. Docling sniffs these before its PDF-only
+# allowlist applies (gzip -> METS/tar enumeration), so they are refused here.
+_REJECTED_MAGIC = (b"\x1f\x8b", b"PK\x03\x04", b"PK\x05\x06", b"BZh", b"\xfd7zXZ\x00", b"7z\xbc\xaf\x27\x1c")
+# Only a UTF-8 BOM and ASCII whitespace may precede the header. Real PDF writers
+# start at byte 0; this small tolerance keeps files saved by tools that prepend
+# a BOM/newline usable without accepting arbitrary polyglot prefixes.
+_PDF_PREFIX_TOLERANCE = 8
+
+
+def _pdf_signature_ok(content: bytes) -> bool:
+    if any(content.startswith(magic) for magic in _REJECTED_MAGIC):
+        return False
+    head = content[: _PDF_PREFIX_TOLERANCE + 5]
+    stripped = head.removeprefix(b"\xef\xbb\xbf").lstrip(b" \t\r\n\x0c")
+    return stripped.startswith(b"%PDF-") and len(head) - len(stripped) <= _PDF_PREFIX_TOLERANCE
+
+
 def _ensure_file(content: bytes, file_name: str, content_type: str) -> None:
     max_file_size_bytes = get_settings().max_file_size_bytes
     if not file_name.lower().endswith(".pdf") or content_type not in ALLOWED_CONTENT_TYPES:
         raise ApiProblem(400, "invalid_file_type", "Only PDF files are supported.")
+    if len(file_name) > MAX_FILE_NAME_LENGTH:
+        raise ApiProblem(422, "file_name_too_long", f"The file name must be at most {MAX_FILE_NAME_LENGTH} characters.")
     if not content:
         raise ApiProblem(400, "empty_file", "The uploaded PDF is empty.")
     if len(content) > max_file_size_bytes:
-        raise ApiProblem(413, "file_too_large", "The PDF must be 50 MB or smaller.")
-    if b"%PDF-" not in content[:1024]:
+        raise ApiProblem(413, "file_too_large", f"The PDF must be {max_file_size_bytes // (1024 * 1024)} MB or smaller.")
+    if not _pdf_signature_ok(content):
         raise ApiProblem(400, "invalid_file_type", "The uploaded file is not a valid PDF.")
 
 
@@ -1049,6 +1081,28 @@ def _document_summary_payload(bundle: dict[str, Any], pipeline_id: str | None) -
     }
 
 
+@app.get("/documents/{document_id}/workspace")
+def get_document_workspace(
+    document_id: str,
+    pipeline_id: str | None = Query(default=None, alias="pipelineId"),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """One round trip for a workspace: summary, pipelines and the in-use parse.
+
+    Chunk and embedding bodies stay on their own endpoints (they can be large).
+    """
+
+    repository = _user_repository(user)
+    bundle = repository.get_document_summary_bundle(document_id, owner_user_id=user.id)
+    if bundle is None:
+        raise ApiProblem(404, "document_not_found", "The document was not found.")
+    payload = _document_summary_payload(bundle, pipeline_id)
+    parse_id = payload["activeLineage"]["parseRunId"]
+    parse = repository.get_parse_row(parse_id) if parse_id else None
+    payload["inUseParseRun"] = _persisted_parse_response(bundle["document"], parse) if parse else None
+    return _camelize(payload)
+
+
 @app.get("/documents/{document_id}/summary")
 def get_document_summary(
     document_id: str,
@@ -1375,14 +1429,11 @@ def list_evaluation_runs(dataset_id: str | None = Query(default=None, alias="dat
     items = []
     for row in repository.list_evaluation_summary_rows(dataset_id, owner_user_id=user.id):
         payload = _summary_evaluation_dict(row)
-        dataset = repository.get_dataset_row(row.get("dataset_id", ""))
-        if dataset:
-            config = row.get("config") or {}
-            payload.update({
-                "parseRunId": dataset.get("parse_run_id"),
-                "chunkRunId": config.get("chunk_run_id"),
-                "embeddingRunId": config.get("embedding_run_id"),
-            })
+        payload.update({
+            "parseRunId": row.get("parse_run_id"),
+            "chunkRunId": row.get("chunk_run_id"),
+            "embeddingRunId": row.get("embedding_run_id"),
+        })
         items.append(_camelize(payload))
     return {"items": items}
 
@@ -1404,12 +1455,11 @@ def get_evaluation_run_status(run_id: str, user: CurrentUser = Depends(get_curre
         raise ApiProblem(404, "evaluation_run_not_found", "The evaluation run was not found.")
     results = row.get("results") or {}
     aggregate = results.get("aggregate", {}) if isinstance(results, dict) else {}
-    dataset = repository.get_dataset_row(row["dataset_id"])
     return _camelize({
         "id": row["id"],
         "status": _public_parse_status(row.get("status") or "completed"),
         "completedCases": len(results.get("caseResults", [])) if isinstance(results, dict) and isinstance(results.get("caseResults"), list) else 0,
-        "totalCases": len(dataset.get("cases", [])) if dataset else 0,
+        "totalCases": repository.get_dataset_case_count(row["dataset_id"]),
         "results": aggregate,
         "timing": _run_timing(row),
         "error": _error_object(row, "evaluation"),

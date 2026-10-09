@@ -96,6 +96,10 @@ class Settings:
     storage_cleanup_backoff_base_seconds: int = 30
     storage_cleanup_backoff_max_seconds: int = 6 * 3600
     max_file_size_bytes: int = 50 * 1024 * 1024
+    # Per-user upload quotas (0 disables). Generous defaults: a learning lab
+    # user keeps far fewer PDFs; the limits stop unbounded storage growth.
+    max_documents_per_user: int = 200
+    max_storage_bytes_per_user: int = 2 * 1024 * 1024 * 1024
     # Modal ve Docling değerleri deploy sırasında environment'tan gelir.
     # Varsayılanlar local import/test akışını belirli bir platforma kilitlemez.
     modal_app_name: str = "rag-steplab-api"
@@ -205,6 +209,8 @@ def get_settings() -> Settings:
         storage_cleanup_backoff_base_seconds=max(1, _int("STORAGE_CLEANUP_BACKOFF_BASE_SECONDS", 30)),
         storage_cleanup_backoff_max_seconds=max(1, _int("STORAGE_CLEANUP_BACKOFF_MAX_SECONDS", 6 * 3600)),
         max_file_size_bytes=max(1, _int("MAX_FILE_SIZE_BYTES", 50 * 1024 * 1024)),
+        max_documents_per_user=max(0, _int("MAX_DOCUMENTS_PER_USER", 200)),
+        max_storage_bytes_per_user=max(0, _int("MAX_STORAGE_BYTES_PER_USER", 2 * 1024 * 1024 * 1024)),
         modal_app_name=os.getenv("MODAL_APP_NAME", "rag-steplab-api"),
         modal_parse_function_name=os.getenv("MODAL_PARSE_FUNCTION_NAME", "parse_worker"),
         modal_dispatch_enabled=_bool("MODAL_DISPATCH_ENABLED", True),
