@@ -311,6 +311,11 @@ def test_evaluation_generation_metrics_average_only_numeric_scores():
         "faithfulness": 0.6000000000000001,
         "answerRelevance": 0.6,
         "answerCorrectness": 0.6,
+        "lexicalOverlap": None,
+        "method": None,
+        "metricVersion": "generation-metrics-v2",
         "eligibleCaseCount": 1,
         "scoredCaseCount": 2,
+        "lexicalScoredCaseCount": 0,
+        "skippedCaseCount": 0,
     }
