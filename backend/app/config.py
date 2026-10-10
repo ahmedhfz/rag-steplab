@@ -6,6 +6,7 @@ module is serialised into API responses or logged.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -140,7 +141,8 @@ def pipeline_lease_duration_seconds(settings: Settings) -> int:
     # nested envelope conservatively so a reduced worker timeout cannot make
     # a healthy provider operation outlive its fencing lease.
     provider_attempts = retry_attempts**3
-    provider_budget = max(1, settings.gemini_timeout_seconds) * provider_attempts + provider_attempts * 2
+    # Every attempt may wait up to the provider client's maximum backoff.
+    provider_budget = provider_attempts * (max(1, settings.gemini_timeout_seconds) + _provider_max_retry_delay_seconds())
     operation_budget = max(settings.pipeline_worker_timeout_seconds, provider_budget)
     return (
         settings.pipeline_worker_startup_timeout_seconds
@@ -158,17 +160,41 @@ def chunk_lease_duration_seconds(settings: Settings) -> int:
     return API_REQUEST_TIMEOUT_SECONDS + settings.pipeline_lease_grace_seconds
 
 
+def _provider_max_retry_delay_seconds() -> int:
+    # Single source: the Gemini client's backoff cap (imported lazily; gemini
+    # imports this module).
+    from .gemini import MAX_RETRY_DELAY_SECONDS
+
+    return math.ceil(MAX_RETRY_DELAY_SECONDS)
+
+
 def embedding_batch_lease_seconds(settings: Settings) -> int:
-    """Lease renewed before every provider batch: one batch's retry envelope + grace."""
+    """Lease renewed before every provider batch: one batch's full retry envelope + grace.
+
+    Each attempt may take the request timeout and then wait up to the client's
+    maximum backoff before the next attempt.
+    """
 
     attempts = max(0, settings.gemini_max_retries) + 1
-    return max(1, settings.gemini_timeout_seconds) * attempts + attempts * 2 + settings.pipeline_lease_grace_seconds
+    per_attempt = max(1, settings.gemini_timeout_seconds) + _provider_max_retry_delay_seconds()
+    return attempts * per_attempt + settings.pipeline_lease_grace_seconds
 
 
 def embedding_claim_lease_seconds(settings: Settings) -> int:
-    """The first lease also covers dispatch and worker cold start."""
+    """Lease from claim until the worker starts.
 
-    return settings.pipeline_worker_startup_timeout_seconds + embedding_batch_lease_seconds(settings)
+    The single pipeline_worker container (max_containers=1) may first finish
+    another job of up to ``pipeline_worker_timeout_seconds``; dispatch, that
+    queue wait and cold start must not expire the run. Once the worker starts,
+    ``start_pipeline_worker`` switches to the short batch lease, so a dead
+    worker is still detected after one batch budget.
+    """
+
+    return (
+        settings.pipeline_worker_startup_timeout_seconds
+        + settings.pipeline_worker_timeout_seconds
+        + embedding_batch_lease_seconds(settings)
+    )
 
 
 @lru_cache(maxsize=1)

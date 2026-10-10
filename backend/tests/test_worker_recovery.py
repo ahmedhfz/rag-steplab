@@ -331,3 +331,62 @@ def main_user():
     from tests.conftest import TEST_USER_ID
 
     return TEST_USER_ID
+
+
+# --- Codex review regressions (#130) ------------------------------------------------------
+
+
+def test_started_worker_with_unrecorded_call_id_is_neither_interrupted_nor_redispatched(monkeypatch, hosted):
+    """Spawn succeeded, the API died before recording the call id, the worker is running."""
+
+    document_id, chunk_id = _document_with_chunk(monkeypatch)
+    old_ms = int((datetime.now(timezone.utc) - timedelta(minutes=5)).timestamp() * 1000)
+    reservation = f"dispatching-{old_ms}-{uuid.uuid4()}"
+    experiment = _queued_experiment(
+        document_id, chunk_id, dispatch_id=reservation, status="running", worker_started_at=now_utc(),
+    )
+    token = experiment["lease_token"]
+    repository = get_repository()
+
+    reconciled = maintenance.reconcile_active_run(repository, "experiment", repository.get_experiment_row(experiment["id"]), check_modal=True)
+    assert reconciled["status"] == "running"
+    main._durable_pipeline_response("experiment", experiment, repository.scoped(main_user()))
+    assert hosted == []
+    stored = repository.get_experiment_row(experiment["id"])
+    assert stored["status"] == "running" and stored["lease_token"] == token and stored["dispatch_id"] == reservation
+    # The running worker keeps its fencing token.
+    assert repository.renew_pipeline_lease("experiment", experiment["id"], token, 60) is not None
+
+
+def test_embedding_claim_lease_covers_waiting_behind_a_full_worker_job(monkeypatch, hosted):
+    from app.config import embedding_batch_lease_seconds, embedding_claim_lease_seconds, get_settings
+
+    settings = get_settings()
+    assert embedding_claim_lease_seconds(settings) >= (
+        settings.pipeline_worker_startup_timeout_seconds + settings.pipeline_worker_timeout_seconds
+    )
+    document_id, chunk_id = _document_with_chunk(monkeypatch)
+    run = client.post(f"/documents/{document_id}/embeddings?async=true", json={"chunkRunId": chunk_id}).json()
+    stored = get_repository().embedding_runs[run["id"]]
+    queued_window = (stored["lease_expires_at"] - stored["started_at"]).total_seconds()
+    assert queued_window >= settings.pipeline_worker_timeout_seconds
+
+    # 25 minutes queued behind another job: still not expired, the worker can start.
+    stored["started_at"] -= timedelta(minutes=25)
+    stored["lease_expires_at"] -= timedelta(minutes=25)
+    assert client.get(f"/embedding-runs/{run['id']}").json()["status"] == "running"
+    _kind, run_id, token = hosted[0]
+    started = get_repository().start_pipeline_worker("embedding", run_id, token, embedding_batch_lease_seconds(settings))
+    assert started is not None
+    # After start the short batch lease applies.
+    assert (started["lease_expires_at"] - now_utc()).total_seconds() <= embedding_batch_lease_seconds(settings) + 1
+
+
+def test_batch_lease_covers_the_full_provider_retry_envelope():
+    from app.config import Settings, embedding_batch_lease_seconds
+    from app.gemini import MAX_RETRY_DELAY_SECONDS
+
+    settings = Settings(gemini_timeout_seconds=60, gemini_max_retries=2, pipeline_lease_grace_seconds=120)
+    attempts = settings.gemini_max_retries + 1
+    worst_case = attempts * settings.gemini_timeout_seconds + (attempts - 1) * MAX_RETRY_DELAY_SECONDS
+    assert embedding_batch_lease_seconds(settings) >= worst_case + settings.pipeline_lease_grace_seconds

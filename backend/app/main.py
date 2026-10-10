@@ -781,37 +781,36 @@ def _summary_lineage_compatibility(
             and parse_ok(chunk.get("parse_run_id"))
         )
 
+    def embedding_ok(embedding_id: str | None, chunk_id: str | None = None) -> bool:
+        # One rule for embedding rows and experiment parents: a failed
+        # (e.g. artifact_incomplete) embedding is never a compatible parent.
+        embedding = embeddings.get(embedding_id or "")
+        settings = get_settings()
+        return bool(
+            embedding
+            and embedding.get("document_id") == document_id
+            and embedding.get("status") == "completed"
+            and chunk_ok(embedding.get("chunk_run_id"))
+            and (chunk_id is None or embedding.get("chunk_run_id") == chunk_id)
+            and embedding.get("model") == settings.gemini_embedding_model
+            and embedding.get("dimensions") == settings.gemini_embedding_dimensions
+            and embedding.get("embedding_format_version") == EMBEDDING_FORMAT_VERSION
+        )
+
     kind = row.get("kind")
     if kind == "parse":
         return parse_ok(row.get("id")), None if parse_ok(row.get("id")) else "lineage_incompatible"
     if kind == "chunk":
         return chunk_ok(row.get("id")), None if chunk_ok(row.get("id")) else "lineage_incompatible"
     if kind == "embedding":
-        embedding = embeddings.get(row.get("id", ""))
-        compatible = bool(
-            embedding
-            and embedding.get("document_id") == document_id
-            and embedding.get("status") == "completed"
-            and chunk_ok(embedding.get("chunk_run_id"))
-            and embedding.get("model") == get_settings().gemini_embedding_model
-            and embedding.get("dimensions") == get_settings().gemini_embedding_dimensions
-            and embedding.get("embedding_format_version") == EMBEDDING_FORMAT_VERSION
-        )
+        compatible = embedding_ok(row.get("id"))
         return compatible, None if compatible else "lineage_incompatible"
     chunk_id = row.get("chunk_run_id")
     if not chunk_ok(chunk_id):
         return False, "chunk_lineage_missing"
     embedding_id = row.get("embedding_run_id")
-    if embedding_id:
-        embedding = embeddings.get(embedding_id)
-        if not embedding or not chunk_ok(embedding.get("chunk_run_id")) or embedding.get("chunk_run_id") != chunk_id:
-            return False, "lineage_incompatible"
-        if (
-            embedding.get("model") != get_settings().gemini_embedding_model
-            or embedding.get("dimensions") != get_settings().gemini_embedding_dimensions
-            or embedding.get("embedding_format_version") != EMBEDDING_FORMAT_VERSION
-        ):
-            return False, "lineage_incompatible"
+    if embedding_id and not embedding_ok(embedding_id, chunk_id):
+        return False, "lineage_incompatible"
     return True, None
 
 

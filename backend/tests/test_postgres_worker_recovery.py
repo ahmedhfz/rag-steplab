@@ -124,3 +124,22 @@ def test_concurrent_sweepers_never_claim_the_same_cleanup(pg):
         pg.complete_storage_cleanup(row_id)
     assert pg.purge_completed_storage_cleanups(older_than=timedelta(days=30)) == 0
     assert pg.purge_completed_storage_cleanups(older_than=timedelta(seconds=-1)) == 6
+
+
+def test_stale_reservation_never_touches_a_started_worker(pg):
+    document = new_document(pg)
+    parse = completed_parse(pg, document["id"])
+    chunk = completed_chunk(pg, document["id"], parse["id"])
+    claim, _ = pg.claim_embedding_run(document["id"], chunk["id"], "gemini-embedding-2", 768, "format-v1")
+    stale = f"dispatching-1-{uuid.uuid4()}"
+    pg.claim_pipeline_dispatch("embedding", claim["id"], stale, claim["lease_token"])
+    assert pg.start_pipeline_worker("embedding", claim["id"], claim["lease_token"], 60) is not None
+
+    kept = pg.claim_pipeline_dispatch(
+        "embedding", claim["id"], new_reservation_id(), claim["lease_token"],
+        stale_reservation=stale, new_lease_token=str(uuid.uuid4()),
+    )
+    assert kept["dispatch_id"] == stale and kept["lease_token"] == claim["lease_token"]
+    untouched = pg.interrupt_pipeline_run("embedding", claim["id"], stale, "pipeline_dispatch_lost", "x", only_if_unstarted=True)
+    assert untouched["status"] == "running" and untouched["lease_token"] == claim["lease_token"]
+    assert [row["worker_started_at"] is not None for row in pg.list_active_dispatches()] == [True]

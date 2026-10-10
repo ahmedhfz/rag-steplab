@@ -37,6 +37,14 @@ tamamlandıktan sonra yalnız historical `rag_lab.alembic_version` tablosunu
 kaldırır. Kullanıcı/application tabloları veya Storage verisi bu geçişte
 silinmez.
 
+`20261010080000_align_rag_lab_schema_with_production.sql`, release'teki
+`supabase db diff --linked --schema rag_lab` kontrolünün yakaladığı tarihsel
+farkları (release dışı uygulanmış `document_pipelines` taslağı ve ORM kökenli
+CHECK/index ifade biçimleri) koşullu adımlarla temiz veritabanlarında production'a
+hizalar; production'da DDL çalıştırmaz. Production'daki bir değişiklik yeniden
+drift olarak raporlanırsa dashboard'dan düzeltmek yerine aynı yolla yeni bir
+migration ekleyin.
+
 ## İş akışı
 
 ```text
