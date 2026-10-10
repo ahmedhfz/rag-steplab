@@ -106,7 +106,7 @@ async function assertBelow(above: Locator, below: Locator, label: string) {
 
 /** Layout width without the reserved scrollbar gutter (`scrollbar-gutter: stable` at >=768px). */
 async function contentWidth(page: Page) {
-  return page.evaluate(() => document.documentElement.clientWidth);
+  return page.evaluate(() => Math.round(document.body.getBoundingClientRect().width));
 }
 
 async function assertShellGeometry(page: Page) {

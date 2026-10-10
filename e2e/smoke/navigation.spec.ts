@@ -69,7 +69,7 @@ test("seeded state reload sonrası korunur ve responsive gezinme çalışır", a
   for (const width of [390, 768, 1024]) {
     await page.setViewportSize({ width, height: 844 });
     // Taşma yok: içerik genişliği, ayrılmış scrollbar gutter'ı hariç görünür genişliği aşmaz.
-    const layoutWidth = await page.evaluate(() => document.documentElement.clientWidth);
+    const layoutWidth = await page.evaluate(() => Math.round(document.body.getBoundingClientRect().width));
     expect(layoutWidth).toBeLessThanOrEqual(width);
     await expect(page.locator("html")).toHaveJSProperty("scrollWidth", layoutWidth);
     await expect(page.locator("body")).toHaveJSProperty("scrollWidth", layoutWidth);
