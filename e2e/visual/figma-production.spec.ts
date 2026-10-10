@@ -258,14 +258,14 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
   } else if (state.group === "chunking") {
     const header = page.getByTestId("chunking-page-header");
     await assertRect(header, { x: 288, y: 40, width: 1113, fluid: 1 }, "chunking-header");
-    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 289, width: 556, fluid: 0.5, height: 53 }, "chunking-context");
+    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 289, width: 556, height: 53 }, "chunking-context");
     await assertBelow(header, page.getByTestId("pipeline-context-bar"), "chunking context below header");
     await assertRect(page.getByTestId("chunking-workspace"), { x: 288, width: 1113, fluid: 1 }, "chunking-workspace");
     await assertBelow(page.getByTestId("pipeline-context-bar"), page.getByTestId("chunking-workspace"), "chunking workspace below context");
   } else if (state.group === "embeddings") {
     const header = page.getByTestId("embeddings-page-header");
     await assertRect(header, { x: 288, y: 40, width: 1113, fluid: 1 }, "embeddings-header");
-    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 289, width: 556, fluid: 0.5, height: 53 }, "embeddings-context");
+    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 289, width: 556, height: 53 }, "embeddings-context");
     await assertBelow(header, page.getByTestId("pipeline-context-bar"), "embeddings context below header");
     await expect(page.getByTestId("embedding-input")).toHaveCount(0);
     const embeddingWorkspace = page.getByTestId("embeddings-workspace");
@@ -457,7 +457,8 @@ async function captureAndCompare(page: Page, state: VisualState) {
 }
 
 test.describe("canonical desktop production React visual contracts", () => {
-  test.describe.configure({ mode: "serial" });
+  // Referans üretiminde bir durumdaki sapma diğer durumların referansını engellemesin.
+  test.describe.configure({ mode: updateReferences ? "default" : "serial" });
 
   for (const state of [...visualStates, ...darkVisualStates]) {
     test(`${state.key} real React state preserves geometry and visual contract`, async ({ page }) => {
