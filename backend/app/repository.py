@@ -150,6 +150,20 @@ def storage_cleanup_retry(attempt_count: int, now: datetime) -> tuple[str, datet
     return "pending", now + timedelta(seconds=delay)
 
 
+def _completion_replay(status: str | None, lease_token: str | None) -> bool:
+    """A retried completion of an already completed artifact is a read, not a write.
+
+    A successful completion clears the lease, so a retry after a lost
+    acknowledgement would otherwise fail the fence and look like a persistence
+    failure. Returning the durable row is safe: nothing from the retrying
+    attempt is written, and the row is the run's single immutable artifact
+    (its identity fixes the inputs). Only ``completed`` qualifies; a failed or
+    interrupted row still goes through the fence and never reads as success.
+    """
+
+    return status == "completed" and lease_token is not None
+
+
 def _embedding_advances_default(
     active_parse_id: str | None,
     active_chunk_id: str | None,
@@ -1448,10 +1462,10 @@ class InMemoryRepository(Repository):
             row = self.chunk_runs.get(run_id)
             if row is None:
                 return None
+            if _completion_replay(row.get("status"), lease_token):
+                return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, []), "lineage_fingerprint": chunk_lineage_fingerprint(row)})
             if not _artifact_fence_allows(row, lease_token, unfenced):
                 return None
-            if row["status"] == "completed":
-                return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, []), "lineage_fingerprint": chunk_lineage_fingerprint(row)})
             if row["status"] != "running":
                 return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, []), "lineage_fingerprint": chunk_lineage_fingerprint(row)})
 
@@ -1632,6 +1646,8 @@ class InMemoryRepository(Repository):
             row = self.embedding_runs.get(run_id)
             if row is None:
                 return None
+            if _completion_replay(row.get("status"), lease_token):
+                return copy.deepcopy(row)
             if not _artifact_fence_allows(row, lease_token, unfenced):
                 return None
             if row["status"] != "running":
@@ -3308,6 +3324,8 @@ class SqlAlchemyRepository(Repository):
             document, run = self._lock_run_document(session, ChunkRun, run_id)
             if run is None:
                 return None
+            if _completion_replay(run.status, lease_token):
+                return self._chunk_dict(run, session)
             if not _artifact_fence_allows(
                 {"lease_token": run.lease_token, "lease_expires_at": run.lease_expires_at}, lease_token, unfenced
             ):
@@ -3587,6 +3605,8 @@ class SqlAlchemyRepository(Repository):
             document, run = self._lock_run_document(session, EmbeddingRun, run_id)
             if run is None:
                 return None
+            if _completion_replay(run.status, lease_token):
+                return self._embedding_dict(run)
             if not _artifact_fence_allows(
                 {"lease_token": run.lease_token, "lease_expires_at": run.lease_expires_at}, lease_token, unfenced
             ):
