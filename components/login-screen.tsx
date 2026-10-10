@@ -11,6 +11,7 @@ import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePreferences } from "@/components/preferences-provider";
+import { safeNextPath } from "@/lib/auth-redirect";
 import { getSupabaseBrowserClient, supabaseAuthErrorMessage } from "@/lib/supabase/browser";
 import type { AppLocale } from "@/lib/copy";
 
@@ -51,6 +52,16 @@ function getServerAuthErrorMessage() {
   return "";
 }
 
+/** Post-login destination; only a same-origin relative path is honored. */
+function getNextPath() {
+  if (typeof window === "undefined") return "/";
+  return safeNextPath(new URLSearchParams(window.location.search).get("next"));
+}
+
+function getServerNextPath() {
+  return "/";
+}
+
 function friendlyAuthError(error: unknown, locale: AppLocale) {
   const message = error instanceof Error ? error.message.toLowerCase() : "";
   const tr = locale === "tr";
@@ -66,6 +77,8 @@ export function LoginScreen() {
   const { preferences } = usePreferences();
   const router = useRouter();
   const urlAuthErrorCode = useSyncExternalStore(subscribeToAuthError, getAuthErrorMessage, getServerAuthErrorMessage);
+  const nextPath = useSyncExternalStore(subscribeToAuthError, getNextPath, getServerNextPath);
+  const googleHref = nextPath === "/" ? "/auth/google" : `/auth/google?${new URLSearchParams({ next: nextPath }).toString()}`;
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -108,18 +121,19 @@ export function LoginScreen() {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: `${window.location.origin}/auth/confirm` },
+          // The validated deep link survives email confirmation; /auth/confirm re-validates it.
+          options: { emailRedirectTo: `${window.location.origin}/auth/confirm${nextPath === "/" ? "" : `?${new URLSearchParams({ next: nextPath }).toString()}`}` },
         });
         if (error) throw error;
         if (data.session) {
-          router.replace("/");
+          router.replace(nextPath);
           router.refresh();
         } else setStatusMessage(preferences.locale === "tr" ? "Kayıt tamamlandı. Devam etmek için e-posta adresinizi doğrulayın." : "Account created. Confirm your email address before continuing.");
         return;
       }
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-      router.replace("/");
+      router.replace(nextPath);
       // Auth cookie değişikliğinin stale App Router cache'inde kalmasını engeller.
       router.refresh();
     } catch (error) {
@@ -176,12 +190,12 @@ export function LoginScreen() {
 
         {mode === "signin" ? <>
           <div className="my-6 flex items-center gap-3 text-[11px] text-subtle-foreground"><span aria-hidden="true" className="h-px flex-1 bg-border" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-border" /></div>
-          <Button asChild className="h-[42px] w-full rounded-[10px] border-[1.5px] border-input bg-card text-[13px] font-medium text-foreground shadow-none hover:bg-accent" variant="outline"><a href="/auth/google"><GoogleMark />{labels.google}</a></Button>
+          <Button asChild className="h-[42px] w-full rounded-[10px] border-[1.5px] border-input bg-card text-[13px] font-medium text-foreground shadow-none hover:bg-accent" variant="outline"><a href={googleHref}><GoogleMark />{labels.google}</a></Button>
         </> : null}
 
         {mode === "signup" ? <>
           <div className="my-6 flex items-center gap-3 text-[11px] text-subtle-foreground"><span aria-hidden="true" className="h-px flex-1 bg-border" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-border" /></div>
-          <Button asChild className="h-[42px] w-full rounded-[10px] border-[1.5px] border-input bg-card text-[13px] font-medium text-foreground shadow-none hover:bg-accent" variant="outline"><a href="/auth/google"><GoogleMark />{labels.google}</a></Button>
+          <Button asChild className="h-[42px] w-full rounded-[10px] border-[1.5px] border-input bg-card text-[13px] font-medium text-foreground shadow-none hover:bg-accent" variant="outline"><a href={googleHref}><GoogleMark />{labels.google}</a></Button>
         </> : null}
 
         {mode === "forgot" ? <div className="mt-6 text-center"><button className="text-[13px] font-medium text-brand underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25" onClick={() => setAuthMode("signin")} type="button">{labels.back}</button></div> : null}

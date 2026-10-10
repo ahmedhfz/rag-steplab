@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { AUTH_NEXT_COOKIE, readCookie, safeNextPath } from "@/lib/auth-redirect";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 function authErrorCategory(error: unknown) {
@@ -101,7 +102,9 @@ export async function GET(request: Request) {
     const supabase = await createSupabaseServerClient(response);
     const { error } = await supabase.auth.exchangeCodeForSession(code, flowId ? { flowId } : undefined);
     if (error) throw error;
-    response.headers.set("Location", new URL("/", request.url).toString());
+    const next = safeNextPath(readCookie(request.headers.get("cookie"), AUTH_NEXT_COOKIE));
+    response.headers.set("Location", new URL(next, request.url).toString());
+    response.cookies.set(AUTH_NEXT_COOKIE, "", { path: "/auth", maxAge: 0 });
     return response;
   } catch (error) {
     console.error("oauth_callback_failed", {

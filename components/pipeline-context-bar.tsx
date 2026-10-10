@@ -27,12 +27,13 @@ function LineageLink({
   href: string;
   label: string;
   locale: AppLocale;
-  status: PipelineOperationStatus;
+  /** Omitted while the workspace is loading, so no stage shows a false "Locked". */
+  status?: PipelineOperationStatus;
 }) {
   return (
     <Link className="flex min-w-0 items-center gap-1.5 rounded-[8px] px-1.5 py-1 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/25" href={href}>
       <span className="text-xs font-medium text-foreground">{label}</span>
-      <OperationStatusBadge locale={locale} status={status} />
+      {status ? <OperationStatusBadge locale={locale} status={status} /> : null}
     </Link>
   );
 }
@@ -51,6 +52,7 @@ export function PipelineContextBar({ showLineage = true }: { showLineage?: boole
     activePipelineId,
     pipelines,
     persistenceStatus,
+    workspaceStatus,
     chunkStatus,
     embeddingStatus,
     selectPersistedDocument,
@@ -67,6 +69,7 @@ export function PipelineContextBar({ showLineage = true }: { showLineage?: boole
   const parseStageStatus = runToOperationStatus(selectedParse, hasDocument ? "ready" : "locked");
   const chunkStageStatus = runToOperationStatus(selectedChunk, hasParse ? chunkStatus : "locked");
   const embeddingStageStatus = runToOperationStatus(selectedEmbedding, hasChunk ? embeddingStatus : "locked");
+  const lineageLoading = workspaceStatus === "loading";
   const isHistorical = Boolean(selectedParse?.historicalLineage || selectedChunk?.historicalLineage || selectedEmbedding?.historicalLineage);
   const labels = locale === "tr"
     ? { document: "Doküman bağlamı", pipeline: "Indexing pipeline", placeholder: "Doküman seçin", noDocument: "Aktif doküman yok", noPipeline: "Pipeline seçin", lineage: "Indexing lineage", historical: "geçmiş lineage", parse: "Parse", chunk: "Chunk", embedding: "Embedding" }
@@ -95,20 +98,14 @@ export function PipelineContextBar({ showLineage = true }: { showLineage?: boole
 
         {showLineage ? <nav aria-label={labels.lineage} className="flex min-w-0 flex-wrap items-center gap-1 min-[1360px]:ml-auto min-[1360px]:shrink-0 min-[1360px]:flex-nowrap">
             <span className="sr-only">{labels.lineage}</span>
-            <LineageLink href="/parse" label={labels.parse} locale={locale} status={parseStageStatus} />
+            <LineageLink href="/parse" label={labels.parse} locale={locale} status={lineageLoading ? undefined : parseStageStatus} />
             <span aria-hidden="true" className="text-input"><AppIcon name="arrowRight" className="size-3.5" /></span>
-            <LineageLink href="/chunking" label={labels.chunk} locale={locale} status={chunkStageStatus} />
+            <LineageLink href="/chunking" label={labels.chunk} locale={locale} status={lineageLoading ? undefined : chunkStageStatus} />
             <span aria-hidden="true" className="text-input"><AppIcon name="arrowRight" className="size-3.5" /></span>
-            <LineageLink href="/embeddings" label={labels.embedding} locale={locale} status={embeddingStageStatus} />
+            <LineageLink href="/embeddings" label={labels.embedding} locale={locale} status={lineageLoading ? undefined : embeddingStageStatus} />
             {isHistorical ? <span className="truncate text-[10px] text-warning">({labels.historical})</span> : null}
           </nav> : null}
       </div>
     </section>
   );
-}
-
-/** Other surfaces keep their existing compact empty-state behavior; build pages render PipelineContextBar directly. */
-export function ConditionalPipelineContextBar() {
-  const { activeDocumentId } = useDocumentPipeline();
-  return <div className={activeDocumentId ? "sr-only" : undefined}><PipelineContextBar /></div>;
 }

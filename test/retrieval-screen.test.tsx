@@ -1,10 +1,52 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PreferencesProvider } from "@/components/preferences-provider";
 import { RetrievalScreen } from "@/components/retrieval-screen";
 import { DocumentPipelineProvider } from "@/components/document-pipeline-provider";
+
+const capabilities = {
+  embeddingModel: "gemini",
+  embeddingDimensions: 768,
+  generationModel: "gemini",
+  rerankModel: "gemini",
+  judgeModel: "gemini",
+  embeddingFormatVersion: "v1",
+  limits: {},
+};
+
+function json(payload: unknown) {
+  return Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+}
+
+function stubEmptyWorkspace() {
+  vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+    if (url.endsWith("/capabilities")) return json(capabilities);
+    if (url.endsWith("/documents")) return json({ items: [] });
+    throw new Error(`unexpected request: ${url}`);
+  }));
+}
+
+function summary() {
+  const run = (id: string, upstream: Record<string, string>) => ({ id, status: "completed", isCompatible: true, upstream, config: {}, timing: {}, error: null });
+  return {
+    id: "document-1",
+    fileName: "lesson.pdf",
+    mediaType: "application/pdf",
+    sizeBytes: 9,
+    pageCount: 1,
+    activeParseRunId: "parse-1",
+    activeChunkRunId: "chunk-1",
+    activeEmbeddingRunId: "embedding-1",
+    parseRuns: [run("parse-1", {})],
+    chunkRuns: [run("chunk-1", { parseRunId: "parse-1" })],
+    embeddingRuns: [run("embedding-1", { chunkRunId: "chunk-1" })],
+    experiments: [],
+    evaluationDatasets: [],
+    evaluationRuns: [],
+  };
+}
 
 function renderRetrieval() {
   return render(
@@ -17,17 +59,30 @@ function renderRetrieval() {
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 describe("RetrievalScreen", () => {
-  it("exposes the compact controls and one truthful blocker state", () => {
+  it("shows no blocker while the workspace loads, then one truthful blocker", async () => {
+    let finishDocuments!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith("/capabilities")) return json(capabilities);
+      if (url.endsWith("/documents")) return new Promise<Response>((resolve) => { finishDocuments = resolve; });
+      throw new Error(`unexpected request: ${url}`);
+    }));
     renderRetrieval();
 
-    expect(screen.getByRole("textbox", { name: "Question" })).toHaveAccessibleName("Question");
     const run = screen.getByRole("button", { name: "Run experiment" });
     expect(run).toBeDisabled();
+    expect(screen.queryByTestId("playground-blocker")).not.toBeInTheDocument();
+    expect(screen.queryByText("Select a document")).not.toBeInTheDocument();
+
+    await waitFor(() => expect(finishDocuments).toBeTypeOf("function"));
+    finishDocuments(new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    await waitFor(() => expect(screen.getByTestId("playground-blocker")).toHaveTextContent("Action blocked"));
+    expect(screen.getByRole("textbox", { name: "Question" })).toHaveAccessibleName("Question");
     expect(run).toHaveAccessibleDescription("Select a document and complete indexing setup first.");
-    expect(screen.getByTestId("playground-blocker")).toHaveTextContent("Action blocked");
     expect(screen.getByTestId("playground-blocker")).toHaveTextContent("Go to Documents");
     expect(screen.getByRole("button", { name: "Hybrid" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("switch", { name: "Reranker" })).toHaveAttribute("aria-checked", "false");
@@ -44,9 +99,33 @@ describe("RetrievalScreen", () => {
     expect(screen.queryByText("No trace data is available yet.")).not.toBeInTheDocument();
   });
 
+  it("treats an empty question with a complete lineage as ready, not blocked", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-1");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith("/capabilities")) return json(capabilities);
+      if (url.endsWith("/documents")) return json({ items: [{ ...summary(), parseRuns: undefined }] });
+      if (url.endsWith("/documents/document-1/summary")) return json(summary());
+      if (url.endsWith("/documents/document-1/pipelines")) return json([]);
+      if (url.includes("/parse-runs/")) return new Promise<Response>(() => undefined);
+      throw new Error(`unexpected request: ${url}`);
+    }));
+    renderRetrieval();
+
+    const run = screen.getByRole("button", { name: "Run experiment" });
+    await waitFor(() => expect(run).toHaveAccessibleDescription("Enter a question to run an experiment."));
+    expect(screen.queryByTestId("playground-blocker")).not.toBeInTheDocument();
+    expect(run).toBeDisabled();
+
+    await user.type(screen.getByRole("textbox", { name: "Question" }), "What is RAG?");
+    expect(run).toBeEnabled();
+  });
+
   it("allows request parameters to be prepared and reset without running fake retrieval", async () => {
     const user = userEvent.setup();
+    stubEmptyWorkspace();
     renderRetrieval();
+    await waitFor(() => expect(screen.getByTestId("playground-blocker")).toHaveTextContent("Select a document"));
 
     const question = screen.getByRole("textbox", { name: "Question" });
     await user.type(question, "What is RAG?");

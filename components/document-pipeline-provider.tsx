@@ -4,9 +4,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { usePathname } from "next/navigation";
 
 import { useAuthBootstrap } from "@/components/auth-provider";
-import { DocumentApiError, type DocumentApiErrorCode } from "@/lib/document-api";
-import { validatePdfFile, type DocumentFileValidationError } from "@/lib/document-file";
-import type { DocumentParseResponse } from "@/lib/document-parse-types";
+import { DocumentApiError } from "@/lib/document-api";
+import { validatePdfFile } from "@/lib/document-file";
 import {
   createChunkRun,
   createEmbeddingRun,
@@ -23,12 +22,12 @@ import {
   getExperiment,
   getParseRun,
   getEmbeddingRun,
+  isAbortError,
   listDocumentPipelines,
   listDocuments,
   uploadDocument,
   deleteDocument,
   listEvaluationRuns,
-  parseAndPersistDocument,
   reparsePersistedDocument,
   deleteDocumentPipeline,
   rerunGeneration,
@@ -54,29 +53,45 @@ import type {
   ExperimentRun,
   ExperimentSummary,
   PersistedDocument,
+  PersistedParseResponse,
   ParseRun,
-  RunSummary,
 } from "@/lib/rag-api-types";
-import type { DocumentActivityEventType } from "@/lib/rag-ui-types";
+import {
+  completedCompatibleRun,
+  describeReparseImpact,
+  emptyLineageSelection,
+  pipelineSelection,
+  pipelineStatusFromRun,
+  resolveLineageSelection,
+  type PipelineOperationStatus,
+  type ReparseImpact,
+} from "@/lib/pipeline-lineage";
+import {
+  forgetActivePipeline,
+  readActiveDocument,
+  readActivePipeline,
+  readLineageSelections,
+  rememberActiveDocument,
+  rememberActivePipeline,
+  rememberLineageSelections,
+  type LineageSelectionStore,
+} from "@/lib/pipeline-storage";
 
 export type DocumentParseStatus = "not-started" | "ready" | "queued" | "running" | "completed" | "failed";
-export type PipelineOperationStatus = "locked" | "ready" | "processing" | "completed" | "skipped" | "error" | "stale";
+export type { PipelineOperationStatus } from "@/lib/pipeline-lineage";
 export type PersistenceStatus = "checking" | "available" | "unavailable";
-
-export type DocumentActivityEvent = {
-  id: number;
-  type: DocumentActivityEventType;
-  errorCode?: DocumentApiErrorCode;
-};
+/**
+ * Whether the active workspace (documents and the active document's lineage)
+ * has been resolved. Screens must not evaluate blockers while it is "loading".
+ */
+export type WorkspaceStatus = "loading" | "ready" | "unavailable";
 export type { DocumentLineageSelection } from "@/lib/rag-api-types";
-
-type LineageSelectionStore = Record<string, DocumentLineageSelection>;
 
 type DocumentSnapshot = {
   detail: DocumentSummary;
   summaryFetchedAt?: number;
   selection: DocumentLineageSelection;
-  parseResult: DocumentParseResponse | null;
+  parseResult: PersistedParseResponse | null;
   parseStatus: DocumentParseStatus;
   inFlightParseRunId: string | null;
   parseError: DocumentApiError | null;
@@ -89,6 +104,12 @@ type DocumentSnapshot = {
   experimentStatus: PipelineOperationStatus;
   experimentRun: ExperimentRun | null;
   evaluationStatus: PipelineOperationStatus;
+};
+
+type LoadedDocumentWorkspace = {
+  pipelines: DocumentPipeline[];
+  summary: DocumentSummary;
+  fetchedAt: number;
 };
 
 type PipelineMutationContext = {
@@ -109,17 +130,20 @@ type EvaluationRunInput = {
 };
 
 type DocumentPipelineContextValue = {
-  pendingUpload: File | null;
-  fileError: DocumentFileValidationError | null;
   parseStatus: DocumentParseStatus;
   parseProgress: number;
   parseProgressEstimated: boolean;
   parsePhase: string | null;
-  parseResult: DocumentParseResponse | null;
+  /**
+   * Inspect-screen artifact: the inspected run when one is being inspected,
+   * otherwise the selected one. It may be historical; use screens must read
+   * `selectedParseResult` instead.
+   */
+  parseResult: PersistedParseResponse | null;
   parseError: DocumentApiError | null;
-  activity: DocumentActivityEvent[];
   persistenceStatus: PersistenceStatus;
   persistenceError: DocumentApiError | null;
+  workspaceStatus: WorkspaceStatus;
   capabilities: Capabilities | null;
   documents: PersistedDocument[];
   activeDocumentId: string | null;
@@ -128,14 +152,20 @@ type DocumentPipelineContextValue = {
   selectedParseRunId: string | null;
   selectedChunkRunId: string | null;
   selectedEmbeddingRunId: string | null;
+  /** Artifacts of the selected (canonical) lineage only; never an inspected historical run. */
+  selectedParseResult: PersistedParseResponse | null;
+  selectedChunkRun: ChunkRun | null;
+  selectedEmbeddingRun: EmbeddingRun | null;
   /** Read-only artifact cursor; never changes the saved pipeline lineage. */
   inspectedParseRunId: string | null;
   inspectedChunkRunId: string | null;
   inspectedEmbeddingRunId: string | null;
   chunkStatus: PipelineOperationStatus;
+  /** Inspect-screen chunk run (inspected or selected). Use screens read `selectedChunkRun`. */
   chunkRun: ChunkRun | null;
   chunkError: DocumentApiError | null;
   embeddingStatus: PipelineOperationStatus;
+  /** Inspect-screen embedding run (inspected or selected). Use screens read `selectedEmbeddingRun`. */
   embeddingRun: EmbeddingRun | null;
   embeddingError: DocumentApiError | null;
   experimentStatus: PipelineOperationStatus;
@@ -152,7 +182,8 @@ type DocumentPipelineContextValue = {
   activePipelineId: string | null;
   activePipeline: DocumentPipeline | null;
   pipelineSelectionMode: "scratch" | "saved";
-  selectFile: (file: File | undefined) => void;
+  /** What a completed reparse would do to the working lineage (for a confirmation step). */
+  reparseImpact: ReparseImpact;
   addDocument: (file: File) => Promise<PersistedDocument | null>;
   selectPersistedDocument: (documentId: string) => Promise<void>;
   deletePersistedDocument: (documentId: string) => Promise<void>;
@@ -169,10 +200,7 @@ type DocumentPipelineContextValue = {
   createPipeline: (name: string) => Promise<DocumentPipeline | null>;
   renamePipeline: (pipelineId: string, name: string) => Promise<DocumentPipeline | null>;
   deletePipeline: (pipelineId: string) => Promise<boolean>;
-  removeFile: () => void;
-  parseSelectedFile: () => Promise<void>;
   reparseActiveDocument: () => Promise<void>;
-  parseActiveDocument: () => Promise<void>;
   runChunking: (strategy: ChunkStrategy, config: ChunkConfig) => Promise<ChunkRun | null>;
   runEmbedding: () => Promise<EmbeddingRun | null>;
   runExperiment: (input: Omit<ExperimentRequest, "documentId" | "chunkRunId" | "embeddingRunId">) => Promise<void>;
@@ -189,146 +217,7 @@ type DocumentPipelineContextValue = {
 };
 
 const DocumentPipelineContext = createContext<DocumentPipelineContextValue | null>(null);
-const ACTIVE_DOCUMENT_STORAGE_KEY = "rag-steplab-active-document-id";
-const ACTIVE_DOCUMENT_STORAGE_PREFIX = `${ACTIVE_DOCUMENT_STORAGE_KEY}:`;
-const LINEAGE_SELECTION_STORAGE_KEY = "rag-steplab-lineage-selections-v1";
-const LINEAGE_SELECTION_STORAGE_PREFIX = `${LINEAGE_SELECTION_STORAGE_KEY}:`;
-const ACTIVE_PIPELINE_STORAGE_KEY = "rag-steplab-active-pipeline-id";
-const ACTIVE_PIPELINE_STORAGE_PREFIX = `${ACTIVE_PIPELINE_STORAGE_KEY}:`;
-const ACTIVE_PIPELINE_DOCUMENT_STORAGE_PREFIX = `${ACTIVE_PIPELINE_STORAGE_KEY}:document:`;
-const SCRATCH_PIPELINE_STORAGE_VALUE = "__scratch__";
 const SUMMARY_CACHE_MAX_AGE_MS = 60_000;
-
-function activeDocumentStorageKey(userId?: string | null) {
-  return userId ? `${ACTIVE_DOCUMENT_STORAGE_PREFIX}${userId}` : ACTIVE_DOCUMENT_STORAGE_KEY;
-}
-
-function rememberActiveDocument(documentId: string | null, userId?: string | null) {
-  try {
-    const key = activeDocumentStorageKey(userId);
-    if (documentId) window.localStorage.setItem(key, documentId);
-    else window.localStorage.removeItem(key);
-  } catch {
-    // Kalıcı seçim bir kolaylıktır; storage engeli gerçek pipeline'ı durdurmamalıdır.
-  }
-}
-
-function activePipelineStorageKey(userId?: string | null, documentId?: string | null) {
-  if (documentId) return userId
-    ? `${ACTIVE_PIPELINE_DOCUMENT_STORAGE_PREFIX}${userId}:${documentId}`
-    : `${ACTIVE_PIPELINE_DOCUMENT_STORAGE_PREFIX}${documentId}`;
-  return userId ? `${ACTIVE_PIPELINE_STORAGE_PREFIX}${userId}` : ACTIVE_PIPELINE_STORAGE_KEY;
-}
-
-function rememberActivePipeline(pipelineId: string | null, userId?: string | null, documentId?: string | null) {
-  try {
-    const key = activePipelineStorageKey(userId, documentId);
-    window.localStorage.setItem(key, pipelineId ?? SCRATCH_PIPELINE_STORAGE_VALUE);
-  } catch {
-    // Pipeline kimliği yalnız oturum kolaylığıdır; asıl seçim server state'idir.
-  }
-}
-
-function forgetActivePipeline(userId?: string | null, documentId?: string | null) {
-  try {
-    window.localStorage.removeItem(activePipelineStorageKey(userId, documentId));
-  } catch {
-    // Storage engeli silme akışını durdurmamalıdır.
-  }
-}
-
-function readActivePipeline(documentId: string, userId?: string | null): string | null | undefined {
-  try {
-    const scoped = window.localStorage.getItem(activePipelineStorageKey(userId, documentId));
-    const value = scoped ?? window.localStorage.getItem(activePipelineStorageKey(userId));
-    if (value === null) return undefined;
-    return value === SCRATCH_PIPELINE_STORAGE_VALUE ? null : value;
-  } catch {
-    return undefined;
-  }
-}
-
-function lineageSelectionStorageKey(userId?: string | null) {
-  return userId ? `${LINEAGE_SELECTION_STORAGE_PREFIX}${userId}` : LINEAGE_SELECTION_STORAGE_KEY;
-}
-
-function emptyLineageSelection(): DocumentLineageSelection {
-  return { selectedParseRunId: null, selectedChunkRunId: null, selectedEmbeddingRunId: null };
-}
-
-function pipelineSelection(pipeline: DocumentPipeline): DocumentLineageSelection {
-  return {
-    selectedParseRunId: pipeline.parseRunId,
-    selectedChunkRunId: pipeline.chunkRunId,
-    selectedEmbeddingRunId: pipeline.embeddingRunId,
-  };
-}
-
-function normalizeLineageSelection(value: unknown): DocumentLineageSelection {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return emptyLineageSelection();
-  const payload = value as Record<string, unknown>;
-  const id = (key: keyof DocumentLineageSelection) => typeof payload[key] === "string" ? payload[key] as string : null;
-  return {
-    selectedParseRunId: id("selectedParseRunId"),
-    selectedChunkRunId: id("selectedChunkRunId"),
-    selectedEmbeddingRunId: id("selectedEmbeddingRunId"),
-  };
-}
-
-function readLineageSelections(userId?: string | null): LineageSelectionStore {
-  try {
-    const raw = window.localStorage.getItem(lineageSelectionStorageKey(userId));
-    if (!raw) return {};
-    const payload = JSON.parse(raw) as unknown;
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
-    return Object.fromEntries(Object.entries(payload).map(([documentId, selection]) => [documentId, normalizeLineageSelection(selection)]));
-  } catch {
-    return {};
-  }
-}
-
-function rememberLineageSelections(selections: LineageSelectionStore, userId?: string | null) {
-  try {
-    window.localStorage.setItem(lineageSelectionStorageKey(userId), JSON.stringify(selections));
-  } catch {
-    // Seçim persistence yalnız bir kolaylıktır; pipeline'ı durdurmamalıdır.
-  }
-}
-
-function completedCompatibleRun(run: RunSummary | undefined) {
-  return Boolean(run && run.status === "completed" && run.isCompatible);
-}
-
-function pipelineStatusFromRun(run: RunSummary): PipelineOperationStatus {
-  if (run.status === "queued" || run.status === "running") return "processing";
-  if (run.status === "completed") return "completed";
-  return "error";
-}
-
-function resolveLineageSelection(
-  detail: DocumentSummary,
-  stored?: DocumentLineageSelection,
-  strict = false,
-): DocumentLineageSelection {
-  const candidate = stored ?? emptyLineageSelection();
-  const parse = detail.parseRuns.find((run) => run.id === candidate.selectedParseRunId && completedCompatibleRun(run))
-    ?? (strict ? undefined : detail.parseRuns.find((run) => run.id === detail.activeParseRunId && completedCompatibleRun(run)));
-  const parseRunId = parse?.id ?? null;
-  const chunk = parseRunId
-    ? detail.chunkRuns.find((run) => run.id === candidate.selectedChunkRunId && run.upstream.parseRunId === parseRunId && completedCompatibleRun(run))
-      ?? (strict ? undefined : detail.chunkRuns.find((run) => run.id === detail.activeChunkRunId && run.upstream.parseRunId === parseRunId && completedCompatibleRun(run)))
-    : undefined;
-  const chunkRunId = chunk?.id ?? null;
-  const embedding = chunkRunId
-    ? detail.embeddingRuns.find((run) => run.id === candidate.selectedEmbeddingRunId && run.upstream.chunkRunId === chunkRunId && completedCompatibleRun(run))
-      ?? (strict ? undefined : detail.embeddingRuns.find((run) => run.id === detail.activeEmbeddingRunId && run.upstream.chunkRunId === chunkRunId && completedCompatibleRun(run)))
-    : undefined;
-  return {
-    selectedParseRunId: parseRunId,
-    selectedChunkRunId: chunkRunId,
-    selectedEmbeddingRunId: embedding?.id ?? null,
-  };
-}
 
 function asApiError(error: unknown, fallback: string) {
   return error instanceof DocumentApiError ? error : new DocumentApiError("unknown", fallback);
@@ -338,23 +227,25 @@ function removeControllerIfCurrent(controllers: Map<string, AbortController>, ke
   if (controllers.get(key) === controller) controllers.delete(key);
 }
 
+function isRunInFlight(status: string) {
+  return status === "queued" || status === "running";
+}
+
 export function DocumentPipelineProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "/";
-  const { userId: authoritativeUserId } = useAuthBootstrap();
+  const { userId: authoritativeUserId, ready: authReady, error: authError, retry: retryAuth } = useAuthBootstrap();
   const [authUserId, setAuthUserId] = useState<string | null>(authoritativeUserId);
-  const [pendingUpload, setPendingUpload] = useState<File | null>(null);
-  const [fileError, setFileError] = useState<DocumentFileValidationError | null>(null);
   const [parseStatus, setParseStatus] = useState<DocumentParseStatus>("not-started");
   const [parseProgress, setParseProgress] = useState(0);
   const [parsePhase, setParsePhase] = useState<string | null>(null);
   // Docling exposes coarse stage checkpoints, so the UI may interpolate between
   // them while the long-running conversion itself is still in progress.
   const [lastReportedParseProgress, setLastReportedParseProgress] = useState(0);
-  const [parseResult, setParseResult] = useState<DocumentParseResponse | null>(null);
+  const [selectedParseResult, setSelectedParseResult] = useState<PersistedParseResponse | null>(null);
+  const [inspectedParseResult, setInspectedParseResult] = useState<PersistedParseResponse | null>(null);
   const [parseError, setParseError] = useState<DocumentApiError | null>(null);
   const parseInFlightRef = useRef(false);
   const activeParseRunIdRef = useRef<string | null>(null);
-  const [activity, setActivity] = useState<DocumentActivityEvent[]>([]);
   const [persistenceStatus, setPersistenceStatus] = useState<PersistenceStatus>("checking");
   const [persistenceError, setPersistenceError] = useState<DocumentApiError | null>(null);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
@@ -362,17 +253,15 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
   const [activeDocumentMetadata, setActiveDocumentMetadata] = useState<PersistedDocument | null>(null);
   const [activeDocument, setActiveDocument] = useState<DocumentSummary | null>(null);
-  const [selectedParseRunId, setSelectedParseRunId] = useState<string | null>(null);
-  const [selectedChunkRunId, setSelectedChunkRunId] = useState<string | null>(null);
-  const [selectedEmbeddingRunId, setSelectedEmbeddingRunId] = useState<string | null>(null);
-  const [inspectedParseRunId, setInspectedParseRunId] = useState<string | null>(null);
-  const [inspectedChunkRunId, setInspectedChunkRunId] = useState<string | null>(null);
-  const [inspectedEmbeddingRunId, setInspectedEmbeddingRunId] = useState<string | null>(null);
+  const [selectedLineage, setSelectedLineage] = useState<DocumentLineageSelection>(emptyLineageSelection);
+  const [inspectedLineage, setInspectedLineage] = useState<DocumentLineageSelection>(emptyLineageSelection);
   const [chunkStatus, setChunkStatus] = useState<PipelineOperationStatus>("locked");
-  const [chunkRun, setChunkRun] = useState<ChunkRun | null>(null);
+  const [selectedChunkRun, setSelectedChunkRun] = useState<ChunkRun | null>(null);
+  const [inspectedChunkRun, setInspectedChunkRun] = useState<ChunkRun | null>(null);
   const [chunkError, setChunkError] = useState<DocumentApiError | null>(null);
   const [embeddingStatus, setEmbeddingStatus] = useState<PipelineOperationStatus>("locked");
-  const [embeddingRun, setEmbeddingRun] = useState<EmbeddingRun | null>(null);
+  const [selectedEmbeddingRun, setSelectedEmbeddingRun] = useState<EmbeddingRun | null>(null);
+  const [inspectedEmbeddingRun, setInspectedEmbeddingRun] = useState<EmbeddingRun | null>(null);
   const [embeddingError, setEmbeddingError] = useState<DocumentApiError | null>(null);
   const [experimentStatus, setExperimentStatus] = useState<PipelineOperationStatus>("locked");
   const [experimentRun, setExperimentRun] = useState<ExperimentRun | null>(null);
@@ -390,44 +279,54 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const documentEpochRef = useRef(0);
   const documentLoadRequestRef = useRef(0);
   const selectionRequestRef = useRef(0);
-  const inspectionRequestRef = useRef(0);
-  const inspectedParseRunIdRef = useRef<string | null>(null);
-  const inspectedChunkRunIdRef = useRef<string | null>(null);
-  const inspectedEmbeddingRunIdRef = useRef<string | null>(null);
+  const selectedLineageRef = useRef<DocumentLineageSelection>(emptyLineageSelection());
+  const inspectedLineageRef = useRef<DocumentLineageSelection>(emptyLineageSelection());
   const activeDocumentRef = useRef<DocumentSummary | null>(null);
   const activeDocumentSummaryLoadedAtRef = useRef(0);
   const activePipelineRef = useRef<DocumentPipeline | null>(null);
   const authUserIdRef = useRef<string | null>(authUserId);
   const lineageSelectionsRef = useRef<LineageSelectionStore>({});
-  const activityIdRef = useRef(0);
   const controllersRef = useRef(new Map<string, AbortController>());
   const artifactCacheRef = useRef(new Map<string, ParseRun | ChunkRun | EmbeddingRun | ExperimentRun | EvaluationDataset | EvaluationRun>());
   const pipelineRevisionRef = useRef(new Map<string, number>());
   const pipelineMutationQueueRef = useRef(new Map<string, Promise<boolean>>());
-  const persistActivePipelineSelectionRef = useRef<(selection: DocumentLineageSelection) => Promise<boolean>>(async () => false);
+  const persistActivePipelineSelectionRef = useRef<(selection: DocumentLineageSelection, expectedPipelineId?: string | null) => Promise<boolean>>(async () => false);
 
-  const setInspectedSelection = useCallback((selection: DocumentLineageSelection) => {
-    inspectedParseRunIdRef.current = selection.selectedParseRunId;
-    inspectedChunkRunIdRef.current = selection.selectedChunkRunId;
-    inspectedEmbeddingRunIdRef.current = selection.selectedEmbeddingRunId;
-    setInspectedParseRunId(selection.selectedParseRunId);
-    setInspectedChunkRunId(selection.selectedChunkRunId);
-    setInspectedEmbeddingRunId(selection.selectedEmbeddingRunId);
+  const applySelectedLineage = useCallback((selection: DocumentLineageSelection) => {
+    selectedLineageRef.current = selection;
+    setSelectedLineage(selection);
+  }, []);
+
+  /** Resets the inspection cursor to the selected lineage. */
+  const resetInspection = useCallback((selection: DocumentLineageSelection) => {
+    inspectedLineageRef.current = selection;
+    setInspectedLineage(selection);
+    setInspectedParseResult(null);
+    setInspectedChunkRun(null);
+    setInspectedEmbeddingRun(null);
   }, []);
 
   const beginArtifactInspection = useCallback((kind: "parse" | "chunk" | "embedding", runId: string) => {
-    const requestId = ++inspectionRequestRef.current;
-    if (kind === "parse") {
-      inspectedParseRunIdRef.current = runId;
-      setInspectedParseRunId(runId);
-    } else if (kind === "chunk") {
-      inspectedChunkRunIdRef.current = runId;
-      setInspectedChunkRunId(runId);
-    } else {
-      inspectedEmbeddingRunIdRef.current = runId;
-      setInspectedEmbeddingRunId(runId);
-    }
-    return requestId;
+    const key = kind === "parse" ? "selectedParseRunId" : kind === "chunk" ? "selectedChunkRunId" : "selectedEmbeddingRunId";
+    const next = { ...inspectedLineageRef.current, [key]: runId };
+    inspectedLineageRef.current = next;
+    setInspectedLineage(next);
+  }, []);
+
+  /**
+   * Captures the document/selection scope of an async action. Results must be
+   * dropped when the user switched document, pipeline or lineage meanwhile.
+   */
+  const captureScope = useCallback(() => {
+    const epoch = documentEpochRef.current;
+    const selection = selectionRequestRef.current;
+    const documentId = activeDocumentRef.current?.id ?? null;
+    return {
+      documentId,
+      isCurrent: () => documentEpochRef.current === epoch
+        && selectionRequestRef.current === selection
+        && activeDocumentRef.current?.id === documentId,
+    };
   }, []);
 
   const replaceController = useCallback((key: string) => {
@@ -442,53 +341,23 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     controllersRef.current.clear();
   }, []);
 
-  const handleAuthUserChange = useCallback((nextUserId: string | null) => {
-    if (authUserIdRef.current === nextUserId) return;
-    controllersRef.current.forEach((controller) => controller.abort());
-    controllersRef.current.clear();
-    documentLoadRequestRef.current += 1;
-    documentEpochRef.current += 1;
-    selectionRequestRef.current += 1;
-    inspectionRequestRef.current += 1;
-    runIdRef.current += 1;
+  /** Clears every lineage-bound value; callers decide document-level state. */
+  const resetLineageState = useCallback(() => {
     parseInFlightRef.current = false;
     activeParseRunIdRef.current = null;
-    activeDocumentRef.current = null;
-    activeDocumentSummaryLoadedAtRef.current = 0;
-    activePipelineRef.current = null;
-    pipelineRevisionRef.current.clear();
-    pipelineMutationQueueRef.current.clear();
-    lineageSelectionsRef.current = {};
-    artifactCacheRef.current.clear();
-    setActiveDocument(null);
-    setActiveDocumentId(null);
-    setActiveDocumentMetadata(null);
-    setCapabilities(null);
-    setDocuments([]);
-    setPersistenceStatus("checking");
-    setPersistenceError(null);
-    setPendingUpload(null);
-    setFileError(null);
-    setActivity([]);
+    applySelectedLineage(emptyLineageSelection());
+    resetInspection(emptyLineageSelection());
     setParseStatus("not-started");
     setParseProgress(0);
     setLastReportedParseProgress(0);
-    setParseResult(null);
+    setParsePhase(null);
+    setSelectedParseResult(null);
     setParseError(null);
-    setSelectedParseRunId(null);
-    setSelectedChunkRunId(null);
-    setSelectedEmbeddingRunId(null);
-    inspectedParseRunIdRef.current = null;
-    inspectedChunkRunIdRef.current = null;
-    inspectedEmbeddingRunIdRef.current = null;
-    setInspectedParseRunId(null);
-    setInspectedChunkRunId(null);
-    setInspectedEmbeddingRunId(null);
     setChunkStatus("locked");
-    setChunkRun(null);
+    setSelectedChunkRun(null);
     setChunkError(null);
     setEmbeddingStatus("locked");
-    setEmbeddingRun(null);
+    setSelectedEmbeddingRun(null);
     setEmbeddingError(null);
     setExperimentStatus("locked");
     setExperimentRun(null);
@@ -499,11 +368,37 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setEvaluationRun(null);
     setEvaluationError(null);
     setEvaluationHistory([]);
+  }, [applySelectedLineage, resetInspection]);
+
+  const handleAuthUserChange = useCallback((nextUserId: string | null) => {
+    if (authUserIdRef.current === nextUserId) return;
+    controllersRef.current.forEach((controller) => controller.abort());
+    controllersRef.current.clear();
+    documentLoadRequestRef.current += 1;
+    documentEpochRef.current += 1;
+    selectionRequestRef.current += 1;
+    runIdRef.current += 1;
+    activeDocumentRef.current = null;
+    activeDocumentSummaryLoadedAtRef.current = 0;
+    activePipelineRef.current = null;
+    pipelineRevisionRef.current.clear();
+    pipelineMutationQueueRef.current.clear();
+    lineageSelectionsRef.current = {};
+    artifactCacheRef.current.clear();
+    resetLineageState();
+    setActiveDocument(null);
+    setActiveDocumentId(null);
+    setActiveDocumentMetadata(null);
+    setCapabilities(null);
+    setDocuments([]);
+    setPersistenceStatus("checking");
+    setPersistenceError(null);
+    setUploadNotice(null);
     setPipelines([]);
     setActivePipelineId(null);
     authUserIdRef.current = nextUserId;
     setAuthUserId(nextUserId);
-  }, []);
+  }, [resetLineageState]);
 
   useEffect(() => {
     handleAuthUserChange(authoritativeUserId);
@@ -523,11 +418,6 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
 
   const readArtifact = useCallback(<T extends ParseRun | ChunkRun | EmbeddingRun | ExperimentRun | EvaluationDataset | EvaluationRun,>(kind: string, id: string) => {
     return artifactCacheRef.current.get(`${kind}:${id}`) as T | undefined;
-  }, []);
-
-  const addActivity = useCallback((type: DocumentActivityEventType, errorCode?: DocumentApiErrorCode) => {
-    const id = ++activityIdRef.current;
-    setActivity((current) => [...current, { id, type, errorCode }]);
   }, []);
 
   const applyParseRunStatus = useCallback((run: ParseRun, expectedRunId: number) => {
@@ -574,20 +464,17 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       updatedAt: snapshot.detail.updatedAt,
     });
     setActiveDocument(snapshot.detail);
-    setSelectedParseRunId(snapshot.selection.selectedParseRunId);
-    setSelectedChunkRunId(snapshot.selection.selectedChunkRunId);
-    setSelectedEmbeddingRunId(snapshot.selection.selectedEmbeddingRunId);
-    inspectionRequestRef.current += 1;
-    setInspectedSelection(snapshot.selection);
+    applySelectedLineage(snapshot.selection);
+    resetInspection(snapshot.selection);
     setPersistenceError(null);
     if (persistSelection && !activePipelineRef.current) rememberSelection(snapshot.detail.id, snapshot.selection);
     activeParseRunIdRef.current = snapshot.inFlightParseRunId ?? snapshot.selection.selectedParseRunId;
-    setParseResult(snapshot.parseResult);
+    setSelectedParseResult(snapshot.parseResult);
     setParseStatus(snapshot.parseStatus);
-    setChunkRun(snapshot.chunkRun);
+    setSelectedChunkRun(snapshot.chunkRun);
     setChunkStatus(snapshot.chunkStatus);
     setChunkError(null);
-    setEmbeddingRun(snapshot.embeddingRun);
+    setSelectedEmbeddingRun(snapshot.embeddingRun);
     setEmbeddingStatus(snapshot.embeddingStatus);
     setEmbeddingError(null);
     setExperimentHistory(snapshot.experiments);
@@ -609,7 +496,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setParsePhase(snapshot.inFlightParseRunId
       ? snapshot.detail.parseRuns.find((run) => run.id === snapshot.inFlightParseRunId)?.phase ?? null
       : selectedParseSummary?.phase ?? (snapshot.parseResult ? "completed" : null));
-  }, [rememberSelection, setInspectedSelection]);
+  }, [applySelectedLineage, rememberSelection, resetInspection]);
 
   const buildDocumentSnapshot = useCallback((
     detail: DocumentSummary,
@@ -624,14 +511,13 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const parseSummary = selection.selectedParseRunId
       ? detail.parseRuns.find((run) => run.id === selection.selectedParseRunId) ?? null
       : null;
-    const inFlightParseSummary = detail.parseRuns.find((run) => run.status === "queued" || run.status === "running") ?? null;
+    const inFlightParseSummary = detail.parseRuns.find((run) => isRunInFlight(run.status)) ?? null;
     const latestParseSummary = detail.parseRuns[0] ?? null;
     const failedReparseSummary = latestParseSummary?.status === "failed" && latestParseSummary.id !== detail.activeParseRunId
       ? latestParseSummary
       : null;
     const visibleParseSummary = inFlightParseSummary ?? failedReparseSummary ?? parseSummary;
     const parseRun = selection.selectedParseRunId ? readArtifact<ParseRun>("parse", selection.selectedParseRunId) : undefined;
-    const legacyActiveParse = selection.selectedParseRunId === detail.activeParseRun?.parseRunId ? detail.activeParseRun : null;
     const chunkRun = selection.selectedChunkRunId ? readArtifact<ChunkRun>("chunk", selection.selectedChunkRunId) : undefined;
     const embeddingRun = selection.selectedEmbeddingRunId ? readArtifact<EmbeddingRun>("embedding", selection.selectedEmbeddingRunId) : undefined;
     const chunkSummary = selection.selectedChunkRunId ? detail.chunkRuns.find((run) => run.id === selection.selectedChunkRunId) : undefined;
@@ -659,19 +545,17 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       && (run.embeddingRunId === null || run.embeddingRunId === effectiveSelection.selectedEmbeddingRunId)) ?? null;
     const selectedExperiment = selectedExperimentSummary ? readArtifact<ExperimentRun>("experiment", selectedExperimentSummary.id) ?? null : null;
     const nextParseStatus: DocumentParseStatus = inFlightParseSummary
-      ? inFlightParseSummary.status
+      ? inFlightParseSummary.status as DocumentParseStatus
       : failedReparseSummary
         ? "failed"
-        : (parseRun?.result ?? legacyActiveParse)
+        : parseRun?.result || parseSummary?.status === "completed"
           ? "completed"
-          : parseSummary?.status === "completed"
-            ? "completed"
-            : "not-started";
+          : "not-started";
     const embeddingReady = Boolean(effectiveSelection.selectedChunkRunId && embeddingMatchesLineage && embeddingRun);
     return {
       detail,
       selection: effectiveSelection,
-      parseResult: effectiveSelection.selectedParseRunId ? parseRun?.result ?? legacyActiveParse ?? null : null,
+      parseResult: effectiveSelection.selectedParseRunId ? parseRun?.result ?? null : null,
       parseStatus: nextParseStatus,
       inFlightParseRunId: inFlightParseSummary?.id ?? null,
       parseError: visibleParseSummary?.error
@@ -702,26 +586,49 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     };
   }, [buildDocumentSnapshot]);
 
-  const hydrateParseDetail = useCallback(async (
-    documentId: string,
-    runId: string,
-    expectedSelection = selectionRequestRef.current,
-    expectedInspection = inspectionRequestRef.current,
-  ) => {
-    const epoch = documentEpochRef.current;
+  // Artifact details are applied by run ID to every slot that currently wants
+  // that run: the selected lineage slot and/or the inspection slot. A late
+  // response for a run no slot wants anymore is cached but never shown.
+  const applyParseRun = useCallback((documentId: string, run: ParseRun) => {
+    if (activeDocumentRef.current?.id !== documentId) return;
+    const selectedId = selectedLineageRef.current.selectedParseRunId;
+    if (selectedId === run.id) {
+      setSelectedParseResult(run.result);
+      if (activeParseRunIdRef.current === run.id) {
+        setParseStatus(run.status);
+        setParseError(run.error ? new DocumentApiError(run.error.code, run.error.message) : null);
+      }
+    }
+    if (inspectedLineageRef.current.selectedParseRunId === run.id && selectedId !== run.id) {
+      setInspectedParseResult(run.result);
+    }
+  }, []);
+
+  const applyChunkRun = useCallback((documentId: string, run: ChunkRun) => {
+    if (activeDocumentRef.current?.id !== documentId) return;
+    const selectedId = selectedLineageRef.current.selectedChunkRunId;
+    if (selectedId === run.id) {
+      setSelectedChunkRun(run);
+      if (!controllersRef.current.has("chunk")) setChunkStatus(pipelineStatusFromRun(run));
+    }
+    if (inspectedLineageRef.current.selectedChunkRunId === run.id && selectedId !== run.id) setInspectedChunkRun(run);
+  }, []);
+
+  const applyEmbeddingRun = useCallback((documentId: string, run: EmbeddingRun) => {
+    if (activeDocumentRef.current?.id !== documentId) return;
+    const selectedId = selectedLineageRef.current.selectedEmbeddingRunId;
+    if (selectedId === run.id) {
+      setSelectedEmbeddingRun(run);
+      if (!controllersRef.current.has("embedding")) setEmbeddingStatus(pipelineStatusFromRun(run));
+    }
+    if (inspectedLineageRef.current.selectedEmbeddingRunId === run.id && selectedId !== run.id) setInspectedEmbeddingRun(run);
+  }, []);
+
+  const hydrateParseDetail = useCallback(async (documentId: string, runId: string) => {
     const cached = readArtifact<ParseRun>("parse", runId);
     if (cached && cached.documentId !== documentId) return null;
-    const isCurrent = () => documentEpochRef.current === epoch
-      && selectionRequestRef.current === expectedSelection
-      && inspectionRequestRef.current === expectedInspection
-      && inspectedParseRunIdRef.current === runId
-      && activeDocumentRef.current?.id === documentId;
     if (cached) {
-      if (isCurrent()) {
-        setParseResult(cached.result);
-        setParseStatus(cached.status);
-        setParseError(cached.error ? new DocumentApiError(cached.error.code, cached.error.message) : null);
-      }
+      applyParseRun(documentId, cached);
       return cached;
     }
     const controllerKey = `detail:parse:${documentId}:${runId}`;
@@ -731,40 +638,24 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       const run = await getParseRun(runId, controller.signal, documentId);
       if (run.documentId !== documentId) return null;
       cacheArtifact("parse", runId, run);
-      if (!isCurrent()) return run;
-      setParseResult(run.result);
-      setParseStatus(run.status);
-      setParseError(run.error ? new DocumentApiError(run.error.code, run.error.message) : null);
+      applyParseRun(documentId, run);
       return run;
     } catch (error) {
-      if (!(error instanceof DOMException && error.name === "AbortError") && isCurrent()) {
+      const wanted = selectedLineageRef.current.selectedParseRunId === runId || inspectedLineageRef.current.selectedParseRunId === runId;
+      if (!isAbortError(error) && wanted && activeDocumentRef.current?.id === documentId) {
         setParseError(asApiError(error, "The selected parse run could not be loaded."));
       }
       return null;
     } finally {
       removeControllerIfCurrent(controllersRef.current, controllerKey, controller);
     }
-  }, [cacheArtifact, readArtifact, replaceController]);
+  }, [applyParseRun, cacheArtifact, readArtifact, replaceController]);
 
-  const hydrateChunkDetail = useCallback(async (
-    documentId: string,
-    runId: string,
-    expectedSelection = selectionRequestRef.current,
-    expectedInspection = inspectionRequestRef.current,
-  ) => {
-    const epoch = documentEpochRef.current;
+  const hydrateChunkDetail = useCallback(async (documentId: string, runId: string) => {
     const cached = readArtifact<ChunkRun>("chunk", runId);
     if (cached && cached.documentId !== documentId) return null;
-    const isCurrent = () => documentEpochRef.current === epoch
-      && selectionRequestRef.current === expectedSelection
-      && inspectionRequestRef.current === expectedInspection
-      && inspectedChunkRunIdRef.current === runId
-      && activeDocumentRef.current?.id === documentId;
     if (cached) {
-      if (isCurrent()) {
-        setChunkRun(cached);
-        setChunkStatus(pipelineStatusFromRun(cached));
-      }
+      applyChunkRun(documentId, cached);
       return cached;
     }
     const controllerKey = `detail:chunk:${documentId}:${runId}`;
@@ -774,40 +665,28 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       const run = await getChunkRun(runId, controller.signal);
       if (run.documentId !== documentId) return null;
       cacheArtifact("chunk", runId, run);
-      if (!isCurrent()) return run;
-      setChunkRun(run);
-      setChunkStatus(pipelineStatusFromRun(run));
+      applyChunkRun(documentId, run);
       return run;
     } catch (error) {
-      if (!(error instanceof DOMException && error.name === "AbortError") && isCurrent()) {
-        setChunkError(asApiError(error, "The selected chunk run could not be loaded."));
-        setChunkStatus("error");
+      if (!isAbortError(error) && activeDocumentRef.current?.id === documentId) {
+        if (selectedLineageRef.current.selectedChunkRunId === runId) {
+          setChunkError(asApiError(error, "The selected chunk run could not be loaded."));
+          setChunkStatus("error");
+        } else if (inspectedLineageRef.current.selectedChunkRunId === runId) {
+          setChunkError(asApiError(error, "The selected chunk run could not be loaded."));
+        }
       }
       return null;
     } finally {
       removeControllerIfCurrent(controllersRef.current, controllerKey, controller);
     }
-  }, [cacheArtifact, readArtifact, replaceController]);
+  }, [applyChunkRun, cacheArtifact, readArtifact, replaceController]);
 
-  const hydrateEmbeddingDetail = useCallback(async (
-    documentId: string,
-    runId: string,
-    expectedSelection = selectionRequestRef.current,
-    expectedInspection = inspectionRequestRef.current,
-  ) => {
-    const epoch = documentEpochRef.current;
+  const hydrateEmbeddingDetail = useCallback(async (documentId: string, runId: string) => {
     const cached = readArtifact<EmbeddingRun>("embedding", runId);
     if (cached && cached.documentId !== documentId) return null;
-    const isCurrent = () => documentEpochRef.current === epoch
-      && selectionRequestRef.current === expectedSelection
-      && inspectionRequestRef.current === expectedInspection
-      && inspectedEmbeddingRunIdRef.current === runId
-      && activeDocumentRef.current?.id === documentId;
     if (cached) {
-      if (isCurrent()) {
-        setEmbeddingRun(cached);
-        setEmbeddingStatus(pipelineStatusFromRun(cached));
-      }
+      applyEmbeddingRun(documentId, cached);
       return cached;
     }
     const controllerKey = `detail:embedding:${documentId}:${runId}`;
@@ -817,20 +696,22 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       const run = await getEmbeddingRun(runId, controller.signal);
       if (run.documentId !== documentId) return null;
       cacheArtifact("embedding", runId, run);
-      if (!isCurrent()) return run;
-      setEmbeddingRun(run);
-      setEmbeddingStatus(pipelineStatusFromRun(run));
+      applyEmbeddingRun(documentId, run);
       return run;
     } catch (error) {
-      if (!(error instanceof DOMException && error.name === "AbortError") && isCurrent()) {
-        setEmbeddingError(asApiError(error, "The selected embedding run could not be loaded."));
-        setEmbeddingStatus("error");
+      if (!isAbortError(error) && activeDocumentRef.current?.id === documentId) {
+        if (selectedLineageRef.current.selectedEmbeddingRunId === runId) {
+          setEmbeddingError(asApiError(error, "The selected embedding run could not be loaded."));
+          setEmbeddingStatus("error");
+        } else if (inspectedLineageRef.current.selectedEmbeddingRunId === runId) {
+          setEmbeddingError(asApiError(error, "The selected embedding run could not be loaded."));
+        }
       }
       return null;
     } finally {
       removeControllerIfCurrent(controllersRef.current, controllerKey, controller);
     }
-  }, [cacheArtifact, readArtifact, replaceController]);
+  }, [applyEmbeddingRun, cacheArtifact, readArtifact, replaceController]);
 
   useEffect(() => {
     if (parseStatus !== "queued" && parseStatus !== "running") return;
@@ -849,8 +730,44 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     return () => window.clearInterval(interval);
   }, [parseStatus]);
 
+  /**
+   * A parse result belongs to the lineage that was active when the parse
+   * started. If the user switched pipeline or selection meanwhile, the new
+   * run only appears in history: nothing is PATCHed and the current lineage
+   * is refreshed as-is. Returns a snapshot only when the caller should commit
+   * the new parse as the working lineage.
+   */
+  const commitCompletedParse = useCallback(async (
+    documentId: string,
+    parseRunId: string,
+    startScope: { pipelineId: string | null; selectionRequest: number },
+    signal: AbortSignal,
+    isCurrentRun: () => boolean,
+  ): Promise<DocumentSnapshot | null> => {
+    const lineageUnchanged = (activePipelineRef.current?.id ?? null) === startScope.pipelineId
+      && selectionRequestRef.current === startScope.selectionRequest
+      && activeDocumentRef.current?.id === documentId;
+    if (lineageUnchanged) {
+      const selection = { selectedParseRunId: parseRunId, selectedChunkRunId: null, selectedEmbeddingRunId: null };
+      if (!await persistActivePipelineSelectionRef.current(selection, startScope.pipelineId)) return null;
+      const snapshot = await loadDocumentSnapshot(documentId, signal, selection, Boolean(activePipelineRef.current));
+      if (!isCurrentRun() || activeDocumentRef.current?.id !== documentId) return null;
+      return snapshot;
+    }
+    const pipeline = activePipelineRef.current;
+    const currentSelection = pipeline ? pipelineSelection(pipeline) : lineageSelectionsRef.current[documentId];
+    const refreshScope = captureScope();
+    const snapshot = await loadDocumentSnapshot(documentId, signal, currentSelection, Boolean(pipeline));
+    if (!isCurrentRun() || !refreshScope.isCurrent()) return null;
+    parseInFlightRef.current = false;
+    commitDocumentSnapshot(snapshot, false);
+    return null;
+  }, [captureScope, commitDocumentSnapshot, loadDocumentSnapshot]);
+
   const resumeParseRun = useCallback(async (documentId: string, parseRunId: string, expectedRunId: number) => {
+    const startScope = { pipelineId: activePipelineRef.current?.id ?? null, selectionRequest: selectionRequestRef.current };
     const controller = replaceController(`parse-resume:${documentId}`);
+    const isCurrentRun = () => runIdRef.current === expectedRunId;
     try {
       const completedResult = await waitForParseRun(
         parseRunId,
@@ -858,58 +775,41 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         documentId,
         (run) => applyParseRunStatus(run, expectedRunId),
       );
-      if (runIdRef.current !== expectedRunId || activeDocumentRef.current?.id !== documentId || activeParseRunIdRef.current !== parseRunId) return;
-      const selection = {
-        selectedParseRunId: parseRunId,
-        selectedChunkRunId: null,
-        selectedEmbeddingRunId: null,
-      };
-      if (!await persistActivePipelineSelectionRef.current(selection)) return;
-      const snapshot = await loadDocumentSnapshot(
-        documentId,
-        controller.signal,
-        selection,
-        Boolean(activePipelineRef.current),
-      );
-      if (runIdRef.current !== expectedRunId || activeDocumentRef.current?.id !== documentId) return;
+      if (!isCurrentRun() || activeDocumentRef.current?.id !== documentId || activeParseRunIdRef.current !== parseRunId) return;
+      const snapshot = await commitCompletedParse(documentId, parseRunId, startScope, controller.signal, isCurrentRun);
+      if (!snapshot) return;
       documentEpochRef.current += 1;
       selectionRequestRef.current += 1;
       commitDocumentSnapshot(snapshot);
-      setParseResult(completedResult);
+      setSelectedParseResult(completedResult);
       setParseStatus("completed");
-      addActivity("parseCompleted");
     } catch (error) {
-      if (runIdRef.current !== expectedRunId || activeDocumentRef.current?.id !== documentId || (error instanceof DOMException && error.name === "AbortError")) return;
+      if (!isCurrentRun() || activeDocumentRef.current?.id !== documentId || isAbortError(error)) return;
       const apiError = asApiError(error, "The persisted document could not be parsed.");
       setParseError(apiError);
-      if (apiError.code !== "parse_poll_timeout") {
-        setParseStatus("failed");
-        addActivity("parseFailed", apiError.code);
-      }
+      if (apiError.code !== "parse_poll_timeout") setParseStatus("failed");
     } finally {
-      if (runIdRef.current === expectedRunId) removeControllerIfCurrent(controllersRef.current, `parse-resume:${documentId}`, controller);
+      if (isCurrentRun()) removeControllerIfCurrent(controllersRef.current, `parse-resume:${documentId}`, controller);
     }
-  }, [addActivity, applyParseRunStatus, commitDocumentSnapshot, loadDocumentSnapshot, replaceController]);
+  }, [applyParseRunStatus, commitCompletedParse, commitDocumentSnapshot, replaceController]);
+
+  const fetchDocumentWorkspace = useCallback(async (documentId: string, signal: AbortSignal): Promise<LoadedDocumentWorkspace> => {
+    const [nextPipelines, summary] = await Promise.all([
+      listDocumentPipelines(documentId, signal),
+      getDocumentSummary(documentId, signal),
+    ]);
+    return { pipelines: nextPipelines, summary, fetchedAt: Date.now() };
+  }, []);
 
   const loadThenCommitDocument = useCallback(async (
     documentId: string,
     signal: AbortSignal,
     pipelineId: string | null | undefined,
+    prefetched?: Promise<LoadedDocumentWorkspace>,
   ) => {
     const requestId = ++documentLoadRequestRef.current;
-    const pipelinesPromise = listDocumentPipelines(documentId, signal).catch((error: unknown) => {
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
-      // Yalnız additive endpoint'in henüz bulunmadığı preview'larda legacy
-      // workspace'e dön; gerçek network/auth hatalarını görünür bırak.
-      if (!(error instanceof DocumentApiError)
-        || (error.status !== 404 && error.code !== "invalid_response")) throw error;
-      return [] as DocumentPipeline[];
-    });
-    const [nextPipelines, loadedSummary] = await Promise.all([
-      pipelinesPromise,
-      getDocumentSummary(documentId, signal).then((detail) => ({ detail, fetchedAt: Date.now() })),
-    ]);
-    const scopedPipelines = nextPipelines.filter((item) => item.documentId === documentId);
+    const loaded = await (prefetched ?? fetchDocumentWorkspace(documentId, signal));
+    const scopedPipelines = loaded.pipelines.filter((item) => item.documentId === documentId);
     const pipeline = pipelineId === null
       ? null
       : scopedPipelines.find((item) => item.id === pipelineId)
@@ -917,7 +817,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         ?? scopedPipelines[0]
         ?? null;
     const snapshot = buildDocumentSnapshot(
-      loadedSummary.detail,
+      loaded.summary,
       pipeline ? pipelineSelection(pipeline) : lineageSelectionsRef.current[documentId],
       Boolean(pipeline),
     );
@@ -931,41 +831,67 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     activePipelineRef.current = pipeline;
     setActivePipelineId(pipeline?.id ?? null);
     rememberActivePipeline(pipeline?.id ?? null, authUserId, documentId);
-    commitDocumentSnapshot({ ...snapshot, summaryFetchedAt: loadedSummary.fetchedAt }, !pipeline);
+    commitDocumentSnapshot({ ...snapshot, summaryFetchedAt: loaded.fetchedAt }, !pipeline);
     rememberActiveDocument(documentId, authUserId);
     setPersistenceError(null);
     setPersistenceStatus("available");
     return snapshot;
-  }, [authUserId, buildDocumentSnapshot, commitDocumentSnapshot]);
+  }, [authUserId, buildDocumentSnapshot, commitDocumentSnapshot, fetchDocumentWorkspace]);
+
+  /**
+   * Loads capabilities and the document list while the remembered document's
+   * workspace is fetched in parallel; it is committed only if the document is
+   * still in the authoritative list.
+   */
+  const fetchBootstrap = useCallback(async (controller: AbortController, documentId: string | null) => {
+    const prefetched = documentId ? fetchDocumentWorkspace(documentId, controller.signal) : undefined;
+    // A discarded prefetch (e.g. a deleted document) must not surface as an unhandled rejection.
+    prefetched?.catch(() => undefined);
+    const [nextCapabilities, nextDocuments] = await Promise.all([
+      getCapabilities(controller.signal),
+      listDocuments(controller.signal),
+    ]);
+    return { nextCapabilities, nextDocuments, prefetched };
+  }, [fetchDocumentWorkspace]);
+
+  const applyBootstrap = useCallback(async (
+    controller: AbortController,
+    documentId: string | null,
+    pipelineId: string | null | undefined,
+    { nextCapabilities, nextDocuments, prefetched }: Awaited<ReturnType<typeof fetchBootstrap>>,
+  ) => {
+    setCapabilities(nextCapabilities);
+    setDocuments(nextDocuments);
+    if (documentId && nextDocuments.some((document) => document.id === documentId)) {
+      const loaded = await loadThenCommitDocument(documentId, controller.signal, pipelineId, prefetched);
+      if (loaded && !parseInFlightRef.current && isRunInFlight(loaded.parseStatus) && loaded.inFlightParseRunId) {
+        void resumeParseRun(documentId, loaded.inFlightParseRunId, runIdRef.current);
+      }
+    } else if (documentId) {
+      rememberActiveDocument(null, authUserId);
+    }
+    setPersistenceStatus("available");
+  }, [authUserId, loadThenCommitDocument, resumeParseRun]);
 
   const refreshPersistence = useCallback(async () => {
+    if (!authUserIdRef.current) {
+      retryAuth();
+      return;
+    }
     const controller = replaceController("bootstrap");
     setPersistenceStatus("checking");
     setPersistenceError(null);
     try {
-      const [nextCapabilities, nextDocuments] = await Promise.all([
-        getCapabilities(controller.signal),
-        listDocuments(controller.signal),
-      ]);
-      setCapabilities(nextCapabilities);
-      setDocuments(nextDocuments);
-
-      const documentId = activeDocumentRef.current?.id;
-      if (documentId && nextDocuments.some((document) => document.id === documentId)) {
-        const preferredPipelineId = activePipelineRef.current?.id ?? readActivePipeline(documentId, authUserId);
-        const loaded = await loadThenCommitDocument(documentId, controller.signal, preferredPipelineId);
-        if (loaded && !parseInFlightRef.current && (loaded.parseStatus === "queued" || loaded.parseStatus === "running") && loaded.inFlightParseRunId) {
-          void resumeParseRun(documentId, loaded.inFlightParseRunId, runIdRef.current);
-        }
-      }
-      setPersistenceStatus("available");
+      const documentId = activeDocumentRef.current?.id ?? null;
+      const pipelineId = documentId ? activePipelineRef.current?.id ?? readActivePipeline(documentId, authUserId) : undefined;
+      await applyBootstrap(controller, documentId, pipelineId, await fetchBootstrap(controller, documentId));
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (isAbortError(error)) return;
       setCapabilities(null);
       setPersistenceError(asApiError(error, "Persistent pipeline data could not be loaded."));
       setPersistenceStatus("unavailable");
     }
-  }, [authUserId, loadThenCommitDocument, replaceController, resumeParseRun]);
+  }, [applyBootstrap, authUserId, fetchBootstrap, replaceController, retryAuth]);
 
   const selectPersistedDocument = useCallback(async (documentId: string, metadataOverride?: PersistedDocument) => {
     const metadata = metadataOverride ?? documents.find((document) => document.id === documentId);
@@ -978,11 +904,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const previousPipelines = pipelines;
     const previousPipelineId = activePipelineId;
     const previousSnapshot = previousDocument
-      ? buildDocumentSnapshot(previousDocument, {
-          selectedParseRunId,
-          selectedChunkRunId,
-          selectedEmbeddingRunId,
-        }, Boolean(previousPipeline))
+      ? buildDocumentSnapshot(previousDocument, selectedLineageRef.current, Boolean(previousPipeline))
       : null;
     const storedPipelineId = readActivePipeline(documentId, authUserId);
     const controller = replaceController("document");
@@ -990,30 +912,15 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     documentEpochRef.current += 1;
     selectionRequestRef.current += 1;
     runIdRef.current += 1;
-    parseInFlightRef.current = false;
     activeDocumentRef.current = null;
     activeDocumentSummaryLoadedAtRef.current = 0;
+    activePipelineRef.current = null;
+    resetLineageState();
     setActiveDocument(null);
     setActiveDocumentId(documentId);
     setActiveDocumentMetadata(metadata);
-    setSelectedParseRunId(null);
-    setSelectedChunkRunId(null);
-    setSelectedEmbeddingRunId(null);
-    inspectionRequestRef.current += 1;
-    setInspectedSelection(emptyLineageSelection());
-    setParseResult(null);
-    setChunkRun(null);
-    setEmbeddingRun(null);
-    setExperimentRun(null);
-    setExperimentHistory([]);
-    setEvaluationRun(null);
-    setEvaluationHistory([]);
-    setChunkStatus("locked");
-    setEmbeddingStatus("locked");
-    setExperimentStatus("locked");
-    setEvaluationStatus("locked");
-    setParseStatus("not-started");
-    setParseError(null);
+    setActivePipelineId(null);
+    setPipelines([]);
     setPersistenceError(null);
     // The document list is already authoritative. Detail hydration must not
     // replace it with a global loading state or hide the instant selection.
@@ -1021,18 +928,13 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     rememberActiveDocument(documentId, authUserId);
     const selectionToken = selectionRequestRef.current;
     try {
-      activePipelineRef.current = null;
-      setActivePipelineId(null);
-      setPipelines([]);
       const loaded = await loadThenCommitDocument(documentId, controller.signal, storedPipelineId);
       if (!loaded) return;
-      setPendingUpload(null);
-      setFileError(null);
-      if ((loaded.parseStatus === "queued" || loaded.parseStatus === "running") && loaded.inFlightParseRunId) {
+      if (isRunInFlight(loaded.parseStatus) && loaded.inFlightParseRunId) {
         void resumeParseRun(documentId, loaded.inFlightParseRunId, runIdRef.current);
       }
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (isAbortError(error)) return;
       if (selectionToken === selectionRequestRef.current) {
         // Başarısız bir switch, yeni document state'inin eski committed state'i
         // kısmen ezmesine izin vermemeli.
@@ -1055,7 +957,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       setPersistenceError(asApiError(error, "The selected document could not be loaded."));
       setPersistenceStatus(documents.length > 0 ? "available" : "unavailable");
     }
-  }, [activeDocumentMetadata, activePipelineId, authUserId, buildDocumentSnapshot, commitDocumentSnapshot, documents, loadThenCommitDocument, pipelines, replaceController, resumeParseRun, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId, setInspectedSelection]);
+  }, [activeDocumentMetadata, activePipelineId, authUserId, buildDocumentSnapshot, commitDocumentSnapshot, documents, loadThenCommitDocument, pipelines, replaceController, resetLineageState, resumeParseRun]);
 
   const deletePersistedDocument = useCallback(async (documentId: string) => {
     const metadata = documents.find((document) => document.id === documentId);
@@ -1070,7 +972,6 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       documentLoadRequestRef.current += 1;
       documentEpochRef.current += 1;
       selectionRequestRef.current += 1;
-      inspectionRequestRef.current += 1;
       runIdRef.current += 1;
       parseInFlightRef.current = false;
       activeParseRunIdRef.current = null;
@@ -1092,39 +993,12 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       activeDocumentSummaryLoadedAtRef.current = 0;
       activePipelineRef.current = null;
       pipelineRevisionRef.current.clear();
+      resetLineageState();
       setActiveDocument(null);
       setActiveDocumentId(null);
       setActiveDocumentMetadata(null);
       setPipelines([]);
       setActivePipelineId(null);
-      setPendingUpload(null);
-      setFileError(null);
-      setParseStatus("not-started");
-      setParseProgress(0);
-      setLastReportedParseProgress(0);
-      setParsePhase(null);
-      setParseResult(null);
-      setParseError(null);
-      setActivity([]);
-      setSelectedParseRunId(null);
-      setSelectedChunkRunId(null);
-      setSelectedEmbeddingRunId(null);
-      setInspectedSelection(emptyLineageSelection());
-      setChunkStatus("locked");
-      setChunkRun(null);
-      setChunkError(null);
-      setEmbeddingStatus("locked");
-      setEmbeddingRun(null);
-      setEmbeddingError(null);
-      setExperimentStatus("locked");
-      setExperimentRun(null);
-      setExperimentError(null);
-      setExperimentHistory([]);
-      setEvaluationDatasets([]);
-      setEvaluationStatus("locked");
-      setEvaluationRun(null);
-      setEvaluationError(null);
-      setEvaluationHistory([]);
       setUploadNotice(null);
       rememberActiveDocument(null, authUserId);
       setPersistenceStatus("available");
@@ -1132,14 +1006,14 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       const nextDocument = remainingDocuments[0];
       if (nextDocument) await selectPersistedDocument(nextDocument.id, nextDocument);
     } catch (error) {
-      if (!(error instanceof DOMException && error.name === "AbortError")) {
+      if (!isAbortError(error)) {
         setPersistenceError(asApiError(error, "The document could not be deleted."));
       }
       throw error;
     } finally {
       removeControllerIfCurrent(controllersRef.current, "document-delete", controller);
     }
-  }, [activeDocumentId, authUserId, documents, replaceController, selectPersistedDocument, setInspectedSelection]);
+  }, [activeDocumentId, authUserId, documents, replaceController, resetLineageState, selectPersistedDocument]);
 
   const addDocument = useCallback(async (file: File): Promise<PersistedDocument | null> => {
     const validationError = validatePdfFile(file);
@@ -1167,155 +1041,29 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   }, [replaceController, selectPersistedDocument]);
 
   useEffect(() => {
-    if (!authUserId && process.env.NODE_ENV !== "test") return;
+    if (!authUserId) return;
 
     const controller = replaceController("bootstrap");
-    void Promise.all([getCapabilities(controller.signal), listDocuments(controller.signal)])
-      .then(async ([nextCapabilities, nextDocuments]) => {
-        setCapabilities(nextCapabilities);
-        setDocuments(nextDocuments);
-        const storedSelections = readLineageSelections(authUserId);
-        lineageSelectionsRef.current = storedSelections;
-        let documentId: string | null = null;
-        let pipelineId: string | null | undefined;
-        let legacyDocumentId: string | null = null;
-        try {
-          documentId = window.localStorage.getItem(activeDocumentStorageKey(authUserId));
-          if (!documentId && authUserId) legacyDocumentId = window.localStorage.getItem(ACTIVE_DOCUMENT_STORAGE_KEY);
-          documentId = documentId ?? legacyDocumentId;
-          pipelineId = documentId ? readActivePipeline(documentId, authUserId) : undefined;
-        } catch {
-          // Browser storage kapalıysa kalıcı backend verisi yine kullanılabilir.
-        }
-        if (documentId && nextDocuments.some((document) => document.id === documentId)) {
-          if (legacyDocumentId) rememberActiveDocument(documentId, authUserId);
-          const loaded = await loadThenCommitDocument(documentId, controller.signal, pipelineId);
-          if (loaded && (loaded.parseStatus === "queued" || loaded.parseStatus === "running") && loaded.inFlightParseRunId) {
-            void resumeParseRun(documentId, loaded.inFlightParseRunId, runIdRef.current);
-          }
-        } else if (documentId) {
-          rememberActiveDocument(null, authUserId);
-        }
-        setPersistenceStatus("available");
-      })
+    lineageSelectionsRef.current = readLineageSelections(authUserId);
+    const documentId = readActiveDocument(authUserId);
+    const pipelineId = documentId ? readActivePipeline(documentId, authUserId) : undefined;
+    void fetchBootstrap(controller, documentId)
+      .then((loaded) => applyBootstrap(controller, documentId, pipelineId, loaded))
       .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (isAbortError(error)) return;
         setCapabilities(null);
         setPersistenceError(asApiError(error, "Persistent pipeline data could not be loaded."));
         setPersistenceStatus("unavailable");
       });
     return () => controller.abort();
-  }, [authUserId, loadThenCommitDocument, replaceController, resumeParseRun]);
-
-  const selectFile = useCallback((file: File | undefined) => {
-    if (!file) return;
-    const validationError = validatePdfFile(file);
-    if (validationError) {
-      setFileError(validationError);
-      return;
-    }
-    runIdRef.current += 1;
-    parseInFlightRef.current = false;
-    activeParseRunIdRef.current = null;
-    setPendingUpload(file);
-    setFileError(null);
-    setParseStatus("ready");
-    setLastReportedParseProgress(0);
-    setParseProgress(0);
-    setParsePhase(null);
-    setParseError(null);
-    setActivity([]);
-    addActivity("documentSelected");
-  }, [addActivity]);
-
-  const removeFile = useCallback(() => {
-    runIdRef.current += 1;
-    parseInFlightRef.current = false;
-    activeParseRunIdRef.current = selectedParseRunId;
-    setPendingUpload(null);
-    setFileError(null);
-    setParseStatus(selectedParseRunId ? "completed" : "not-started");
-    setParseError(null);
-    setActivity([]);
-  }, [selectedParseRunId]);
-
-  const parseSelectedFile = useCallback(async () => {
-    if (!pendingUpload || parseInFlightRef.current || parseStatus === "queued" || parseStatus === "running") return;
-    const currentRunId = runIdRef.current;
-    const controller = replaceController("parse");
-    parseInFlightRef.current = true;
-    activeParseRunIdRef.current = null;
-    setParseStatus("queued");
-    setLastReportedParseProgress(0);
-    setParseProgress(0);
-    setParseError(null);
-    addActivity("parseRequested");
-    addActivity("parsing");
-    try {
-      const result = await parseAndPersistDocument(
-        pendingUpload,
-        controller.signal,
-        (run) => applyParseRunStatus(run, currentRunId),
-      );
-      if (runIdRef.current !== currentRunId) return;
-      if (result.documentId && result.parseRunId) {
-        const snapshot = await loadDocumentSnapshot(result.documentId, controller.signal, {
-          selectedParseRunId: result.parseRunId,
-          selectedChunkRunId: null,
-          selectedEmbeddingRunId: null,
-        });
-        if (runIdRef.current !== currentRunId) return;
-        parseInFlightRef.current = false;
-        runIdRef.current += 1;
-        documentEpochRef.current += 1;
-        selectionRequestRef.current += 1;
-        commitDocumentSnapshot(snapshot);
-        setDocuments((current) => [
-          {
-            id: snapshot.detail.id,
-            fileName: snapshot.detail.fileName,
-            mediaType: snapshot.detail.mediaType,
-            sizeBytes: snapshot.detail.sizeBytes,
-            pageCount: snapshot.detail.pageCount,
-            sha256: snapshot.detail.sha256,
-            activeParseRunId: snapshot.detail.activeParseRunId,
-            activeChunkRunId: snapshot.detail.activeChunkRunId,
-            activeEmbeddingRunId: snapshot.detail.activeEmbeddingRunId,
-            createdAt: snapshot.detail.createdAt,
-            updatedAt: snapshot.detail.updatedAt,
-          },
-          ...current.filter((item) => item.id !== snapshot.detail.id),
-        ]);
-        rememberActiveDocument(snapshot.detail.id, authUserId);
-        setPendingUpload(null);
-        setPersistenceStatus("available");
-        setParseResult(result);
-        setParseStatus("completed");
-        setLastReportedParseProgress(100);
-        setParseProgress(100);
-        setParsePhase("completed");
-        addActivity("parseCompleted");
-      }
-    } catch (error) {
-      if (runIdRef.current !== currentRunId || (error instanceof DOMException && error.name === "AbortError")) return;
-      const apiError = asApiError(error, "The document could not be parsed.");
-      setParseError(apiError);
-      if (apiError.code !== "parse_poll_timeout") {
-        setParseStatus("failed");
-        addActivity("parseFailed", apiError.code);
-      }
-    } finally {
-      if (runIdRef.current === currentRunId) {
-        parseInFlightRef.current = false;
-        removeControllerIfCurrent(controllersRef.current, "parse", controller);
-      }
-    }
-  }, [addActivity, applyParseRunStatus, authUserId, commitDocumentSnapshot, loadDocumentSnapshot, parseStatus, pendingUpload, replaceController]);
+  }, [applyBootstrap, authUserId, fetchBootstrap, replaceController]);
 
   const reparseActiveDocument = useCallback(async () => {
     const documentId = activeDocumentRef.current?.id;
     if (!documentId || parseInFlightRef.current || parseStatus === "queued" || parseStatus === "running") return;
     const currentRunId = runIdRef.current;
+    const startScope = { pipelineId: activePipelineRef.current?.id ?? null, selectionRequest: selectionRequestRef.current };
+    const isCurrentRun = () => runIdRef.current === currentRunId;
     const controller = replaceController("reparse");
     parseInFlightRef.current = true;
     activeParseRunIdRef.current = null;
@@ -1324,29 +1072,16 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setParseProgress(0);
     setParsePhase("queued");
     setParseError(null);
-    addActivity("parseRequested");
-    addActivity("parsing");
     try {
       const result = await reparsePersistedDocument(
         documentId,
         controller.signal,
         (run) => applyParseRunStatus(run, currentRunId),
       );
-      if (runIdRef.current !== currentRunId) return;
+      if (!isCurrentRun() || !result.parseRunId) return;
       activeParseRunIdRef.current = result.parseRunId;
-      const selection = {
-        selectedParseRunId: result.parseRunId,
-        selectedChunkRunId: null,
-        selectedEmbeddingRunId: null,
-      };
-      if (!await persistActivePipelineSelectionRef.current(selection)) return;
-      const snapshot = await loadDocumentSnapshot(
-        documentId,
-        controller.signal,
-        selection,
-        Boolean(activePipelineRef.current),
-      );
-      if (runIdRef.current !== currentRunId) return;
+      const snapshot = await commitCompletedParse(documentId, result.parseRunId, startScope, controller.signal, isCurrentRun);
+      if (!snapshot) return;
       parseInFlightRef.current = false;
       runIdRef.current += 1;
       documentEpochRef.current += 1;
@@ -1354,12 +1089,11 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       removeControllerIfCurrent(controllersRef.current, "reparse", controller);
       commitDocumentSnapshot(snapshot);
       setParseStatus("completed");
-      setParseResult(result);
+      setSelectedParseResult(result);
       setLastReportedParseProgress(100);
       setParseProgress(100);
       setParsePhase("completed");
       setEvaluationRun(null);
-      addActivity("parseCompleted");
       setDocuments((current) => current.map((document) => document.id === documentId ? {
         ...document,
         pageCount: snapshot.detail.pageCount,
@@ -1368,22 +1102,17 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         activeEmbeddingRunId: snapshot.detail.activeEmbeddingRunId,
       } : document));
     } catch (error) {
-      if (runIdRef.current !== currentRunId || (error instanceof DOMException && error.name === "AbortError")) return;
+      if (!isCurrentRun() || isAbortError(error)) return;
       const apiError = asApiError(error, "The persisted document could not be reparsed.");
       setParseError(apiError);
-      if (apiError.code !== "parse_poll_timeout") {
-        setParseStatus("failed");
-        addActivity("parseFailed", apiError.code);
-      }
+      if (apiError.code !== "parse_poll_timeout") setParseStatus("failed");
     } finally {
-      if (runIdRef.current === currentRunId) {
+      if (isCurrentRun()) {
         parseInFlightRef.current = false;
         removeControllerIfCurrent(controllersRef.current, "reparse", controller);
       }
     }
-  }, [addActivity, applyParseRunStatus, commitDocumentSnapshot, loadDocumentSnapshot, parseStatus, replaceController]);
-
-  const parseActiveDocument = reparseActiveDocument;
+  }, [applyParseRunStatus, commitCompletedParse, commitDocumentSnapshot, parseStatus, replaceController]);
 
   const replacePipelineState = useCallback((pipeline: DocumentPipeline) => {
     pipelineRevisionRef.current.set(pipeline.id, pipeline.revision);
@@ -1422,10 +1151,17 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setPipelines((items) => items.map((item) => item.id === pipeline.id ? next : item));
   }, [pipelineMutationIsCurrent, replacePipelineState]);
 
+  /**
+   * Persists the working lineage to the active saved pipeline (or the scratch
+   * selection). With `expectedPipelineId`, nothing is written unless that
+   * pipeline (or scratch, for `null`) is still the active one.
+   */
   const persistActivePipelineSelection = useCallback(async (
     selection: DocumentLineageSelection,
+    expectedPipelineId?: string | null,
   ): Promise<boolean> => {
     const current = activePipelineRef.current;
+    if (expectedPipelineId !== undefined && (current?.id ?? null) !== expectedPipelineId) return false;
     if (!current) {
       if (activeDocumentRef.current) rememberSelection(activeDocumentRef.current.id, selection);
       return true;
@@ -1492,8 +1228,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
           commitDocumentSnapshot(buildDocumentSnapshot(activeDocumentRef.current, selection, true), false);
           return true;
         } catch (reconcileError) {
-          if (!(reconcileError instanceof DOMException && reconcileError.name === "AbortError")
-            && pipelineMutationIsCurrent(context)) {
+          if (!isAbortError(reconcileError) && pipelineMutationIsCurrent(context)) {
             setPersistenceError(asApiError(reconcileError, "Pipeline conflict could not be reconciled."));
           }
           return false;
@@ -1537,7 +1272,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       rememberActivePipeline(pipeline?.id ?? null, authUserId, document.id);
       commitDocumentSnapshot(snapshot, !pipeline);
     } catch (error) {
-      if (!(error instanceof DOMException && error.name === "AbortError")) {
+      if (!isAbortError(error)) {
         setPersistenceError(asApiError(error, "Pipeline could not be selected."));
       }
     } finally {
@@ -1548,6 +1283,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const createPipeline = useCallback(async (name: string) => {
     const document = activeDocumentRef.current;
     if (!document) return null;
+    const scope = captureScope();
     const controller = replaceController("pipeline-create");
     try {
       const pipeline = await createDocumentPipeline(document.id, {
@@ -1559,6 +1295,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (pipeline.documentId !== document.id) {
         throw new DocumentApiError("incompatible_lineage", "The created pipeline belongs to a different document.");
       }
+      if (!scope.isCurrent()) return null;
       setPipelines((current) => [...current, pipeline]);
       pipelineRevisionRef.current.set(pipeline.id, pipeline.revision);
       activePipelineRef.current = pipeline;
@@ -1568,123 +1305,145 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       setPersistenceError(null);
       return pipeline;
     } catch (error) {
+      if (isAbortError(error) || !scope.isCurrent()) return null;
       setPersistenceError(asApiError(error, "Pipeline could not be created."));
       return null;
     } finally {
       removeControllerIfCurrent(controllersRef.current, "pipeline-create", controller);
     }
-  }, [authUserId, buildDocumentSnapshot, commitDocumentSnapshot, replaceController]);
+  }, [authUserId, buildDocumentSnapshot, captureScope, commitDocumentSnapshot, replaceController]);
 
   const renamePipeline = useCallback(async (pipelineId: string, name: string) => {
     const current = pipelines.find((item) => item.id === pipelineId);
     if (!current) return null;
+    const documentEpoch = documentEpochRef.current;
+    // Rename does not change lineage, so only a document or session switch makes the result stale.
+    const documentIsCurrent = () => documentEpochRef.current === documentEpoch && activeDocumentRef.current?.id === current.documentId;
     const mutationContext: PipelineMutationContext | null = activePipelineRef.current?.id === pipelineId
       ? {
           documentId: current.documentId,
           pipelineId,
           requestId: selectionRequestRef.current,
-          documentEpoch: documentEpochRef.current,
+          documentEpoch,
         }
       : null;
-    try {
-      const updated = await updateDocumentPipeline(pipelineId, { expectedRevision: current.revision, name });
+    const controller = replaceController(`pipeline-rename:${pipelineId}`);
+    const applyRenamed = (updated: DocumentPipeline) => {
       setPipelines((items) => items.map((item) => item.id === updated.id ? updated : item));
-      setPersistenceError(null);
       if (activePipelineRef.current?.id === updated.id) replacePipelineState(updated);
+    };
+    try {
+      const updated = await updateDocumentPipeline(pipelineId, { expectedRevision: current.revision, name }, controller.signal);
+      if (!documentIsCurrent()) return null;
+      applyRenamed(updated);
+      setPersistenceError(null);
       return updated;
     } catch (error) {
+      if (isAbortError(error) || !documentIsCurrent()) return null;
       if (error instanceof DocumentApiError && error.code === "pipeline_conflict") {
         try {
-          const refreshed = await listDocumentPipelines(current.documentId);
+          const refreshed = await listDocumentPipelines(current.documentId, controller.signal);
+          if (!documentIsCurrent()) return null;
           setPipelines(refreshed);
           const latest = refreshed.find((item) => item.id === pipelineId);
           refreshed.forEach((item) => pipelineRevisionRef.current.set(item.id, item.revision));
           if (latest && mutationContext && pipelineMutationIsCurrent(mutationContext)) {
             replacePipelineState(latest);
-            const controller = replaceController(`pipeline-rename-conflict:${pipelineId}`);
-            try {
-              const snapshot = await loadDocumentSnapshot(latest.documentId, controller.signal, pipelineSelection(latest), true);
-              if (!pipelineMutationIsCurrent(mutationContext)) return null;
-              commitDocumentSnapshot(snapshot, false);
-            } finally {
-              removeControllerIfCurrent(controllersRef.current, `pipeline-rename-conflict:${pipelineId}`, controller);
-            }
+            const snapshot = await loadDocumentSnapshot(latest.documentId, controller.signal, pipelineSelection(latest), true);
+            if (!pipelineMutationIsCurrent(mutationContext)) return null;
+            commitDocumentSnapshot(snapshot, false);
           }
           if (latest?.name === name) return latest;
           if (latest) {
             if (mutationContext && !pipelineMutationIsCurrent(mutationContext)) return null;
-            const updated = await updateDocumentPipeline(pipelineId, { expectedRevision: latest.revision, name });
-            setPipelines((items) => items.map((item) => item.id === updated.id ? updated : item));
-            if (mutationContext && pipelineMutationIsCurrent(mutationContext)) replacePipelineState(updated);
+            const updated = await updateDocumentPipeline(pipelineId, { expectedRevision: latest.revision, name }, controller.signal);
+            if (!documentIsCurrent()) return null;
+            applyRenamed(updated);
             return updated;
           }
         } catch (reconcileError) {
+          if (isAbortError(reconcileError) || !documentIsCurrent()) return null;
           setPersistenceError(asApiError(reconcileError, "Pipeline rename conflict could not be reconciled."));
           return null;
         }
       }
       setPersistenceError(asApiError(error, "Pipeline could not be renamed."));
       return null;
+    } finally {
+      removeControllerIfCurrent(controllersRef.current, `pipeline-rename:${pipelineId}`, controller);
     }
   }, [commitDocumentSnapshot, loadDocumentSnapshot, pipelineMutationIsCurrent, pipelines, replaceController, replacePipelineState]);
 
   const deletePipeline = useCallback(async (pipelineId: string) => {
     const current = pipelines.find((item) => item.id === pipelineId);
     if (!current) return false;
+    const documentEpoch = documentEpochRef.current;
+    const documentIsCurrent = () => documentEpochRef.current === documentEpoch && activeDocumentRef.current?.id === current.documentId;
+    const controller = replaceController(`pipeline-delete:${pipelineId}`);
     try {
-      await deleteDocumentPipeline(pipelineId);
+      await deleteDocumentPipeline(pipelineId, controller.signal);
+      if (!documentIsCurrent()) return true;
       setPersistenceError(null);
       setPipelines((items) => items.filter((item) => item.id !== pipelineId));
       const activePipeline = activePipelineRef.current;
       if (activePipeline?.id === pipelineId) {
-        const document = activeDocumentRef.current;
-        if (document) rememberSelection(document.id, { selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId });
+        rememberSelection(current.documentId, selectedLineageRef.current);
         activePipelineRef.current = null;
         setActivePipelineId(null);
         rememberActivePipeline(null, authUserId, activePipeline.documentId);
       }
       return true;
     } catch (error) {
+      if (isAbortError(error) || !documentIsCurrent()) return false;
       setPersistenceError(asApiError(error, "Pipeline could not be deleted."));
       return false;
+    } finally {
+      removeControllerIfCurrent(controllersRef.current, `pipeline-delete:${pipelineId}`, controller);
     }
-  }, [authUserId, pipelines, rememberSelection, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId]);
+  }, [authUserId, pipelines, rememberSelection, replaceController]);
 
   const inspectParseRun = useCallback(async (runId: string): Promise<ParseRun | null> => {
     const document = activeDocumentRef.current;
     const summary = document?.parseRuns.find((run) => run.id === runId);
     if (!document || !summary || summary.status !== "completed") return null;
-    const expectedSelection = selectionRequestRef.current;
-    const expectedInspection = beginArtifactInspection("parse", runId);
-    setParseResult(null);
-    setParseError(null);
-    setParseStatus("ready");
-    return hydrateParseDetail(document.id, runId, expectedSelection, expectedInspection);
+    beginArtifactInspection("parse", runId);
+    setInspectedParseResult(null);
+    return hydrateParseDetail(document.id, runId);
   }, [beginArtifactInspection, hydrateParseDetail]);
 
   const inspectChunkRun = useCallback(async (runId: string): Promise<ChunkRun | null> => {
     const document = activeDocumentRef.current;
     const summary = document?.chunkRuns.find((run) => run.id === runId);
     if (!document || !summary || summary.status !== "completed") return null;
-    const expectedSelection = selectionRequestRef.current;
-    const expectedInspection = beginArtifactInspection("chunk", runId);
-    setChunkRun(null);
-    setChunkError(null);
-    setChunkStatus("ready");
-    return hydrateChunkDetail(document.id, runId, expectedSelection, expectedInspection);
+    beginArtifactInspection("chunk", runId);
+    setInspectedChunkRun(null);
+    return hydrateChunkDetail(document.id, runId);
   }, [beginArtifactInspection, hydrateChunkDetail]);
 
   const inspectEmbeddingRun = useCallback(async (runId: string): Promise<EmbeddingRun | null> => {
     const document = activeDocumentRef.current;
     const summary = document?.embeddingRuns.find((run) => run.id === runId);
     if (!document || !summary || summary.status !== "completed") return null;
-    const expectedSelection = selectionRequestRef.current;
-    const expectedInspection = beginArtifactInspection("embedding", runId);
-    setEmbeddingRun(null);
-    setEmbeddingError(null);
-    setEmbeddingStatus("ready");
-    return hydrateEmbeddingDetail(document.id, runId, expectedSelection, expectedInspection);
+    beginArtifactInspection("embedding", runId);
+    setInspectedEmbeddingRun(null);
+    return hydrateEmbeddingDetail(document.id, runId);
   }, [beginArtifactInspection, hydrateEmbeddingDetail]);
+
+  /** Applies a new working lineage locally and clears artifacts that no longer belong to it. */
+  const applyWorkingSelection = useCallback((selection: DocumentLineageSelection, changed: "parse" | "chunk" | "embedding") => {
+    applySelectedLineage(selection);
+    resetInspection(selection);
+    if (changed === "parse") setSelectedParseResult(null);
+    if (changed === "parse" || changed === "chunk") {
+      setSelectedChunkRun(null);
+      setChunkStatus("ready");
+    }
+    setSelectedEmbeddingRun(null);
+    setEmbeddingStatus(changed === "embedding" ? "ready" : "locked");
+    setExperimentRun(null);
+    setExperimentStatus("ready");
+    setEvaluationRun(null);
+  }, [applySelectedLineage, resetInspection]);
 
   const selectParseRun = useCallback(async (runId: string) => {
     const document = activeDocumentRef.current;
@@ -1697,23 +1456,11 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       return;
     }
     const selection = { selectedParseRunId: runId, selectedChunkRunId: null, selectedEmbeddingRunId: null };
-    const requestId = ++selectionRequestRef.current;
+    selectionRequestRef.current += 1;
     rememberSelection(document.id, selection);
-    setSelectedParseRunId(runId);
-    setSelectedChunkRunId(null);
-    setSelectedEmbeddingRunId(null);
-    inspectionRequestRef.current += 1;
-    setInspectedSelection(selection);
-    setParseResult(null);
-    setChunkRun(null);
-    setEmbeddingRun(null);
-    setChunkStatus("ready");
-    setEmbeddingStatus("locked");
-    setExperimentRun(null);
-    setExperimentStatus("ready");
-    setEvaluationRun(null);
-    void hydrateParseDetail(document.id, runId, requestId, inspectionRequestRef.current);
-  }, [hydrateParseDetail, inspectParseRun, rememberSelection, setInspectedSelection]);
+    applyWorkingSelection(selection, "parse");
+    void hydrateParseDetail(document.id, runId);
+  }, [applyWorkingSelection, hydrateParseDetail, inspectParseRun, rememberSelection]);
 
   const selectChunkRun = useCallback(async (runId: string) => {
     const document = activeDocumentRef.current;
@@ -1723,23 +1470,14 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       await inspectChunkRun(runId);
       return;
     }
-    if (summary?.upstream.parseRunId !== selectedParseRunId) return;
-    const selection = { selectedParseRunId, selectedChunkRunId: runId, selectedEmbeddingRunId: null };
-    const requestId = ++selectionRequestRef.current;
+    const { selectedParseRunId: parseRunId } = selectedLineageRef.current;
+    if (summary?.upstream.parseRunId !== parseRunId) return;
+    const selection = { selectedParseRunId: parseRunId, selectedChunkRunId: runId, selectedEmbeddingRunId: null };
+    selectionRequestRef.current += 1;
     rememberSelection(document.id, selection);
-    setSelectedChunkRunId(runId);
-    setSelectedEmbeddingRunId(null);
-    inspectionRequestRef.current += 1;
-    setInspectedSelection(selection);
-    setChunkRun(null);
-    setEmbeddingRun(null);
-    setChunkStatus("ready");
-    setEmbeddingStatus("locked");
-    setExperimentRun(null);
-    setExperimentStatus("ready");
-    setEvaluationRun(null);
-    void hydrateChunkDetail(document.id, runId, requestId, inspectionRequestRef.current);
-  }, [hydrateChunkDetail, inspectChunkRun, rememberSelection, selectedParseRunId, setInspectedSelection]);
+    applyWorkingSelection(selection, "chunk");
+    void hydrateChunkDetail(document.id, runId);
+  }, [applyWorkingSelection, hydrateChunkDetail, inspectChunkRun, rememberSelection]);
 
   const selectEmbeddingRun = useCallback(async (runId: string) => {
     const document = activeDocumentRef.current;
@@ -1749,20 +1487,14 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       await inspectEmbeddingRun(runId);
       return;
     }
-    if (summary?.upstream.chunkRunId !== selectedChunkRunId) return;
-    const selection = { selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId: runId };
-    const requestId = ++selectionRequestRef.current;
+    const { selectedParseRunId: parseRunId, selectedChunkRunId: chunkRunId } = selectedLineageRef.current;
+    if (summary?.upstream.chunkRunId !== chunkRunId) return;
+    const selection = { selectedParseRunId: parseRunId, selectedChunkRunId: chunkRunId, selectedEmbeddingRunId: runId };
+    selectionRequestRef.current += 1;
     rememberSelection(document.id, selection);
-    setSelectedEmbeddingRunId(runId);
-    inspectionRequestRef.current += 1;
-    setInspectedSelection(selection);
-    setEmbeddingRun(null);
-    setEmbeddingStatus("ready");
-    setExperimentRun(null);
-    setExperimentStatus("ready");
-    setEvaluationRun(null);
-    void hydrateEmbeddingDetail(document.id, runId, requestId, inspectionRequestRef.current);
-  }, [hydrateEmbeddingDetail, inspectEmbeddingRun, rememberSelection, selectedChunkRunId, selectedParseRunId, setInspectedSelection]);
+    applyWorkingSelection(selection, "embedding");
+    void hydrateEmbeddingDetail(document.id, runId);
+  }, [applyWorkingSelection, hydrateEmbeddingDetail, inspectEmbeddingRun, rememberSelection]);
 
   const rejectPipelineSelection = useCallback((message: string) => {
     setPersistenceError(new DocumentApiError("incompatible_lineage", message));
@@ -1779,24 +1511,12 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const selection = { selectedParseRunId: runId, selectedChunkRunId: null, selectedEmbeddingRunId: null };
     const requestId = ++selectionRequestRef.current;
     replacePipelineState({ ...pipeline, parseRunId: runId, chunkRunId: null, embeddingRunId: null });
-    setSelectedParseRunId(runId);
-    setSelectedChunkRunId(null);
-    setSelectedEmbeddingRunId(null);
-    inspectionRequestRef.current += 1;
-    setInspectedSelection(selection);
-    setParseResult(null);
-    setChunkRun(null);
-    setEmbeddingRun(null);
-    setChunkStatus("ready");
-    setEmbeddingStatus("locked");
-    setExperimentRun(null);
-    setExperimentStatus("ready");
-    setEvaluationRun(null);
+    applyWorkingSelection(selection, "parse");
     const persisted = await persistActivePipelineSelection(selection);
     if (!persisted || selectionRequestRef.current !== requestId || activeDocumentRef.current?.id !== document.id) return false;
-    void hydrateParseDetail(document.id, runId, requestId, inspectionRequestRef.current);
+    void hydrateParseDetail(document.id, runId);
     return true;
-  }, [hydrateParseDetail, persistActivePipelineSelection, rejectPipelineSelection, replacePipelineState, setInspectedSelection]);
+  }, [applyWorkingSelection, hydrateParseDetail, persistActivePipelineSelection, rejectPipelineSelection, replacePipelineState]);
 
   const setPipelineChunkRun = useCallback(async (runId: string): Promise<boolean> => {
     const document = activeDocumentRef.current;
@@ -1809,23 +1529,12 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const selection = { selectedParseRunId: pipeline.parseRunId, selectedChunkRunId: runId, selectedEmbeddingRunId: null };
     const requestId = ++selectionRequestRef.current;
     replacePipelineState({ ...pipeline, chunkRunId: runId, embeddingRunId: null });
-    setSelectedParseRunId(selection.selectedParseRunId);
-    setSelectedChunkRunId(runId);
-    setSelectedEmbeddingRunId(null);
-    inspectionRequestRef.current += 1;
-    setInspectedSelection(selection);
-    setChunkRun(null);
-    setEmbeddingRun(null);
-    setChunkStatus("ready");
-    setEmbeddingStatus("locked");
-    setExperimentRun(null);
-    setExperimentStatus("ready");
-    setEvaluationRun(null);
+    applyWorkingSelection(selection, "chunk");
     const persisted = await persistActivePipelineSelection(selection);
     if (!persisted || selectionRequestRef.current !== requestId || activeDocumentRef.current?.id !== document.id) return false;
-    void hydrateChunkDetail(document.id, runId, requestId, inspectionRequestRef.current);
+    void hydrateChunkDetail(document.id, runId);
     return true;
-  }, [hydrateChunkDetail, persistActivePipelineSelection, rejectPipelineSelection, replacePipelineState, setInspectedSelection]);
+  }, [applyWorkingSelection, hydrateChunkDetail, persistActivePipelineSelection, rejectPipelineSelection, replacePipelineState]);
 
   const setPipelineEmbeddingRun = useCallback(async (runId: string): Promise<boolean> => {
     const document = activeDocumentRef.current;
@@ -1838,37 +1547,27 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const selection = { selectedParseRunId: pipeline.parseRunId, selectedChunkRunId: pipeline.chunkRunId, selectedEmbeddingRunId: runId };
     const requestId = ++selectionRequestRef.current;
     replacePipelineState({ ...pipeline, embeddingRunId: runId });
-    setSelectedParseRunId(selection.selectedParseRunId);
-    setSelectedChunkRunId(selection.selectedChunkRunId);
-    setSelectedEmbeddingRunId(runId);
-    inspectionRequestRef.current += 1;
-    setInspectedSelection(selection);
-    setEmbeddingRun(null);
-    setEmbeddingStatus("ready");
-    setExperimentRun(null);
-    setExperimentStatus("ready");
-    setEvaluationRun(null);
+    applyWorkingSelection(selection, "embedding");
     const persisted = await persistActivePipelineSelection(selection);
     if (!persisted || selectionRequestRef.current !== requestId || activeDocumentRef.current?.id !== document.id) return false;
-    void hydrateEmbeddingDetail(document.id, runId, requestId, inspectionRequestRef.current);
+    void hydrateEmbeddingDetail(document.id, runId);
     return true;
-  }, [hydrateEmbeddingDetail, persistActivePipelineSelection, rejectPipelineSelection, replacePipelineState, setInspectedSelection]);
+  }, [applyWorkingSelection, hydrateEmbeddingDetail, persistActivePipelineSelection, rejectPipelineSelection, replacePipelineState]);
 
   const runChunking = useCallback(async (strategy: ChunkStrategy, config: ChunkConfig): Promise<ChunkRun | null> => {
     const documentId = activeDocumentRef.current?.id;
-    const parseRunId = selectedParseRunId;
+    const parseRunId = selectedLineageRef.current.selectedParseRunId;
     if (!documentId || !parseRunId || chunkStatus === "processing") return null;
-    const epoch = documentEpochRef.current;
-    const selectionVersion = selectionRequestRef.current;
+    const scope = captureScope();
     const controller = replaceController("chunk");
     setChunkStatus("processing");
     setChunkError(null);
-    setEmbeddingRun(null);
+    setSelectedEmbeddingRun(null);
     setExperimentRun(null);
     setEvaluationRun(null);
     try {
       const result = await createChunkRun(documentId, strategy, config, parseRunId, controller.signal);
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedParseRunId !== parseRunId) return null;
+      if (!scope.isCurrent()) return null;
       const selection = {
         selectedParseRunId: parseRunId,
         selectedChunkRunId: result.id,
@@ -1876,29 +1575,27 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       };
       if (!await persistActivePipelineSelection(selection)) return null;
       const snapshot = await loadDocumentSnapshot(documentId, controller.signal, selection, Boolean(activePipelineRef.current));
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedParseRunId !== parseRunId) return null;
+      if (!scope.isCurrent()) return null;
       commitDocumentSnapshot(snapshot);
       cacheArtifact("chunk", result.id, result);
-      setChunkRun(result);
+      setSelectedChunkRun(result);
       setChunkStatus("completed");
       return result;
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return null;
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedParseRunId !== parseRunId) return null;
+      if (isAbortError(error) || !scope.isCurrent()) return null;
       setChunkError(asApiError(error, "Chunking could not be completed."));
       setChunkStatus("error");
       return null;
     } finally {
       removeControllerIfCurrent(controllersRef.current, "chunk", controller);
     }
-  }, [cacheArtifact, chunkStatus, commitDocumentSnapshot, loadDocumentSnapshot, persistActivePipelineSelection, replaceController, selectedParseRunId]);
+  }, [cacheArtifact, captureScope, chunkStatus, commitDocumentSnapshot, loadDocumentSnapshot, persistActivePipelineSelection, replaceController]);
 
   const runEmbedding = useCallback(async (): Promise<EmbeddingRun | null> => {
     const documentId = activeDocumentRef.current?.id;
-    const chunkRunId = selectedChunkRunId;
+    const { selectedParseRunId: parseRunId, selectedChunkRunId: chunkRunId } = selectedLineageRef.current;
     if (!documentId || !chunkRunId || embeddingStatus === "processing") return null;
-    const epoch = documentEpochRef.current;
-    const selectionVersion = selectionRequestRef.current;
+    const scope = captureScope();
     const controller = replaceController("embedding");
     setEmbeddingStatus("processing");
     setEmbeddingError(null);
@@ -1906,36 +1603,35 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setEvaluationRun(null);
     try {
       const result = await createEmbeddingRun(documentId, chunkRunId, controller.signal);
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId) return null;
+      if (!scope.isCurrent()) return null;
       const selection = {
-        selectedParseRunId,
+        selectedParseRunId: parseRunId,
         selectedChunkRunId: chunkRunId,
         selectedEmbeddingRunId: result.id,
       };
       if (!await persistActivePipelineSelection(selection)) return null;
       const snapshot = await loadDocumentSnapshot(documentId, controller.signal, selection, Boolean(activePipelineRef.current));
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId) return null;
+      if (!scope.isCurrent()) return null;
       commitDocumentSnapshot(snapshot);
       cacheArtifact("embedding", result.id, result);
-      setEmbeddingRun(result);
+      setSelectedEmbeddingRun(result);
       setEmbeddingStatus("completed");
       return result;
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return null;
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId) return null;
+      if (isAbortError(error) || !scope.isCurrent()) return null;
       setEmbeddingError(asApiError(error, "Embeddings could not be created."));
       setEmbeddingStatus("error");
       return null;
     } finally {
       removeControllerIfCurrent(controllersRef.current, "embedding", controller);
     }
-  }, [cacheArtifact, commitDocumentSnapshot, embeddingStatus, loadDocumentSnapshot, persistActivePipelineSelection, replaceController, selectedChunkRunId, selectedParseRunId]);
+  }, [cacheArtifact, captureScope, commitDocumentSnapshot, embeddingStatus, loadDocumentSnapshot, persistActivePipelineSelection, replaceController]);
 
   const commitExperimentResult = useCallback((result: ExperimentRun) => {
     setExperimentRun(result);
     setExperimentHistory((current) => [result, ...current.filter((run) => run.id !== result.id)]);
     setExperimentError(result.error ? new DocumentApiError(result.error.code, result.error.message) : null);
-    setExperimentStatus(result.status === "completed" ? "completed" : result.status === "running" || result.status === "queued" ? "processing" : "error");
+    setExperimentStatus(pipelineStatusFromRun(result));
     setEvaluationStatus(evaluationDatasets.length > 0 ? "ready" : "locked");
   }, [evaluationDatasets.length]);
 
@@ -1943,17 +1639,16 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setEvaluationRun(result);
     setEvaluationHistory((current) => [result, ...current.filter((run) => run.id !== result.id)]);
     setEvaluationError(result.error ? new DocumentApiError(result.error.code, result.error.message) : null);
-    setEvaluationStatus(result.status === "completed" ? "completed" : result.status === "running" || result.status === "queued" ? "processing" : "error");
+    setEvaluationStatus(pipelineStatusFromRun(result));
   }, []);
 
   const runExperiment = useCallback(async (input: Omit<ExperimentRequest, "documentId" | "chunkRunId" | "embeddingRunId">) => {
     const documentId = activeDocumentRef.current?.id;
-    const chunkRunId = selectedChunkRunId;
-    const embeddingRunId = input.retrieval.mode === "keyword" ? null : selectedEmbeddingRunId;
+    const chunkRunId = selectedLineageRef.current.selectedChunkRunId;
+    const embeddingRunId = input.retrieval.mode === "keyword" ? null : selectedLineageRef.current.selectedEmbeddingRunId;
     if (!documentId || !chunkRunId || experimentStatus === "processing") return;
     if (input.retrieval.mode !== "keyword" && !embeddingRunId) return;
-    const epoch = documentEpochRef.current;
-    const selectionVersion = selectionRequestRef.current;
+    const scope = captureScope();
     const controller = replaceController("experiment");
     setExperimentStatus("processing");
     setExperimentError(null);
@@ -1965,33 +1660,31 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         embeddingRunId,
         pipelineId: activePipelineRef.current?.id ?? null,
       }, controller.signal, (progressRun) => {
-        if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
+        if (!scope.isCurrent()) return;
         setExperimentRun(progressRun);
         setExperimentHistory((current) => [progressRun, ...current.filter((run) => run.id !== progressRun.id)]);
-        setExperimentStatus(progressRun.status === "running" || progressRun.status === "queued" ? "processing" : progressRun.status === "completed" ? "completed" : "error");
+        setExperimentStatus(pipelineStatusFromRun(progressRun));
       });
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId || (input.retrieval.mode !== "keyword" && selectedEmbeddingRunId !== embeddingRunId)) return;
+      if (!scope.isCurrent()) return;
       commitExperimentResult(result);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId || (input.retrieval.mode !== "keyword" && selectedEmbeddingRunId !== embeddingRunId)) return;
+      if (isAbortError(error) || !scope.isCurrent()) return;
       setExperimentError(asApiError(error, "The experiment could not be completed."));
       setExperimentStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "experiment", controller);
     }
-  }, [commitExperimentResult, experimentStatus, replaceController, selectedChunkRunId, selectedEmbeddingRunId]);
+  }, [captureScope, commitExperimentResult, experimentStatus, replaceController]);
 
   const loadExperiment = useCallback(async (experimentId: string) => {
     const documentId = activeDocumentRef.current?.id;
     if (!documentId) return;
     controllersRef.current.get("experiment")?.abort();
-    const epoch = documentEpochRef.current;
-    const selectionVersion = selectionRequestRef.current;
+    const scope = captureScope();
     const cached = readArtifact<ExperimentRun>("experiment", experimentId);
     if (cached && cached.documentId === documentId) {
       commitExperimentResult(cached);
-      if (cached.status === "queued" || cached.status === "running") setExperimentStatus("ready");
+      if (isRunInFlight(cached.status)) setExperimentStatus("ready");
       return;
     }
     if (controllersRef.current.has("experiment-load")) return;
@@ -2003,26 +1696,24 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (result.documentId !== documentId) {
         throw new DocumentApiError("incompatible_lineage", "The selected experiment belongs to a different document.");
       }
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
+      if (!scope.isCurrent()) return;
       cacheArtifact("experiment", experimentId, result);
       commitExperimentResult(result);
-      if (result.status === "queued" || result.status === "running") setExperimentStatus("ready");
+      if (isRunInFlight(result.status)) setExperimentStatus("ready");
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
+      if (isAbortError(error) || !scope.isCurrent()) return;
       setExperimentError(asApiError(error, "The experiment could not be loaded."));
       setExperimentStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "experiment-load", controller);
     }
-  }, [cacheArtifact, commitExperimentResult, readArtifact, replaceController]);
+  }, [cacheArtifact, captureScope, commitExperimentResult, readArtifact, replaceController]);
 
   const loadEvaluationDataset = useCallback(async (datasetId: string): Promise<EvaluationDataset | null> => {
     const activeSummary = activeDocumentRef.current;
     const documentId = activeSummary?.id;
     if (!documentId || !activeSummary.evaluationDatasets.some((dataset) => dataset.id === datasetId)) return null;
-    const epoch = documentEpochRef.current;
-    const selectionVersion = selectionRequestRef.current;
+    const scope = captureScope();
     const cached = readArtifact<EvaluationDataset>("dataset", datasetId);
     if (cached && cached.documentId === documentId) return cached;
     const controllerKey = `detail:dataset:${documentId}:${datasetId}`;
@@ -2033,32 +1724,30 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (dataset.documentId !== documentId) {
         throw new DocumentApiError("incompatible_lineage", "The selected evaluation dataset belongs to a different document.");
       }
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return dataset;
+      if (!scope.isCurrent()) return dataset;
       cacheArtifact("dataset", datasetId, dataset);
       return dataset;
     } catch (error) {
-      if (!(error instanceof DOMException && error.name === "AbortError") && documentEpochRef.current === epoch && selectionRequestRef.current === selectionVersion && activeDocumentRef.current?.id === documentId) {
+      if (!isAbortError(error) && scope.isCurrent()) {
         setEvaluationError(asApiError(error, "The selected evaluation dataset could not be loaded."));
       }
       return null;
     } finally {
       removeControllerIfCurrent(controllersRef.current, controllerKey, controller);
     }
-  }, [cacheArtifact, readArtifact, replaceController]);
+  }, [cacheArtifact, captureScope, readArtifact, replaceController]);
 
   const loadEvaluationRun = useCallback(async (runId: string) => {
-    const activeSummary = activeDocumentRef.current;
-    const documentId = activeSummary?.id;
+    const documentId = activeDocumentRef.current?.id;
     if (!documentId) return;
     controllersRef.current.get("evaluation")?.abort();
     controllersRef.current.get("evaluation-history")?.abort();
-    const epoch = documentEpochRef.current;
-    const selectionVersion = selectionRequestRef.current;
+    const scope = captureScope();
     const belongsToDocument = (run: EvaluationRun) => activeDocumentRef.current?.evaluationDatasets.some((dataset) => dataset.id === run.datasetId) ?? false;
     const cached = readArtifact<EvaluationRun>("evaluation", runId);
     if (cached && belongsToDocument(cached)) {
       commitEvaluationResult(cached);
-      if (cached.status === "queued" || cached.status === "running") setEvaluationStatus("ready");
+      if (isRunInFlight(cached.status)) setEvaluationStatus("ready");
       return;
     }
     if (controllersRef.current.has("evaluation-load")) return;
@@ -2070,39 +1759,30 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (!belongsToDocument(result)) {
         throw new DocumentApiError("incompatible_lineage", "The selected evaluation run belongs to a different document.");
       }
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
+      if (!scope.isCurrent()) return;
       cacheArtifact("evaluation", runId, result);
       commitEvaluationResult(result);
-      if (result.status === "queued" || result.status === "running") setEvaluationStatus("ready");
+      if (isRunInFlight(result.status)) setEvaluationStatus("ready");
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
+      if (isAbortError(error) || !scope.isCurrent()) return;
       setEvaluationError(asApiError(error, "The selected evaluation run could not be loaded."));
       setEvaluationStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "evaluation-load", controller);
     }
-  }, [cacheArtifact, commitEvaluationResult, readArtifact, replaceController]);
+  }, [cacheArtifact, captureScope, commitEvaluationResult, readArtifact, replaceController]);
+
+  const { selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId } = selectedLineage;
 
   useEffect(() => {
     const documentId = activeDocumentRef.current?.id;
     if (!documentId) return;
-    const expectedSelection = selectionRequestRef.current;
-    const needsParseDetail = pathname === "/parse"
-      || pathname === "/documents/parsed"
-      || pathname === "/playground"
-      || pathname === "/retrieval"
-      || pathname === "/evaluation";
-    if (needsParseDetail && selectedParseRunId) {
-      void hydrateParseDetail(documentId, selectedParseRunId, expectedSelection);
-    }
-    if ((pathname === "/chunking" || pathname === "/documents/chunks") && selectedChunkRunId) {
-      void hydrateChunkDetail(documentId, selectedChunkRunId, expectedSelection);
-    }
-    if (pathname === "/embeddings" && selectedEmbeddingRunId) {
-      void hydrateEmbeddingDetail(documentId, selectedEmbeddingRunId, expectedSelection);
-    }
-    if ((pathname === "/playground" || pathname === "/retrieval") && !experimentRun) {
+    // Use screens always hydrate the selected lineage; an inspection cursor never leaks into them.
+    const needsParseDetail = pathname === "/parse" || pathname === "/playground" || pathname === "/evaluation";
+    if (needsParseDetail && selectedParseRunId) void hydrateParseDetail(documentId, selectedParseRunId);
+    if (pathname === "/chunking" && selectedChunkRunId) void hydrateChunkDetail(documentId, selectedChunkRunId);
+    if (pathname === "/embeddings" && selectedEmbeddingRunId) void hydrateEmbeddingDetail(documentId, selectedEmbeddingRunId);
+    if (pathname === "/playground" && !experimentRun) {
       const summary = activeDocumentRef.current?.experiments.find((run) => run.isCompatible
         && run.upstream.chunkRunId === selectedChunkRunId
         && (run.embeddingRunId === null || run.embeddingRunId === selectedEmbeddingRunId));
@@ -2130,59 +1810,55 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const documentId = activeDocumentRef.current?.id;
     const experimentId = experimentRun?.id;
     if (!documentId || !experimentId || experimentStatus === "processing") return;
-    const epoch = documentEpochRef.current;
+    const scope = captureScope();
     const controller = replaceController("experiment-continue");
     setExperimentStatus("processing");
     setExperimentError(null);
     try {
       const result = await continueExperiment(experimentId, controller.signal);
-      if (documentEpochRef.current !== epoch || activeDocumentRef.current?.id !== documentId) return;
+      if (!scope.isCurrent()) return;
       commitExperimentResult(result);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      if (documentEpochRef.current !== epoch || activeDocumentRef.current?.id !== documentId) return;
+      if (isAbortError(error) || !scope.isCurrent()) return;
       setExperimentError(asApiError(error, "The experiment could not continue."));
       setExperimentStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "experiment-continue", controller);
     }
-  }, [commitExperimentResult, experimentRun?.id, experimentStatus, replaceController]);
+  }, [captureScope, commitExperimentResult, experimentRun?.id, experimentStatus, replaceController]);
 
   const rerunCurrentGeneration = useCallback(async () => {
     const documentId = activeDocumentRef.current?.id;
     const experimentId = experimentRun?.id;
     if (!documentId || !experimentId || experimentStatus === "processing") return;
-    const epoch = documentEpochRef.current;
+    const scope = captureScope();
     const controller = replaceController("experiment-rerun-generation");
     setExperimentStatus("processing");
     setExperimentError(null);
     try {
       const result = await rerunGeneration(experimentId, controller.signal);
-      if (documentEpochRef.current !== epoch || activeDocumentRef.current?.id !== documentId) return;
+      if (!scope.isCurrent()) return;
       commitExperimentResult(result);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      if (documentEpochRef.current !== epoch || activeDocumentRef.current?.id !== documentId) return;
+      if (isAbortError(error) || !scope.isCurrent()) return;
       setExperimentError(asApiError(error, "Generation could not be run again."));
       setExperimentStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "experiment-rerun-generation", controller);
     }
-  }, [commitExperimentResult, experimentRun?.id, experimentStatus, replaceController]);
+  }, [captureScope, commitExperimentResult, experimentRun?.id, experimentStatus, replaceController]);
 
   const createDataset = useCallback(async (name: string, cases: EvaluationCase[], baseDatasetId?: string | null) => {
     const documentId = activeDocumentRef.current?.id;
-    const parseRunId = selectedParseRunId;
+    const { selectedParseRunId: parseRunId, selectedChunkRunId: chunkRunId } = selectedLineageRef.current;
     if (!documentId || !parseRunId) return;
-    const epoch = documentEpochRef.current;
-    const selectionVersion = selectionRequestRef.current;
-    const chunkRunId = selectedChunkRunId;
+    const scope = captureScope();
     const controller = replaceController("evaluation-dataset");
     setEvaluationStatus("processing");
     setEvaluationError(null);
     try {
       const dataset = await createEvaluationDataset({ documentId, parseRunId, name, cases, baseDatasetId }, controller.signal);
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedParseRunId !== parseRunId || selectedChunkRunId !== chunkRunId) return;
+      if (!scope.isCurrent()) return;
       const summary: EvaluationDatasetSummary = {
         id: dataset.id,
         documentId: dataset.documentId,
@@ -2195,24 +1871,22 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       };
       cacheArtifact("dataset", dataset.id, dataset);
       setEvaluationDatasets((current) => [summary, ...current.filter((item) => item.id !== summary.id)]);
-      setEvaluationStatus(selectedChunkRunId ? "ready" : "locked");
+      setEvaluationStatus(chunkRunId ? "ready" : "locked");
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (isAbortError(error) || !scope.isCurrent()) return;
       setEvaluationError(asApiError(error, "The evaluation dataset could not be created."));
       setEvaluationStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "evaluation-dataset", controller);
     }
-  }, [cacheArtifact, replaceController, selectedChunkRunId, selectedParseRunId]);
+  }, [cacheArtifact, captureScope, replaceController]);
 
   const runEvaluation = useCallback(async (input: EvaluationRunInput) => {
-    const chunkRunId = selectedChunkRunId;
-    const embeddingRunId = input.retrieval.mode === "keyword" ? null : selectedEmbeddingRunId;
+    const chunkRunId = selectedLineageRef.current.selectedChunkRunId;
+    const embeddingRunId = input.retrieval.mode === "keyword" ? null : selectedLineageRef.current.selectedEmbeddingRunId;
     if (!chunkRunId || (input.retrieval.mode !== "keyword" && !embeddingRunId) || evaluationStatus === "processing") return;
-    const documentId = activeDocumentRef.current?.id;
-    if (!documentId) return;
-    const epoch = documentEpochRef.current;
-    const selectionVersion = selectionRequestRef.current;
+    if (!activeDocumentRef.current?.id) return;
+    const scope = captureScope();
     const controller = replaceController("evaluation");
     setEvaluationStatus("processing");
     setEvaluationError(null);
@@ -2223,75 +1897,67 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         chunkRunId,
         embeddingRunId,
       }, controller.signal, (progressRun) => {
-        if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
+        if (!scope.isCurrent()) return;
         setEvaluationRun(progressRun);
         setEvaluationHistory((current) => [progressRun, ...current.filter((run) => run.id !== progressRun.id)]);
-        setEvaluationStatus(progressRun.status === "completed" ? "completed" : progressRun.status === "failed" ? "error" : "processing");
+        setEvaluationStatus(pipelineStatusFromRun(progressRun));
       });
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId || (input.retrieval.mode !== "keyword" && selectedEmbeddingRunId !== embeddingRunId)) return;
-      setEvaluationRun(result);
-      setEvaluationHistory((current) => [result, ...current.filter((run) => run.id !== result.id)]);
-      setEvaluationStatus(result.status === "completed" ? "completed" : result.status === "running" ? "processing" : "error");
+      if (!scope.isCurrent()) return;
+      commitEvaluationResult(result);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId || selectedChunkRunId !== chunkRunId || (input.retrieval.mode !== "keyword" && selectedEmbeddingRunId !== embeddingRunId)) return;
+      if (isAbortError(error) || !scope.isCurrent()) return;
       setEvaluationError(asApiError(error, "Evaluation could not be completed."));
       setEvaluationStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "evaluation", controller);
     }
-  }, [evaluationStatus, replaceController, selectedChunkRunId, selectedEmbeddingRunId]);
+  }, [captureScope, commitEvaluationResult, evaluationStatus, replaceController]);
 
   const refreshEvaluationRuns = useCallback(async (datasetId: string) => {
     const document = activeDocumentRef.current;
-    const documentId = document?.id;
-    if (!documentId || !document.evaluationDatasets.some((dataset) => dataset.id === datasetId)) return;
-    const epoch = documentEpochRef.current;
-    const selectionVersion = selectionRequestRef.current;
+    if (!document?.id || !document.evaluationDatasets.some((dataset) => dataset.id === datasetId)) return;
+    const scope = captureScope();
     const controller = replaceController("evaluation-history");
     try {
       const runs = await listEvaluationRuns(datasetId, controller.signal);
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
+      if (!scope.isCurrent()) return;
       setEvaluationHistory(runs);
-      const latestRun = runs.find((run) => run.status === "queued" || run.status === "running")
+      const latestRun = runs.find((run) => isRunInFlight(run.status))
         ?? runs.find((run) => run.status === "completed" || run.status === "failed");
       if (!latestRun) {
         setEvaluationRun(null);
         return;
       }
       setEvaluationRun(latestRun);
-      setEvaluationStatus(latestRun.status === "queued" || latestRun.status === "running" ? "processing" : latestRun.status === "completed" ? "completed" : "error");
-      const detail = latestRun.status === "queued" || latestRun.status === "running"
+      setEvaluationStatus(pipelineStatusFromRun(latestRun));
+      const detail = isRunInFlight(latestRun.status)
         ? await waitForEvaluationRun(latestRun.id, controller.signal, (progress) => {
-          if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
+          if (!scope.isCurrent()) return;
           setEvaluationRun(progress);
           setEvaluationHistory((current) => [progress, ...current.filter((run) => run.id !== progress.id)]);
         })
         : await getEvaluationRun(latestRun.id, controller.signal);
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
+      if (!scope.isCurrent()) return;
       cacheArtifact("evaluation", detail.id, detail);
       commitEvaluationResult(detail);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      if (documentEpochRef.current !== epoch || selectionRequestRef.current !== selectionVersion || activeDocumentRef.current?.id !== documentId) return;
+      if (isAbortError(error) || !scope.isCurrent()) return;
       setEvaluationError(asApiError(error, "Evaluation history could not be loaded."));
       setEvaluationStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "evaluation-history", controller);
     }
-  }, [cacheArtifact, commitEvaluationResult, replaceController]);
+  }, [cacheArtifact, captureScope, commitEvaluationResult, replaceController]);
 
   const resumeRunTracking = useCallback(async (kind: "experiment" | "evaluation") => {
     const runId = kind === "experiment" ? experimentRun?.id : evaluationRun?.id;
     const documentId = activeDocumentRef.current?.id;
     if (!runId || !documentId) return;
-    const epoch = documentEpochRef.current;
-    const selectionVersion = selectionRequestRef.current;
+    const scope = captureScope();
     controllersRef.current.get(`${kind}-load`)?.abort();
     if (kind === "evaluation") controllersRef.current.get("evaluation-history")?.abort();
     const controller = replaceController(kind);
-    const isCurrent = () => !controller.signal.aborted && documentEpochRef.current === epoch
-      && selectionRequestRef.current === selectionVersion && activeDocumentRef.current?.id === documentId;
+    const isCurrent = () => !controller.signal.aborted && scope.isCurrent();
     const setStatus = kind === "experiment" ? setExperimentStatus : setEvaluationStatus;
     const setError = kind === "experiment" ? setExperimentError : setEvaluationError;
     setStatus("processing");
@@ -2329,41 +1995,68 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     } finally {
       removeControllerIfCurrent(controllersRef.current, kind, controller);
     }
-  }, [experimentRun?.id, evaluationRun?.id, replaceController, cacheArtifact, commitEvaluationResult]);
+  }, [experimentRun?.id, evaluationRun?.id, captureScope, replaceController, cacheArtifact, commitEvaluationResult]);
 
   const activePipeline = useMemo(
     () => pipelines.find((pipeline) => pipeline.id === activePipelineId) ?? null,
     [activePipelineId, pipelines],
   );
 
+  const inspectingParse = inspectedLineage.selectedParseRunId !== null && inspectedLineage.selectedParseRunId !== selectedParseRunId;
+  const inspectingChunk = inspectedLineage.selectedChunkRunId !== null && inspectedLineage.selectedChunkRunId !== selectedChunkRunId;
+  const inspectingEmbedding = inspectedLineage.selectedEmbeddingRunId !== null && inspectedLineage.selectedEmbeddingRunId !== selectedEmbeddingRunId;
+  const parseResult = inspectingParse ? inspectedParseResult : selectedParseResult;
+  const chunkRun = inspectingChunk ? inspectedChunkRun : selectedChunkRun;
+  const embeddingRun = inspectingEmbedding ? inspectedEmbeddingRun : selectedEmbeddingRun;
+  // A resolved auth check without a user must not leave the workspace in
+  // "checking" forever: surface it so the screen can offer a retry.
+  const authBlocked = authReady && !authoritativeUserId;
+  const effectivePersistenceStatus: PersistenceStatus = authBlocked ? "unavailable" : persistenceStatus;
+  const effectivePersistenceError = useMemo(() => {
+    if (!authBlocked) return persistenceError;
+    return authError
+      ? new DocumentApiError("auth_unavailable", "Your session could not be verified. Retry or sign in again.")
+      : new DocumentApiError("auth_required", "Sign in to load your documents.");
+  }, [authBlocked, authError, persistenceError]);
+  const workspaceStatus: WorkspaceStatus = effectivePersistenceStatus === "unavailable"
+    ? "unavailable"
+    : !authReady || effectivePersistenceStatus === "checking" || (activeDocumentId !== null && activeDocument?.id !== activeDocumentId)
+      ? "loading"
+      : "ready";
+  const reparseImpact = useMemo(() => describeReparseImpact(activePipeline, selectedLineage), [activePipeline, selectedLineage]);
+
   const value = useMemo<DocumentPipelineContextValue>(() => ({
-    pendingUpload, fileError, parseStatus, parseProgress, parsePhase,
+    parseStatus, parseProgress, parsePhase,
     parseProgressEstimated: parseProgress > lastReportedParseProgress,
-    parseResult, parseError, activity,
-    persistenceStatus, persistenceError, capabilities, documents, activeDocumentId, activeDocumentMetadata, activeDocument,
+    parseResult, parseError,
+    persistenceStatus: effectivePersistenceStatus, persistenceError: effectivePersistenceError, workspaceStatus, capabilities, documents, activeDocumentId, activeDocumentMetadata, activeDocument,
     selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId,
-    inspectedParseRunId, inspectedChunkRunId, inspectedEmbeddingRunId,
+    selectedParseResult, selectedChunkRun, selectedEmbeddingRun,
+    inspectedParseRunId: inspectedLineage.selectedParseRunId,
+    inspectedChunkRunId: inspectedLineage.selectedChunkRunId,
+    inspectedEmbeddingRunId: inspectedLineage.selectedEmbeddingRunId,
     chunkStatus, chunkRun, chunkError, embeddingStatus, embeddingRun, embeddingError,
     experimentStatus, experimentRun, experimentError, experimentHistory,
     evaluationDatasets, evaluationStatus, evaluationRun, evaluationError, evaluationHistory,
     uploadNotice,
     pipelines, activePipelineId, activePipeline,
     pipelineSelectionMode: activePipeline ? "saved" : "scratch",
-    selectFile, addDocument, selectPersistedDocument, deletePersistedDocument, selectParseRun, selectChunkRun, selectEmbeddingRun, inspectParseRun, inspectChunkRun, inspectEmbeddingRun,
-    setPipelineParseRun, setPipelineChunkRun, setPipelineEmbeddingRun, removeFile, parseSelectedFile, reparseActiveDocument, parseActiveDocument, runChunking, runEmbedding,
+    reparseImpact,
+    addDocument, selectPersistedDocument, deletePersistedDocument, selectParseRun, selectChunkRun, selectEmbeddingRun, inspectParseRun, inspectChunkRun, inspectEmbeddingRun,
+    setPipelineParseRun, setPipelineChunkRun, setPipelineEmbeddingRun, reparseActiveDocument, runChunking, runEmbedding,
     runExperiment, loadExperiment, loadEvaluationDataset, loadEvaluationRun, resumeRunTracking, continueExperiment: continueCurrentExperiment, rerunGeneration: rerunCurrentGeneration,
     createDataset, runEvaluation, refreshPersistence, refreshEvaluationRuns,
     selectPipeline, createPipeline, renamePipeline, deletePipeline,
   }), [
-    activeDocument, activeDocumentId, activeDocumentMetadata, activePipeline, activePipelineId, activity, capabilities, chunkError, chunkRun, chunkStatus, createDataset, documents,
+    activeDocument, activeDocumentId, activeDocumentMetadata, activePipeline, activePipelineId, capabilities, chunkError, chunkRun, chunkStatus, createDataset, documents,
     embeddingError, embeddingRun, embeddingStatus, evaluationDatasets, evaluationError, evaluationHistory,
     evaluationRun, evaluationStatus, experimentError, experimentHistory, experimentRun, experimentStatus,
-    fileError, lastReportedParseProgress, parseError, parsePhase, parseProgress, parseResult, parseSelectedFile, parseStatus, persistenceError, persistenceStatus,
-    pendingUpload, pipelines, selectedChunkRunId, selectedEmbeddingRunId, selectedParseRunId, inspectedChunkRunId, inspectedEmbeddingRunId, inspectedParseRunId, uploadNotice,
-    addDocument, deletePersistedDocument, reparseActiveDocument, parseActiveDocument,
-    continueCurrentExperiment, inspectChunkRun, inspectEmbeddingRun, inspectParseRun, loadEvaluationDataset, loadEvaluationRun, loadExperiment, refreshEvaluationRuns, refreshPersistence, removeFile, rerunCurrentGeneration,
+    inspectedLineage, lastReportedParseProgress, parseError, parsePhase, parseProgress, parseResult, parseStatus, effectivePersistenceError, effectivePersistenceStatus,
+    pipelines, reparseImpact, selectedChunkRun, selectedChunkRunId, selectedEmbeddingRun, selectedEmbeddingRunId, selectedParseResult, selectedParseRunId, uploadNotice, workspaceStatus,
+    addDocument, deletePersistedDocument, reparseActiveDocument,
+    continueCurrentExperiment, inspectChunkRun, inspectEmbeddingRun, inspectParseRun, loadEvaluationDataset, loadEvaluationRun, loadExperiment, refreshEvaluationRuns, refreshPersistence, rerunCurrentGeneration,
     runChunking, runEmbedding, runEvaluation, runExperiment, resumeRunTracking,
-    createPipeline, deletePipeline, renamePipeline, selectChunkRun, selectEmbeddingRun, selectFile, selectParseRun, selectPersistedDocument, selectPipeline,
+    createPipeline, deletePipeline, renamePipeline, selectChunkRun, selectEmbeddingRun, selectParseRun, selectPersistedDocument, selectPipeline,
     setPipelineChunkRun, setPipelineEmbeddingRun, setPipelineParseRun,
   ]);
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { continueExperiment, createDocumentPipeline, createExperimentAsync, deleteDocument, deleteDocumentPipeline, getChunkRun, getDocument, getDocumentSummary, getEmbeddingRun, getEvaluationRun, getExperiment, getParseRun, listDocumentPipelines, listDocuments, parseAndPersistDocument, rerunGeneration, updateDocumentPipeline, uploadDocument, waitForParseRun } from "@/lib/rag-api";
+import { continueExperiment, createDocumentPipeline, createEmbeddingRun, createExperimentAsync, deleteDocument, deleteDocumentPipeline, getChunkRun, getDocumentSummary, getEmbeddingRun, getEvaluationRun, getExperiment, getParseRun, listDocumentPipelines, listDocuments, parsePersistedDocument, rerunGeneration, updateDocumentPipeline, uploadDocument, waitForParseRun } from "@/lib/rag-api";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -46,21 +46,8 @@ describe("RAG API contract normalization", () => {
     await expect(listDocuments()).resolves.toMatchObject([{ id: "document-1", fileName: "lesson.pdf" }]);
   });
 
-  it("hydrates the active parse result from persisted document detail", async () => {
+  it("hydrates a persisted parse result with OCR source provenance", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      id: "document-1",
-      fileName: "lesson.pdf",
-      mediaType: "application/pdf",
-      sizeBytes: 100,
-      pageCount: 1,
-      activeParseRunId: "parse-1",
-      activeChunkRunId: null,
-      activeEmbeddingRunId: null,
-      parseRuns: [],
-      chunkRuns: [],
-      embeddingRuns: [],
-      experiments: [],
-      activeParseRun: {
         document: { fileName: "lesson.pdf", mediaType: "application/pdf", sizeBytes: 100, pageCount: 1 },
         structured: {
           pages: [{ pageNumber: 1, elements: [] }],
@@ -73,11 +60,12 @@ describe("RAG API contract normalization", () => {
         parseRunId: "parse-1",
         status: "completed",
         runMetadata: { parser: "docling" },
-      },
     }), { status: 200, headers: { "Content-Type": "application/json" } })));
 
-    await expect(getDocument("document-1")).resolves.toMatchObject({
-      activeParseRun: { documentId: "document-1", parseRunId: "parse-1", markdown: "# RAG Basics",
+    await expect(getParseRun("parse-1", undefined, "document-1")).resolves.toMatchObject({
+      id: "parse-1",
+      status: "completed",
+      result: { documentId: "document-1", parseRunId: "parse-1", markdown: "# RAG Basics",
         structured: { elements: [{ sourceOrigin: "mixed", sourceRegions: [{ origin: "ocr", confidence: .95, bbox: [1, 2, 3, 4] }] }] } },
     });
   });
@@ -177,39 +165,45 @@ describe("RAG API contract normalization", () => {
       reusedDocument: true,
     }), { status: 200, headers: { "Content-Type": "application/json" } })));
 
-    await expect(parseAndPersistDocument(new File(["%PDF-1.4"], "lesson.pdf", { type: "application/pdf" }))).resolves.toMatchObject({
+    await expect(parsePersistedDocument("document-1")).resolves.toMatchObject({
       documentId: "document-1",
       parseRunId: "parse-1",
       reusedDocument: true,
     });
   });
 
-  it("normalizes persisted snake_case chunk run responses without inventing values", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+  it("normalizes camelCase chunk runs and surfaces snake_case contract drift", async () => {
+    const chunkPayload = {
       id: "chunk-run-1",
       status: "completed",
-      config: { chunk_size_tokens: 128, overlap_tokens: 16 },
-      document_id: "document-1",
-      parse_run_id: "parse-run-1",
+      config: { chunkSizeTokens: 128, overlapTokens: 16 },
+      documentId: "document-1",
+      parseRunId: "parse-run-1",
       strategy: "fixed_token",
-      chunk_count: 1,
+      chunkCount: 1,
       chunks: [{
         id: "chunk-1",
         ordinal: 0,
         text: "Grounded source text",
-        page_numbers: [2],
-        source_element_ids: ["element-2"],
-        heading_path: ["Introduction"],
-        token_count: 4,
-        character_count: 20,
+        pageNumbers: [2],
+        sourceElementIds: ["element-2"],
+        headingPath: ["Introduction"],
+        tokenCount: 4,
+        characterCount: 20,
       }],
-    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    };
+    const json = (payload: unknown) => new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(chunkPayload)));
 
     const run = await getChunkRun("chunk-run-1");
 
     expect(run.documentId).toBe("document-1");
     expect(run.chunks[0]).toMatchObject({ pageNumbers: [2], sourceElementIds: ["element-2"] });
     expect(run.reusedArtifact).toBe(false);
+
+    const { documentId, parseRunId, chunkCount, ...rest } = chunkPayload;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ ...rest, document_id: documentId, parse_run_id: parseRunId, chunk_count: chunkCount })));
+    await expect(getChunkRun("chunk-run-1")).rejects.toMatchObject({ code: "invalid_response" });
   });
 
   it("carries additive embedding reuse and effective-model provenance fields", async () => {
@@ -217,17 +211,17 @@ describe("RAG API contract normalization", () => {
       id: "embedding-run-1",
       status: "completed",
       config: {},
-      document_id: "document-1",
-      chunk_run_id: "chunk-run-1",
+      documentId: "document-1",
+      chunkRunId: "chunk-run-1",
       model: "gemini-embedding-2",
       dimensions: 768,
-      embedding_format_version: "gemini-embedding-2-qa-prefix-v1",
-      embedding_count: 1,
-      effective_model: "gemini-embedding-2-001",
+      embeddingFormatVersion: "gemini-embedding-2-qa-prefix-v1",
+      embeddingCount: 1,
+      effectiveModel: "gemini-embedding-2-001",
       startedAt: "2026-08-23T20:09:38.883931Z",
       completedAt: "2026-08-23T20:09:50.744289Z",
       durationMs: 11861,
-      reused_artifact: true,
+      reusedArtifact: true,
     }), { status: 200, headers: { "Content-Type": "application/json" } })));
 
     await expect(getEmbeddingRun("embedding-run-1")).resolves.toMatchObject({
@@ -336,6 +330,7 @@ describe("RAG API contract normalization", () => {
   });
 
   it("uses one experiment state machine for a production 202 response", async () => {
+    vi.useFakeTimers();
     const queued = {
       id: "experiment-async",
       status: "queued",
@@ -358,15 +353,18 @@ describe("RAG API contract normalization", () => {
         },
       },
     };
+    const json = (payload: unknown, status = 200) => new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } });
     const responses = [
-      new Response(JSON.stringify(queued), { status: 202, headers: { "Content-Type": "application/json" } }),
-      new Response(JSON.stringify(queued), { status: 200, headers: { "Content-Type": "application/json" } }),
-      new Response(JSON.stringify(completed), { status: 200, headers: { "Content-Type": "application/json" } }),
+      json(queued, 202),
+      json({ id: "experiment-async", status: "running", stageStatuses: {} }),
+      json({ ...queued, status: "running" }),
+      json({ id: "experiment-async", status: "completed", stageStatuses: { retrieval: "completed" } }),
+      json(completed),
     ];
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(responses.shift()));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(createExperimentAsync({
+    const result = createExperimentAsync({
       documentId: "document-1",
       chunkRunId: "chunk-1",
       embeddingRunId: null,
@@ -376,10 +374,15 @@ describe("RAG API contract normalization", () => {
       reranking: { enabled: false, candidateCount: 10 },
       context: { tokenBudget: 3000 },
       generation: { temperature: 0.1, maxOutputTokens: 256 },
-    })).resolves.toMatchObject({ id: "experiment-async", status: "completed" });
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(result).resolves.toMatchObject({ id: "experiment-async", status: "completed" });
+    vi.useRealTimers();
     expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
       ["http://127.0.0.1:8000/experiments?async=true", "POST"],
+      ["http://127.0.0.1:8000/experiments/experiment-async/status", undefined],
       ["http://127.0.0.1:8000/experiments/experiment-async", undefined],
+      ["http://127.0.0.1:8000/experiments/experiment-async/status", undefined],
       ["http://127.0.0.1:8000/experiments/experiment-async", undefined],
     ]);
   });
@@ -432,5 +435,127 @@ describe("RAG API contract normalization", () => {
 
     const polling = waitForParseRun("parse-run-1", undefined, "document-1", undefined, 1);
     await expect(polling).rejects.toMatchObject({ code: "parse_poll_timeout" });
+  });
+
+  it("fails a hung request with request_timeout instead of leaving it pending", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+    })));
+    const pending = expect(listDocuments()).rejects.toMatchObject({ code: "request_timeout" });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pending;
+    vi.useRealTimers();
+  });
+
+  it("keeps a caller abort as AbortError rather than a timeout", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      if (init?.signal?.aborted) reject(new DOMException("aborted", "AbortError"));
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+    })));
+    const controller = new AbortController();
+    const pending = expect(listDocuments(controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await pending;
+  });
+
+  describe("embedding run creation", () => {
+    const embedding = (status: string, extra: Record<string, unknown> = {}) => ({
+      id: "embedding-1",
+      status,
+      documentId: "document-1",
+      chunkRunId: "chunk-1",
+      model: "gemini-embedding",
+      dimensions: 768,
+      embeddingFormatVersion: "v1",
+      ...extra,
+    });
+
+    it("returns a synchronous 200 completed run without polling", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(embedding("completed", { embeddingCount: 12 })), { status: 200 }));
+      vi.stubGlobal("fetch", fetchMock);
+      await expect(createEmbeddingRun("document-1", "chunk-1")).resolves.toMatchObject({ id: "embedding-1", status: "completed", embeddingCount: 12 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("polls an accepted 202 run until it completes", async () => {
+      vi.useFakeTimers();
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify(embedding("queued", { embeddingCount: 0 })), { status: 202 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify(embedding("running")), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify(embedding("completed", { embeddingCount: 12 })), { status: 200 }));
+      vi.stubGlobal("fetch", fetchMock);
+      const progress: string[] = [];
+      const pending = createEmbeddingRun("document-1", "chunk-1", undefined, (run) => progress.push(run.status));
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(pending).resolves.toMatchObject({ id: "embedding-1", status: "completed", embeddingCount: 12 });
+      expect(fetchMock.mock.calls.slice(1).map(([url]) => String(url))).toEqual([
+        "http://127.0.0.1:8000/embedding-runs/embedding-1",
+        "http://127.0.0.1:8000/embedding-runs/embedding-1",
+      ]);
+      expect(progress).toEqual(["running", "completed"]);
+      vi.useRealTimers();
+    });
+
+    it("rejects with the run error when an accepted run fails", async () => {
+      vi.useFakeTimers();
+      vi.stubGlobal("fetch", vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify(embedding("running")), { status: 202 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify(embedding("failed", { errorCode: "worker_terminated", errorMessage: "The worker stopped." })), { status: 200 })));
+      const failed = expect(createEmbeddingRun("document-1", "chunk-1")).rejects.toMatchObject({ code: "worker_terminated" });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await failed;
+      vi.useRealTimers();
+    });
+  });
+
+  it("detaches its abort listener from a long-lived caller signal after each request", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }))));
+    const controller = new AbortController();
+    const add = vi.spyOn(controller.signal, "addEventListener");
+    const remove = vi.spyOn(controller.signal, "removeEventListener");
+    await listDocuments(controller.signal);
+    await listDocuments(controller.signal);
+    const listeners = (spy: typeof add) => spy.mock.calls.filter(([type]) => type === "abort").map(([, listener]) => listener);
+    expect(listeners(add)).toHaveLength(2);
+    expect(listeners(remove)).toEqual(listeners(add));
+  });
+
+  it("gives continue and rerun-generation the long request deadline", async () => {
+    vi.useFakeTimers();
+    const run = { id: "experiment-2", status: "completed", documentId: "doc-1", chunkRunId: "chunk-1", query: "q", targetStage: "retrieval", stageResults: { retrieval: { candidates: [], durationMs: 1 } } };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((_url: string, init?: RequestInit) => new Promise<Response>((resolve, reject) => {
+      // Development backends run these inline, so the response can take well over 30 s.
+      const timer = setTimeout(() => resolve(new Response(JSON.stringify(run), { status: 200 })), 60_000);
+      init?.signal?.addEventListener("abort", () => {
+        clearTimeout(timer);
+        reject(new DOMException("aborted", "AbortError"));
+      }, { once: true });
+    })));
+    for (const action of [continueExperiment, rerunGeneration]) {
+      const pending = action("experiment-1");
+      await vi.advanceTimersByTimeAsync(60_000);
+      await expect(pending).resolves.toMatchObject({ id: "experiment-2", status: "completed" });
+    }
+    vi.useRealTimers();
+  });
+
+  it("keeps missing evaluation case metrics as null instead of a measured zero", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "evaluation-1",
+      status: "completed",
+      datasetId: "dataset-1",
+      results: { aggregate: {}, caseResults: [{ question: "q", expectedElementIds: [], retrievedElementIds: [], citations: [] }] },
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    const run = await getEvaluationRun("evaluation-1");
+    expect(run.caseResults?.[0]).toMatchObject({ citationValidity: null, groundedness: null });
+  });
+
+  it("does not fall back to the legacy document endpoint when the summary is missing", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code: "document_not_found", message: "Missing" } }), { status: 404, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getDocumentSummary("document-1")).rejects.toMatchObject({ code: "document_not_found", status: 404 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
