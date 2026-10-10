@@ -78,7 +78,10 @@ ile ayağa kalkan local stack (Supabase CLI) üzerinde Auth gerekir.
 
 2. `.env` içinde en az `NEXT_PUBLIC_SUPABASE_URL`,
    `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` ile backend'in JWT doğrulaması için
-   `SUPABASE_URL` değerlerini kendi Supabase projenizle doldurun. Değişken
+   `SUPABASE_URL` değerlerini kendi Supabase projenizle doldurun.
+   `SUPABASE_JWT_ISSUER` ve `SUPABASE_JWT_JWKS_URL` şablonda `<project-ref>`
+   placeholder'ı taşır ve doluysa `SUPABASE_URL`'den türetilen değerlerin önüne
+   geçer; bunları aynı proje adresiyle güncelleyin ya da boş bırakın. Değişken
    açıklamaları `.env.example` içindedir; secret'ları source control'a eklemeyin.
 3. Backend'i kurun (virtual environment, bağımlılıklar, OCR modelleri, kalıcı
    Supabase/Gemini seçenekleri): [backend/README.md](backend/README.md).

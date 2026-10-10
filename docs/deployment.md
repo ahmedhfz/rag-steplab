@@ -42,9 +42,11 @@ Tek `rag-steplab-api` Modal App üç farklı compute profili kullanır
 | --- | --- | ---: | ---: | ---: | ---: |
 | FastAPI ASGI | `api_eu` | 0.5 | 1024 MiB | 300 s | 1 / 2 |
 | Full Docling parse worker | `parse_worker` (`benchmark_parse` aynı profili kullanır) | 2.0 | 4096 MiB | 900 s | 0 / 1 |
-| Pipeline worker (embedding, experiment, evaluation) | `pipeline_worker` | 1.0 | 2048 MiB | 1800 s | 0 / 1 |
+| Pipeline worker (experiment, evaluation) | `pipeline_worker` | 1.0 | 2048 MiB | 1800 s | 0 / 1 |
 
-Pipeline worker API image'ını kullanır (Docling taşımaz); timeout ve startup
+Pipeline worker API image'ını kullanır (Docling taşımaz). Embedding run'ları
+şu an API isteği içinde senkron çalışır; lease süreleri aynı pipeline bütçesini
+kullanır. Pipeline worker timeout ve startup
 timeout `PIPELINE_WORKER_TIMEOUT_SECONDS` / `PIPELINE_WORKER_STARTUP_TIMEOUT_SECONDS`
 ile ayarlanır (varsayılan 1800 s / 300 s); backend lease/timeout hesabı aynı
 değişkenleri okur, bu yüzden Modal deploy'u ile API secret'ında aynı değer
