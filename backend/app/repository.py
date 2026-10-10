@@ -164,6 +164,21 @@ def _completion_replay(status: str | None, lease_token: str | None) -> bool:
     return status == "completed" and lease_token is not None
 
 
+def upload_quota_problem(
+    count: int, stored_bytes: int, size_bytes: int, quota: tuple[int, int] | None
+) -> ApiProblem | None:
+    """The per-owner upload quota decision (``quota`` = (max documents, max bytes), 0 disables)."""
+
+    if not quota:
+        return None
+    max_documents, max_bytes = quota
+    if max_documents and count >= max_documents:
+        return ApiProblem(403, "document_quota_exceeded", "The document limit for this account has been reached.")
+    if max_bytes and stored_bytes + size_bytes > max_bytes:
+        return ApiProblem(403, "storage_quota_exceeded", "The storage limit for this account has been reached.")
+    return None
+
+
 def _embedding_advances_default(
     active_parse_id: str | None,
     active_chunk_id: str | None,
@@ -473,7 +488,16 @@ class Repository:
     def scoped(self, owner_user_id: uuid.UUID) -> "ScopedRepository":
         return ScopedRepository(self, owner_user_id)
 
-    def create_document(self, metadata: dict[str, Any], storage_bucket: str, storage_path: str, sha256: str) -> dict[str, Any]:
+    def create_document(
+        self,
+        metadata: dict[str, Any],
+        storage_bucket: str,
+        storage_path: str,
+        sha256: str,
+        *,
+        quota: tuple[int, int] | None = None,
+    ) -> dict[str, Any]:
+        """Insert a document; ``quota`` is enforced atomically with the insert."""
         raise NotImplementedError
 
     def save_parse(self, document_id: str, parsed: ParseResponse, *, run_id: str | None = None) -> dict[str, Any]:
@@ -543,7 +567,11 @@ class Repository:
         raise NotImplementedError
 
     def owner_document_usage(self, owner_user_id: uuid.UUID | str) -> tuple[int, int]:
-        """(document count, stored bytes) for one owner."""
+        """(document count, stored bytes) for one owner.
+
+        Stored bytes include objects of deleted documents whose Storage cleanup
+        has not completed yet (pending or dead outbox rows).
+        """
         raise NotImplementedError
 
     def get_dataset_case_count(self, dataset_id: str) -> int:
@@ -961,12 +989,18 @@ class InMemoryRepository(Repository):
         self._run_number_counters[key] = value
         return value
 
-    def create_document(self, metadata, storage_bucket, storage_path, sha256):
+    def create_document(self, metadata, storage_bucket, storage_path, sha256, *, quota=None):
         document_id = new_id()
         owner_user_id = metadata.get("owner_user_id")
         with self._lock:
             if self.get_document_by_sha256(sha256, owner_user_id=owner_user_id) is not None:
                 raise ApiProblem(409, "duplicate_document", "A document with this SHA256 already exists for this user.")
+            if quota and owner_user_id is not None:
+                problem = upload_quota_problem(
+                    *self.owner_document_usage(owner_user_id), int(metadata.get("size_bytes") or 0), quota
+                )
+                if problem is not None:
+                    raise problem
         row = {
             "id": document_id,
             **metadata,
@@ -1185,7 +1219,12 @@ class InMemoryRepository(Repository):
     def owner_document_usage(self, owner_user_id):
         owner = uuid.UUID(str(owner_user_id))
         rows = [row for row in self.documents.values() if row.get("owner_user_id") == owner]
-        return len(rows), sum(int(row.get("size_bytes") or 0) for row in rows)
+        outstanding = sum(
+            int(row.get("size_bytes") or 0)
+            for row in self.storage_cleanups.values()
+            if row.get("owner_user_id") == owner and row.get("status") in {"pending", "dead"}
+        )
+        return len(rows), sum(int(row.get("size_bytes") or 0) for row in rows) + outstanding
 
     def get_document_by_sha256(self, sha256, *, owner_user_id=None):
         owner = owner_user_id
@@ -1257,6 +1296,7 @@ class InMemoryRepository(Repository):
                 "owner_user_id": document["owner_user_id"],
                 "storage_bucket": document["storage_bucket"],
                 "storage_path": document["storage_path"],
+                "size_bytes": document.get("size_bytes"),
                 "status": "pending",
                 "attempt_count": 0,
                 "last_error_code": None,
@@ -2338,7 +2378,7 @@ class SqlAlchemyRepository(Repository):
                 "Another expensive operation is already queued or running for this user.",
             )
 
-    def create_document(self, metadata, storage_bucket, storage_path, sha256):
+    def create_document(self, metadata, storage_bucket, storage_path, sha256, *, quota=None):
         row = Document(
             id=new_id(),
             file_name=metadata["file_name"],
@@ -2351,6 +2391,19 @@ class SqlAlchemyRepository(Repository):
             storage_path=storage_path,
         )
         with session_scope() as session:
+            if quota and row.owner_user_id is not None:
+                # One owner's quota check and insert are serialized by a
+                # transaction-scoped lock, so concurrent uploads cannot all read
+                # the same usage and overshoot the quota together.
+                session.execute(
+                    text("select pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+                    {"key": f"upload-quota:{row.owner_user_id}"},
+                )
+                problem = upload_quota_problem(
+                    *self._owner_usage(session, row.owner_user_id), int(row.size_bytes or 0), quota
+                )
+                if problem is not None:
+                    raise problem
             session.add(row)
             session.flush()
             if row.owner_user_id is not None:
@@ -2667,14 +2720,23 @@ class SqlAlchemyRepository(Repository):
         with session_scope() as session:
             return session.scalar(select(query.exists())) is True
 
+    def _owner_usage(self, session, owner_user_id) -> tuple[int, int]:
+        owner = self._owner_uuid(owner_user_id)
+        count, total = session.execute(
+            select(func.count(Document.id), func.coalesce(func.sum(Document.size_bytes), 0)).where(
+                Document.owner_user_id == owner
+            )
+        ).one()
+        outstanding = session.scalar(
+            select(func.coalesce(func.sum(StorageCleanup.size_bytes), 0)).where(
+                StorageCleanup.owner_user_id == owner, StorageCleanup.status.in_(["pending", "dead"])
+            )
+        )
+        return int(count), int(total) + int(outstanding or 0)
+
     def owner_document_usage(self, owner_user_id):
         with session_scope() as session:
-            count, total = session.execute(
-                select(func.count(Document.id), func.coalesce(func.sum(Document.size_bytes), 0)).where(
-                    Document.owner_user_id == self._owner_uuid(owner_user_id)
-                )
-            ).one()
-            return int(count), int(total)
+            return self._owner_usage(session, owner_user_id)
 
     def get_dataset_case_count(self, dataset_id):
         with session_scope() as session:
@@ -2734,6 +2796,7 @@ class SqlAlchemyRepository(Repository):
             "status": row.status,
             "attempt_count": row.attempt_count,
             "last_error_code": row.last_error_code,
+            "size_bytes": row.size_bytes,
             "next_attempt_at": row.next_attempt_at,
             "created_at": row.created_at,
             "completed_at": row.completed_at,
@@ -2755,6 +2818,7 @@ class SqlAlchemyRepository(Repository):
                     owner_user_id=document.owner_user_id,
                     storage_bucket=document.storage_bucket,
                     storage_path=document.storage_path,
+                    size_bytes=document.size_bytes,
                     status="pending",
                     attempt_count=0,
                 )
@@ -4609,10 +4673,10 @@ class ScopedRepository(Repository):
     def get_dataset_case_count(self, dataset_id):
         return self._repository.get_dataset_case_count(dataset_id) if self._owns("dataset", dataset_id) else 0
 
-    def create_document(self, metadata, storage_bucket, storage_path, sha256):
+    def create_document(self, metadata, storage_bucket, storage_path, sha256, *, quota=None):
         payload = dict(metadata)
         payload["owner_user_id"] = self.owner_user_id
-        return self._repository.create_document(payload, storage_bucket, storage_path, sha256)
+        return self._repository.create_document(payload, storage_bucket, storage_path, sha256, quota=quota)
 
     def save_parse(self, document_id, parsed, *, run_id=None):
         if self._owned_document(document_id) is None:

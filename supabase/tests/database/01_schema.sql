@@ -1,6 +1,6 @@
 begin;
 
-select plan(65);
+select plan(66);
 
 select ok(to_regnamespace('rag_lab') is not null, 'rag_lab schema exists');
 
@@ -500,6 +500,15 @@ select ok(
       and has_function_privilege('rag_steplab_app', p.oid, 'EXECUTE')
   ),
   'runtime role has no administrative extension functions'
+);
+
+select ok(
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'rag_lab' and table_name = 'storage_cleanups' and column_name = 'size_bytes'
+  )
+  and to_regclass('rag_lab.ix_storage_cleanups_owner_outstanding') is not null,
+  'cleanup outbox records object size for the owner storage quota'
 );
 
 select * from finish();

@@ -43,6 +43,7 @@ from .repository import (
     new_id,
     now_utc,
     simple_fts_terms,
+    upload_quota_problem,
 )
 from .schemas import (
     ChunkRunRequest,
@@ -524,7 +525,10 @@ def persist_document_upload(
     existing = repository.get_document_by_sha256(digest)
     if existing is not None:
         return existing, True
-    _require_upload_quota(repository, settings, len(content))
+    quota = _upload_quota(repository, settings)
+    # Cheap early rejection before the object is uploaded; the authoritative
+    # check runs again atomically with the document insert.
+    _require_upload_quota(repository, quota, len(content))
 
     storage_path = f"{new_id()}/{digest}.pdf"
     storage = get_storage()
@@ -538,10 +542,16 @@ def persist_document_upload(
     try:
         storage.upload_pdf(storage_path, content)
         try:
-            document = repository.create_document(metadata, settings.supabase_storage_bucket, storage_path, digest)
-        except Exception:
+            document = repository.create_document(
+                metadata, settings.supabase_storage_bucket, storage_path, digest, quota=quota
+            )
+        except Exception as exc:
             storage.remove(storage_path)
             raced = repository.get_document_by_sha256(digest)
+            if isinstance(exc, ApiProblem) and exc.code in {"document_quota_exceeded", "storage_quota_exceeded"}:
+                if raced is not None:
+                    return raced, True
+                raise
             if raced is None:
                 raise
             return raced, True
@@ -557,17 +567,24 @@ def persist_document_upload(
     return document, False
 
 
-def _require_upload_quota(repository: Repository, settings: Settings, size_bytes: int) -> None:
-    """Per-user document/byte quota (soft: concurrent uploads may overshoot by one)."""
+def _upload_quota(repository: Repository, settings: Settings) -> tuple[int, int] | None:
+    """(max documents, max bytes) for an owner-scoped upload, or None when disabled."""
 
-    owner = getattr(repository, "owner_user_id", None)
-    if owner is None or not (settings.max_documents_per_user or settings.max_storage_bytes_per_user):
+    if getattr(repository, "owner_user_id", None) is None:
+        return None
+    if not (settings.max_documents_per_user or settings.max_storage_bytes_per_user):
+        return None
+    return settings.max_documents_per_user, settings.max_storage_bytes_per_user
+
+
+def _require_upload_quota(repository: Repository, quota: tuple[int, int] | None, size_bytes: int) -> None:
+    """Early per-user quota check; ``create_document`` re-checks it under a per-owner lock."""
+
+    if quota is None:
         return
-    count, stored = repository.owner_document_usage(owner)
-    if settings.max_documents_per_user and count >= settings.max_documents_per_user:
-        raise ApiProblem(403, "document_quota_exceeded", "The document limit for this account has been reached.")
-    if settings.max_storage_bytes_per_user and stored + size_bytes > settings.max_storage_bytes_per_user:
-        raise ApiProblem(403, "storage_quota_exceeded", "The storage limit for this account has been reached.")
+    problem = upload_quota_problem(*repository.owner_document_usage(repository.owner_user_id), size_bytes, quota)
+    if problem is not None:
+        raise problem
 
 
 def queue_parse_upload(

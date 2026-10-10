@@ -81,6 +81,9 @@ class StorageCleanup(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Bytes of the object still held in Storage; counted against the owner's
+    # storage quota until the cleanup completes (NULL for legacy rows).
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

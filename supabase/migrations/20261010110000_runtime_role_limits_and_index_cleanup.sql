@@ -45,3 +45,15 @@ create index if not exists ix_experiment_runs_active
   on rag_lab.experiment_runs (document_id) where status in ('queued', 'running');
 create index if not exists ix_evaluation_runs_active
   on rag_lab.evaluation_runs (dataset_id) where status in ('queued', 'running');
+
+-- 5. Storage quota accounting: a deleted document's object keeps counting
+--    against its owner's byte quota until the cleanup outbox actually removes
+--    it (pending or dead). Legacy rows have no recorded size (NULL = 0).
+alter table rag_lab.storage_cleanups
+  add column if not exists size_bytes integer;
+alter table rag_lab.storage_cleanups
+  add constraint storage_cleanups_size_nonnegative
+  check (size_bytes is null or size_bytes >= 0);
+create index if not exists ix_storage_cleanups_owner_outstanding
+  on rag_lab.storage_cleanups (owner_user_id)
+  where status in ('pending', 'dead');

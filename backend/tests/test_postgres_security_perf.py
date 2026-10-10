@@ -101,3 +101,51 @@ def test_dataset_case_count_comes_from_sql(pg):
     assert pg.get_dataset_case_count(dataset["id"]) == 2
     assert pg.scoped(OWNER_B).get_dataset_case_count(dataset["id"]) == 0
     assert uuid.UUID(dataset["id"])
+
+
+def test_concurrent_uploads_cannot_overshoot_the_document_quota(pg):
+    from concurrent.futures import ThreadPoolExecutor
+
+    scoped = pg.scoped(OWNER_A)
+
+    def upload(index):
+        try:
+            return scoped.create_document(
+                {"file_name": f"q{index}.pdf", "media_type": "application/pdf", "size_bytes": 10, "page_count": 0},
+                "rag-documents",
+                f"{uuid.uuid4()}/quota-{index}.pdf",
+                f"{index:064x}",
+                quota=(3, 0),
+            )["id"]
+        except ApiProblem as exc:
+            return exc.code
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(upload, range(8)))
+    assert sum(result == "document_quota_exceeded" for result in results) == 5
+    assert pg.owner_document_usage(OWNER_A)[0] == 3
+
+
+def test_byte_quota_counts_objects_until_storage_cleanup_completes(pg):
+    scoped = pg.scoped(OWNER_A)
+    document = new_document(pg)  # 8 bytes
+    assert pg.owner_document_usage(OWNER_A) == (1, 8)
+
+    cleanup = scoped.delete_document_with_cleanup(document["id"])
+    assert cleanup["size_bytes"] == 8
+    # Storage deletion has not succeeded yet: the object still counts.
+    assert pg.owner_document_usage(OWNER_A) == (0, 8)
+    with pytest.raises(ApiProblem) as rejected:
+        scoped.create_document(
+            {"file_name": "big.pdf", "media_type": "application/pdf", "size_bytes": 10, "page_count": 0},
+            "rag-documents", f"{uuid.uuid4()}/big.pdf", "f" * 64, quota=(0, 16),
+        )
+    assert rejected.value.code == "storage_quota_exceeded"
+
+    for _ in range(20):
+        if (pg.fail_storage_cleanup(cleanup["id"], "storage_delete_failed") or {}).get("status") == "dead":
+            break
+    # A dead cleanup still holds the object in Storage.
+    assert pg.owner_document_usage(OWNER_A) == (0, 8)
+    pg.complete_storage_cleanup(cleanup["id"])
+    assert pg.owner_document_usage(OWNER_A) == (0, 0)
