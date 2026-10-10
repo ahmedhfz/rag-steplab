@@ -466,7 +466,7 @@ export type ParseStatusListener = (run: ParseRun) => void;
 export const RUN_POLL_TIMEOUT_MS = 15 * 60 * 1_000;
 /** Status polls back off from 1 s to 5 s; a run that changes resets to the fast interval. */
 export const RUN_POLL_INTERVALS_MS = [1_000, 1_000, 2_000, 2_000, 5_000] as const;
-/** Upper bound for one non-polling request; long synchronous POSTs (chunk/embedding) get more time. */
+/** Upper bound for one non-polling request; long synchronous POSTs (chunk/embedding, and continue/rerun-generation, which run inline outside hosted environments) get more time. */
 export const REQUEST_TIMEOUT_MS = 30_000;
 export const LONG_REQUEST_TIMEOUT_MS = 5 * 60 * 1_000;
 
@@ -760,16 +760,21 @@ function listPayload(value: unknown, key: string): unknown[] {
 
 type RequestOptions = RequestInit & { timeoutMs?: number };
 
-/** Aborts when any source aborts; avoids AbortSignal.any for older Safari. */
+/**
+ * Aborts when any source aborts; avoids AbortSignal.any for older Safari.
+ * `dispose` detaches the listeners so a long-lived caller signal (run polling)
+ * does not accumulate one listener per finished request.
+ */
 function anySignal(signals: AbortSignal[]) {
   const controller = new AbortController();
+  const dispose = () => signals.forEach((item) => item.removeEventListener("abort", abort));
   const abort = () => {
     controller.abort();
-    signals.forEach((item) => item.removeEventListener("abort", abort));
+    dispose();
   };
   if (signals.some((item) => item.aborted)) controller.abort();
   else signals.forEach((item) => item.addEventListener("abort", abort, { once: true }));
-  return controller.signal;
+  return { signal: controller.signal, dispose };
 }
 
 /**
@@ -780,7 +785,8 @@ async function request(path: string, init: RequestOptions = {}): Promise<unknown
   const { timeoutMs = REQUEST_TIMEOUT_MS, signal, ...fetchInit } = init;
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), timeoutMs);
-  const requestSignal = signal ? anySignal([signal, deadline.signal]) : deadline.signal;
+  const combined = signal ? anySignal([signal, deadline.signal]) : null;
+  const requestSignal = combined?.signal ?? deadline.signal;
   const timedOut = () => deadline.signal.aborted && !signal?.aborted;
   const timeoutError = () => new DocumentApiError("request_timeout", "The RAG backend did not respond in time.");
   try {
@@ -820,6 +826,7 @@ async function request(path: string, init: RequestOptions = {}): Promise<unknown
     return payload;
   } finally {
     clearTimeout(timer);
+    combined?.dispose();
   }
 }
 
@@ -1007,12 +1014,12 @@ export async function getExperiment(experimentId: string, signal?: AbortSignal):
 }
 
 export async function continueExperiment(experimentId: string, signal?: AbortSignal): Promise<ExperimentRun> {
-  const run = normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}/continue`, { method: "POST", signal }));
+  const run = normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}/continue`, { method: "POST", signal, timeoutMs: LONG_REQUEST_TIMEOUT_MS }));
   return waitForExperimentRun(run.id, signal, undefined, run);
 }
 
 export async function rerunGeneration(experimentId: string, signal?: AbortSignal): Promise<ExperimentRun> {
-  const run = normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}/rerun-generation`, { method: "POST", signal }));
+  const run = normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}/rerun-generation`, { method: "POST", signal, timeoutMs: LONG_REQUEST_TIMEOUT_MS }));
   return waitForExperimentRun(run.id, signal, undefined, run);
 }
 

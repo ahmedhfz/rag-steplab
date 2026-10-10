@@ -459,6 +459,37 @@ describe("RAG API contract normalization", () => {
     await pending;
   });
 
+  it("detaches its abort listener from a long-lived caller signal after each request", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }))));
+    const controller = new AbortController();
+    const add = vi.spyOn(controller.signal, "addEventListener");
+    const remove = vi.spyOn(controller.signal, "removeEventListener");
+    await listDocuments(controller.signal);
+    await listDocuments(controller.signal);
+    const listeners = (spy: typeof add) => spy.mock.calls.filter(([type]) => type === "abort").map(([, listener]) => listener);
+    expect(listeners(add)).toHaveLength(2);
+    expect(listeners(remove)).toEqual(listeners(add));
+  });
+
+  it("gives continue and rerun-generation the long request deadline", async () => {
+    vi.useFakeTimers();
+    const run = { id: "experiment-2", status: "completed", documentId: "doc-1", chunkRunId: "chunk-1", query: "q", targetStage: "retrieval", stageResults: { retrieval: { candidates: [], durationMs: 1 } } };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((_url: string, init?: RequestInit) => new Promise<Response>((resolve, reject) => {
+      // Development backends run these inline, so the response can take well over 30 s.
+      const timer = setTimeout(() => resolve(new Response(JSON.stringify(run), { status: 200 })), 60_000);
+      init?.signal?.addEventListener("abort", () => {
+        clearTimeout(timer);
+        reject(new DOMException("aborted", "AbortError"));
+      }, { once: true });
+    })));
+    for (const action of [continueExperiment, rerunGeneration]) {
+      const pending = action("experiment-1");
+      await vi.advanceTimersByTimeAsync(60_000);
+      await expect(pending).resolves.toMatchObject({ id: "experiment-2", status: "completed" });
+    }
+    vi.useRealTimers();
+  });
+
   it("keeps missing evaluation case metrics as null instead of a measured zero", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       id: "evaluation-1",
