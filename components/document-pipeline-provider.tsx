@@ -257,6 +257,9 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const [parseError, setParseError] = useState<DocumentApiError | null>(null);
   const parseInFlightRef = useRef(false);
   const activeParseRunIdRef = useRef<string | null>(null);
+  // Lineage scope of the parse being tracked. Resuming after a poll timeout must
+  // commit against the scope the parse started in, never the one active now.
+  const parseStartScopeRef = useRef<{ documentId: string; parseRunId: string | null; pipelineId: string | null; selectionRequest: number } | null>(null);
   const [persistenceStatus, setPersistenceStatus] = useState<PersistenceStatus>("checking");
   const [persistenceError, setPersistenceError] = useState<DocumentApiError | null>(null);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
@@ -775,8 +778,14 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     return null;
   }, [captureScope, commitDocumentSnapshot, loadDocumentSnapshot]);
 
-  const resumeParseRun = useCallback(async (documentId: string, parseRunId: string, expectedRunId: number) => {
-    const startScope = { pipelineId: activePipelineRef.current?.id ?? null, selectionRequest: selectionRequestRef.current };
+  const resumeParseRun = useCallback(async (
+    documentId: string,
+    parseRunId: string,
+    expectedRunId: number,
+    scope?: { pipelineId: string | null; selectionRequest: number },
+  ) => {
+    const startScope = scope ?? { pipelineId: activePipelineRef.current?.id ?? null, selectionRequest: selectionRequestRef.current };
+    parseStartScopeRef.current = { documentId, parseRunId, ...startScope };
     const controller = replaceController(`parse-resume:${documentId}`);
     const isCurrentRun = () => runIdRef.current === expectedRunId;
     try {
@@ -1074,6 +1083,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     if (!documentId || parseInFlightRef.current || parseStatus === "queued" || parseStatus === "running") return;
     const currentRunId = runIdRef.current;
     const startScope = { pipelineId: activePipelineRef.current?.id ?? null, selectionRequest: selectionRequestRef.current };
+    const trackedScope = { documentId, parseRunId: null as string | null, ...startScope };
+    parseStartScopeRef.current = trackedScope;
     const isCurrentRun = () => runIdRef.current === currentRunId;
     const controller = replaceController("reparse");
     parseInFlightRef.current = true;
@@ -1087,7 +1098,10 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       const result = await reparsePersistedDocument(
         documentId,
         controller.signal,
-        (run) => applyParseRunStatus(run, currentRunId),
+        (run) => {
+          trackedScope.parseRunId = run.id;
+          applyParseRunStatus(run, currentRunId);
+        },
       );
       if (!isCurrentRun() || !result.parseRunId) return;
       activeParseRunIdRef.current = result.parseRunId;
@@ -1127,10 +1141,17 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
 
   const resumeParseTracking = useCallback(async () => {
     const documentId = activeDocumentRef.current?.id;
-    const parseRunId = activeParseRunIdRef.current;
+    const saved = parseStartScopeRef.current?.documentId === documentId ? parseStartScopeRef.current : null;
+    // Track the run that timed out, not whatever parse the now-active lineage points to.
+    const parseRunId = saved?.parseRunId ?? activeParseRunIdRef.current;
     if (!documentId || !parseRunId) return;
     setParseError(null);
-    await resumeParseRun(documentId, parseRunId, runIdRef.current);
+    // Without the original scope the result may only appear in history: a
+    // selection request of -1 never matches, so nothing is PATCHed.
+    const scope = saved
+      ? { pipelineId: saved.pipelineId, selectionRequest: saved.selectionRequest }
+      : { pipelineId: null, selectionRequest: -1 };
+    await resumeParseRun(documentId, parseRunId, runIdRef.current, scope);
   }, [resumeParseRun]);
 
   const replacePipelineState = useCallback((pipeline: DocumentPipeline) => {
