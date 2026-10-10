@@ -64,15 +64,18 @@ def _signing_key(client, token: str, kid: str):
 
     global _last_jwks_refresh
     now = time.monotonic()
-    with _kid_lock:
-        if _unknown_kids.get(kid, 0.0) > now:
-            raise _unauthorized("The access token is invalid or expired.")
     get_keys = getattr(client, "get_signing_keys", None)
     if get_keys is None:  # pragma: no cover - non-PyJWT test doubles
         return client.get_signing_key_from_jwt(token)
+    # The negative cache only suppresses refreshes: a kid that is already in
+    # the cached JWKS (e.g. loaded by a refresh another request triggered) is
+    # always accepted, so a rotated key cannot stay locked out.
     key = _match_key(get_keys(), kid)
     if key is not None:
         return key
+    with _kid_lock:
+        if _unknown_kids.get(kid, 0.0) > now:
+            raise _unauthorized("The access token is invalid or expired.")
     with _kid_lock:
         allowed = now - _last_jwks_refresh >= _JWKS_REFRESH_INTERVAL_SECONDS
         if allowed:

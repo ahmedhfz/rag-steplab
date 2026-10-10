@@ -99,6 +99,18 @@ def test_unknown_kid_is_negatively_cached_and_refresh_is_rate_limited(jwks):
     assert verify_access_token(_token()).id == SUBJECT
 
 
+def test_negatively_cached_kid_is_accepted_once_the_cached_jwks_contains_it(jwks, monkeypatch):
+    rotated = FakePyJWK("rotated", PRIVATE_KEY.public_key())
+    # The rotated kid is not published yet: it is negatively cached.
+    with pytest.raises(ApiProblem):
+        verify_access_token(_token(kid="rotated"))
+    # A later refresh (triggered by any request) loads the rotated key into the
+    # JWKS cache; tokens with that kid must not stay rejected for the TTL.
+    original = jwks.get_signing_keys
+    monkeypatch.setattr(jwks, "get_signing_keys", lambda refresh=False: [*original(refresh), rotated])
+    assert verify_access_token(_token(kid="rotated")).id == SUBJECT
+
+
 def test_disallowed_algorithm_never_reaches_the_jwks_endpoint(jwks, monkeypatch):
     def fail(_url):
         raise AssertionError("JWKS must not be fetched")
