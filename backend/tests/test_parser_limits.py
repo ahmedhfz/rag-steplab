@@ -1,5 +1,6 @@
 """Parse budget and normalization cost regressions."""
 
+from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -60,13 +61,29 @@ def test_pdf_over_page_limit_fails_before_docling(monkeypatch):
     assert "500" in error.value.message
 
 
+class _FailureCategory(str, Enum):
+    """Shape of ``docling.datamodel.base_models.FailureCategory``."""
+
+    TIMEOUT = "timeout"
+    INFERENCE_FAILURE = "inference_failure"
+
+
 def test_converter_receives_page_limit_and_timeout_partial_result_is_rejected(monkeypatch):
     calls = []
 
     class Converter:
         def convert(self, path, **kwargs):
             calls.append(kwargs)
-            return SimpleNamespace(document=FakeDocument(), has_timeout_errors=lambda: True)
+            # Docling 2.117 reports document_timeout as PARTIAL_SUCCESS plus an
+            # ErrorItem with category TIMEOUT; it has no timeout helper method.
+            return SimpleNamespace(
+                document=FakeDocument(),
+                status="partial_success",
+                errors=[
+                    SimpleNamespace(category=_FailureCategory.INFERENCE_FAILURE),
+                    SimpleNamespace(category=_FailureCategory.TIMEOUT),
+                ],
+            )
 
     monkeypatch.setattr(parser, "_pdf_page_count", lambda _path: 2)
     monkeypatch.setattr(parser, "_get_document_converter", lambda *_args, **_kwargs: Converter())

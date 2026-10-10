@@ -268,8 +268,7 @@ def parse_pdf_file(
         converter = _get_document_converter(artifacts_path)
         report_progress(30, "docling_ready")
         conversion_result = converter.convert(path, max_num_pages=max_pages)
-        timeout_check = getattr(conversion_result, "has_timeout_errors", None)
-        if callable(timeout_check) and timeout_check():
+        if _conversion_timed_out(conversion_result):
             raise ApiProblem(
                 422,
                 "docling_timeout",
@@ -327,6 +326,21 @@ def parse_pdf_file(
             "ocr": _ocr_manifest,
         },
     )
+
+
+def _conversion_timed_out(conversion_result: Any) -> bool:
+    """Detect Docling's ``document_timeout`` partial result.
+
+    On timeout Docling returns ``PARTIAL_SUCCESS`` (which ``convert`` does not
+    raise for) and records an ``ErrorItem`` whose ``category`` is
+    ``FailureCategory.TIMEOUT``; the remaining pages are simply missing.
+    """
+
+    for error in getattr(conversion_result, "errors", None) or []:
+        category = getattr(error, "category", None)
+        if str(getattr(category, "value", category) or "").lower() == "timeout":
+            return True
+    return False
 
 
 def _pdf_page_count(path: Path) -> int | None:
