@@ -2494,7 +2494,13 @@ def run_queued_evaluation(
                 "evaluation", evaluation_id, lease_token, pipeline_lease_duration_seconds(get_settings())
             ) is None:
                 return None
-        return _evaluation_response(create_evaluation(request, repository=repository, evaluation_id=evaluation_id, lease_token=lease_token))
+        return _evaluation_response(create_evaluation(
+            request,
+            repository=repository,
+            evaluation_id=evaluation_id,
+            lease_token=lease_token,
+            lineage_snapshot=bool(persisted.get("config")),
+        ))
     except ApiProblem as exc:
         completed_at = now_utc()
         if lease_token:
@@ -2525,7 +2531,19 @@ def create_evaluation(
     repository: Repository | None = None,
     evaluation_id: str | None = None,
     lease_token: str | None = None,
+    lineage_snapshot: bool = False,
 ) -> dict[str, Any]:
+    """Run an evaluation.
+
+    ``lineage_snapshot`` marks a persisted (queued) run whose config already
+    names the exact chunk/embedding artifacts chosen at queue time. Those ids
+    fully determine execution: the saved pipeline is provenance only, so a
+    later pipeline edit or deletion neither changes nor blocks the run. The
+    artifacts themselves are still re-validated below, so a snapshot whose
+    chunks/embeddings were failed or detached fails visibly instead of
+    silently falling back to another lineage.
+    """
+
     repository = repository or get_repository()
     _require_write(repository, get_settings())
     dataset = repository.get_dataset_row(request.dataset_id)
@@ -2542,10 +2560,19 @@ def create_evaluation(
         )
     document = _document_or_404(repository, dataset["document_id"])
     _require_compatible_parse(repository, dataset["document_id"], dataset["parse_run_id"])
-    pipeline = _selected_pipeline(repository, dataset["document_id"], request.pipeline_id)
-    selected_chunk_id, selected_embedding_id = _resolve_run_selection(
-        repository, document, pipeline, request.chunk_run_id, request.embedding_run_id
-    )
+    child_pipeline_id = request.pipeline_id
+    if lineage_snapshot and request.chunk_run_id:
+        selected_chunk_id, selected_embedding_id = request.chunk_run_id, request.embedding_run_id
+        if child_pipeline_id and select_pipeline(
+            repository.list_document_pipeline_rows(dataset["document_id"]) or [], child_pipeline_id
+        ) is None:
+            # The pipeline was deleted after queueing; the snapshot still runs.
+            child_pipeline_id = None
+    else:
+        pipeline = _selected_pipeline(repository, dataset["document_id"], request.pipeline_id)
+        selected_chunk_id, selected_embedding_id = _resolve_run_selection(
+            repository, document, pipeline, request.chunk_run_id, request.embedding_run_id
+        )
     if not selected_chunk_id:
         raise ApiProblem(409, "chunks_required", "Create chunks for the dataset parse before evaluating it.")
     selected_chunk = _require_compatible_chunk(repository, dataset["document_id"], selected_chunk_id)
@@ -2594,7 +2621,7 @@ def create_evaluation(
         renew_evaluation_lease()
         exp_request = ExperimentCreateRequest(
             document_id=dataset["document_id"],
-            pipeline_id=request.pipeline_id,
+            pipeline_id=child_pipeline_id,
             chunk_run_id=selected_chunk_id,
             embedding_run_id=selected_embedding_id,
             query=case["question"],

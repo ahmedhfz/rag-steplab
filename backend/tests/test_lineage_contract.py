@@ -354,3 +354,60 @@ def test_continuation_reads_seed_stages_by_reference(monkeypatch):
     monkeypatch.setattr("app.pipeline._run_experiment_stages", capture)
     run_queued_experiment(None, queued["id"], repository=repository)
     assert captured["seed_stage_results"]["retrieval"]["status"] == "completed"
+
+
+def _queued_snapshot_evaluation(monkeypatch):
+    from app.pipeline import queue_evaluation
+    from app.schemas import EvaluationRunRequest
+    from tests.test_pipeline import _phase5_document
+
+    document_id, default_chunk_id = _phase5_document(monkeypatch)
+    parse_id = client.get(f"/documents/{document_id}/summary").json()["activeLineage"]["parseRunId"]
+    snapshot_chunk = _chunk(document_id, parse_id, "structure_aware")
+    created = client.post(
+        f"/documents/{document_id}/pipelines",
+        json={"name": "Snapshot", "parseRunId": parse_id, "chunkRunId": snapshot_chunk["id"]},
+    )
+    assert created.status_code == 201, created.text
+    dataset = client.post(
+        "/evaluation/datasets",
+        json={"documentId": document_id, "name": "snapshot", "cases": [{"question": "retrieval"}]},
+    ).json()
+    repository = get_repository().scoped(TEST_USER_ID)
+    queued = queue_evaluation(
+        EvaluationRunRequest(
+            dataset_id=dataset["id"],
+            pipeline_id=created.json()["id"],
+            retrieval={"mode": "keyword", "topK": 1},
+            reranking={"enabled": False, "candidateCount": 1},
+        ),
+        repository=repository,
+    )
+    assert queued["config"]["chunk_run_id"] == snapshot_chunk["id"] != default_chunk_id
+    return repository, queued, created.json(), snapshot_chunk
+
+
+def test_queued_evaluation_runs_its_snapshot_after_the_pipeline_is_deleted(monkeypatch):
+    from app.pipeline import run_queued_evaluation
+
+    repository, queued, pipeline, snapshot_chunk = _queued_snapshot_evaluation(monkeypatch)
+    assert client.delete(f"/document-pipelines/{pipeline['id']}").status_code == 204
+
+    result = run_queued_evaluation(None, queued["id"], repository=repository)
+
+    assert result is not None and result["status"] == "completed", result
+    children = [repository.get_experiment_row(child) for child in result["child_experiment_ids"]]
+    assert children and all(child["chunk_run_id"] == snapshot_chunk["id"] for child in children)
+
+
+def test_queued_evaluation_fails_visibly_when_its_snapshot_artifact_is_no_longer_usable(monkeypatch):
+    from app.pipeline import run_queued_evaluation
+
+    repository, queued, _pipeline, snapshot_chunk = _queued_snapshot_evaluation(monkeypatch)
+    get_repository().fail_chunk_run(snapshot_chunk["id"], "artifact_incomplete", "broken", unfenced=True)
+
+    assert run_queued_evaluation(None, queued["id"], repository=repository) is None
+    failed = repository.get_evaluation_row(queued["id"])
+    assert failed["status"] == "failed"
+    assert failed["child_experiment_ids"] == []
+    assert failed["error_code"] not in {None, "document_pipeline_not_found"}
