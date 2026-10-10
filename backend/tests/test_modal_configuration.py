@@ -46,8 +46,9 @@ def test_production_health_check_uses_the_routing_region_endpoint():
     assert 'branches: [main]' in ci_workflow
     assert "feature/**" not in ci_workflow
     assert "  push:" not in ci_workflow
-    assert '      - "backend/app/**"' in workflow
-    assert "backend/tests/**" not in workflow
+    # Release her main push'unda çalışır; deploy kararı diff'ten değil canlı Modal tag'inden verilir.
+    assert "paths:" not in workflow.split("jobs:")[0]
+    assert "modal app history" in workflow
 
 
 def test_parse_reconciliation_budget_covers_modal_execution_and_startup():

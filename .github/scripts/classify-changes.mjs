@@ -7,15 +7,21 @@ const categories = [
   "backend",
   "database",
   "migration",
+  "lint_full",
   "auth_e2e",
-  "critical_e2e",
+  "seeded_e2e",
   "playwright_list",
   "modal_deploy",
+  "modal_image",
   "worker_provider",
   "production_visual",
   "workflow_config",
+  "dependabot_config",
   "docs_only",
 ];
+
+// docs_only dışındaki her değişiklik en az bir kontrol üretmelidir; aksi classifier açığıdır.
+const checkCategories = categories.filter((category) => category !== "docs_only");
 
 const frontendRoots = ["app/", "components/", "lib/", "test/", "public/"];
 const frontendConfig = new Set([
@@ -29,6 +35,14 @@ const frontendConfig = new Set([
   "vitest.config.mts",
   "components.json",
   "next-env.d.ts",
+]);
+// ESLint kuralı/sürümü veya TS ayarı değişince yalnız değişen dosyalar değil, tüm repo lintlenir.
+const fullLintTriggers = new Set([
+  "package.json",
+  "package-lock.json",
+  "eslint.config.mjs",
+  "tsconfig.json",
+  ".nvmrc",
 ]);
 const fullVitestFallback = new Set([
   "package.json",
@@ -50,14 +64,16 @@ const authPaths = [
   "e2e/setup/",
   "e2e/support/auth.ts",
 ];
-const criticalContractPaths = [
+// Seeded smoke API'yi mock'lar ve PR Preview'ı production backend'e bağlıdır; backend/migration
+// değişikliği bu suite ile doğrulanamaz (backend testleri ve DB job'u kapsar).
+const seededContractPaths = [
   "package.json",
+  "next.config.ts",
   "app/globals.css",
   "app/layout.tsx",
-  "backend/app/main.py",
-  "backend/app/schemas.py",
-  "backend/app/document_pipelines.py",
-  "backend/app/pipeline.py",
+  "public/samples/",
+  "lib/sample-documents.ts",
+  "components/sample-document-button.tsx",
   "components/document-pipeline-provider.tsx",
   "components/document-upload-panel.tsx",
   "components/documents-screen.tsx",
@@ -78,13 +94,9 @@ const criticalContractPaths = [
   "lib/theme.ts",
   "lib/rag-api.ts",
   "lib/rag-api-types.ts",
-  "e2e/smoke/document-lifecycle.spec.ts",
-  "e2e/smoke/rag-inspection.spec.ts",
-  "e2e/smoke/ui-context-cta.spec.ts",
-  "e2e/smoke/theme.spec.ts",
-  "e2e/support/browser-quality.ts",
-  "e2e/support/seeded-api.ts",
-  "e2e/support/seeded-workspace.ts",
+  "e2e/smoke/",
+  "e2e/support/",
+  "e2e/setup/",
   "app/page.tsx",
   "app/documents/page.tsx",
   "app/parse/page.tsx",
@@ -137,6 +149,11 @@ const productionVisualSourcePaths = [
   "lib/overview-journey.ts",
   "lib/theme.ts",
 ];
+const modalImagePaths = [
+  "backend/requirements.txt",
+  "backend/app/ocr.py",
+  "backend/app/config.py",
+];
 const workerProviderPaths = [
   "backend/modal_app.py",
   "backend/requirements-worker.txt",
@@ -162,17 +179,30 @@ function classify(paths) {
     if (file === "AGENTS.md" || file === "README.md" || file.startsWith("docs/") || file.endsWith(".md")) continue;
     docsOnly = false;
 
-    if (file.startsWith(".github/workflows/") || file.startsWith(".github/scripts/")) {
+    if (file === ".github/dependabot.yml") {
+      result.dependabot_config = true;
+      continue;
+    }
+
+    if (file === ".github/scripts/python-locks.mjs") {
+      result.workflow_config = true;
+      result.backend = true;
+      continue;
+    }
+
+    if (file.startsWith(".github/")) {
       result.workflow_config = true;
       continue;
     }
 
-    if (file.startsWith(".github/")) continue;
-
     if (file === "supabase/config.toml" || file.startsWith("supabase/")) {
       result.database = true;
       result.migration ||= file.startsWith("supabase/migrations/");
-      result.critical_e2e ||= result.migration;
+      continue;
+    }
+
+    if (file === ".python-version") {
+      result.backend = true;
       continue;
     }
 
@@ -186,7 +216,7 @@ function classify(paths) {
       result.backend = true;
       result.modal_deploy ||= file === "backend/modal_app.py" || file === "backend/requirements.txt" || file === "backend/requirements-worker.txt" || file.startsWith("backend/app/");
       result.worker_provider ||= matches(file, workerProviderPaths);
-      result.critical_e2e ||= matches(file, criticalContractPaths);
+      result.modal_image ||= matches(file, workerProviderPaths) || matches(file, modalImagePaths);
       continue;
     }
 
@@ -194,7 +224,7 @@ function classify(paths) {
       result.node = true;
       result.playwright_list = true;
       result.auth_e2e ||= matches(file, authPaths);
-      result.critical_e2e ||= matches(file, criticalContractPaths);
+      result.seeded_e2e ||= matches(file, seededContractPaths);
       result.production_visual ||= matches(file, productionVisualPaths);
       continue;
     }
@@ -203,8 +233,9 @@ function classify(paths) {
       result.node = true;
       result.frontend = true;
       result.frontend_full_tests ||= fullVitestFallback.has(file);
+      result.lint_full ||= fullLintTriggers.has(file);
       result.auth_e2e ||= matches(file, authPaths);
-      result.critical_e2e ||= matches(file, criticalContractPaths);
+      result.seeded_e2e ||= matches(file, seededContractPaths);
       result.production_visual ||= matches(file, productionVisualSourcePaths);
       continue;
     }
@@ -220,9 +251,10 @@ function classify(paths) {
     result.node = true;
     result.frontend = true;
     result.frontend_full_tests = true;
+    result.lint_full ||= fullLintTriggers.has(file);
   }
 
-  if (result.auth_e2e || result.critical_e2e || result.playwright_list) result.node = true;
+  if (result.auth_e2e || result.seeded_e2e || result.playwright_list) result.node = true;
   result.docs_only = hasFile && docsOnly;
   return result;
 }
@@ -238,39 +270,56 @@ function assertClassification(paths, overrides) {
 if (process.argv.includes("--self-test")) {
   assertClassification(["README.md"], { docs_only: true });
   assertClassification(["components/status-indicator.tsx"], { node: true, frontend: true, production_visual: true });
-  assertClassification(["package-lock.json"], { node: true, frontend: true, frontend_full_tests: true });
-  assertClassification(["package.json"], { node: true, frontend: true, frontend_full_tests: true, critical_e2e: true });
+  assertClassification(["package-lock.json"], { node: true, frontend: true, frontend_full_tests: true, lint_full: true });
+  assertClassification(["package.json"], { node: true, frontend: true, frontend_full_tests: true, lint_full: true, seeded_e2e: true });
+  assertClassification(["eslint.config.mjs"], { node: true, frontend: true, lint_full: true });
+  assertClassification(["next.config.ts"], { node: true, frontend: true, seeded_e2e: true });
+  assertClassification([".nvmrc"], { node: true, frontend: true, frontend_full_tests: true, lint_full: true });
+  assertClassification([".python-version"], { backend: true });
+  assertClassification(["public/samples/rag-steplab-sample-city-bikes.pdf"], { node: true, frontend: true, seeded_e2e: true });
   assertClassification(["components/login-screen.tsx"], { node: true, frontend: true, auth_e2e: true, production_visual: true });
-  assertClassification(["app/globals.css"], { node: true, frontend: true, critical_e2e: true, production_visual: true });
-  assertClassification(["lib/theme.ts"], { node: true, frontend: true, critical_e2e: true, production_visual: true });
-  assertClassification(["components/preferences-provider.tsx"], { node: true, frontend: true, critical_e2e: true, production_visual: true });
+  assertClassification(["app/globals.css"], { node: true, frontend: true, seeded_e2e: true, production_visual: true });
+  assertClassification(["lib/theme.ts"], { node: true, frontend: true, seeded_e2e: true, production_visual: true });
+  assertClassification(["components/preferences-provider.tsx"], { node: true, frontend: true, seeded_e2e: true, production_visual: true });
   assertClassification(["backend/tests/test_main.py"], { backend: true });
+  assertClassification(["backend/requirements-ci.in"], { backend: true });
   assertClassification(["backend/app/auth.py"], { backend: true, modal_deploy: true });
-  assertClassification(["backend/app/schemas.py"], { node: true, backend: true, critical_e2e: true, modal_deploy: true });
-  assertClassification(["backend/app/parser.py"], { backend: true, modal_deploy: true, worker_provider: true });
-  assertClassification(["supabase/migrations/20260821083157_auth_owner_strict.sql"], { node: true, database: true, migration: true, critical_e2e: true });
+  assertClassification(["backend/app/schemas.py"], { backend: true, modal_deploy: true });
+  assertClassification(["backend/app/ocr.py"], { backend: true, modal_deploy: true, modal_image: true });
+  assertClassification(["backend/requirements.txt"], { backend: true, modal_deploy: true, modal_image: true });
+  assertClassification(["backend/app/parser.py"], { backend: true, modal_deploy: true, modal_image: true, worker_provider: true });
+  assertClassification(["backend/modal_app.py"], { backend: true, modal_deploy: true, modal_image: true, worker_provider: true });
+  assertClassification(["supabase/migrations/20260821083157_auth_owner_strict.sql"], { database: true, migration: true });
   assertClassification(["e2e/visual/figma-production.spec.ts"], { node: true, playwright_list: true, production_visual: true });
   assertClassification(["e2e/visual/reference/production/overview.png"], { node: true, playwright_list: true, production_visual: true });
-  assertClassification(["e2e/smoke/rag-inspection.spec.ts"], { node: true, critical_e2e: true, playwright_list: true });
-  assertClassification(["components/overview-screen.tsx"], { node: true, frontend: true, critical_e2e: true, production_visual: true });
-  assertClassification(["components/evaluation-screen.tsx"], { node: true, frontend: true, critical_e2e: true, production_visual: true });
-  assertClassification(["e2e/smoke/ui-context-cta.spec.ts"], { node: true, critical_e2e: true, playwright_list: true });
-  assertClassification(["e2e/smoke/theme.spec.ts"], { node: true, critical_e2e: true, playwright_list: true });
-  assertClassification(["app/page.tsx"], { node: true, frontend: true, critical_e2e: true, production_visual: true });
-  assertClassification(["e2e/support/auth.ts"], { node: true, auth_e2e: true, playwright_list: true });
-  assertClassification(["playwright.config.ts"], { node: true, critical_e2e: true, playwright_list: true });
+  assertClassification(["e2e/smoke/rag-inspection.spec.ts"], { node: true, seeded_e2e: true, playwright_list: true });
+  assertClassification(["e2e/smoke/navigation.spec.ts"], { node: true, seeded_e2e: true, playwright_list: true });
+  assertClassification(["components/overview-screen.tsx"], { node: true, frontend: true, seeded_e2e: true, production_visual: true });
+  assertClassification(["components/evaluation-screen.tsx"], { node: true, frontend: true, seeded_e2e: true, production_visual: true });
+  assertClassification(["app/page.tsx"], { node: true, frontend: true, seeded_e2e: true, production_visual: true });
+  assertClassification(["e2e/support/auth.ts"], { node: true, auth_e2e: true, seeded_e2e: true, playwright_list: true });
+  assertClassification(["e2e/support/seeded-api.ts"], { node: true, seeded_e2e: true, playwright_list: true });
+  assertClassification(["playwright.config.ts"], { node: true, seeded_e2e: true, playwright_list: true });
   assertClassification(["e2e/visual/figma-visual-diff.mjs"], { node: true, playwright_list: true, production_visual: true });
   assertClassification(
     ["components/retrieval-screen.tsx", "backend/app/schemas.py", "supabase/migrations/20260821083157_auth_owner_strict.sql"],
-    { node: true, frontend: true, backend: true, database: true, migration: true, critical_e2e: true, modal_deploy: true, production_visual: true },
+    { node: true, frontend: true, backend: true, database: true, migration: true, seeded_e2e: true, modal_deploy: true, production_visual: true },
   );
   assertClassification([".github/workflows/ci.yml"], { workflow_config: true });
+  assertClassification([".github/CODEOWNERS"], { workflow_config: true });
+  assertClassification([".github/dependabot.yml"], { dependabot_config: true });
+  assertClassification([".github/scripts/python-locks.mjs"], { backend: true, workflow_config: true });
   process.stdout.write("classification self-test passed\n");
 } else {
   let input = "";
   process.stdin.setEncoding("utf8");
   for await (const chunk of process.stdin) input += chunk;
-  const result = classify(input.split(/\r?\n/));
+  const paths = input.split(/\r?\n/).filter((line) => line.trim());
+  const result = classify(paths);
+  if (paths.length > 0 && !result.docs_only && !checkCategories.some((category) => result[category])) {
+    process.stderr.write("Classifier produced no checks for a non-documentation change.\n");
+    process.exit(1);
+  }
   for (const category of categories) process.stdout.write(`${category}=${result[category]}\n`);
 }
 

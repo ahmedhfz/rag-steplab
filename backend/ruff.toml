@@ -1,0 +1,19 @@
+# Başlangıç kural seti: ruff'ın klasik varsayılanı (pyflakes + hata sınıfı pycodestyle).
+# Sürüm yükseltmesi kural setini sessizce genişletmesin diye açıkça seçilir.
+target-version = "py313"
+line-length = 160
+
+[lint]
+select = ["E4", "E7", "E9", "F"]
+
+[lint.per-file-ignores]
+# Baseline: CI eklendiğinde mevcut olan ihlaller. Dosya temizlendikçe satırı silin;
+# yeni dosyalar baseline'a eklenmez.
+"app/main.py" = ["F401"]
+"app/models.py" = ["F401"]
+"app/pipeline.py" = ["F841"]
+"app/repository.py" = ["F401"]
+"app/storage.py" = ["F401"]
+"tests/test_parser.py" = ["F401"]
+"tests/test_quality_regression.py" = ["E713"]
+"tests/test_summary_projection.py" = ["F401"]

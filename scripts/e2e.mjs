@@ -3,18 +3,9 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 import { createClient } from "@supabase/supabase-js";
-
-try {
-  process.loadEnvFile?.(".env.e2e.local");
-} catch {}
-try {
-  process.loadEnvFile?.(".env.local");
-} catch {}
-try {
-  process.loadEnvFile?.(".env");
-} catch {}
 
 const command = process.argv[2];
 const fixturePath = path.resolve("e2e/fixtures/generated/rag-steplab-golden.pdf");
@@ -111,16 +102,23 @@ async function findUser(client, email) {
   throw new Error("E2E user lookup exceeded the safe pagination limit.");
 }
 
+const testAccountMarker = "rag-steplab-e2e";
+
 async function ensureUser() {
   const { client } = adminClient();
   const email = required("E2E_USER_EMAIL");
   const password = required("E2E_USER_PASSWORD");
   const existing = await findUser(client, email);
+  // Fail-closed: marker'sız mevcut hesap gerçek bir kullanıcı olabilir. Şifresini değiştirmek
+  // veya ona marker basmak cleanup guard'ını kendi kendine onaylatır.
+  if (existing && existing.app_metadata?.test_account !== testAccountMarker) {
+    throw new Error("Refusing to modify an existing account without the dedicated E2E marker. Check E2E_USER_EMAIL.");
+  }
   const attributes = {
     email,
     password,
     email_confirm: true,
-    app_metadata: { ...(existing?.app_metadata ?? {}), test_account: "rag-steplab-e2e" },
+    app_metadata: { ...(existing?.app_metadata ?? {}), test_account: testAccountMarker },
   };
   const result = existing
     ? await client.auth.admin.updateUserById(existing.id, attributes)
@@ -129,13 +127,15 @@ async function ensureUser() {
   console.log(existing ? "Dedicated E2E user verified and updated." : "Dedicated E2E user created and confirmed.");
 }
 
-function setGitHubSecret(name, value) {
-  const result = spawnSync("gh", ["secret", "set", name], { input: value, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+function setGitHubSecret(name, value, environment) {
+  const args = ["secret", "set", name, ...(environment ? ["--env", environment] : [])];
+  const result = spawnSync("gh", args, { input: value, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
   if (result.status !== 0) throw new Error(`GitHub secret ${name} could not be configured.`);
 }
 
 async function bootstrap() {
-  const projectRef = process.env.SUPABASE_PROJECT_REF ?? "dronqqospsuhnjjitqls";
+  // Hedef açıkça verilmeli; varsayılan bir production ref'i sessizce hedeflenmez.
+  const projectRef = required("SUPABASE_PROJECT_REF");
   if (!/^[a-z]{20}$/.test(projectRef)) throw new Error("SUPABASE_PROJECT_REF has an invalid format.");
   const args = ["projects", "api-keys", "--project-ref", projectRef, "--reveal", "--output", "json"];
   const raw = process.platform === "win32"
@@ -145,7 +145,7 @@ async function bootstrap() {
   const secret = keys.find((item) => item.type === "secret" && item.name === "default")?.api_key
     ?? keys.find((item) => item.name === "service_role")?.api_key;
   if (!secret) throw new Error("A server-side Supabase secret key could not be obtained from the authenticated CLI.");
-  const email = process.env.E2E_USER_EMAIL ?? "rag-steplab-e2e@ahmedhfz.dev";
+  const email = required("E2E_USER_EMAIL");
   const password = process.env.E2E_USER_PASSWORD ?? `E2E-${randomBytes(24).toString("base64url")}aA1!`;
   const supabaseUrl = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? `https://${projectRef}.supabase.co`;
 
@@ -163,54 +163,83 @@ async function bootstrap() {
   if (process.env.E2E_BOOTSTRAP_GITHUB === "true") {
     setGitHubSecret("E2E_USER_EMAIL", email);
     setGitHubSecret("E2E_USER_PASSWORD", password);
-    setGitHubSecret("E2E_SUPABASE_SECRET_KEY", secret);
+    // Service-role key yalnız full-RAG job'unun korumalı environment'ında tutulur.
+    setGitHubSecret("E2E_SUPABASE_SECRET_KEY", secret, "production-e2e");
     console.log("Dedicated E2E secrets configured in GitHub Actions.");
   }
   console.log("Local ignored E2E environment is ready.");
 }
 
-function assertCleanupTarget(url) {
+function isLoopbackHost(hostname) {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
+}
+
+// Non-production cleanup yalnız loopback veya açıkça listelenmiş test host'larına izin verir.
+// Production custom domain'i veya farklı bir project ref'i "test" sanılamaz: kanıtlanamayan hedef reddedilir.
+function assertCleanupTarget(urls) {
   const target = process.env.E2E_TARGET ?? "test";
-  const parsed = new URL(url);
-  const productionProjectRef = process.env.E2E_PRODUCTION_PROJECT_REF
-    ?? process.env.SUPABASE_PROJECT_REF
-    ?? "dronqqospsuhnjjitqls";
-  const productionHost = `${productionProjectRef}.supabase.co`;
-  if (parsed.hostname === productionHost && target !== "production") {
-    throw new Error("Cleanup refused: the production Supabase target must be declared with E2E_TARGET=production.");
+  if (target === "production") {
+    if (process.env.E2E_ALLOW_PRODUCTION_CLEANUP !== "true") {
+      throw new Error("Production cleanup requires E2E_ALLOW_PRODUCTION_CLEANUP=true.");
+    }
+    return;
   }
-  if ((target === "production" || parsed.hostname === productionHost)
-    && process.env.E2E_ALLOW_PRODUCTION_CLEANUP !== "true") {
-    throw new Error("Production cleanup requires E2E_ALLOW_PRODUCTION_CLEANUP=true.");
+  if (target !== "test") throw new Error("E2E_TARGET must be either test or production.");
+  const allowedTestHosts = new Set((process.env.E2E_TEST_HOSTS ?? "").split(",").map((host) => host.trim().toLowerCase()).filter(Boolean));
+  for (const url of urls) {
+    const { hostname } = new URL(url);
+    if (!isLoopbackHost(hostname) && !allowedTestHosts.has(hostname.toLowerCase())) {
+      throw new Error(`Cleanup refused: ${hostname} is not a declared test host. Use E2E_TARGET=production with E2E_ALLOW_PRODUCTION_CLEANUP=true, or list it in E2E_TEST_HOSTS.`);
+    }
   }
 }
 
+function cleanupScope(argv = process.argv) {
+  const staleIndex = argv.indexOf("--stale-hours");
+  if (staleIndex !== -1) {
+    const hours = Number(argv[staleIndex + 1]);
+    if (!Number.isFinite(hours) || hours < 1) throw new Error("--stale-hours requires a number >= 1.");
+    return { kind: "stale", cutoff: Date.now() - hours * 3_600_000, label: `older than ${hours}h` };
+  }
+  const runId = required("E2E_RUN_ID");
+  if (!/^[A-Za-z0-9-]{1,80}$/.test(runId)) throw new Error("E2E_RUN_ID has an invalid format.");
+  return { kind: "run", prefix: `${namespacePrefix}${runId}-`, label: `run ${runId}` };
+}
+
+function inCleanupScope(document, scope) {
+  if (typeof document?.id !== "string" || typeof document?.fileName !== "string") return false;
+  if (!document.fileName.startsWith(namespacePrefix)) return false;
+  if (scope.kind === "run") return document.fileName.startsWith(scope.prefix);
+  // Stale temizlik eşzamanlı başka bir koşunun uçuştaki dokümanına dokunmaz.
+  const createdAt = Date.parse(document.createdAt ?? "");
+  return Number.isFinite(createdAt) && createdAt < scope.cutoff;
+}
+
 async function cleanup() {
+  const scope = cleanupScope();
   const { url, client } = adminClient();
-  assertCleanupTarget(url);
+  const apiBaseUrl = required("E2E_API_BASE_URL").replace(/\/$/, "");
+  assertCleanupTarget([url, apiBaseUrl]);
   const email = required("E2E_USER_EMAIL");
   const password = required("E2E_USER_PASSWORD");
   const user = await findUser(client, email);
-  if (!user || user.app_metadata?.test_account !== "rag-steplab-e2e") {
+  if (!user || user.app_metadata?.test_account !== testAccountMarker) {
     throw new Error("Cleanup refused: the dedicated user marker is missing.");
   }
 
   const { data: session, error: signInError } = await client.auth.signInWithPassword({ email, password });
   if (signInError || !session.session?.access_token) throw new Error("Cleanup could not authenticate the dedicated E2E user.");
-  const apiBaseUrl = required("E2E_API_BASE_URL").replace(/\/$/, "");
   const headers = { Authorization: `Bearer ${session.session.access_token}` };
   const response = await fetch(`${apiBaseUrl}/documents`, { headers });
   if (!response.ok) throw new Error(`Cleanup document lookup failed with HTTP ${response.status}.`);
   const payload = await response.json();
   const documents = Array.isArray(payload?.items) ? payload.items : [];
-  const namespaced = documents.filter((document) => typeof document?.id === "string"
-    && typeof document?.fileName === "string"
-    && document.fileName.startsWith(namespacePrefix));
+  const namespaced = documents.filter((document) => inCleanupScope(document, scope));
   for (const document of namespaced) {
     const deleted = await fetch(`${apiBaseUrl}/documents/${encodeURIComponent(document.id)}`, { method: "DELETE", headers });
     if (deleted.status !== 204) throw new Error(`Namespaced cleanup failed with HTTP ${deleted.status}.`);
   }
-  console.log(`Namespaced E2E cleanup completed (${namespaced.length} documents).`);
+  console.log(`Namespaced E2E cleanup completed (${namespaced.length} documents, ${scope.label}).`);
 }
 
 async function waitForDeployment() {
@@ -224,7 +253,13 @@ async function waitForDeployment() {
     const deploymentsResponse = await fetch(`${api}/deployments?sha=${encodeURIComponent(sha)}&per_page=50`, { headers });
     if (!deploymentsResponse.ok) throw new Error(`GitHub deployments lookup failed with HTTP ${deploymentsResponse.status}.`);
     const deployments = await deploymentsResponse.json();
-    const candidates = deployments.filter((item) => String(item.environment ?? "").toLowerCase().includes(environment.toLowerCase()));
+    // Vercel "Preview"/"Production" (veya "Production – <project>") adlarını kullanır; release job'unun
+    // "production-release" gibi GitHub environment'ları Vercel deployment'ı sayılmaz.
+    const wanted = environment.toLowerCase();
+    const candidates = deployments.filter((item) => {
+      const name = String(item.environment ?? "").toLowerCase();
+      return name === wanted || name.startsWith(`${wanted} – `);
+    });
     for (const deployment of candidates) {
       const statusResponse = await fetch(`${api}/deployments/${deployment.id}/statuses?per_page=20`, { headers });
       if (!statusResponse.ok) throw new Error(`GitHub deployment status lookup failed with HTTP ${statusResponse.status}.`);
@@ -245,10 +280,21 @@ async function waitForDeployment() {
   throw new Error(`No ready ${environment} Vercel deployment was found for the tested SHA.`);
 }
 
-if (command === "fixture") await createFixture();
-else if (command === "bootstrap") await bootstrap();
-else if (command === "ensure-user") await ensureUser();
-else if (command === "cleanup") await cleanup();
-else if (command === "wait-deployment") await waitForDeployment();
-else if (command === "run-id") console.log(`e2e-${Date.now()}-${randomBytes(3).toString("hex")}`);
-else throw new Error("Usage: node scripts/e2e.mjs <fixture|bootstrap|ensure-user|cleanup|wait-deployment|run-id>");
+export { assertCleanupTarget, cleanupScope, ensureUser, inCleanupScope };
+
+// Testler modülü import eder; komutlar yalnız doğrudan çalıştırmada dispatch edilir.
+// path.relative Windows sürücü harfi büyük/küçük farkını yok sayar.
+if (process.argv[1] && path.relative(path.resolve(process.argv[1]), fileURLToPath(import.meta.url)) === "") {
+  for (const file of [".env.e2e.local", ".env.local", ".env"]) {
+    try {
+      process.loadEnvFile?.(file);
+    } catch {}
+  }
+  if (command === "fixture") await createFixture();
+  else if (command === "bootstrap") await bootstrap();
+  else if (command === "ensure-user") await ensureUser();
+  else if (command === "cleanup") await cleanup();
+  else if (command === "wait-deployment") await waitForDeployment();
+  else if (command === "run-id") console.log(`e2e-${Date.now()}-${randomBytes(3).toString("hex")}`);
+  else throw new Error("Usage: node scripts/e2e.mjs <fixture|bootstrap|ensure-user|cleanup|wait-deployment|run-id>");
+}
