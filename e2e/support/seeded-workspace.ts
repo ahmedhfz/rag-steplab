@@ -1,7 +1,8 @@
 import { expect, type Page } from "@playwright/test";
 
 export async function selectSeededDocument(page: Page, documentName = "e2e-seeded-golden.pdf") {
-  const documentContext = page.getByRole("combobox", { name: "Document context" });
+  // Overview ve context bar aynı erişilebilir adı kullanır; sayfada aynı anda yalnız biri bulunur.
+  const documentContext = page.getByRole("combobox", { name: "Document", exact: true });
   await expect(documentContext).toBeEnabled();
   await documentContext.click();
   await page.getByRole("option", { name: documentName }).click();
