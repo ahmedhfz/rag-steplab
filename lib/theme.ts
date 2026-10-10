@@ -1,3 +1,5 @@
+import type { AppLocale } from "@/lib/copy";
+
 export type ThemePreference = "system" | "light" | "dark";
 export type ResolvedTheme = Exclude<ThemePreference, "system">;
 
@@ -8,9 +10,15 @@ export const LEGACY_PREFERENCES_STORAGE_KEYS = [
 ] as const;
 export const THEME_MEDIA_QUERY = "(prefers-color-scheme: dark)";
 export const DEFAULT_THEME: ThemePreference = "system";
+/** PreferencesProvider's default; the server renders `<html lang>` with it. */
+export const DEFAULT_LOCALE: AppLocale = "en";
 
 export function isThemePreference(value: unknown): value is ThemePreference {
   return value === "system" || value === "light" || value === "dark";
+}
+
+export function isAppLocale(value: unknown): value is AppLocale {
+  return value === "en" || value === "tr";
 }
 
 export function resolveTheme(theme: ThemePreference, prefersDark: boolean): ResolvedTheme {
@@ -55,4 +63,26 @@ export const THEME_BOOTSTRAP_SCRIPT = `(() => {
   const root = document.documentElement;
   root.classList.toggle("dark", resolved === "dark");
   root.style.colorScheme = resolved;
+})();`;
+
+// Same pattern and storage walk as THEME_BOOTSTRAP_SCRIPT and PreferencesProvider:
+// the first stored object wins and an unknown locale falls back to the default.
+// It only sets `<html lang>` before React; the provider owns it after hydration.
+export const LOCALE_BOOTSTRAP_SCRIPT = `(() => {
+  const keys = ${JSON.stringify(storageKeys)};
+  let locale = ${JSON.stringify(DEFAULT_LOCALE)};
+  try {
+    for (const key of keys) {
+      const raw = window.localStorage.getItem(key);
+      if (raw === null) continue;
+      try {
+        const value = JSON.parse(raw);
+        if (value && typeof value === "object") {
+          locale = value.locale === "en" || value.locale === "tr" ? value.locale : ${JSON.stringify(DEFAULT_LOCALE)};
+          break;
+        }
+      } catch {}
+    }
+  } catch {}
+  document.documentElement.lang = locale;
 })();`;

@@ -99,6 +99,8 @@ const en = {
     playground: "Playground", evaluation: "Evaluation", settings: "Settings",
   },
   navGroups: { prepare: "Prepare", test: "Test", measure: "Measure" },
+  /** Browser tab names for routes outside the sidebar (`lib/page-titles.ts`). */
+  documentTitles: { signIn: "Sign in", resetPassword: "Reset password" },
   status: { "Not started": "Not started", Ready: "Ready", Processing: "Processing", Completed: "Completed", Skipped: "Skipped", Error: "Error", Locked: "Locked", Stale: "Stale" },
   help: "Help",
   helpPanel: {
@@ -119,6 +121,7 @@ const en = {
     accountFallback: "RAG learning lab",
     signOut: "Sign out",
     storagePending: "Loading preferences…",
+    skipToContent: "Skip to content",
     howItWorks: "How it works",
     technicalDetails: "Technical details",
     defaultPipeline: "default",
@@ -765,6 +768,7 @@ const tr: AppCopy = {
     playground: "Deney Alanı", evaluation: "Değerlendirme", settings: "Ayarlar",
   },
   navGroups: { prepare: "Hazırla", test: "Test et", measure: "Ölç" },
+  documentTitles: { signIn: "Giriş yap", resetPassword: "Şifre yenileme" },
   status: { "Not started": "Başlatılmadı", Ready: "Hazır", Processing: "İşleniyor", Completed: "Tamamlandı", Skipped: "Atlandı", Error: "Hata", Locked: "Kilitli", Stale: "Eski" },
   help: "Yardım",
   helpPanel: {
@@ -785,6 +789,7 @@ const tr: AppCopy = {
     accountFallback: "RAG öğrenme laboratuvarı",
     signOut: "Çıkış yap",
     storagePending: "Tercihler yükleniyor…",
+    skipToContent: "İçeriğe geç",
     howItWorks: "Nasıl çalışır?",
     technicalDetails: "Teknik ayrıntılar",
     defaultPipeline: "varsayılan",
