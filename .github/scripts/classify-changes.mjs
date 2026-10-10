@@ -131,6 +131,7 @@ const productionVisualSourcePaths = [
   "components/document-pipeline-provider.tsx",
   "components/documents-screen.tsx",
   "components/evaluation-screen.tsx",
+  "components/login-hero.tsx",
   "components/login-screen.tsx",
   "components/overview-screen.tsx",
   "components/page-transition.tsx",
@@ -279,6 +280,7 @@ if (process.argv.includes("--self-test")) {
   assertClassification(["public/samples/rag-steplab-sample-city-bikes.pdf"], { node: true, frontend: true, seeded_e2e: true });
   assertClassification(["components/login-screen.tsx"], { node: true, frontend: true, auth_e2e: true, production_visual: true });
   assertClassification(["components/brand-mark.tsx"], { node: true, frontend: true, production_visual: true });
+  assertClassification(["components/login-hero.tsx"], { node: true, frontend: true, production_visual: true });
   assertClassification(["app/globals.css"], { node: true, frontend: true, seeded_e2e: true, production_visual: true });
   assertClassification(["lib/theme.ts"], { node: true, frontend: true, seeded_e2e: true, production_visual: true });
   assertClassification(["components/preferences-provider.tsx"], { node: true, frontend: true, seeded_e2e: true, production_visual: true });

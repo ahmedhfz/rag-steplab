@@ -155,4 +155,13 @@ describe("LoginScreen Supabase auth flows", () => {
 
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Google ile giriş tamamlanamadı"));
   });
+
+  it("ignores auth_error values that are not known route handler codes", async () => {
+    // A prototype key used to resolve to Object.prototype and crash the render.
+    window.history.replaceState({}, "", "/login?auth_error=__proto__");
+    render(<LoginScreen />);
+
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument());
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
 });

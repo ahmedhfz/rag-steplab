@@ -10,10 +10,13 @@ import { AuthShell } from "@/components/auth-shell";
 import { usePreferences } from "@/components/preferences-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useCopy } from "@/lib/copy";
 import { getSupabaseBrowserClient, supabaseAuthErrorMessage } from "@/lib/supabase/browser";
 
 export function ResetPasswordScreen() {
   const { preferences } = usePreferences();
+  const auth = useCopy().auth;
+  const labels = auth.reset;
   const router = useRouter();
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
@@ -22,9 +25,8 @@ export function ResetPasswordScreen() {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const isTurkish = preferences.locale === "tr";
-    if (password.length < 10) return setStatus(isTurkish ? "Şifreniz en az 10 karakter olmalı." : "Your password must be at least 10 characters.");
-    if (password !== confirmation) { shakeValidation(document.getElementById("reset-password-confirmation")); return setStatus(isTurkish ? "Şifreler eşleşmiyor." : "The passwords do not match."); }
+    if (password.length < 10) return setStatus(auth.messages.passwordTooShort);
+    if (password !== confirmation) { shakeValidation(document.getElementById("reset-password-confirmation")); return setStatus(auth.messages.passwordMismatch); }
     setBusy(true);
     setStatus("");
     try {
@@ -37,10 +39,6 @@ export function ResetPasswordScreen() {
       setBusy(false);
     }
   }
-
-  const labels = preferences.locale === "tr"
-    ? { form: "Şifre yenileme formu", title: "Yeni şifre oluştur", description: "Hesabınız için yeni bir şifre belirleyin.", password: "Yeni şifre", confirmation: "Yeni şifre tekrarı", passwordPlaceholder: "Yeni şifreniz", confirmationPlaceholder: "Yeni şifrenizi tekrar girin", submit: "Şifreyi güncelle", busy: "Kaydediliyor…" }
-    : { form: "Password reset form", title: "Create a new password", description: "Choose a new password for your account.", password: "New password", confirmation: "Confirm new password", passwordPlaceholder: "Your new password", confirmationPlaceholder: "Repeat your new password", submit: "Update password", busy: "Saving…" };
 
   return (
     <AuthShell>
