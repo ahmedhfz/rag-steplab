@@ -1,6 +1,7 @@
 import { DocumentApiError, isDocumentParseResponse } from "@/lib/document-api";
 import type { DocumentParseResponse, ParseRunStatus } from "@/lib/document-parse-types";
 import type {
+  AnswerSegment,
   ApiProblem,
   Capabilities,
   ChunkConfig,
@@ -25,13 +26,20 @@ import type {
   ExperimentRun,
   ExperimentSummary,
   ExperimentStageResults,
+  GenerationMetricMethod,
+  GenerationOutcome,
+  GroundingFailureDetail,
   PersistedDocument,
   PersistedParseResponse,
   ParseRun,
+  RetrievalScoreSemantics,
+  RetrievalTimings,
   RetrievedCandidate,
   RerankedCandidate,
   RunStatus,
   RunSummary,
+  StageRetrievalMetrics,
+  StageRetrievalMetricsByStage,
   StageReuseMetadata,
   ValidatedCitation,
 } from "@/lib/rag-api-types";
@@ -268,7 +276,45 @@ function normalizeRerankedCandidate(value: unknown): RerankedCandidate {
     originalRank: requiredNumber(payload.originalRank ?? payload.retrievalRank ?? payload.rank, "original retrieval rank"),
     rerankRank: optionalNumber(payload.rerankRank ?? payload.rank),
     rerankScore: optionalNumber(payload.rerankScore),
+    rankedBy: payload.rankedBy === "model" || payload.rankedBy === "retrieval_fallback" ? payload.rankedBy : null,
+    rerankInputTruncated: typeof payload.rerankInputTruncated === "boolean" ? payload.rerankInputTruncated : null,
   };
+}
+
+const RETRIEVAL_SCORE_SEMANTICS: readonly RetrievalScoreSemantics[] = ["cosine_similarity", "postgres_ts_rank", "relative_min_max_fusion_within_candidate_pool"];
+
+function normalizeScoreSemantics(value: unknown): RetrievalScoreSemantics | null {
+  return RETRIEVAL_SCORE_SEMANTICS.find((item) => item === value) ?? null;
+}
+
+function normalizeRetrievalTimings(value: unknown): RetrievalTimings | null {
+  const payload = object(value);
+  if (Object.keys(payload).length === 0) return null;
+  return {
+    queryEmbeddingMs: optionalNumber(payload.queryEmbeddingMs),
+    candidateQueryMs: optionalNumber(payload.candidateQueryMs),
+    assemblyMs: optionalNumber(payload.assemblyMs),
+  };
+}
+
+function normalizeGenerationOutcome(value: unknown): GenerationOutcome | null {
+  return value === "answered" || value === "insufficient_context" || value === "grounding_rejected" ? value : null;
+}
+
+/** Segments are the validated answer units; pre-freeze payloads called them `claims`. */
+function normalizeSegments(value: unknown): AnswerSegment[] | null {
+  if (!Array.isArray(value)) return null;
+  return value
+    .map((item) => object(item))
+    .filter((item) => typeof item.text === "string" && item.text.trim().length > 0)
+    .map((item) => ({ text: (item.text as string).trim(), citationIds: strings(item.citationIds) }));
+}
+
+function normalizeGroundingFailureDetail(value: unknown): GroundingFailureDetail | null {
+  const payload = object(value);
+  const code = optionalString(payload.code);
+  if (!code) return null;
+  return { code, token: optionalString(payload.token), attempts: optionalNumber(payload.attempts) };
 }
 
 function normalizeContextCandidate(value: unknown): ContextCandidate {
@@ -312,6 +358,10 @@ function normalizeStageResults(value: unknown): ExperimentStageResults {
     retrieval: Object.keys(retrieval).length === 0 ? null : {
       ...normalizeStageIdentity(retrieval),
       candidates: requiredArray(retrieval.candidates ?? retrieval.results, normalizeRetrievedCandidate, "retrieval results"),
+      // `candidates` is the whole pool; `results` is the top-K list that reaches context.
+      results: Array.isArray(retrieval.results) ? array(retrieval.results, normalizeRetrievedCandidate) : null,
+      scoreSemantics: normalizeScoreSemantics(retrieval.scoreSemantics),
+      timings: normalizeRetrievalTimings(retrieval.timings),
       durationMs: optionalNumber(retrieval.durationMs),
     },
     reranking: Object.keys(reranking).length === 0 ? null : {
@@ -342,8 +392,35 @@ function normalizeStageResults(value: unknown): ExperimentStageResults {
       outputTokens: optionalNumber(generation.outputTokens),
       durationMs: optionalNumber(generation.durationMs),
       insufficientContext: boolean(generation.insufficientContext),
+      outcome: normalizeGenerationOutcome(generation.outcome),
+      segments: normalizeSegments(generation.segments ?? generation.claims),
+      groundingFailureDetail: normalizeGroundingFailureDetail(generation.groundingFailureDetail),
     },
   };
+}
+
+function normalizeStageRetrievalMetrics(value: unknown): StageRetrievalMetricsByStage | null {
+  const payload = object(value);
+  if (Object.keys(payload).length === 0) return null;
+  const stage = (item: unknown): StageRetrievalMetrics | null => {
+    const metrics = object(item);
+    if (Object.keys(metrics).length === 0) return null;
+    return {
+      hitAtK: optionalNumber(metrics.hitAtK),
+      precisionAtK: optionalNumber(metrics.precisionAtK),
+      recallAtK: optionalNumber(metrics.recallAtK),
+      mrr: optionalNumber(metrics.mrr),
+      eligibleCaseCount: optionalNumber(metrics.eligibleCaseCount),
+    };
+  };
+  return { retrieval: stage(payload.retrieval), reranking: stage(payload.reranking), context: stage(payload.context) };
+}
+
+function normalizeFailedCaseCodes(value: unknown): Array<{ code: string; count: number }> {
+  return array(value, (item) => {
+    const payload = object(item);
+    return { code: string(payload.code), count: optionalNumber(payload.count) ?? 0 };
+  }).filter((item) => item.code.length > 0);
 }
 
 function normalizeMetrics(value: unknown): EvaluationMetrics {
@@ -364,7 +441,21 @@ function normalizeMetrics(value: unknown): EvaluationMetrics {
     abstentionEligibleCaseCount: optionalNumber(metrics.abstentionEligibleCaseCount),
     abstentionAccuracy: optionalNumber(metrics.abstentionAccuracy),
     generationMetrics,
+    // Additive aggregate fields; a missing value stays null, never a measured 0.
+    completedCaseCount: optionalNumber(metrics.completedCaseCount),
+    failedCaseCount: optionalNumber(metrics.failedCaseCount),
+    failedCaseCodes: normalizeFailedCaseCodes(metrics.failedCaseCodes),
+    retrievalMetricsStage: optionalString(metrics.retrievalMetricsStage),
+    stageRetrievalMetrics: normalizeStageRetrievalMetrics(metrics.stageRetrievalMetrics),
+    citationValidityEligibleCaseCount: optionalNumber(metrics.citationValidityEligibleCaseCount),
+    answerableCaseCount: optionalNumber(metrics.answerableCaseCount),
+    falseAbstentionRate: optionalNumber(metrics.falseAbstentionRate),
+    groundingRejectedCaseCount: optionalNumber(metrics.groundingRejectedCaseCount),
   };
+}
+
+function normalizeMetricMethod(value: unknown): GenerationMetricMethod | null {
+  return value === "gemini_generation_metrics_v2" || value === "citation_token_overlap_v1" || value === "mixed" ? value : null;
 }
 
 function normalizeGenerationMetrics(value: unknown): EvaluationGenerationMetrics | null {
@@ -376,6 +467,12 @@ function normalizeGenerationMetrics(value: unknown): EvaluationGenerationMetrics
     answerCorrectness: optionalNumber(metrics.answerCorrectness),
     eligibleCaseCount: optionalNumber(metrics.eligibleCaseCount),
     scoredCaseCount: optionalNumber(metrics.scoredCaseCount),
+    lexicalOverlap: optionalNumber(metrics.lexicalOverlap),
+    method: normalizeMetricMethod(metrics.method),
+    metricVersion: optionalString(metrics.metricVersion),
+    lexicalScoredCaseCount: optionalNumber(metrics.lexicalScoredCaseCount),
+    skippedCaseCount: optionalNumber(metrics.skippedCaseCount),
+    skippedReason: optionalString(metrics.skippedReason),
   };
 }
 
@@ -677,6 +774,7 @@ function normalizeExperiment(value: unknown): ExperimentRun {
     reusedExperiment: boolean(payload.reusedExperiment),
     continuedFromExperimentId: optionalString(payload.continuedFromExperimentId),
     generationRerun: boolean(payload.generationRerun),
+    queueDurationMs: optionalNumber(payload.queueDurationMs ?? object(payload.timing).queueDurationMs),
   };
 }
 
@@ -1176,6 +1274,10 @@ function normalizeEvaluationRun(value: unknown): EvaluationRun {
         groundednessDetail: object(item.groundednessDetail),
         generationMetrics: normalizeGenerationMetrics(item.generationMetrics),
         experimentId: string(item.experimentId),
+        status: item.status === "failed" ? "failed" : "completed",
+        errorCode: optionalString(item.errorCode),
+        errorMessage: optionalString(item.errorMessage),
+        generationOutcome: normalizeGenerationOutcome(item.generationOutcome),
       }))
       : [],
   };
