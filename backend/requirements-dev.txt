@@ -838,9 +838,9 @@ faker==40.43.0 \
     --hash=sha256:02fae4327c03a4a6315e1b428a3878f435bfc276c93435ea349b95c0c9372361 \
     --hash=sha256:9dd7c0ddfaf30c842b05502d3cf641c135e0120a3a19047008ba8525b72953ed
     # via polyfactory
-fastapi==0.139.2 \
-    --hash=sha256:333145a6891e9b5b3cfceb69baf817e8240cde4d4588ae5a10bf56ffacb6255e \
-    --hash=sha256:b9ad015a835173d59865e2f5d8296fbc2b317bf56a2ba1a5bfbdd03de2fd4b1c
+fastapi==0.142.3 \
+    --hash=sha256:519ca478f8acacc2062f204cde0bc233119c413c78477ddce299db8c0d5792d1 \
+    --hash=sha256:5a27878d54a17627a849fc26096b9f37191106cab4b063ca60b0c7770ab39f9d
     # via
     #   -c requirements.txt
     #   -r requirements.in
@@ -1742,9 +1742,9 @@ mdurl==0.1.2 \
     # via
     #   -c requirements.txt
     #   markdown-it-py
-modal==1.5.4 \
-    --hash=sha256:3e54e26037c445af42f9a9ef9862b66bdd2e0b1faeced5fcc7adf3e5f59e44ed \
-    --hash=sha256:d611bb47fc07117f5d194f7f9a9c0aba4537573a136349bbe45c5694e64bca92
+modal==1.6.1 \
+    --hash=sha256:f408ef88563003a83e491a6be09d4221eaa6e038fa4faa2ad8b15b25afe949a4 \
+    --hash=sha256:ff17768f67a65595aa7882e893e6cb78e2e001b3653aa52cfe98d4051d8d9e9e
     # via
     #   -c requirements.txt
     #   -r requirements.in
@@ -2222,6 +2222,12 @@ openpyxl==3.1.5 \
     --hash=sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2 \
     --hash=sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050
     # via docling-slim
+opentelemetry-api==1.45.1 \
+    --hash=sha256:aa38ed19bcc084ba42782a73255b3582283eced7ad6dddbd6695189e69adfb75 \
+    --hash=sha256:b31553efa588ae44bc306f863c785c5333a9ecc091248c6ee68b4b6c87fdedfb
+    # via
+    #   -c requirements.txt
+    #   fastapi
 packaging==26.3 \
     --hash=sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79 \
     --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
@@ -4080,6 +4086,7 @@ typing-extensions==4.16.0 \
     #   huggingface-hub
     #   modal
     #   mypy
+    #   opentelemetry-api
     #   polyfactory
     #   pydantic
     #   pydantic-core
