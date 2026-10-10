@@ -147,3 +147,29 @@ def test_byte_quota_counts_objects_until_storage_cleanup_completes(pg):
     assert pg.owner_document_usage(OWNER_A) == (0, 8)
     pg.complete_storage_cleanup(cleanup["id"])
     assert pg.owner_document_usage(OWNER_A) == (0, 0)
+
+
+def test_storage_usage_is_read_in_one_statement_snapshot(pg):
+    """Codex #131-8: documents and pending cleanups must come from one snapshot."""
+
+    from sqlalchemy import event
+
+    from app.db import get_engine
+
+    document = new_document(pg)
+    pg.scoped(OWNER_A).delete_document_with_cleanup(document["id"])
+    new_document(pg, name="kept.pdf")
+    statements: list[str] = []
+
+    def record(_conn, _cursor, statement, *_args):
+        statements.append(statement)
+
+    engine = get_engine()
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        usage = pg.owner_document_usage(OWNER_A)
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    usage_statements = [statement for statement in statements if "rag_lab" in statement]
+    assert len(usage_statements) == 1
+    assert usage == (1, 16)  # 8 bytes kept + 8 bytes awaiting storage cleanup

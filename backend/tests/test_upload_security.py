@@ -166,3 +166,45 @@ def test_evaluation_run_listing_carries_lineage_without_dataset_reads(monkeypatc
     items = client.get(f"/evaluation/runs?datasetId={dataset['id']}").json()["items"]
     assert items[0]["parseRunId"] == parsed["parseRunId"]
     assert items[0]["chunkRunId"] == "c-1"
+
+
+def test_in_memory_quota_check_and_insert_are_one_critical_section(monkeypatch):
+    """Codex #131-9: two concurrent creates with quota (1, 0) must not both succeed."""
+
+    import threading
+    import time
+    import uuid as uuid_module
+
+    from app.errors import ApiProblem
+    from app.repository import InMemoryRepository
+
+    import app.repository as repository_module
+
+    repository = InMemoryRepository()
+    owner = uuid_module.UUID("11111111-1111-4111-8111-111111111111")
+    original_now = repository_module.now_utc
+
+    def slow_now():
+        # Row construction happens after the quota check; widen that window.
+        time.sleep(0.05)
+        return original_now()
+
+    monkeypatch.setattr(repository_module, "now_utc", slow_now)
+    results: list[object] = []
+
+    def create(index: int) -> None:
+        try:
+            results.append(repository.create_document(
+                {"file_name": f"{index}.pdf", "media_type": "application/pdf", "size_bytes": 1, "page_count": 0, "owner_user_id": owner},
+                "bucket", f"{index}.pdf", f"sha-{index}", quota=(1, 0),
+            ))
+        except ApiProblem as exc:
+            results.append(exc.code)
+
+    threads = [threading.Thread(target=create, args=(index,)) for index in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(result if isinstance(result, str) else "created" for result in results) == ["created", "document_quota_exceeded"]
+    assert len(repository.documents) == 1

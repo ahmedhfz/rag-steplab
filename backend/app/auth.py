@@ -117,7 +117,8 @@ def _signing_key(client, token: str, kid: str):
         return key
     with _kid_lock:
         negative = _unknown_kids.get(kid, 0.0) > now
-    if fresh is None or not negative:
+    looked_up = fresh is None or not negative
+    if looked_up:
         # Cold/expired cache, or a kid we have not ruled out yet.
         key = _match_key(_refresh_keys(client, now), kid)
         if key is None:
@@ -125,10 +126,14 @@ def _signing_key(client, token: str, kid: str):
             # bounded-staleness keys instead of every request refetching.
             key = _match_key(_cached_keys(client, time.monotonic(), _JWKS_MAX_STALE_SECONDS), kid)
     if key is None:
-        with _kid_lock:
-            if len(_unknown_kids) > 1024:
-                _unknown_kids.clear()
-            _unknown_kids[kid] = now + _UNKNOWN_KID_TTL_SECONDS
+        if looked_up:
+            # Only a real lookup (re)starts the negative window. A hit inside
+            # the window must not extend it, or a kid published later would
+            # stay locked out for as long as clients keep retrying.
+            with _kid_lock:
+                if len(_unknown_kids) > 1024:
+                    _unknown_kids.clear()
+                _unknown_kids[kid] = now + _UNKNOWN_KID_TTL_SECONDS
         raise _unauthorized("The access token is invalid or expired.")
     return key
 

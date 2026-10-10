@@ -235,3 +235,26 @@ def test_every_run_id_endpoint_hides_other_users_artifacts(monkeypatch):
         response = getattr(client, method)(path, json=body) if body is not None else getattr(client, method)(path)
         assert response.status_code == 404, (method, path, response.status_code, response.text)
     assert repository.get_document_row(document_id) is not None
+
+
+def test_negative_cache_hits_do_not_extend_the_unknown_kid_window(jwks, monkeypatch):
+    """Codex #131-7: retries inside the window must not keep a published kid locked out."""
+
+    import types
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(auth, "time", types.SimpleNamespace(monotonic=lambda: clock["now"], time=time.time, sleep=time.sleep))
+    with pytest.raises(ApiProblem):
+        verify_access_token(_token(kid="late"))
+    refreshes_after_miss = jwks.refreshes
+    for offset in (30.0, 55.0):
+        clock["now"] = 1000.0 + offset
+        with pytest.raises(ApiProblem):
+            verify_access_token(_token(kid="late"))
+    assert jwks.refreshes == refreshes_after_miss  # hits inside the window never fetch
+
+    late = FakePyJWK("late", PRIVATE_KEY.public_key())
+    original = jwks.get_signing_keys
+    monkeypatch.setattr(jwks, "get_signing_keys", lambda refresh=False: [*original(refresh), late])
+    clock["now"] = 1000.0 + auth._UNKNOWN_KID_TTL_SECONDS + 1
+    assert verify_access_token(_token(kid="late")).id == SUBJECT

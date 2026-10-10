@@ -1002,36 +1002,38 @@ class InMemoryRepository(Repository):
                 )
                 if problem is not None:
                     raise problem
-        row = {
-            "id": document_id,
-            **metadata,
-            "storage_bucket": storage_bucket,
-            "storage_path": storage_path,
-            "sha256": sha256,
-            "owner_user_id": metadata.get("owner_user_id"),
-            "active_parse_run_id": None,
-            "active_chunk_run_id": None,
-            "active_embedding_run_id": None,
-            "created_at": now_utc(),
-            "updated_at": now_utc(),
-        }
-        self.documents[document_id] = row
-        # Every document starts with one explicit lineage container.  This
-        # keeps downstream actions deterministic even before the first parse.
-        default_pipeline_id = new_id()
-        self.document_pipelines[default_pipeline_id] = {
-            "id": default_pipeline_id,
-            "owner_user_id": row.get("owner_user_id"),
-            "document_id": document_id,
-            "name": "Default Pipeline",
-            "parse_run_id": None,
-            "chunk_run_id": None,
-            "embedding_run_id": None,
-            "revision": 1,
-            "created_at": row["created_at"],
-            "updated_at": row["updated_at"],
-        }
-        return copy.deepcopy(row)
+            # Insert inside the same critical section as the duplicate and quota
+            # checks, so two concurrent uploads cannot both pass them.
+            row = {
+                "id": document_id,
+                **metadata,
+                "storage_bucket": storage_bucket,
+                "storage_path": storage_path,
+                "sha256": sha256,
+                "owner_user_id": metadata.get("owner_user_id"),
+                "active_parse_run_id": None,
+                "active_chunk_run_id": None,
+                "active_embedding_run_id": None,
+                "created_at": now_utc(),
+                "updated_at": now_utc(),
+            }
+            self.documents[document_id] = row
+            # Every document starts with one explicit lineage container.  This
+            # keeps downstream actions deterministic even before the first parse.
+            default_pipeline_id = new_id()
+            self.document_pipelines[default_pipeline_id] = {
+                "id": default_pipeline_id,
+                "owner_user_id": row.get("owner_user_id"),
+                "document_id": document_id,
+                "name": "Default Pipeline",
+                "parse_run_id": None,
+                "chunk_run_id": None,
+                "embedding_run_id": None,
+                "revision": 1,
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            return copy.deepcopy(row)
 
     def save_parse(self, document_id, parsed, *, run_id=None):
         queued = self.create_parse_run(document_id, parser_version="unknown", run_id=run_id)
@@ -2733,17 +2735,20 @@ class SqlAlchemyRepository(Repository):
 
     def _owner_usage(self, session, owner_user_id) -> tuple[int, int]:
         owner = self._owner_uuid(owner_user_id)
-        count, total = session.execute(
-            select(func.count(Document.id), func.coalesce(func.sum(Document.size_bytes), 0)).where(
-                Document.owner_user_id == owner
-            )
-        ).one()
-        outstanding = session.scalar(
-            select(func.coalesce(func.sum(StorageCleanup.size_bytes), 0)).where(
-                StorageCleanup.owner_user_id == owner, StorageCleanup.status.in_(["pending", "dead"])
-            )
+        # One statement = one READ COMMITTED snapshot. With two statements a
+        # concurrent delete (document row -> pending cleanup, one commit) could
+        # be seen half-applied and the same bytes counted twice.
+        document_count = select(func.count(Document.id)).where(Document.owner_user_id == owner).scalar_subquery()
+        document_bytes = (
+            select(func.coalesce(func.sum(Document.size_bytes), 0)).where(Document.owner_user_id == owner).scalar_subquery()
         )
-        return int(count), int(total) + int(outstanding or 0)
+        outstanding = (
+            select(func.coalesce(func.sum(StorageCleanup.size_bytes), 0))
+            .where(StorageCleanup.owner_user_id == owner, StorageCleanup.status.in_(["pending", "dead"]))
+            .scalar_subquery()
+        )
+        count, total, pending = session.execute(select(document_count, document_bytes, outstanding)).one()
+        return int(count), int(total) + int(pending or 0)
 
     def owner_document_usage(self, owner_user_id):
         with session_scope() as session:
