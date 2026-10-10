@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import process from "node:process";
 
@@ -12,6 +13,12 @@ const requireJudge = process.env.SMOKE_REQUIRE_JUDGE === "1";
 const requireSemantic = process.env.SMOKE_REQUIRE_SEMANTIC === "1";
 const smokeQuery = process.env.SMOKE_QUERY ?? "What is the main topic of this document?";
 const smokeAccessToken = process.env.SMOKE_ACCESS_TOKEN ?? "";
+// Smoke verisi E2E namespace'inde (`e2e-`) kalır ve varsayılan olarak koşu sonunda silinir.
+const smokeRunId = process.env.SMOKE_RUN_ID ?? `${Date.now()}-${randomBytes(3).toString("hex")}`;
+const keepSmokeData = process.env.SMOKE_KEEP_DATA === "1";
+if (!/^[A-Za-z0-9-]{1,80}$/.test(smokeRunId)) throw new Error("SMOKE_RUN_ID has an invalid format.");
+const smokeFileName = `e2e-smoke-${smokeRunId}.pdf`;
+let createdDocumentId = null;
 
 const failures = [];
 
@@ -210,11 +217,18 @@ async function parsePdf() {
   try {
     const bytes = await readFile(pdfPath);
     const form = new FormData();
-    form.append("file", new Blob([bytes], { type: "application/pdf" }), "smoke.pdf");
+    form.append("file", new Blob([bytes], { type: "application/pdf" }), smokeFileName);
     const { response, payload } = await apiRequest("/documents/parse", { method: "POST", body: form });
     if (!response?.ok) {
       fail(`parse returned HTTP ${response?.status ?? "unknown"}`);
       return null;
+    }
+    // SHA tekilleştirmesi mevcut bir dokümanı döndürdüyse o doküman bu koşunun değildir; silinmez.
+    const uploadedDocumentId = payload?.documentId ?? payload?.document_id ?? payload?.document?.id;
+    if (payload?.reusedDocument === false && payload?.document?.fileName === smokeFileName && typeof uploadedDocumentId === "string") {
+      createdDocumentId = uploadedDocumentId;
+    } else {
+      console.log("[smoke] parse reused an existing document; it will not be cleaned up");
     }
 
     const status = parseRunStatus(payload);
@@ -405,7 +419,7 @@ async function runRagContract(parsePayload) {
     body: JSON.stringify({
       documentId,
       parseRunId,
-      name: `smoke-${Date.now()}`,
+      name: `e2e-smoke-${smokeRunId}`,
       cases: [{ question: smokeQuery, relevantElementIds: [firstElementId], referenceAnswer: null }],
     }),
   });
@@ -529,6 +543,20 @@ if (requireRag) {
   if (parsePayload) await runRagContract(parsePayload);
   else fail("RAG smoke was requested but the parse prerequisite failed");
 }
+
+async function cleanupSmokeDocument() {
+  if (!createdDocumentId) return;
+  if (keepSmokeData) {
+    console.log(`[smoke] kept ${smokeFileName} (SMOKE_KEEP_DATA=1)`);
+    return;
+  }
+  // Doküman silmesi parse/chunk/embedding/experiment/evaluation kayıtlarını cascade ile kaldırır.
+  const { response } = await apiRequest(`/documents/${encoded(createdDocumentId)}`, { method: "DELETE" });
+  if (response?.status === 204) console.log(`[smoke] cleanup: removed ${smokeFileName}`);
+  else fail(`cleanup of ${smokeFileName} returned HTTP ${response?.status ?? "unknown"}`);
+}
+
+await cleanupSmokeDocument();
 
 if (failures.length > 0) {
   for (const failure of failures) console.error(`[smoke] ${failure}`);
