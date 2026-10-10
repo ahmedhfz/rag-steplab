@@ -128,6 +128,15 @@ describe("Parse ownership and lifecycle", () => {
     expect(fetchMock.mock.calls.filter(([url, request]) => String(url).endsWith("/documents/document-1/parse") && (request as RequestInit | undefined)?.method === "POST")).toHaveLength(1);
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/documents/parse"))).toBe(false);
     expect(pollCalls).toBeGreaterThanOrEqual(2);
+
+    // A2: only the state/phase text is live; the ticking timer and percentage are not.
+    const lifecycle = screen.getByTestId("parse-lifecycle");
+    expect(lifecycle).not.toHaveAttribute("aria-live");
+    expect(lifecycle.querySelector("[aria-live], [role='status']")).toBeNull();
+    expect(screen.getByTestId("parse-document-status")).not.toHaveAttribute("aria-live");
+    const announcement = screen.getByTestId("parse-status-announcement");
+    expect(announcement).toHaveAttribute("role", "status");
+    expect(announcement).toHaveTextContent(/^Parsed$/);
   });
 
   it("guards duplicate Parse clicks while the run is queued", async () => {

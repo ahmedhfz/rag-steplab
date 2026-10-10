@@ -18,6 +18,19 @@
 .steplab-panel { --panel-translate-y: 8px; --panel-blur: 0px; }
 .steplab-thinking { text-align: start; max-width: 100%; }
 .steplab-thinking .t-think-text { text-align: start; }
+/* The shimmer layer repeats the real text node; empty alt text keeps it out of the
+   accessibility tree. Browsers without the syntax keep the recipe declaration. */
+.steplab-thinking .t-think-text::before { content: attr(data-text) / ""; }
+
+/* At rest the recipes keep will-change, a 0px blur and translate(0) on every page and
+   panel: each becomes a compositing layer, a stacking context and a containing block
+   for fixed descendants. StepLab's blurs are 0px, so filter is dropped and the resting
+   transform/will-change are released; the slide still interpolates to `none`. */
+.steplab-page-slide.t-page-slide > .t-page[data-page-id],
+.steplab-panel.t-panel-slide { will-change: auto; filter: none; }
+.steplab-page-slide.t-page-slide[data-page="1"] > .t-page[data-page-id="1"],
+.steplab-page-slide.t-page-slide[data-page="2"] > .t-page[data-page-id="2"],
+.steplab-panel.t-panel-slide[data-open="true"] { transform: none; }
 .steplab-success { --check-y-amount: 4px; --check-blur-from: 2px; --check-rotate-from: 12deg; }
 
 /* Native details owns open/keyboard semantics. On supporting browsers its

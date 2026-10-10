@@ -25,11 +25,13 @@ const STRATEGIES: ChunkStrategy[] = ["fixed_token", "recursive_token", "structur
 
 /** Chunk text with Markdown pipe tables rendered as plain-text table cells (never HTML). */
 export function ChunkText({ text }: { text: string }) {
+  const copy = useCopy();
   const blocks = splitChunkText(text);
   return (
     <div className="space-y-4 text-sm leading-6 text-foreground" data-testid="chunk-text">
       {blocks.map((block, index) => block.type === "table" ? (
-        <div className="max-w-full overflow-x-auto rounded-md border border-border" key={index}>
+        // Focusable so a horizontally scrolling table can be scrolled from the keyboard.
+        <div aria-label={copy.documents.elementTypes.table} className="max-w-full overflow-x-auto rounded-md border border-border" key={index} role="group" tabIndex={0}>
           <table className="min-w-full text-left text-sm">
             <thead className="bg-technical">
               <tr>{block.header.map((cell, cellIndex) => <th className="border-b border-border px-3 py-2 font-medium" key={cellIndex} scope="col">{cell}</th>)}</tr>

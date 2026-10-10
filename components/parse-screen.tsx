@@ -89,11 +89,13 @@ function outlineSection(result: DocumentParseResponse, entry: OutlineEntry | und
 }
 
 function TableElement({ element }: { element: ParsedElement }) {
+  const copy = useCopy();
   const rows = element.table?.rows ?? [];
   if (rows.length === 0) return <p className="whitespace-pre-wrap text-sm leading-6 text-foreground">{element.text}</p>;
   const [header, ...body] = rows;
   return (
-    <div className="max-w-full overflow-x-auto rounded-md border border-border">
+    // Focusable so a horizontally scrolling table can be scrolled from the keyboard.
+    <div aria-label={copy.documents.elementTypes.table} className="max-w-full overflow-x-auto rounded-md border border-border" role="group" tabIndex={0}>
       <table className="min-w-full text-left text-sm">
         <thead className="bg-technical">
           <tr>{header.map((cell, index) => <th className="border-b border-border px-3 py-2 font-medium" key={`${cell}-${index}`} scope="col">{cell}</th>)}</tr>
@@ -208,8 +210,8 @@ function RawOutput({ result }: { result: DocumentParseResponse }) {
         {(["markdown", "json"] as const).map((option) => <Button aria-pressed={view === option} key={option} onClick={() => setView(option)} size="sm" variant={view === option ? "secondary" : "ghost"}>{labels[option]}</Button>)}
       </SlidingTabs>
       {view === "markdown"
-        ? <pre className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-muted-foreground" data-testid="parsed-markdown">{result.markdown}</pre>
-        : <pre className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-muted-foreground" data-testid="parsed-json">{JSON.stringify(result.structured, null, 2)}</pre>}
+        ? <pre aria-label={labels.markdown} className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-muted-foreground" data-testid="parsed-markdown" role="region" tabIndex={0}>{result.markdown}</pre>
+        : <pre aria-label={labels.json} className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-muted-foreground" data-testid="parsed-json" role="region" tabIndex={0}>{JSON.stringify(result.structured, null, 2)}</pre>}
     </Disclosure>
   );
 }
@@ -310,26 +312,28 @@ export function ParseScreen() {
 
         <div className="mt-6 grid min-w-0 gap-3 lg:grid-cols-[max-content_minmax(0,1fr)]" data-testid="parse-workspace-controls">
           <StageContextCard className="min-w-0" />
-          <section aria-live="polite" className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card px-4 py-2.5" data-testid="parse-document-status">
+          <section className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card px-4 py-2.5" data-testid="parse-document-status">
             <StatusPill tone={statusTone}>{statusLabel}</StatusPill>
             <Button aria-busy={isProcessing} aria-describedby={describedBy} data-testid="parse-run-action" disabled={!canParse} onClick={() => (reparseImpact.requiresConfirmation ? setConfirmOpen(true) : startParse())} size="sm" title={hasParsed ? labels.actions.reparseHint : undefined} variant={hasParsed ? "outline" : "default"}>
               {isProcessing ? <AppIcon name="loading" className="size-3.5 animate-spin motion-reduce:animate-none" /> : <AppIcon name="refresh" className="size-3.5" />}
               {isProcessing ? labels.actions.running : hasParsed ? labels.actions.reparse : labels.actions.parse}
             </Button>
             {hasParsed ? <span className="sr-only" id="parse-run-hint">{labels.actions.reparseHint}</span> : null}
+            {/* The only live region here: phase/state text. Timer, percentage and button label stay silent (A2). */}
+            <p className="sr-only" data-testid="parse-status-announcement" role="status">{statusLabel}</p>
           </section>
         </div>
         <StageBlockerRow blocker={canParse ? null : availability} className="mt-3" id="parse-action-disabled-reason" kind="parse" testId="parse-blocker" />
         <InspectionBand canUse={Boolean(activePipeline)} inspectedId={inspectedParseRunId} kind="parse" onBack={inspectParseRun} onUse={setPipelineParseRun} runs={parseRuns} selectedId={selectedParseRunId} />
 
         {lifecycleVisible ? (
-          <section aria-live="polite" className="mt-6 grid gap-4 rounded-lg border border-border bg-card p-4 md:grid-cols-[minmax(0,1fr)_120px]" data-testid="parse-lifecycle">
+          <section className="mt-6 grid gap-4 rounded-lg border border-border bg-card p-4 md:grid-cols-[minmax(0,1fr)_120px]" data-testid="parse-lifecycle">
             <div>
               <div className="flex items-center justify-between gap-3 text-xs">
                 <span className="font-medium text-foreground">{isProcessing ? <ThinkingText>{statusLabel}</ThinkingText> : <TransitionText>{statusLabel}</TransitionText>}</span>
                 <span className="text-muted-foreground tabular-nums"><TransitionNumber>{parseProgress}</TransitionNumber>% · {parseProgressEstimated ? labels.progress.estimated : labels.progress.confirmed}</span>
               </div>
-              <div aria-label={`${labels.progress.label} ${parseProgress}%`} aria-valuemax={100} aria-valuemin={0} aria-valuenow={parseProgress} className="mt-3 h-2 overflow-hidden rounded-full bg-secondary" role="progressbar"><div className="h-full bg-foreground transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${parseProgress}%` }} /></div>
+              <div aria-label={`${labels.progress.label} ${parseProgress}%`} aria-valuemax={100} aria-valuemin={0} aria-valuenow={parseProgress} className="mt-3 h-2 overflow-hidden rounded-full bg-secondary" role="progressbar"><div className="h-full origin-left bg-foreground transition-transform duration-300 motion-reduce:transition-none" style={{ transform: `scaleX(${Math.min(100, Math.max(0, parseProgress)) / 100})` }} /></div>
               <ol className="mt-4 grid grid-cols-4 gap-2 sm:grid-cols-8">{PHASE_ORDER.map((item, index) => <li className={index <= phaseIndex ? "text-xs text-foreground" : "text-xs text-subtle-foreground"} key={item}><span aria-hidden="true" className={index <= phaseIndex ? "mb-1 block h-1 rounded-full bg-muted-foreground" : "mb-1 block h-1 rounded-full bg-border"} />{labels.phases[item]}</li>)}</ol>
             </div>
             <div className="border-border md:border-l md:pl-4">

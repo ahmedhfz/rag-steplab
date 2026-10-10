@@ -705,7 +705,7 @@ function EvaluationWorkspace() {
             {evaluationStatus === "processing" && totalCases > 0 ? (
               <div className="mt-4" role="status">
                 <div className="flex justify-between text-xs text-muted-foreground"><span>{copy.progress}</span><span className="tabular-nums">{formatNumber(locale, completedCases)}/{formatNumber(locale, totalCases)}</span></div>
-                <div aria-label={copy.progress} aria-valuemax={totalCases} aria-valuemin={0} aria-valuenow={completedCases} className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary" role="progressbar"><div className="t-resize h-full bg-muted-foreground" style={{ width: `${Math.min(100, (completedCases / totalCases) * 100)}%` }} /></div>
+                <div aria-label={copy.progress} aria-valuemax={totalCases} aria-valuemin={0} aria-valuenow={completedCases} className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary" role="progressbar"><div className="h-full origin-left bg-muted-foreground transition-transform duration-300 motion-reduce:transition-none" style={{ transform: `scaleX(${Math.min(1, completedCases / totalCases)})` }} /></div>
               </div>
             ) : null}
 
