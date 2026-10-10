@@ -17,8 +17,8 @@ test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğ
   await expect(page.getByTestId("pdf-drop-zone")).toBeVisible();
   const quality = installBrowserQualityGuards(page);
   await page.getByLabel("Choose PDF", { exact: true }).setInputFiles({ name: fileName, mimeType: "application/pdf", buffer: pdf });
-  await expect(page.getByRole("status")).toContainText(/ready to parse|reused/i);
-  await page.getByRole("link", { name: "Continue to Parse" }).click();
+  await expect(page.getByRole("status").filter({ hasText: /Document added|already in your library/i })).toBeVisible();
+  await page.getByTestId("documents-continue-action").click();
 
   // Upload sonrası document detail hydration kısa süre sonra parse aksiyonunu
   // enable eder; retry'da backend checkpoint'i zaten tamamlanmış olabilir.
