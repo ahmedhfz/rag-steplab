@@ -41,6 +41,7 @@ otoritesidir.
 - Secret'ları source control veya log'a koymayın. Kişisel/hassas PDF'leri public
   deployment'a yüklemeyin.
 
-Lease/fencing ve timeout kuralları `backend/AGENTS.md`'de; schema authority ve
+Lease/fencing kuralları `backend/AGENTS.md`'de, timeout/admission kuralları
+`backend/README.md`'de; schema authority ve
 privilege kuralları `supabase/AGENTS.md`'de tanımlıdır. Ayrıntılarını burada
 tekrarlamayın.

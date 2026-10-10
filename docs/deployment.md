@@ -21,23 +21,11 @@ Supabase schema, private Storage bucket, Supabase CLI migration lineage'ı ve
 RAG pipeline aynı kalır. Browser yalnız FastAPI yüzeyiyle konuşur; Docling worker
 public endpoint değildir.
 
-## Async parse contract
+## Parse polling
 
-```text
-POST /documents/parse (multipart PDF)
-    → Storage upload + document + queued run
-    → HTTP 202 { documentId, parseRunId, status: "queued" }
-    → GET /parse-runs/{parseRunId}
-    → queued → running → completed | failed
-```
-
-Persisted source için `POST /documents/{documentId}/parse` aynı lifecycle'ı
-kullanır. `completed` yanıtı normalized structured content, Markdown, summary
-ve provenance içerir. Database'de internal `interrupted` tutulsa bile public
-API ve frontend bunu `failed` + `error.code = parse_interrupted` olarak gösterir.
-Public `interrupted` state yoktur.
-
-Frontend 2 saniyede bir poll eder. Browser 15 dakika sonunda gerçek run'ı
+Async parse sözleşmesi (`202 → queued → running → completed | failed`,
+`parse_interrupted` normalizasyonu) [backend/README.md](../backend/README.md#async-parse-sözleşmesi)
+içinde tanımlıdır. Frontend 2 saniyede bir poll eder. Browser 15 dakika sonunda gerçek run'ı
 failed yapmadan takibi durdurur; refresh durable polling'i sürdürür. Transient
 network/5xx/408/429 hataları run'ı failed yapmaz. queued/running sırasında
 ikinci submit hem UI hem database unique inflight guard ile engellenir. Fake
@@ -47,12 +35,27 @@ işaretlenen ve bir sonraki checkpoint'i geçmeyen görsel ilerleme gösterebili
 
 ## Modal App
 
-Tek `rag-steplab-api` Modal App iki farklı compute profili kullanır:
+Tek `rag-steplab-api` Modal App üç farklı compute profili kullanır
+(`backend/modal_app.py`):
 
-| Bileşen | CPU | Bellek | Timeout | Min/Max |
-| --- | ---: | ---: | ---: | ---: |
-| FastAPI ASGI (`api_eu`) | 0.5 | 1024 MiB | 300 s | 1 / 2 |
-| Full Docling worker | 2.0 | 4096 MiB | 900 s | 0 / 1 |
+| Bileşen | Function | CPU | Bellek | Timeout | Min/Max |
+| --- | --- | ---: | ---: | ---: | ---: |
+| FastAPI ASGI | `api_eu` | 0.5 | 1024 MiB | 300 s | 1 / 2 |
+| Full Docling parse worker | `parse_worker` (`benchmark_parse` aynı profili kullanır) | 2.0 | 4096 MiB | 900 s | 0 / 1 |
+| Pipeline worker (experiment, evaluation) | `pipeline_worker` | 1.0 | 2048 MiB | 1800 s | 0 / 1 |
+
+Pipeline worker API image'ını kullanır (Docling taşımaz). Embedding run'ları
+şu an API isteği içinde senkron çalışır; lease süreleri aynı pipeline bütçesini
+kullanır. Pipeline worker timeout ve startup
+timeout `PIPELINE_WORKER_TIMEOUT_SECONDS` / `PIPELINE_WORKER_STARTUP_TIMEOUT_SECONDS`
+ile ayarlanır (varsayılan 1800 s / 300 s); backend lease/timeout hesabı aynı
+değişkenleri okur, bu yüzden Modal deploy'u ile API secret'ında aynı değer
+tutulmalıdır. Legacy `api` yalnız rollback içindir. `prefetch_docling_models`
+(1800 s) ve `remote_import_smoke` (300 s) operasyonel yardımcı Function'lardır.
+Deploy anı değişkenleri: `MODAL_API_COMPUTE_REGION` (varsayılan `eu`),
+`MODAL_API_ROUTING_REGION` (`eu-west`), `MODAL_API_SECRET_NAMES`
+(`rag-steplab-api-runtime`) ve `MODAL_WORKER_SECRET_NAMES`
+(`rag-steplab-parser-runtime`); secret değerleri Modal Secret içinde kalır.
 
 Production Supabase `eu-central-1` yakınlığı için yalnız interactive API
 `region=eu` ve `routing_region=eu-west` kullanır. Routing region mevcut Function
@@ -77,9 +80,9 @@ Bu yol Docling Volume dışında kalır; boş Volume OCR modelini maskelemez.
 `prefetch_docling_models` yalnız layout/tableformer indirir ve image OCR
 manifestini doğrular. RapidOCR default downloader ile başka recognition
 profili hazırlamayın. Request sırasında OCR indirmesi veya sessiz fallback
-yoktur. Runtime pin'leri `requirements-worker.txt` içindedir. Bu değişiklik
-henüz deploy edildiği anlamına gelmez; yeni worker image + yetkili hosted parse
-doğrulaması ayrı release adımıdır.
+yoktur. Runtime pin'leri `requirements-worker.txt` içindedir. OCR profil
+değişiklikleri yeni worker image'ı ve yetkili hosted parse doğrulaması gerektirir;
+kaynak değişikliği tek başına deploy edildiği anlamına gelmez.
 
 Karaman regression PDF'iyle ilk ölçüm:
 
@@ -130,7 +133,7 @@ paragrafı ham Docling çıktısında düşürdüğünden yükseltme yapılmadı
 sürümü aynı örnekte içerik kaybetmediği doğrulanınca muafiyet kaldırılır.
 Dependabot npm, pip ve GitHub Actions için haftalık,
 bounded PR üretir. Repository private ve GitHub Code Scanning etkin olmadığı
-için bu değişiklik CodeQL workflow'u eklemez; ücretsiz uygunluk doğrulanmadan
+için CodeQL workflow'u bilinçli olarak yoktur; ücretsiz uygunluk doğrulanmadan
 Advanced Security gerektiren bir gate zorunlu kılınmaz.
 
 ## Deploy sırası ve gerçek otomatik kapılar
@@ -183,8 +186,8 @@ Supabase CLI
 Supabase PostgreSQL
 ```
 
-Yeni migration üretmek için repository root'unda
-`supabase migration new <descriptive_name>` kullanılır.
+Local komut akışı [supabase/AGENTS.md](../supabase/AGENTS.md), karar ve production
+baseline [migrations.md](architecture/migrations.md) içindedir.
 `supabase migration fetch --linked` remote history'yi yeniden oluşturmak
 için kullanılabilir. Existing production baseline migration'ı remote'da tekrar
 çalıştırılmaz; Supabase migration repair ile applied olarak işaretlenir.
@@ -231,6 +234,10 @@ $env:SMOKE_QUERY = "BAT-S12 nedir? Kısa yanıtla."
 $env:SMOKE_TIMEOUT_MS = "60000"
 node scripts/smoke.mjs
 ```
+
+Ek isteğe bağlı değişkenler: `SMOKE_PARSE_TIMEOUT_MS` (parse bekleme süresi,
+varsayılan 900000) ve `SMOKE_REQUIRE_JUDGE=1` (evaluation'da judge'ı açar ve
+judge modelinin raporlanmasını zorunlu kılar).
 
 Semantic gate 8 sayfa, 9–11 tablo, 24–28 gerçek başlık, page provenance ve
 `BAT-S12`, `INV-T17`, `12,84 GWh`, `%17,6`, `%25` marker'larını doğrular. Full
