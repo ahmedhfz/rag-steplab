@@ -775,7 +775,7 @@ class Repository:
         raise NotImplementedError
 
     def interrupt_pipeline_run(
-        self, kind: str, run_id: str, dispatch_id: str, code: str, message: str
+        self, kind: str, run_id: str, dispatch_id: str, code: str, message: str, *, only_if_unstarted: bool = False
     ) -> dict[str, Any] | None:
         raise NotImplementedError
 
@@ -2104,7 +2104,12 @@ class InMemoryRepository(Repository):
                 return None
             if row.get("dispatch_id") is None:
                 row["dispatch_id"] = dispatch_id
-            elif stale_reservation is not None and row.get("dispatch_id") == stale_reservation and new_lease_token:
+            elif (
+                stale_reservation is not None
+                and row.get("dispatch_id") == stale_reservation
+                and new_lease_token
+                and row.get("worker_started_at") is None
+            ):
                 row["dispatch_id"] = dispatch_id
                 row["lease_token"] = str(new_lease_token)
                 row["attempt_count"] = int(row.get("attempt_count") or 0) + 1
@@ -2172,12 +2177,16 @@ class InMemoryRepository(Repository):
             row.update(_expired_run_update(row))
             return copy.deepcopy(row)
 
-    def interrupt_pipeline_run(self, kind, run_id, dispatch_id, code, message):
+    def interrupt_pipeline_run(self, kind, run_id, dispatch_id, code, message, *, only_if_unstarted=False):
         with self._lock:
             row = self._pipeline_store(kind).get(run_id)
             if row is None:
                 return None
-            if row.get("status") in {"queued", "running"} and row.get("dispatch_id") == dispatch_id:
+            if (
+                row.get("status") in {"queued", "running"}
+                and row.get("dispatch_id") == dispatch_id
+                and not (only_if_unstarted and row.get("worker_started_at") is not None)
+            ):
                 row.update({
                     "status": "interrupted", "error_code": code, "error_message": message,
                     "completed_at": now_utc(), "duration_ms": None, "identity_claimed": None,
@@ -2199,6 +2208,7 @@ class InMemoryRepository(Repository):
                     rows.append({
                         "kind": kind, "id": row["id"], "dispatch_id": row["dispatch_id"], "status": row["status"],
                         "started_at": row.get("started_at"), "lease_expires_at": row.get("lease_expires_at"),
+                        "worker_started_at": row.get("worker_started_at"),
                     })
         return rows[:limit]
 
@@ -4321,7 +4331,12 @@ class SqlAlchemyRepository(Repository):
             if entity.dispatch_id is None:
                 entity.dispatch_id = dispatch_id
                 session.flush()
-            elif stale_reservation is not None and entity.dispatch_id == stale_reservation and new_lease_token:
+            elif (
+                stale_reservation is not None
+                and entity.dispatch_id == stale_reservation
+                and new_lease_token
+                and entity.worker_started_at is None
+            ):
                 # The previous reservation's dispatcher is presumed dead. Rotate
                 # the fencing token so a late spawn from it cannot start work.
                 entity.dispatch_id = dispatch_id
@@ -4406,7 +4421,7 @@ class SqlAlchemyRepository(Repository):
             session.flush()
             return self._pipeline_dict(kind, entity)
 
-    def interrupt_pipeline_run(self, kind, run_id, dispatch_id, code, message):
+    def interrupt_pipeline_run(self, kind, run_id, dispatch_id, code, message, *, only_if_unstarted=False):
         """Terminalize an active run whose recorded dispatch is known dead.
 
         The dispatch id is compared-and-set so a newer attempt (new dispatch)
@@ -4415,7 +4430,12 @@ class SqlAlchemyRepository(Repository):
 
         with _clocked_session() as session:
             entity = self._pipeline_entity(session, kind, run_id, for_update=True)
-            if entity is None or entity.status not in {"queued", "running"} or entity.dispatch_id != dispatch_id:
+            if (
+                entity is None
+                or entity.status not in {"queued", "running"}
+                or entity.dispatch_id != dispatch_id
+                or (only_if_unstarted and entity.worker_started_at is not None)
+            ):
                 return self._pipeline_dict(kind, entity) if entity is not None else None
             entity.status = "interrupted"
             entity.error_code = code
@@ -4435,7 +4455,10 @@ class SqlAlchemyRepository(Repository):
         owner = self._owner_uuid(owner_user_id)
         with session_scope() as session:
             for kind, model in self._PIPELINE_MODELS.items():
-                query = select(model.id, model.dispatch_id, model.status, model.started_at, model.lease_expires_at)
+                query = select(
+                    model.id, model.dispatch_id, model.status, model.started_at, model.lease_expires_at,
+                    model.worker_started_at,
+                )
                 if model is EvaluationRun:
                     query = query.join(EvaluationDataset, EvaluationDataset.id == model.dataset_id).join(
                         Document, Document.id == EvaluationDataset.document_id
@@ -4777,10 +4800,12 @@ class ScopedRepository(Repository):
             stale_reservation=stale_reservation, new_lease_token=new_lease_token,
         )
 
-    def interrupt_pipeline_run(self, kind, run_id, dispatch_id, code, message):
+    def interrupt_pipeline_run(self, kind, run_id, dispatch_id, code, message, *, only_if_unstarted=False):
         if self._owned_pipeline_row(kind, run_id) is None:
             return None
-        return self._repository.interrupt_pipeline_run(kind, run_id, dispatch_id, code, message)
+        return self._repository.interrupt_pipeline_run(
+            kind, run_id, dispatch_id, code, message, only_if_unstarted=only_if_unstarted
+        )
 
     def list_active_dispatches(self, *, owner_user_id=None, limit=100):
         return self._repository.list_active_dispatches(owner_user_id=self.owner_user_id, limit=limit)

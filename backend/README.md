@@ -221,13 +221,18 @@ Hosted ortamda embedding de experiment/evaluation gibi durable `pipeline_worker`
 üzerinde çalışır; API isteği yalnız claim + dispatch yapar. `?async=true` olmadan
 istek en fazla `EMBEDDING_SYNC_WAIT_SECONDS` (varsayılan 100) bekler ve run bu
 sürede biterse önceki 200 sözleşmesini korur, aksi halde 202 döner
-(`GET /embedding-runs/{id}` ile izlenir). Embedding lease'i her sağlayıcı batch'inden
-önce batch bütçesiyle yenilenir; chunk lease'i API isteği bütçesine (300 sn + tolerans)
+(`GET /embedding-runs/{id}` ile izlenir). Worker başlayana kadarki embedding lease'i
+tek `pipeline_worker` container'ında başka bir işin (≤ worker timeout) arkasında
+beklemeyi ve cold start'ı kapsar; worker başlayınca her sağlayıcı batch'inden önce,
+deneme başına istek timeout'u + istemcinin en fazla 20 sn backoff'u üzerinden hesaplanan
+batch bütçesiyle yenilenir. Chunk lease'i API isteği bütçesine (300 sn + tolerans)
 bağlıdır. Lease süreleri ve süre dolumu PostgreSQL `now()` ile hesaplanır.
 Modal sert ölümü (OOM, timeout, preemption) polling'de ve yeni iş kabulünden önce
 Modal call durumu (run başına en çok 30 sn'de bir) sorgulanarak `worker_terminated`
 olarak, yerini gerçek call id'ye bırakmayan `dispatching-*` rezervasyonu
-`DISPATCH_RESERVATION_TTL_SECONDS` sonra `pipeline_dispatch_lost` olarak kapatılır;
+`DISPATCH_RESERVATION_TTL_SECONDS` sonra, worker hiç başlamadıysa (satır kilidi
+altında doğrulanır) `pipeline_dispatch_lost` olarak kapatılır; başlamış worker'a
+dokunulmaz, lease reconciliation geçerlidir;
 aynı isteğin tekrarı rezervasyonu fencing token'ını döndürerek yeniden dispatch eder.
 Process-local guard yalnız development'taki istek içi çalıştırma için ve kullanıcı
 başınadır; kullanıcılar arası kabulün tek otoritesi veritabanıdır. Yanıtlardaki

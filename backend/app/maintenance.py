@@ -137,10 +137,15 @@ def reconcile_active_run(repository, kind: str, row: dict[str, Any] | None, *, c
     if row is None or row.get("status") not in {"queued", "running"}:
         return row
     dispatch_id = row.get("dispatch_id")
-    if reservation_is_stale(dispatch_id, row.get("started_at")):
+    if reservation_is_stale(dispatch_id, row.get("started_at")) and row.get("worker_started_at") is None:
+        # Spawn may have succeeded before the API died without recording the
+        # call id. The repository re-checks "not started" under the row lock,
+        # so a worker that started meanwhile keeps running under its lease
+        # (lease reconciliation still bounds it).
         logger.warning("pipeline_dispatch_lost kind=%s run_id=%s", kind, row["id"])
         return repository.interrupt_pipeline_run(
-            kind, row["id"], dispatch_id, "pipeline_dispatch_lost", "The worker was never started for this run."
+            kind, row["id"], dispatch_id, "pipeline_dispatch_lost", "The worker was never started for this run.",
+            only_if_unstarted=True,
         ) or row
     if check_modal and _is_modal_call(dispatch_id) and _due_for_terminal_check(str(dispatch_id)):
         if call_terminal_failure(str(dispatch_id)):
