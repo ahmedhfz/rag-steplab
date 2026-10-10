@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { AUTH_NEXT_COOKIE, AUTH_NEXT_COOKIE_MAX_AGE_SECONDS, safeNextPath } from "@/lib/auth-redirect";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 async function valueFingerprint(value: string | undefined) {
@@ -49,6 +50,18 @@ export async function GET(request: Request) {
       pkceCookieLength: pkceCookie?.value.length ?? 0,
     });
     response.headers.set("Location", data.url);
+    // The OAuth redirect allow-list stays a fixed callback URL; the post-login
+    // destination travels in a short-lived, path-scoped cookie instead.
+    // A root destination also overwrites the cookie with an expired one, so an
+    // abandoned earlier flow cannot redirect this login to its stale target.
+    const next = safeNextPath(requestUrl.searchParams.get("next"));
+    response.cookies.set(AUTH_NEXT_COOKIE, next === "/" ? "" : next, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: requestUrl.protocol === "https:",
+      path: "/auth",
+      maxAge: next === "/" ? 0 : AUTH_NEXT_COOKIE_MAX_AGE_SECONDS,
+    });
     return response;
   } catch {
     return response;

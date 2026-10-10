@@ -251,6 +251,7 @@ export function OverviewScreen() {
     activeDocument,
     persistenceStatus,
     persistenceError,
+    workspaceStatus,
     selectedParseRunId,
     selectedChunkRunId,
     selectedEmbeddingRunId,
@@ -355,7 +356,8 @@ export function OverviewScreen() {
     experiment: matchingExperiment,
     hasEvaluationDataset: matchingDatasetIds.size > 0,
     parse: parseSummary,
-    persistenceStatus,
+    // While the active lineage is still loading, the continuation stays neutral.
+    persistenceStatus: workspaceStatus === "loading" && persistenceStatus === "available" ? "checking" : persistenceStatus,
     selectedChunkRunId,
     selectedEmbeddingRunId,
     selectedParseRunId,

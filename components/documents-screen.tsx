@@ -1,6 +1,6 @@
 "use client";
 
-import { SlidingTabs, TransitionDetails, TransitionNumber, TransitionPanel } from "@/components/ui/transitions";
+import { SlidingTabs, TransitionDetails, TransitionPanel } from "@/components/ui/transitions";
 
 import Link from "next/link";
 import { useState } from "react";
@@ -12,41 +12,11 @@ import { usePreferences } from "@/components/preferences-provider";
 import { OcrSourceDetails } from "@/components/ocr-source-details";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { type AppCopy, type DocumentViewKey, UI_COPY } from "@/lib/copy";
-import { formatDocumentFileSize } from "@/lib/document-file";
+import { type AppCopy, UI_COPY } from "@/lib/copy";
 import type { DocumentParseResponse, ParsedElement } from "@/lib/document-parse-types";
-import type { PersistedDocument } from "@/lib/rag-api-types";
 import { cn } from "@/lib/utils";
 
-export type DocumentView = DocumentViewKey;
-
 type ParsedView = "structured" | "markdown" | "json";
-
-const documentTabs: Array<{ view: DocumentView; href: string }> = [
-  { view: "overview", href: "/documents" },
-  { view: "parsed", href: "/parse" },
-  { view: "chunks", href: "/chunking" },
-];
-
-export function ParseRunSelector({ locale }: { locale: "en" | "tr" }) {
-  const { activeDocument, activePipeline, selectedParseRunId, inspectedParseRunId, selectParseRun, setPipelineParseRun } = useDocumentPipeline();
-  const runs = activeDocument?.parseRuns.filter((run) => run.status === "completed" && run.isCompatible) ?? [];
-  const inspectedId = inspectedParseRunId ?? selectedParseRunId;
-  if (!selectedParseRunId || runs.length < 2) return null;
-  return (
-    <div className="mt-4 max-w-sm">
-      <label className="text-xs font-medium" htmlFor="selected-parse-run">{locale === "tr" ? "İncelenen parse run" : "Inspected parse run"}</label>
-      <Select onValueChange={(value) => void selectParseRun(value)} value={inspectedId ?? selectedParseRunId}>
-        <SelectTrigger className="mt-2" id="selected-parse-run"><SelectValue /></SelectTrigger>
-        <SelectContent>
-          {runs.map((run, index) => <SelectItem key={run.id} value={run.id}>{locale === "tr" ? "Ayrıştırma" : "Parse"} {run.runNumber ?? index + 1}{run.historicalLineage ? (locale === "tr" ? " · geçmiş" : " · historical") : (locale === "tr" ? " · aktif" : " · active")}</SelectItem>)}
-        </SelectContent>
-      </Select>
-      {activePipeline && inspectedId && inspectedId !== selectedParseRunId ? <Button className="mt-2" onClick={() => void setPipelineParseRun(inspectedId)} size="sm" variant="outline">{locale === "tr" ? "Pipeline'da kullan" : "Use in pipeline"}</Button> : null}
-    </div>
-  );
-}
 
 function EmptyState({ children }: { children: React.ReactNode }) {
   return (
@@ -55,81 +25,6 @@ function EmptyState({ children }: { children: React.ReactNode }) {
     >
       {children}
     </TransitionPanel>
-  );
-}
-
-export function SummaryGrid({ copy, result }: { copy: AppCopy["documents"]; result: DocumentParseResponse }) {
-  const fields = [
-    [copy.summaryFields.pageCount, result.summary.pageCount],
-    [copy.summaryFields.headingCount, result.summary.headingCount],
-    [copy.summaryFields.paragraphCount, result.summary.paragraphCount],
-    [copy.summaryFields.listCount, result.summary.listCount],
-    [copy.summaryFields.tableCount, result.summary.tableCount],
-  ] as const;
-
-  return (
-    <dl
-      className="grid grid-cols-2 gap-3 sm:grid-cols-5"
-    >
-      {fields.map(([label, value]) => (
-        <TransitionPanel
-          className="rounded-[10px] border border-border bg-card px-3 py-2"
-          key={label}
-        >
-          <dt className="text-[11px] text-subtle-foreground">{label}</dt>
-          <dd className="mt-1 text-lg font-semibold"><TransitionNumber>{value}</TransitionNumber></dd>
-        </TransitionPanel>
-      ))}
-    </dl>
-  );
-}
-
-export function DocumentOverviewTab({ copy, selectedFile, persistedDocument, result, locale }: { copy: AppCopy["documents"]; selectedFile: File | null; persistedDocument: PersistedDocument | null; result: DocumentParseResponse | null; locale: "en" | "tr" }) {
-  const fileName = selectedFile?.name ?? persistedDocument?.fileName;
-  const sizeBytes = selectedFile?.size ?? persistedDocument?.sizeBytes;
-  const pageCount = result?.document.pageCount ?? (persistedDocument?.activeParseRunId ? persistedDocument.pageCount : undefined);
-  return (
-    <div className="grid border-t lg:grid-cols-2">
-      <section className="p-4 sm:p-7 lg:border-r">
-        <h2 className="text-sm font-semibold">{copy.document}</h2>
-        <div className="mt-5">
-          {fileName ? (
-            <dl className="grid gap-3 border-y px-4 py-5 text-sm">
-              <div className="flex items-center justify-between gap-4">
-                <dt className="text-muted-foreground">{copy.fileName}</dt>
-                <dd className="max-w-[65%] truncate font-medium" title={fileName}>{fileName}</dd>
-              </div>
-              <div className="flex items-center justify-between gap-4">
-                <dt className="text-muted-foreground">{copy.size}</dt>
-                <dd>{formatDocumentFileSize(sizeBytes ?? 0, locale)}</dd>
-              </div>
-              {pageCount !== undefined && (
-                <div className="flex items-center justify-between gap-4">
-                  <dt className="text-muted-foreground">{copy.pages}</dt>
-                  <dd>{pageCount}</dd>
-                </div>
-              )}
-            </dl>
-          ) : (
-            <EmptyState>
-              <div>
-                <p>{copy.noDocumentSelected}</p>
-                <Button asChild className="mt-4" size="sm" variant="outline">
-                  <Link className="text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25" href="/">{copy.chooseFromOverview} <AppIcon name="arrowUpRight" className="size-4" /></Link>
-                </Button>
-              </div>
-            </EmptyState>
-          )}
-        </div>
-      </section>
-
-      <section className="border-t p-4 sm:p-7 lg:border-t-0">
-        <h2 className="text-sm font-semibold">{copy.parseSummary}</h2>
-        <div className="mt-5">
-          {result ? <SummaryGrid copy={copy} result={result} /> : <EmptyState>{copy.noParseSummary}</EmptyState>}
-        </div>
-      </section>
-    </div>
   );
 }
 
@@ -356,13 +251,10 @@ export function ParsedContentTab({ copy, result, showDeveloperOutput = true }: {
   );
 }
 
-export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
+export function DocumentsScreen() {
   const { preferences } = usePreferences();
   const { uploadNotice } = useDocumentPipeline();
   const copy = UI_COPY[preferences.locale];
-  const effectiveView = view ?? "overview";
-  const current = copy.documents.views[effectiveView];
-  const isLegacyView = view !== undefined;
 
   return (
     <div className="min-w-0 overflow-x-clip bg-background" data-testid="documents-screen">
@@ -370,21 +262,15 @@ export function DocumentsScreen({ view }: { view?: DocumentView } = {}) {
         <header className="flex items-start justify-between gap-6" data-testid="documents-page-header">
           <div className="max-w-[640px]">
             <p className="text-xs font-semibold uppercase leading-[18px] tracking-[0.96px] text-brand">{copy.nav.documents}</p>
-            <h1 className="mt-2 text-[30px] font-semibold leading-9 tracking-[-0.6px] text-foreground">{isLegacyView ? current.title : copy.documents.root}</h1>
-            <p className="mt-2 text-sm leading-[21px] text-muted-foreground">{isLegacyView ? current.description : preferences.locale === "tr" ? "RAG'ınızda kullanılan kaynak dokümanları ekleyin ve yönetin." : "Add and manage the source documents used by your RAG."}</p>
-            {isLegacyView ? <ParseRunSelector locale={preferences.locale} /> : null}
+            <h1 className="mt-2 text-[30px] font-semibold leading-9 tracking-[-0.6px] text-foreground">{copy.documents.root}</h1>
+            <p className="mt-2 text-sm leading-[21px] text-muted-foreground">{preferences.locale === "tr" ? "RAG'ınızda kullanılan kaynak dokümanları ekleyin ve yönetin." : "Add and manage the source documents used by your RAG."}</p>
           </div>
         </header>
 
-        {isLegacyView ? <nav aria-label={copy.documents.root} className="mt-6 flex min-w-0 gap-6 overflow-x-auto border-b border-border">
-          {documentTabs.map((tab) => <Link aria-current={view === tab.view ? "page" : undefined} className={cn("-mb-px border-b-2 border-transparent py-3 text-sm text-muted-foreground outline-none hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/25", view === tab.view && "border-brand font-medium text-accent-foreground")} href={tab.href} key={tab.view}>{copy.documents.tabs[tab.view]}</Link>)}
-        </nav> : null}
-
-        {!isLegacyView ? <DocumentUploadPanel /> : null}
-        {!isLegacyView && uploadNotice ? <p aria-live="polite" className={cn("mt-4 rounded-[10px] border px-4 py-3 text-sm", uploadNotice === "reused" ? "border-accent-border bg-accent text-accent-foreground" : "border-success-border bg-success-subtle text-success")} role="status">{uploadNotice === "reused" ? (preferences.locale === "tr" ? "Mevcut doküman yeniden kullanıldı; duplicate oluşturulmadı. Parse ekranından devam edebilirsiniz." : "Existing document reused; no duplicate was created. Continue from Parse.") : (preferences.locale === "tr" ? "Doküman eklendi; parse etmeye hazır." : "Document added; ready to parse.")} <Link className="ml-1 font-medium underline" href="/parse">{preferences.locale === "tr" ? "Parse'a devam et" : "Continue to Parse"}</Link></p> : null}
-        {effectiveView === "overview" ? <DocumentLibrary locale={preferences.locale} /> : null}
+        <DocumentUploadPanel />
+        {uploadNotice ? <p aria-live="polite" className={cn("mt-4 rounded-[10px] border px-4 py-3 text-sm", uploadNotice === "reused" ? "border-accent-border bg-accent text-accent-foreground" : "border-success-border bg-success-subtle text-success")} role="status">{uploadNotice === "reused" ? (preferences.locale === "tr" ? "Mevcut doküman yeniden kullanıldı; duplicate oluşturulmadı. Parse ekranından devam edebilirsiniz." : "Existing document reused; no duplicate was created. Continue from Parse.") : (preferences.locale === "tr" ? "Doküman eklendi; parse etmeye hazır." : "Document added; ready to parse.")} <Link className="ml-1 font-medium underline" href="/parse">{preferences.locale === "tr" ? "Parse'a devam et" : "Continue to Parse"}</Link></p> : null}
+        <DocumentLibrary locale={preferences.locale} />
       </div>
     </div>
   );
 }
-

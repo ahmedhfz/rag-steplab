@@ -266,13 +266,24 @@ function ComparisonMetricTable({ groups, labels }: { groups: ComparisonMetricGro
   );
 }
 
+/**
+ * Local drafts (dataset form, selected dataset, comparison) belong to one
+ * document lineage; remounting on a document, pipeline or parse change keeps
+ * them from leaking into another lineage.
+ */
 export function EvaluationScreen() {
+  const { activeDocumentId, activePipelineId, selectedParseRunId } = useDocumentPipeline();
+  return <EvaluationWorkspace key={`${activeDocumentId ?? ""}:${activePipelineId ?? ""}:${selectedParseRunId ?? ""}`} />;
+}
+
+function EvaluationWorkspace() {
   const { preferences } = usePreferences();
   const copy = UI_COPY[preferences.locale];
   const {
     activeDocument,
     activePipeline,
-    parseResult,
+    selectedParseResult: parseResult,
+    workspaceStatus,
     selectedParseRunId,
     selectedChunkRunId,
     selectedEmbeddingRunId,
@@ -314,18 +325,21 @@ export function EvaluationScreen() {
       };
 
   const datasetBlocker = firstBlocker(preferences.locale, [
+    [workspaceStatus === "loading", "loading"],
     [evaluationStatus === "processing", "processing"],
     [!activeDocument?.id, "missing_document"],
     [!selectedParseRunId, "missing_parse"],
-    [!datasetName.trim(), "invalid_config"],
+    [!datasetName.trim(), "missing_dataset_name"],
     [!question.trim(), "missing_question"],
     [expectedOutcome === "answer" && !elementIds.trim(), "missing_sources"],
     [additionalCases.some((item) => !item.question.trim()), "missing_question"],
     [additionalCases.some((item) => item.expectedOutcome === "answer" && !item.elements.trim()), "missing_sources"],
   ]);
   const canCreateDataset = !datasetBlocker;
-  const selectedDatasetId = datasetId || evaluationDatasets[0]?.id || "";
+  // A dataset choice only counts while it belongs to the current lineage's dataset list.
+  const selectedDatasetId = evaluationDatasets.some((dataset) => dataset.id === datasetId) ? datasetId : evaluationDatasets[0]?.id ?? "";
   const evaluationBlocker = firstBlocker(preferences.locale, [
+    [workspaceStatus === "loading", "loading"],
     [evaluationStatus === "processing", "processing"],
     [!activeDocument?.id, "missing_document"],
     [!selectedDatasetId, "missing_dataset"],
@@ -387,7 +401,7 @@ export function EvaluationScreen() {
     void createDataset(datasetName.trim(), [
       { question: question.trim(), relevantElementIds: elementIds.split(",").map((value) => value.trim()).filter(Boolean), referenceAnswer: referenceAnswer.trim() || null, expectedOutcome },
       ...additionalCases.map((item) => ({ question: item.question.trim(), relevantElementIds: item.elements.split(",").map((value) => value.trim()).filter(Boolean), referenceAnswer: item.reference.trim() || null, expectedOutcome: item.expectedOutcome })),
-    ], baseDatasetId);
+    ], evaluationDatasets.some((dataset) => dataset.id === baseDatasetId) ? baseDatasetId : null);
   }
 
   function handleRun() {
@@ -506,14 +520,16 @@ export function EvaluationScreen() {
                       {evaluationRun.caseResults.map((item, index) => {
                         const noAnswerCase = item.expectedOutcome === "insufficient_context";
                         const faithfulness = item.generationMetrics?.faithfulness ?? null;
-                        const passed = noAnswerCase ? item.abstentionCorrect === true : (faithfulness ?? item.groundedness) >= 0.5 && item.citationValidity >= 0.5;
+                        const groundingScore = faithfulness ?? item.groundedness;
+                        // A missing metric is "not scored"; it never counts as a pass.
+                        const passed = noAnswerCase ? item.abstentionCorrect === true : groundingScore !== null && item.citationValidity !== null && groundingScore >= 0.5 && item.citationValidity >= 0.5;
                         const outcomeLabel = noAnswerCase
                           ? item.abstentionCorrect === true
                             ? (preferences.locale === "tr" ? "Doğru no-answer" : "Correct no-answer")
                             : item.abstentionCorrect === false
                               ? (preferences.locale === "tr" ? "Beklenmeyen cevap" : "Unexpected answer")
                               : (preferences.locale === "tr" ? "No-answer ölçülmedi" : "No-answer not scored")
-                          : `${faithfulness === null ? "Faithfulness —" : `Faithfulness ${faithfulness.toFixed(2)}`} · ${preferences.locale === "tr" ? "Citation üyeliği" : "Citation membership"} ${item.citationValidity.toFixed(2)}`;
+                          : `${faithfulness === null ? "Faithfulness —" : `Faithfulness ${faithfulness.toFixed(2)}`} · ${preferences.locale === "tr" ? "Citation üyeliği" : "Citation membership"} ${item.citationValidity === null ? "—" : item.citationValidity.toFixed(2)}`;
                         return (
                           <TransitionDetails className="overflow-hidden rounded-[16px] border border-border bg-card" key={item.experimentId || `${item.question}-${index}`} open={activeCaseIndex === index}>
                             <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3" onClick={() => setSelectedCaseIndex(index)}>

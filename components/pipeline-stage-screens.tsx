@@ -138,8 +138,9 @@ export function ChunkingScreen() {
 export function EmbeddingsScreen() {
   const { preferences } = usePreferences();
   const locale = preferences.locale;
-  const { activeDocument, selectedChunkRunId, selectedEmbeddingRunId, inspectedEmbeddingRunId, embeddingRun, selectEmbeddingRun, setPipelineEmbeddingRun } = useDocumentPipeline();
-  const canContinue = Boolean(selectedChunkRunId && selectedEmbeddingRunId && embeddingRun?.id === selectedEmbeddingRunId && embeddingRun?.status === "completed" && embeddingRun.isCompatible && embeddingRun.upstream.chunkRunId === selectedChunkRunId);
+  const { activeDocument, selectedChunkRunId, selectedEmbeddingRunId, inspectedEmbeddingRunId, selectedEmbeddingRun, selectEmbeddingRun, setPipelineEmbeddingRun } = useDocumentPipeline();
+  // The next step follows the selected lineage, never the inspection cursor.
+  const canContinue = Boolean(selectedChunkRunId && selectedEmbeddingRunId && selectedEmbeddingRun?.id === selectedEmbeddingRunId && selectedEmbeddingRun?.status === "completed" && selectedEmbeddingRun.isCompatible && selectedEmbeddingRun.upstream.chunkRunId === selectedChunkRunId);
   const labels = locale === "tr"
     ? { description: "Seçili chunk setini semantic search için embedding'lere dönüştürün.", chunks: "chunk", model: "Model", dimensions: "Boyut", noDocument: "Chunk seti seçin", create: "Embedding oluştur", creating: "Embedding oluşturuluyor", history: "Embedding sürüm geçmişi", next: "Playground'a git", nextReason: "Playground'a geçmeden önce embedding oluşturun." }
     : { description: "Turn the selected chunk set into embeddings for semantic search.", chunks: "chunks", model: "Model", dimensions: "Dimensions", noDocument: "Select a chunk set", create: "Create embeddings", creating: "Creating embeddings", history: "Embedding version history", next: "Go to Playground", nextReason: "Create embeddings before continuing to Playground." };

@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import type { AppLocale } from "@/lib/copy";
 import type { ChunkRun, ChunkStrategy, EmbeddingRun } from "@/lib/rag-api-types";
 import { getPipelineAvailability } from "@/lib/blockers";
+import { chunkFormConfigFromRun, chunkStageState } from "@/lib/pipeline-lineage";
 
 const strategyNotes: Record<ChunkStrategy, { en: string; tr: string }> = {
   fixed_token: { en: "Simple deterministic chunks with fixed token boundaries.", tr: "Sabit token sınırlarıyla deterministik parçalar." },
@@ -84,7 +85,7 @@ function EmbeddingLineage({ chunkCount, run, locale }: { chunkCount: number | nu
   );
 }
 
-export type PipelineStage = "both" | "chunking" | "embeddings";
+export type PipelineStage = "chunking" | "embeddings";
 
 export function ChunkingWorkspace({ locale }: { locale: AppLocale }) {
   return <ChunksPipeline locale={locale} stage="chunking" />;
@@ -94,11 +95,23 @@ export function EmbeddingWorkspace({ locale, showAction = true }: { locale: AppL
   return <ChunksPipeline locale={locale} showAction={showAction} stage="embeddings" />;
 }
 
-export function ChunksPipeline({ locale, showAction = true, stage = "both" }: { locale: AppLocale; showAction?: boolean; stage?: PipelineStage }) {
-  const { activeDocument, activePipeline, selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId, parseResult, persistenceStatus, chunkStatus, chunkRun, chunkError, embeddingStatus, embeddingRun, embeddingError, runChunking, runEmbedding } = useDocumentPipeline();
-  const [strategy, setStrategy] = useState<ChunkStrategy>("structure_aware");
-  const [chunkSize, setChunkSize] = useState(512);
-  const [overlap, setOverlap] = useState(64);
+export function ChunksPipeline({ locale, showAction = true, stage }: { locale: AppLocale; showAction?: boolean; stage: PipelineStage }) {
+  const { activeDocument, activePipeline, selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId, selectedParseResult, selectedChunkRun, persistenceStatus, workspaceStatus, chunkStatus, chunkRun, chunkError, embeddingStatus, embeddingRun, embeddingError, runChunking, runEmbedding } = useDocumentPipeline();
+  const selectedChunkSummary = activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId) ?? null;
+  // The form starts from the selected chunk run so it describes the result on screen.
+  const initialForm = chunkFormConfigFromRun(selectedChunkSummary);
+  const [strategy, setStrategy] = useState<ChunkStrategy>(initialForm.strategy);
+  const [chunkSize, setChunkSize] = useState(initialForm.config.chunkSizeTokens);
+  const [overlap, setOverlap] = useState(initialForm.config.overlapTokens);
+  const [formSourceRunId, setFormSourceRunId] = useState(selectedChunkSummary?.id ?? null);
+  if ((selectedChunkSummary?.id ?? null) !== formSourceRunId) {
+    setFormSourceRunId(selectedChunkSummary?.id ?? null);
+    setStrategy(initialForm.strategy);
+    setChunkSize(initialForm.config.chunkSizeTokens);
+    setOverlap(initialForm.config.overlapTokens);
+  }
+  /** isUpToDate: the selected lineage already has a chunk run for this exact config (re-running is optional). */
+  const chunkFormState = chunkStageState(selectedChunkSummary, selectedParseRunId, { strategy, config: { chunkSizeTokens: chunkSize, overlapTokens: overlap } });
   const [reuseNotice, setReuseNotice] = useState<"chunk" | "embedding" | null>(null);
   const labels = Object.assign(locale === "tr" ? {
     strategy: "Chunking stratejisi", chunkSize: "Chunk boyutu", chunkSizeHint: "Her parçanın hedef token uzunluğu.", overlap: "Overlap", overlapHint: "Komşu parçalar arasında korunan token sayısı.", runChunk: "Chunking'i çalıştır", runningChunk: "Chunking sürüyor…", overlapError: "Overlap, chunk boyutundan küçük olmalı.", lastRun: "Son çalışma", chunkLocked: "Önce bir doküman seçip Parse aşamasını tamamlayın.", chunkEmpty: "Henüz chunk sonucu yok.", chunks: "Chunk'lar", chunk: "Chunk", chunkCount: "toplam", selectedChunk: "Seçili chunk", select: "Seçin", emptyChunk: "Boş chunk", filter: "Chunk'ları filtrele", filterPlaceholder: "Bölüm veya numara ara", noMatches: "Bu aramaya uyan chunk yok.", pages: "sayfa", page: "s.", noPage: "Sayfa yok", elements: "öğe", sourceElements: "kaynak öğeleri", chunkId: "Chunk kimliği", heading: "Başlık", token: "token", viewSource: "Kaynağı görüntüle", why: "Bu neden önemli?", whyText: "Büyük chunk'lar daha fazla bağlam taşır; küçük chunk'lar retrieval hassasiyetini artırabilir. Seçtiğiniz strateji bu dengeyi belirler.", chunkDescription: "Parse çıktısını aranabilir parçalara dönüştürün.", reuseNotice: "Önceki sonuç yeniden kullanıldı.", embeddingDescription: "Her chunk'ı semantic search için bir vektör temsiline dönüştürür.", embeddingEmpty: "Henüz embedding sonucu yok.", embeddingProgress: "chunk için embedding oluşturuluyor. Her chunk için ayrı ilerleme bilgisi sunulmuyor.", storage: "Aranabilir depolama", model: "Model", dimensions: "Boyut", count: "Vektör", format: "Format", persistenceUnavailable: "Doküman servisi kullanılamıyor.", embeddingLocked: "Önce Chunking aşamasını tamamlayın.", create: "Embedding oluştur", creating: "Embedding oluşturuluyor", output: "Çıktı", details: "Teknik ayrıntılar", resultSummary: "SONUÇ ÖZETİ", chunksResult: "CHUNK SAYISI", average: "ORT. TOKEN", min: "EN AZ TOKEN", max: "EN ÇOK TOKEN", inspector: "Chunk inceleyici",
@@ -107,7 +120,6 @@ export function ChunksPipeline({ locale, showAction = true, stage = "both" }: { 
   }, { ready: locale === "tr" ? "pgvector'da saklı" : "Stored in pgvector" });
   const compatibleChunkRuns = activeDocument?.chunkRuns.filter((run) => run.status === "completed" && run.isCompatible && run.upstream.parseRunId === selectedParseRunId) ?? [];
   const selectedParseSummary = activeDocument?.parseRuns.find((run) => run.id === selectedParseRunId) ?? null;
-  const selectedChunkSummary = activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId) ?? null;
   const chunkAvailability = getPipelineAvailability(locale, "chunk", {
     document: activeDocument,
     pipeline: activePipeline,
@@ -115,6 +127,7 @@ export function ChunksPipeline({ locale, showAction = true, stage = "both" }: { 
     parseRun: selectedParseSummary,
     processing: chunkStatus === "processing",
     persistenceStatus,
+    workspaceStatus,
   });
   const embeddingAvailability = getPipelineAvailability(locale, "embedding", {
     document: activeDocument,
@@ -124,12 +137,16 @@ export function ChunksPipeline({ locale, showAction = true, stage = "both" }: { 
     chunkRun: selectedChunkSummary,
     processing: embeddingStatus === "processing",
     persistenceStatus,
+    workspaceStatus,
   });
   const canChunk = chunkAvailability.allowed;
   const canEmbed = embeddingAvailability.allowed && compatibleChunkRuns.some((run) => run.id === selectedChunkRunId);
   const chunkBlocker = chunkAvailability.allowed ? null : chunkAvailability;
   const embeddingBlocker = embeddingAvailability.allowed ? null : embeddingAvailability;
-  const selectedChunkCount = chunkRun?.chunkCount ?? activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId)?.chunkCount ?? null;
+  // Embeddings are always built from the selected chunk run, never an inspected one.
+  const selectedChunkCount = selectedChunkRun?.chunkCount ?? selectedChunkSummary?.chunkCount ?? null;
+  // Source evidence is only resolvable against the parse run the viewed chunks came from.
+  const chunkParseResult = chunkRun && selectedParseResult?.parseRunId === chunkRun.parseRunId ? selectedParseResult : null;
   const chunks = chunkRun?.chunks ?? [];
   const averageTokens = chunks.length ? Math.round(chunks.reduce((sum, chunk) => sum + chunk.tokenCount, 0) / chunks.length) : "—";
   const minTokens = chunks.length ? Math.min(...chunks.map((chunk) => chunk.tokenCount)) : "—";
@@ -166,7 +183,7 @@ export function ChunksPipeline({ locale, showAction = true, stage = "both" }: { 
 
   return (
     <div className="mt-6" data-testid="chunking-workspace">
-      <section className="rounded-[14px] border border-border bg-card p-4" data-testid="chunking-config-card">
+      <section className="rounded-[14px] border border-border bg-card p-4" data-chunk-config-dirty={chunkFormState.isDirty} data-chunk-up-to-date={chunkFormState.isUpToDate} data-testid="chunking-config-card">
         <div className="grid xl:grid-cols-[360px_minmax(0,1fr)]">
           <div className="min-w-0 xl:pr-5">
             <h2 className="text-base font-semibold leading-[22px] text-foreground">{labels.strategy}</h2>
@@ -196,8 +213,7 @@ export function ChunksPipeline({ locale, showAction = true, stage = "both" }: { 
         </div>
       </section>
       <div className="mt-3"><LearningHint locale={locale}>{labels.whyText}</LearningHint></div>
-      {chunkRun ? <section className="mt-8" data-testid="chunk-results"><p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{labels.resultSummary}</p><dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-4 border-y border-border py-3 sm:grid-cols-4"><div><dt className="text-[11px] uppercase tracking-[0.04em] text-subtle-foreground">{labels.chunksResult}</dt><dd className="mt-1 text-[22px] font-semibold leading-7 text-foreground">{chunkRun.chunkCount}</dd></div><div><dt className="text-[11px] uppercase tracking-[0.04em] text-subtle-foreground">{labels.average}</dt><dd className="mt-1 text-[22px] font-semibold leading-7 text-foreground">{averageTokens}</dd></div><div><dt className="text-[11px] uppercase tracking-[0.04em] text-subtle-foreground">{labels.min}</dt><dd className="mt-1 text-[22px] font-semibold leading-7 text-foreground">{minTokens}</dd></div><div><dt className="text-[11px] uppercase tracking-[0.04em] text-subtle-foreground">{labels.max}</dt><dd className="mt-1 text-[22px] font-semibold leading-7 text-foreground">{maxTokens}</dd></div></dl><div className="mt-7"><h2 className="text-base font-semibold leading-[22px]">{labels.inspector}</h2><div className="mt-4"><ChunkInspector documentId={activeDocument?.id ?? null} labels={labels} parseResult={parseResult} run={chunkRun} /></div></div></section> : null}
-      {stage === "both" && <div className="mt-4"><Button disabled={!canEmbed} onClick={() => void handleEmbedding()}>{locale === "tr" ? "Embedding oluştur" : "Create embeddings"}</Button></div>}
+      {chunkRun ? <section className="mt-8" data-testid="chunk-results"><p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{labels.resultSummary}</p><dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-4 border-y border-border py-3 sm:grid-cols-4"><div><dt className="text-[11px] uppercase tracking-[0.04em] text-subtle-foreground">{labels.chunksResult}</dt><dd className="mt-1 text-[22px] font-semibold leading-7 text-foreground">{chunkRun.chunkCount}</dd></div><div><dt className="text-[11px] uppercase tracking-[0.04em] text-subtle-foreground">{labels.average}</dt><dd className="mt-1 text-[22px] font-semibold leading-7 text-foreground">{averageTokens}</dd></div><div><dt className="text-[11px] uppercase tracking-[0.04em] text-subtle-foreground">{labels.min}</dt><dd className="mt-1 text-[22px] font-semibold leading-7 text-foreground">{minTokens}</dd></div><div><dt className="text-[11px] uppercase tracking-[0.04em] text-subtle-foreground">{labels.max}</dt><dd className="mt-1 text-[22px] font-semibold leading-7 text-foreground">{maxTokens}</dd></div></dl><div className="mt-7"><h2 className="text-base font-semibold leading-[22px]">{labels.inspector}</h2><div className="mt-4"><ChunkInspector documentId={activeDocument?.id ?? null} labels={labels} parseResult={chunkParseResult} run={chunkRun} /></div></div></section> : null}
     </div>
   );
 }
