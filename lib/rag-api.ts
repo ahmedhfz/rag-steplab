@@ -639,14 +639,16 @@ function normalizeChunkRun(value: unknown): ChunkRun {
 
 function normalizeEmbeddingRun(value: unknown): EmbeddingRun {
   const payload = requiredObject(value, "embedding run");
+  const run = normalizeRun(payload);
   return {
-    ...normalizeRun(payload),
+    ...run,
     documentId: requiredString(payload.documentId, "embedding document id"),
     chunkRunId: requiredString(payload.chunkRunId, "embedding chunk run id"),
     model: requiredString(payload.model, "embedding model"),
     dimensions: requiredNumber(payload.dimensions, "embedding dimensions"),
     embeddingFormatVersion: requiredString(payload.embeddingFormatVersion, "embedding format version"),
-    embeddingCount: requiredNumber(payload.embeddingCount, "embedding count"),
+    // Only a completed run must carry its final vector count; an accepted (queued/running) run has none yet.
+    embeddingCount: run.status === "completed" ? requiredNumber(payload.embeddingCount, "embedding count") : optionalNumber(payload.embeddingCount) ?? 0,
     effectiveModel: optionalString(payload.effectiveModel),
     reusedArtifact: boolean(payload.reusedArtifact),
   };
@@ -961,14 +963,49 @@ export async function createChunkRun(documentId: string, strategy: ChunkStrategy
   return normalizeChunkRun(payload);
 }
 
-export async function createEmbeddingRun(documentId: string, chunkRunId: string, signal?: AbortSignal): Promise<EmbeddingRun> {
+/**
+ * Creates (or reuses) an embedding run and resolves only with a completed run.
+ * A synchronous 200 returns the completed run as-is; an accepted 202 run
+ * (durable worker still computing) is polled via `GET /embedding-runs/{id}`
+ * until it is terminal. A failed run rejects, so callers never record a
+ * non-completed embedding in the lineage.
+ */
+export async function createEmbeddingRun(
+  documentId: string,
+  chunkRunId: string,
+  signal?: AbortSignal,
+  onProgress?: (run: EmbeddingRun) => void,
+): Promise<EmbeddingRun> {
   const payload = await request(`/documents/${encodeURIComponent(documentId)}/embeddings`, {
     method: "POST",
     body: JSON.stringify({ chunkRunId }),
     signal,
     timeoutMs: LONG_REQUEST_TIMEOUT_MS,
   });
-  return normalizeEmbeddingRun(payload);
+  const initial = normalizeEmbeddingRun(payload);
+  const run = isRunInFlight(initial.status) ? await waitForEmbeddingRun(initial.id, signal, onProgress, initial) : initial;
+  if (run.status === "completed") return run;
+  const problem = run.error ?? { code: "embedding_run_failed", message: "The embedding run failed." };
+  throw new DocumentApiError(problem.code, problem.message);
+}
+
+/** Embedding runs have no separate status endpoint; the run payload carries no vectors. */
+export function waitForEmbeddingRun(
+  runId: string,
+  signal?: AbortSignal,
+  onProgress?: (run: EmbeddingRun) => void,
+  initialRun?: EmbeddingRun,
+): Promise<EmbeddingRun> {
+  const read = (pollSignal: AbortSignal) => getEmbeddingRun(runId, pollSignal);
+  return pollRun<EmbeddingRun, EmbeddingRun>({
+    readStatus: read,
+    readDetail: read,
+    progressKey: (run) => `${run.status}:${run.progress ?? ""}`,
+    initialDetail: initialRun,
+    signal,
+    onProgress,
+    timeoutError: runPollTimeoutError,
+  });
 }
 
 export async function createExperimentAsync(

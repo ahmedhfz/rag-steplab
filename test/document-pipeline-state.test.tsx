@@ -182,6 +182,9 @@ function Probe() {
     selectedParseResult,
     workspaceStatus,
     reparseImpact,
+    runEmbedding,
+    embeddingStatus,
+    embeddingError,
   } = useDocumentPipeline();
 
   return (
@@ -208,6 +211,8 @@ function Probe() {
       <output data-testid="workspace-status">{workspaceStatus ?? "unknown"}</output>
       <output data-testid="reparse-impact">{reparseImpact ? `${reparseImpact.target}:${reparseImpact.requiresConfirmation}` : "unknown"}</output>
       <button onClick={() => void reparseActiveDocument()} type="button">Reparse document</button>
+      <button onClick={() => void runEmbedding()} type="button">Run embedding</button>
+      <output data-testid="embedding-status">{embeddingStatus}:{embeddingError?.code ?? "none"}</output>
       <button onClick={() => void selectPersistedDocument("document-new")} type="button">Switch to new</button>
       <button onClick={() => void selectPersistedDocument("document-old")} type="button">Switch to old</button>
       <button onClick={() => void selectParseRun("parse-old")} type="button">Select historical parse</button>
@@ -1125,5 +1130,83 @@ describe("Document pipeline lineage regressions", () => {
     expect(screen.getByTestId("pipeline-names")).toHaveTextContent("document-new/New doc pipeline");
     expect(screen.getByTestId("pipeline-names")).not.toHaveTextContent("document-old");
     expect(screen.getByTestId("persistence-error")).toHaveTextContent("none");
+  });
+});
+
+describe("Accepted (202) embedding runs", () => {
+  function setupAcceptedEmbedding() {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
+    const pipeline = namedPipeline("pipeline-1", { embeddingRunId: null });
+    const accepted = {
+      id: "embedding-accepted",
+      status: "queued",
+      documentId: "document-old",
+      chunkRunId: "chunk-new",
+      model: "gemini",
+      dimensions: 768,
+      embeddingFormatVersion: "v1",
+      embeddingCount: 0,
+      upstream: { chunkRunId: "chunk-new" },
+    };
+    const state = { completed: false };
+    let resolvePoll!: (payload: unknown) => void;
+    const poll = new Promise<unknown>((resolve) => { resolvePoll = resolve; });
+    const patchBodies: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/summary")) {
+        const summary = selectableLineageSummary();
+        return respond(state.completed
+          ? { ...summary, embeddingRuns: [...summary.embeddingRuns, { id: "embedding-accepted", status: "completed", isCompatible: true, upstream: { chunkRunId: "chunk-new" } }] }
+          : summary);
+      }
+      if (url.endsWith("/documents/document-old/pipelines")) return respond([pipeline]);
+      if (url.endsWith("/documents/document-old/embeddings") && init?.method === "POST") return respond(accepted, 202);
+      if (url.endsWith("/embedding-runs/embedding-accepted")) return poll.then((payload) => new Response(JSON.stringify(payload), { status: 200 }));
+      if (url.endsWith("/document-pipelines/pipeline-1") && init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        patchBodies.push(body);
+        return respond({ ...pipeline, revision: 2, embeddingRunId: body.embeddingRunId });
+      }
+      if (url.includes("/chunk-runs/")) return new Promise<Response>(() => undefined);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return { accepted, fetchMock, patchBodies, resolvePoll, state };
+  }
+
+  it("polls an accepted embedding run and records it in the pipeline only after it completes", async () => {
+    const { accepted, fetchMock, patchBodies, resolvePoll, state } = setupAcceptedEmbedding();
+    renderProbe();
+    await waitFor(() => expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-new"));
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("none");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run embedding" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/embedding-runs/embedding-accepted"))).toBe(true), { timeout: 3_000 });
+    expect(patchBodies).toHaveLength(0);
+    expect(screen.getByTestId("embedding-status")).toHaveTextContent("processing:none");
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("none");
+
+    state.completed = true;
+    resolvePoll({ ...accepted, status: "completed", embeddingCount: 1 });
+    await waitFor(() => expect(patchBodies).toHaveLength(1));
+    expect(patchBodies[0]).toMatchObject({ embeddingRunId: "embedding-accepted" });
+    await waitFor(() => expect(screen.getByTestId("selected-embedding")).toHaveTextContent("embedding-accepted"));
+    expect(screen.getByTestId("embedding-status")).toHaveTextContent("completed:none");
+  });
+
+  it("surfaces a failed accepted embedding run without recording it", async () => {
+    const { accepted, patchBodies, resolvePoll } = setupAcceptedEmbedding();
+    renderProbe();
+    await waitFor(() => expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-new"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Run embedding" }));
+    resolvePoll({ ...accepted, status: "failed", errorCode: "worker_terminated", errorMessage: "The worker stopped." });
+    await waitFor(() => expect(screen.getByTestId("embedding-status")).toHaveTextContent("error:worker_terminated"), { timeout: 3_000 });
+    expect(patchBodies).toHaveLength(0);
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("none");
   });
 });

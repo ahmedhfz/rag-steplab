@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { continueExperiment, createDocumentPipeline, createExperimentAsync, deleteDocument, deleteDocumentPipeline, getChunkRun, getDocumentSummary, getEmbeddingRun, getEvaluationRun, getExperiment, getParseRun, listDocumentPipelines, listDocuments, parsePersistedDocument, rerunGeneration, updateDocumentPipeline, uploadDocument, waitForParseRun } from "@/lib/rag-api";
+import { continueExperiment, createDocumentPipeline, createEmbeddingRun, createExperimentAsync, deleteDocument, deleteDocumentPipeline, getChunkRun, getDocumentSummary, getEmbeddingRun, getEvaluationRun, getExperiment, getParseRun, listDocumentPipelines, listDocuments, parsePersistedDocument, rerunGeneration, updateDocumentPipeline, uploadDocument, waitForParseRun } from "@/lib/rag-api";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -457,6 +457,56 @@ describe("RAG API contract normalization", () => {
     const pending = expect(listDocuments(controller.signal)).rejects.toMatchObject({ name: "AbortError" });
     controller.abort();
     await pending;
+  });
+
+  describe("embedding run creation", () => {
+    const embedding = (status: string, extra: Record<string, unknown> = {}) => ({
+      id: "embedding-1",
+      status,
+      documentId: "document-1",
+      chunkRunId: "chunk-1",
+      model: "gemini-embedding",
+      dimensions: 768,
+      embeddingFormatVersion: "v1",
+      ...extra,
+    });
+
+    it("returns a synchronous 200 completed run without polling", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(embedding("completed", { embeddingCount: 12 })), { status: 200 }));
+      vi.stubGlobal("fetch", fetchMock);
+      await expect(createEmbeddingRun("document-1", "chunk-1")).resolves.toMatchObject({ id: "embedding-1", status: "completed", embeddingCount: 12 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("polls an accepted 202 run until it completes", async () => {
+      vi.useFakeTimers();
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify(embedding("queued", { embeddingCount: 0 })), { status: 202 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify(embedding("running")), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify(embedding("completed", { embeddingCount: 12 })), { status: 200 }));
+      vi.stubGlobal("fetch", fetchMock);
+      const progress: string[] = [];
+      const pending = createEmbeddingRun("document-1", "chunk-1", undefined, (run) => progress.push(run.status));
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(pending).resolves.toMatchObject({ id: "embedding-1", status: "completed", embeddingCount: 12 });
+      expect(fetchMock.mock.calls.slice(1).map(([url]) => String(url))).toEqual([
+        "http://127.0.0.1:8000/embedding-runs/embedding-1",
+        "http://127.0.0.1:8000/embedding-runs/embedding-1",
+      ]);
+      expect(progress).toEqual(["running", "completed"]);
+      vi.useRealTimers();
+    });
+
+    it("rejects with the run error when an accepted run fails", async () => {
+      vi.useFakeTimers();
+      vi.stubGlobal("fetch", vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify(embedding("running")), { status: 202 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify(embedding("failed", { errorCode: "worker_terminated", errorMessage: "The worker stopped." })), { status: 200 })));
+      const failed = expect(createEmbeddingRun("document-1", "chunk-1")).rejects.toMatchObject({ code: "worker_terminated" });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await failed;
+      vi.useRealTimers();
+    });
   });
 
   it("detaches its abort listener from a long-lived caller signal after each request", async () => {
