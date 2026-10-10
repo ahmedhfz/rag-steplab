@@ -2290,12 +2290,19 @@ class SqlAlchemyRepository(Repository):
         Every pointer writer takes ``documents`` first and the run second, the
         same order as document deletion, so concurrent completions serialize on
         the document instead of interleaving stale pointer reads.
+
+        ``FOR NO KEY UPDATE`` (only pointer columns change) still conflicts with
+        other pointer writers and with deletion, but not with the ``KEY SHARE``
+        lock of child-row inserts (new runs, pipelines, experiments), so those
+        are not blocked for the duration of a large artifact write.
         """
 
         document_id = session.scalar(select(model.document_id).where(model.id == run_id))
         if document_id is None:
             return None, None
-        document = session.scalars(select(Document).where(Document.id == document_id).with_for_update()).first()
+        document = session.scalars(
+            select(Document).where(Document.id == document_id).with_for_update(key_share=True)
+        ).first()
         run = session.scalars(select(model).where(model.id == run_id).with_for_update()).first()
         return document, run
 
@@ -2608,7 +2615,9 @@ class SqlAlchemyRepository(Repository):
                 return False
             # Serialize sibling deletes on the document so two concurrent
             # deletes cannot both observe two pipelines and leave zero.
-            session.execute(select(Document.id).where(Document.id == target_document_id).with_for_update())
+            session.execute(
+                select(Document.id).where(Document.id == target_document_id).with_for_update(key_share=True)
+            )
             target = session.scalars(select(DocumentPipeline).where(*filters).with_for_update()).first()
             if target is None:
                 return False
