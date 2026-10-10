@@ -60,7 +60,7 @@ kullanır; evaluation lineage'ı kuyruğa alınırken config ve fingerprint'e sa
 Varsayılan pointer'lar doküman satırı kilitlenerek yalnız kendi parent'ı boyunca
 ilerler; şema aynı-doküman zincirini composite FK'larla zorlar.
 
-## Modal deployment
+## Parse ve normalizasyon
 
 Production parsing tam Docling `DocumentConverter` ve semantic normalization
 üzerinden çalışır. Normalizasyon, layout modelinin heading adaylarını tablo/container
@@ -91,15 +91,10 @@ Confidence kalibre doğruluk değildir; otomatik eleme/eşik uygulanmaz.
 Gerçek crop testi: `RUN_OCR_REGRESSION=1 python -m pytest tests/test_ocr_recognition.py`.
 Ölçüm: `python scripts/benchmark_ocr.py --output result.json --pdf <stress-test.pdf>`.
 
-Mevcut profil worker için `CPU 2`, `4096 MiB`, `timeout
-900 s`, `min_containers=0`, `max_containers=1`; API için yaklaşık `CPU 0.5`,
-`1024 MiB`, `min_containers=1`, `max_containers=2`'dir (`api_eu`). Legacy `api`
-cutover rollback yüzeyi scale-to-zero kalır. Docling modelleri pinned
-ve versioned bir Modal Volume'a prefetch edilir. `backend/app` image'a explicit
-paketlenir ve remote import smoke'ta `app.main` ile `app.parser` doğrulanır.
-
-Otomatik Modal deploy/tag/health kontrolleri ile gerektiğinde yetkili model cache
-hazırlığı ve manuel production full-RAG doğrulaması [docs/deployment.md](../docs/deployment.md) içinde tanımlıdır.
+Modal compute profilleri (API, parse worker, pipeline worker), Docling model
+Volume'u, otomatik deploy/tag/health kontrolleri, gerektiğinde yetkili model cache
+hazırlığı ve manuel production full-RAG doğrulaması [docs/deployment.md](../docs/deployment.md)
+içinde tanımlıdır.
 
 ## Çalıştırma
 
@@ -126,6 +121,10 @@ python -m venv .venv
 .venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
 ```
 
+Frontend varsayılan olarak `http://127.0.0.1:8000` adresini kullanır; farklı bir
+adres için frontend build/dev işleminden önce `NEXT_PUBLIC_API_BASE_URL` tanımlanır.
+Hosted kurulum için [docs/deployment.md](../docs/deployment.md) canonical kaynaktır.
+
 Environment isimleri repository kökündeki `.env.example` dosyasında tanımlıdır. Paylaşılan
 Supabase PostgreSQL kullanıldığında `rag_lab` şeması, `extensions.vector` ve
 private `rag-documents` bucket'ı Supabase migration'ları tarafından hazırlanır.
@@ -133,24 +132,12 @@ Secret değerleri source control'a eklenmez.
 
 ## Database migrations
 
-Migration authority yalnız Supabase CLI'dır:
-
-```text
-supabase/migrations/*.sql → Supabase CLI → Supabase PostgreSQL
-```
-
-Yeni migration oluşturmak için repository root'unda:
-
-```powershell
-supabase migration new <descriptive_name>
-```
-
-Local Supabase stack ile şema rebuild'i:
-
-```powershell
-supabase start
-supabase db reset --local --no-seed
-```
+Migration authority yalnız Supabase CLI ve `supabase/migrations/` dizinidir.
+Local akış ve komutlar [supabase/AGENTS.md](../supabase/AGENTS.md), karar ve
+production baseline [docs/architecture/migrations.md](../docs/architecture/migrations.md)
+içinde tanımlıdır. Uygulamanın local `DATABASE_URL` fallback'i korunur; Supabase
+CLI local stack'i uygulamanın zorunlu runtime dependency'si değildir. Production
+migration'ları release workflow'u veya açık operasyon yetkisiyle uygulanır.
 
 Runtime rolü `rag_steplab_app` oturumları `statement_timeout=30s`,
 `lock_timeout=5s` ve `idle_in_transaction_session_timeout=60s` ile sınırlıdır;
@@ -160,12 +147,6 @@ bu role ayrı EXECUTE verilmez (pgvector PUBLIC ile çalışır).
 `GET /documents/{id}/workspace?pipelineId=` summary, pipeline'lar ve kullanımdaki
 parse çıktısını tek çağrıda döndürür; chunk/embedding gövdeleri kendi
 endpoint'lerinde kalır.
-
-Uygulamanın local `DATABASE_URL` fallback'i korunur; Supabase CLI local
-stack'i uygulamanın zorunlu runtime dependency'si değildir. Production
-migration'ları yalnız GitHub Actions Supabase CLI job'ı uygular.
-
-Frontend varsayılan olarak `http://127.0.0.1:8000` adresini kullanır. Farklı bir adres için frontend build/dev işleminden önce `NEXT_PUBLIC_API_BASE_URL` tanımlanabilir. Hosted kurulum için `docs/deployment.md` canonical kaynaktır.
 
 ## RAG kalite sözleşmesi
 
@@ -214,8 +195,9 @@ durumları kapasiteyi serbest bırakır.
 Yeni iş admission'ı aynı owner lock ve transaction içinde süresi dolan aktif
 kayıtları `interrupted` durumuna uzlaştırır; geçmiş ve kısmi çıktılar silinmez.
 Embedding/experiment/evaluation için explicit lease önceliklidir; eski lease'siz
-kayıtlarda `started_at`, yoksa `created_at` üzerine mevcut pipeline çalışma bütçesi
-uygulanır. Parse için Modal'ın 900 saniye execution + 300 saniye startup sınırı
+kayıtlarda `started_at`, yoksa `created_at` üzerine pipeline çalışma bütçesi
+(`PIPELINE_WORKER_TIMEOUT_SECONDS` 1800 s, `PIPELINE_WORKER_STARTUP_TIMEOUT_SECONDS`
+300 s, `PIPELINE_LEASE_GRACE_SECONDS` 120 s) uygulanır. Parse için Modal'ın 900 saniye execution + 300 saniye startup sınırı
 ve 120 saniye tolerans kullanılır. Parse polling/yeniden başlatma ve pipeline
 polling de aynı zaman aşımı kurallarını uygular. Worker'ın gerçek bitiş anı
 bilinmeyen timeout kayıtlarında `duration_ms` boş bırakılır.

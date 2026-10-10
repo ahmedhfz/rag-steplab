@@ -31,10 +31,8 @@ The remaining catalog recipes require product patterns that these screens do not
 - Native details use `::details-content` to allow closing animation in supporting browsers. Other browsers retain native disclosure behavior. Nested accordion selectors are scoped in adapters so opening a parent cannot open a child.
 - Tab pills use measured control sizes and update on resizing/font readiness. The switch uses the source overshoot keyframes with the existing thumb travel and centered geometry.
 - Source reduced-motion rules and the application's global reduced-motion guard disable visual motion. Cleanup uses zero delay for manual surfaces in reduced-motion mode.
-- Existing MotionConfig remains for consumers outside this integration; `.agents/skills/motion/SKILL.md` is replaced with the transitions integration guide.
+- Existing MotionConfig remains for consumers outside this integration (`components/app-shell.tsx`). `.codex/config.toml` only registers the Motion documentation MCP servers for Codex; the transitions integration does not need them.
 
 ## Verification
 
 `test/transitions.test.tsx` checks native/nested disclosures, controlled state, closing/reopening, immediate result replacement, live text, measured tabs and CSS timing. `e2e/smoke/transitions.spec.ts` runs the existing seeded critical workflow in normal and reduced-motion modes, checking theme selection, switch state and modal Escape/focus restoration. Existing navigation, lineage and production visual checks remain enabled.
-
-Local checks cover whitespace, recipe provenance, standalone TypeScript helpers, the CI change-classifier self-test, lint, typecheck and unit tests. Browser checks run against the exact pull-request preview using the existing dedicated auth workflow. The initial CI audit exposed an existing Next.js advisory (GHSA-vcvr-r3jv-pc5j); Next.js and its ESLint config are upgraded together from 16.3.5 to 16.3.8 so required checks can proceed. Review CI results before merging.
