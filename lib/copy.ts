@@ -447,6 +447,7 @@ const en = {
     candidates: "Candidates",
     validCitations: "Valid citations",
     candidateForms: { one: "candidate", other: "candidates" },
+    tokenForms: { one: "token", other: "tokens" },
     inspector: {
       title: "Source inspector",
       open: "Inspect source",
@@ -1051,6 +1052,7 @@ const tr: AppCopy = {
     candidates: "Aday",
     validCitations: "Geçerli atıf",
     candidateForms: { one: "aday", other: "aday" },
+    tokenForms: { one: "token", other: "token" },
     inspector: {
       title: "Kaynak denetleyicisi",
       open: "Kaynağı incele",

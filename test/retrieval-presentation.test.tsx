@@ -234,6 +234,27 @@ describe("Playground presentation states", () => {
     expect(screen.getByTestId("candidate-score")).toHaveTextContent("Cosine similarity 0.82");
   });
 
+  it("explains context decisions with localized reasons and correct token plurals", () => {
+    const withContext = buildRun({ answer: "", insufficientContext: true });
+    withContext.stageResults.context = {
+      candidates: [
+        { chunkId: "chunk-a", selected: true, reason: "", tokenCount: 1, text: "Selected chunk", pageNumbers: [1], sourceElementIds: [] },
+        { chunkId: "chunk-b", selected: false, reason: "budget_exceeded", tokenCount: 11, text: "Excluded chunk", pageNumbers: [2], sourceElementIds: [] },
+      ],
+      finalContext: "[C1] Selected chunk",
+      tokenBudget: 3000,
+      tokenCount: 1,
+      durationMs: 1,
+    };
+    state().experimentRun = withContext;
+    renderRetrieval();
+    fireEvent.click(within(screen.getByTestId("experiment-stage-trace")).getByRole("button", { name: /^Context/ }));
+    const items = within(screen.getByRole("list", { name: "Build context" })).getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("Selected1 token");
+    expect(items[1]).toHaveTextContent("Excluded · Over the token budget11 tokens");
+    expect(within(screen.getByTestId("playground-stage-content")).getByText("1 / 3,000 tokens")).toBeInTheDocument();
+  });
+
   it("shows a queue/startup row only when the backend reports it", () => {
     state().experimentRun = buildRun({ answer: "", insufficientContext: true }, { queueDurationMs: 9_500 });
     const view = renderRetrieval();

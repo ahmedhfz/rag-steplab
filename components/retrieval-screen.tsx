@@ -325,7 +325,7 @@ function ContextStageView({ copy, locale, run }: { copy: RetrievalCopy; locale: 
                         <span className={candidate.selected ? "inline-flex items-center gap-1.5 text-sm font-medium text-foreground" : "inline-flex items-center gap-1.5 text-sm font-medium text-subtle-foreground"}>
                           <AppIcon name={candidate.selected ? "check" : "minus"} className="size-3.5" />{candidate.selected ? copy.selected : copy.excluded}{reason ? <span className="font-normal text-muted-foreground"> · {reason}</span> : null}
                         </span>
-                        <span className="text-xs text-muted-foreground tabular-nums">{formatNumber(locale, candidate.tokenCount)} token</span>
+                        <span className="text-xs text-muted-foreground tabular-nums">{formatCount(locale, candidate.tokenCount, copy.tokenForms)}</span>
                       </div>
                       <p className="mt-2 line-clamp-2 break-words text-sm text-muted-foreground">{candidate.text}</p>
                       <TechnicalDetails className="mt-3">
