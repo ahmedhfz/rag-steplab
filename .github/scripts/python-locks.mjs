@@ -1,10 +1,10 @@
 // backend/requirements*.in girdilerinden hash'li, platformdan bağımsız lock'ları üretir/denetler.
 //   node .github/scripts/python-locks.mjs            → lock'ları yeniden üret (mevcut pin'ler korunur)
 //   node .github/scripts/python-locks.mjs -- --upgrade-package pyjwt
-//   node .github/scripts/python-locks.mjs --check    → CI: lock'lar girdilerle ve birbirleriyle tutarlı mı
+//   node .github/scripts/python-locks.mjs --check    → CI: lock'lar girdilerle, hash'lerle ve birbirleriyle tutarlı mı
 // Dependabot (`uv` ekosistemi) aynı başlık seçenekleriyle `.in` → `.txt` derlemesini kendisi yapar.
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -37,8 +37,31 @@ function pins(file) {
   return entries;
 }
 
-function describe(entries) {
-  return [...entries.values()].flat();
+// Gereksinim satırı ("paket==sürüm ; marker" / "paket @ url ; marker") → sıralı hash listesi.
+// Yorumlar (başlık, `# via`) karşılaştırılmaz.
+function hashedEntries(text) {
+  const entries = new Map();
+  let current = null;
+  for (const line of text.split(/\r?\n/)) {
+    const hash = line.match(/^\s+--hash=(\S+)/);
+    if (hash) {
+      if (current) entries.get(current).push(hash[1]);
+      continue;
+    }
+    current = /^[A-Za-z0-9]/.test(line) ? line.replace(/\s*\\$/, "").trim() : null;
+    if (current) entries.set(current, []);
+  }
+  for (const hashes of entries.values()) hashes.sort();
+  return entries;
+}
+
+// uv mevcut çıktı dosyasındaki pin'leri ve hash'leri korur. Hash satırları silinmiş kopya verilince
+// sürümler korunur, hash'ler ise index'ten (URL pin'lerinde URL'deki #sha256'dan) yeniden alınır.
+function stripHashes(text) {
+  return text.split(/\r?\n/)
+    .filter((line) => !/^\s+--hash=/.test(line))
+    .map((line) => line.replace(/\s*\\$/, ""))
+    .join("\n");
 }
 
 // Marker'lar platform kümesine göre farklı yazılabilir; tutarlılıkta yalnız sürüm/URL karşılaştırılır.
@@ -53,16 +76,28 @@ function check() {
     for (const name of locks) {
       const committed = path.join(backend, `${name}.txt`);
       const regenerated = path.join(tempDir, `${name}.txt`);
-      copyFileSync(committed, regenerated);
-      // uv mevcut çıktı dosyasındaki pin'leri tercih eder; girdiler değişmediyse pin seti aynı kalır.
+      const committedText = readFileSync(committed, "utf8");
+      writeFileSync(regenerated, stripHashes(committedText));
       compile(name, regenerated);
-      const before = new Set(describe(pins(committed)));
-      const after = new Set(describe(pins(regenerated)));
-      const missing = [...after].filter((entry) => !before.has(entry));
-      const stale = [...before].filter((entry) => !after.has(entry));
+      const before = hashedEntries(committedText);
+      const after = hashedEntries(readFileSync(regenerated, "utf8"));
+      const unhashed = [...before].filter(([, hashes]) => hashes.length === 0).map(([entry]) => entry);
+      if (unhashed.length) {
+        failures.push(`backend/${name}.txt has requirements without --hash: ${unhashed.join(", ")}`);
+      }
+      const missing = [...after.keys()].filter((entry) => !before.has(entry));
+      const stale = [...before.keys()].filter((entry) => !after.has(entry));
       if (missing.length || stale.length) {
         failures.push(`backend/${name}.txt is out of date with backend/${name}.in`
           + `\n  expected: ${missing.join(", ") || "-"}\n  committed: ${stale.join(", ") || "-"}`);
+      }
+      // Elle düzenlenmiş/eksik/eski hash; paket sürümü kilitlendikten sonra yeni dosya yüklediyse de
+      // görünür (yeniden üretilmeli: pip yeni wheel'i seçerse hash kontrolü kurulumda düşer).
+      const hashDrift = [...after]
+        .filter(([entry, hashes]) => before.has(entry) && before.get(entry).join() !== hashes.join())
+        .map(([entry]) => entry);
+      if (hashDrift.length) {
+        failures.push(`backend/${name}.txt hashes differ from the package index for: ${hashDrift.join(", ")}`);
       }
     }
 
