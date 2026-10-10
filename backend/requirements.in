@@ -4,7 +4,7 @@ fastapi==0.139.2
 pydantic>=2.12,<3
 # GHSA-mj87-hwqh-73pj, GHSA-pp6c-gr5w-3c5g, GHSA-v9pg-7xvm-68hf ve sonrası düzeltilmiş taban.
 python-multipart>=0.0.31,<1
-uvicorn[standard]>=0.37,<1
+uvicorn[standard]>=0.54.0,<1
 SQLAlchemy>=2.0,<3
 psycopg[binary]>=3.3.6,<4
 pgvector>=0.5.0,<1
