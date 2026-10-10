@@ -8,7 +8,7 @@ import { Dialog as DialogPrimitive } from "radix-ui";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { OcrSourceDetails } from "@/components/ocr-source-details";
-import { InspectionBand, PipelineErrorMessage, RunHistory, StageBlockerRow, StageNextAction } from "@/components/pipeline-learning-ui";
+import { hasVisibleBlocker, InspectionBand, PipelineErrorMessage, RunHistory, StageBlockerRow, StageNextAction } from "@/components/pipeline-learning-ui";
 import { StageContextCard } from "@/components/pipeline-stage-screens";
 import { usePreferences } from "@/components/preferences-provider";
 import { SourceInspector } from "@/components/source-inspector";
@@ -295,7 +295,7 @@ export function ParseScreen() {
     [labels.summary.tables, parseResult.summary.tableCount],
     [labels.summary.elements, parseResult.structured.elements.length],
   ] as const : [];
-  const describedBy = [!canParse && availability.code !== "loading" && availability.code !== "processing" ? "parse-action-disabled-reason" : null, hasParsed ? "parse-run-hint" : null].filter(Boolean).join(" ") || undefined;
+  const describedBy = [hasVisibleBlocker(canParse ? null : availability) ? "parse-action-disabled-reason" : null, hasParsed ? "parse-run-hint" : null].filter(Boolean).join(" ") || undefined;
 
   function startParse() {
     setConfirmOpen(false);

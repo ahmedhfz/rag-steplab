@@ -39,6 +39,11 @@ export function revealRunHistory(kind: RunKind) {
   section?.scrollIntoView?.({ behavior: reduce ? "auto" : "smooth", block: "start" });
 }
 
+/** Whether StageBlockerRow renders anything for this availability (for aria-describedby wiring). */
+export function hasVisibleBlocker(blocker: PipelineAvailability | null | undefined): blocker is PipelineAvailability {
+  return Boolean(blocker && !blocker.allowed && blocker.code && blocker.code !== "loading" && blocker.code !== "processing");
+}
+
 /**
  * A stage blocker with its way out: a link to the unblocking page, or for an
  * incompatible lineage a button that opens this stage's history. Loading and
@@ -46,7 +51,7 @@ export function revealRunHistory(kind: RunKind) {
  */
 export function StageBlockerRow({ blocker, kind, id, testId, className }: { blocker: PipelineAvailability | null | undefined; kind: RunKind; id?: string; testId?: string; className?: string }) {
   const copy = useCopy();
-  if (!blocker || blocker.allowed || !blocker.code || blocker.code === "loading" || blocker.code === "processing") return null;
+  if (!hasVisibleBlocker(blocker)) return null;
   return (
     <div className={cn("flex flex-wrap items-baseline gap-x-3 gap-y-1", className)}>
       <StageBlocker blocker={blocker} data-testid={testId} id={id} />
@@ -81,8 +86,7 @@ export function StageNextAction({ href, label, disabled, testId, blocker, reason
   const variant = emphasis === "primary" ? "default" : "outline";
   // A blocker that points back at this page restates the stage's own job; the
   // stage reason says it better. Blockers elsewhere (or without a page) win.
-  const showBlocker = Boolean(blocker && !blocker.allowed && blocker.code && blocker.code !== "loading" && blocker.code !== "processing"
-    && (!blocker.href || blocker.href !== pathname));
+  const showBlocker = hasVisibleBlocker(blocker) && (!blocker.href || blocker.href !== pathname);
   return (
     <footer className="mt-8 flex flex-wrap items-center justify-end gap-x-4 gap-y-2 border-t border-border pt-5" data-testid={`${testId}-footer`}>
       {disabled ? (showBlocker

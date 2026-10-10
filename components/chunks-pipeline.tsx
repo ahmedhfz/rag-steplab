@@ -5,7 +5,7 @@ import { SlidingTabs, ThinkingText, TransitionNumber, TransitionPanel, Transitio
 import { useEffect, useState } from "react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
-import { PipelineErrorMessage, StageBlockerRow } from "@/components/pipeline-learning-ui";
+import { hasVisibleBlocker, PipelineErrorMessage, StageBlockerRow } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
 import { SourceInspector } from "@/components/source-inspector";
 import { AppIcon } from "@/components/ui/app-icon";
@@ -227,7 +227,8 @@ export function ChunksPipeline({ showAction = true, stage, onFormStateChange }: 
   if (stage === "embeddings") {
     const sourceChunkRunId = embeddingRun?.chunkRunId ?? embeddingRun?.upstream.chunkRunId ?? null;
     const sourceChunkRun = sourceChunkRunId ? activeDocument?.chunkRuns.find((run) => run.id === sourceChunkRunId) : undefined;
-    const describedBy = [!canEmbed ? "embedding-run-disabled-reason" : null, embeddingUpToDate ? "embedding-run-hint" : null].filter(Boolean).join(" ") || undefined;
+    const embeddingBlocker = !canEmbed && embeddingStatus !== "processing" ? embeddingAvailability : null;
+    const describedBy = [hasVisibleBlocker(embeddingBlocker) ? "embedding-run-disabled-reason" : null, embeddingUpToDate ? "embedding-run-hint" : null].filter(Boolean).join(" ") || undefined;
     return (
       <div className="mt-6" data-testid="embeddings-workspace">
         <section className="w-full max-w-[760px] rounded-lg border border-border bg-card p-4 sm:w-fit" data-testid="embedding-action-card">
@@ -241,7 +242,7 @@ export function ChunksPipeline({ showAction = true, stage, onFormStateChange }: 
             </div> : null}
             <div className="min-w-0 flex-1 sm:border-l sm:border-border sm:pl-5"><EmbeddingLineage chunkCount={selectedChunkCount} run={embeddingRun} /></div>
           </div>
-          <StageBlockerRow blocker={!canEmbed && embeddingStatus !== "processing" ? embeddingAvailability : null} className="mt-3" id="embedding-run-disabled-reason" kind="embedding" testId="embedding-blocker" />
+          <StageBlockerRow blocker={embeddingBlocker} className="mt-3" id="embedding-run-disabled-reason" kind="embedding" testId="embedding-blocker" />
         </section>
         {embeddingStatus === "processing" ? (
           <div className="mt-4 max-w-[760px] rounded-md border border-border bg-card p-4 text-xs text-muted-foreground" role="status">
@@ -274,7 +275,7 @@ export function ChunksPipeline({ showAction = true, stage, onFormStateChange }: 
   const labels = copy.chunking;
   const chunkSizeTokens = formatCount(locale, chunkSize, copy.units.token).split(" ").slice(1).join(" ");
   const overlapInvalid = overlap >= chunkSize;
-  const runDescribedBy = [overlapInvalid ? "chunk-overlap-reason" : null, !canChunk ? "chunk-disabled-reason" : null, selectedChunkSummary ? "chunk-run-hint" : null].filter(Boolean).join(" ") || undefined;
+  const runDescribedBy = [overlapInvalid ? "chunk-overlap-reason" : null, hasVisibleBlocker(canChunk ? null : chunkAvailability) ? "chunk-disabled-reason" : null, selectedChunkSummary ? "chunk-run-hint" : null].filter(Boolean).join(" ") || undefined;
   const selectedRunName = selectedChunkSummary ? runName(copy, "chunk", selectedChunkSummary.runNumber) : null;
   return (
     <div className="mt-6" data-testid="chunking-workspace">
