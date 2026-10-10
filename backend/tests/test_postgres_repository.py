@@ -222,3 +222,35 @@ def test_experiment_lease_reclaim_fences_the_stale_worker(pg, admin_engine):
     assert owner and reclaimed["id"] == first["id"] and reclaimed["dispatch_id"] is None
     assert pg.update_experiment_stage(first["id"], "retrieval", {"status": "completed"}, first["lease_token"]) is None
     assert pg.update_experiment_stage(first["id"], "retrieval", {"status": "completed"}, new_token) is not None
+
+
+def test_pointer_lock_serializes_writers_but_not_child_inserts(pg, admin_engine):
+    from sqlalchemy.exc import OperationalError
+
+    from app.models import ChunkRun
+
+    document = new_document(pg)
+    parse = completed_parse(pg, document["id"])
+    chunk = completed_chunk(pg, document["id"], parse["id"])
+    with session_scope() as session:
+        locked_document, run = pg._lock_run_document(session, ChunkRun, chunk["id"])
+        assert locked_document is not None and run is not None
+        # A child row (KEY SHARE on documents) is not blocked by a completion's
+        # pointer lock, even for the length of a large artifact write ...
+        with admin_engine.begin() as other:
+            other.execute(text("set local lock_timeout = '1s'"))
+            other.execute(
+                text(
+                    "insert into rag_lab.document_pipelines (id, owner_user_id, document_id, name) "
+                    "values (:id, :owner, :document_id, 'Concurrent')"
+                ),
+                {"id": str(uuid.uuid4()), "owner": OWNER_A, "document_id": document["id"]},
+            )
+        # ... while a second pointer writer still serializes on the document.
+        with pytest.raises(OperationalError):
+            with admin_engine.begin() as other:
+                other.execute(text("set local lock_timeout = '200ms'"))
+                other.execute(
+                    text("select id from rag_lab.documents where id = :id for no key update"),
+                    {"id": document["id"]},
+                )
