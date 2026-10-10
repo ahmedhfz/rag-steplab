@@ -411,3 +411,50 @@ def test_queued_evaluation_fails_visibly_when_its_snapshot_artifact_is_no_longer
     assert failed["status"] == "failed"
     assert failed["child_experiment_ids"] == []
     assert failed["error_code"] not in {None, "document_pipeline_not_found"}
+
+
+def test_keyword_evaluation_keeps_its_null_embedding_snapshot_in_child_experiments(monkeypatch):
+    """Codex #129-2: an embedding created after queueing must not leak into children."""
+
+    from app.pipeline import run_queued_evaluation
+
+    repository, queued, pipeline, snapshot_chunk = _queued_snapshot_evaluation(monkeypatch)
+    assert queued["config"]["embedding_run_id"] is None
+    store = get_repository()
+    store.embedding_runs["embedding-late"] = {
+        "id": "embedding-late", "document_id": snapshot_chunk["documentId"], "chunk_run_id": snapshot_chunk["id"],
+        "status": "completed", "model": "gemini-embedding-2", "dimensions": 768,
+        "embedding_format_version": main.EMBEDDING_FORMAT_VERSION, "embedding_count": 0,
+    }
+    store.document_pipelines[pipeline["id"]]["embedding_run_id"] = "embedding-late"
+
+    result = run_queued_evaluation(None, queued["id"], repository=repository)
+
+    assert result is not None and result["status"] == "completed", result
+    assert result["config"]["embedding_run_id"] is None
+    children = [repository.get_experiment_row(child) for child in result["child_experiment_ids"]]
+    assert children and all(child["embedding_run_id"] is None for child in children)
+
+
+def test_experiment_whose_embedding_was_failed_is_not_compatible(monkeypatch):
+    """Codex #129-1: summary-based compatibility must check the embedding parent status."""
+
+    parsed = _queue_and_run(monkeypatch)
+    document_id, parse_id = parsed["documentId"], parsed["parseRunId"]
+    chunk = _chunk(document_id, parse_id, "fixed_token")
+    repository = get_repository()
+    repository.embedding_runs["embedding-broken"] = {
+        "id": "embedding-broken", "document_id": document_id, "chunk_run_id": chunk["id"], "status": "completed",
+        "model": "gemini-embedding-2", "dimensions": 768, "embedding_format_version": main.EMBEDDING_FORMAT_VERSION,
+        "embedding_count": 0, "identity_claimed": True,
+    }
+    _seed_experiment(repository, document_id, chunk["id"], id="experiment-dense", embedding_run_id="embedding-broken")
+    compatible = _by_id(client.get(f"/documents/{document_id}/summary").json()["experiments"], "experiment-dense")
+    assert compatible["isCompatible"] is True
+
+    repository.fail_embedding_run("embedding-broken", "artifact_incomplete", "broken", unfenced=True)
+
+    for payload in (client.get(f"/documents/{document_id}/summary").json(), client.get(f"/documents/{document_id}").json()):
+        experiment = _by_id(payload["experiments"], "experiment-dense")
+        assert experiment["isCompatible"] is False
+        assert experiment["compatibilityReason"] == "lineage_incompatible"

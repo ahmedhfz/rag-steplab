@@ -98,6 +98,22 @@ describe("RAG API contract normalization", () => {
     expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8000/documents/document-1/summary", expect.anything());
   });
 
+  it("requests the summary relative to the selected pipeline and falls back when it was deleted", async () => {
+    const summary = { id: "document-1", fileName: "lesson.pdf", mediaType: "application/pdf", sizeBytes: 1, pageCount: 0, parseRuns: [], chunkRuns: [], embeddingRuns: [], experiments: [], evaluationDatasets: [], evaluationRuns: [] };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(summary), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: "document_pipeline_not_found", message: "The pipeline was not found." } }), { status: 404, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(summary), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getDocumentSummary("document-1", undefined, "pipeline 2");
+    expect(fetchMock).toHaveBeenLastCalledWith("http://127.0.0.1:8000/documents/document-1/summary?pipelineId=pipeline%202", expect.anything());
+
+    await expect(getDocumentSummary("document-1", undefined, "deleted")).resolves.toMatchObject({ id: "document-1" });
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "http://127.0.0.1:8000/documents/document-1/summary?pipelineId=deleted", expect.anything());
+    expect(fetchMock).toHaveBeenNthCalledWith(3, "http://127.0.0.1:8000/documents/document-1/summary", expect.anything());
+  });
+
   it("keeps nested answer-quality metrics available to the evaluation UI", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       id: "evaluation-1",
