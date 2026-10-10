@@ -1,6 +1,6 @@
 "use client";
 
-import { TransitionDetails, TransitionPanel, TransitionText } from "@/components/ui/transitions";
+import { TransitionDetails, TransitionPanel } from "@/components/ui/transitions";
 import { TransitionDialogContent } from "@/components/ui/transition-surface";
 
 import Link from "next/link";
@@ -18,10 +18,9 @@ import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/ui/page-header";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { isExceptionTone, PIPELINE_STEP_STATUS, StatusIcon, StatusPill } from "@/components/ui/status-pill";
-import { UI_COPY, type AppLocale } from "@/lib/copy";
-import { blocker, type BlockerCode } from "@/lib/blockers";
-import { buildOverviewViewModel } from "@/lib/figma-view-models";
-import type { OverviewContinuationKind } from "@/lib/figma-view-models";
+import { useCopy } from "@/lib/copy";
+import { blocker } from "@/lib/blockers";
+import { buildOverviewViewModel, journeyLockReason } from "@/lib/figma-view-models";
 import {
   buildJourneyConnectorPath,
   deriveJourneyConnectorState,
@@ -75,39 +74,8 @@ const journeyIcons: Record<JourneyStepKey, SemanticIconName> = {
   evaluate: "evaluate",
 };
 
-const continuationCopy: Record<AppLocale, Record<OverviewContinuationKind, { action: string; nextStep: string }>> = {
-  tr: {
-    checking: { action: "Workspace'i aç", nextStep: "Workspace" },
-    document: { action: "Doküman seç", nextStep: "Doküman" },
-    "parse-processing": { action: "Parsing'i izle", nextStep: "Parsing" },
-    "parse-error": { action: "Parsing sorununu incele", nextStep: "Parsing" },
-    parse: { action: "Parsing'e devam et", nextStep: "Parsing" },
-    "chunk-processing": { action: "Chunking'i izle", nextStep: "Chunking" },
-    "chunk-error": { action: "Chunking sorununu incele", nextStep: "Chunking" },
-    chunk: { action: "Chunking'e devam et", nextStep: "Chunking" },
-    "embedding-processing": { action: "Embedding'i izle", nextStep: "Embeddings" },
-    "embedding-error": { action: "Embedding sorununu incele", nextStep: "Embeddings" },
-    embedding: { action: "Embedding'e devam et", nextStep: "Embeddings" },
-    playground: { action: "Playground'a devam et", nextStep: "Playground" },
-  },
-  en: {
-    checking: { action: "Open workspace", nextStep: "Workspace" },
-    document: { action: "Select a document", nextStep: "Document" },
-    "parse-processing": { action: "Monitor parsing", nextStep: "Parsing" },
-    "parse-error": { action: "Review parsing issue", nextStep: "Parsing" },
-    parse: { action: "Continue to Parsing", nextStep: "Parsing" },
-    "chunk-processing": { action: "Monitor chunking", nextStep: "Chunking" },
-    "chunk-error": { action: "Review chunking issue", nextStep: "Chunking" },
-    chunk: { action: "Continue to Chunking", nextStep: "Chunking" },
-    "embedding-processing": { action: "Monitor embeddings", nextStep: "Embeddings" },
-    "embedding-error": { action: "Review embedding issue", nextStep: "Embeddings" },
-    embedding: { action: "Continue to Embeddings", nextStep: "Embeddings" },
-    playground: { action: "Continue to Playground", nextStep: "Playground" },
-  },
-};
-
 const selectorTriggerClass = "min-w-0 max-w-full overflow-hidden [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]]:truncate [&_[data-slot=select-value]]:whitespace-nowrap";
-const selectorItemClass = "h-auto min-h-8 whitespace-normal break-words";
+const selectorItemClass = "h-auto min-h-8 whitespace-normal [overflow-wrap:anywhere]";
 
 function JourneyGlyph({ stepKey, state }: { stepKey: JourneyStepKey; state: PipelineStepState }) {
   const visual = journeyNodeVisualForState(state);
@@ -162,12 +130,14 @@ function JourneyNode({
   reason,
   state,
   step,
+  onReveal,
 }: {
   href: string;
   labels: Record<PipelineStepKey, string>;
   reason: string | null;
   state: PipelineStepState;
   step: JourneyPipelineStep;
+  onReveal: (step: JourneyStepKey | null) => void;
 }) {
   const position = journeyNodePosition(step.key);
   const visual = journeyNodeVisualForState(state);
@@ -199,17 +169,30 @@ function JourneyNode({
       >
         {labels[step.key]}
       </span>
-      {reason ? <span className="sr-only">{reason}</span> : null}
     </>
   );
 
-  const className = cn(
-    "absolute z-10",
-    reason ? "cursor-not-allowed" : "rounded-md hover:ring-2 hover:ring-input",
-  );
+  const className = cn("absolute z-10 rounded-md", reason ? "cursor-help" : "hover:ring-2 hover:ring-input");
   const style = { left: position.left, top: position.top };
+  // A locked node stays focusable so its reason is reachable by pointer, touch and keyboard (Q9).
   return reason ? (
-    <div aria-disabled="true" className={className} data-state={state} data-testid={`overview-journey-node-${step.key}`} style={style}>
+    <div
+      aria-describedby="overview-journey-reason"
+      aria-disabled="true"
+      aria-label={`${labels[step.key]}: ${reason}`}
+      className={className}
+      data-state={state}
+      data-testid={`overview-journey-node-${step.key}`}
+      onBlur={() => onReveal(null)}
+      onClick={() => onReveal(step.key)}
+      onFocus={() => onReveal(step.key)}
+      onMouseEnter={() => onReveal(step.key)}
+      onMouseLeave={() => onReveal(null)}
+      role="link"
+      style={style}
+      tabIndex={0}
+      title={reason}
+    >
       {content}
     </div>
   ) : (
@@ -221,9 +204,9 @@ function JourneyNode({
 
 /** Exceptions (processing/error/stale) show text; everything else stays icon-only. */
 function JourneyStatus({ state }: { state: PipelineStepState }) {
-  const { preferences } = usePreferences();
+  const copy = useCopy();
   const presentation = PIPELINE_STEP_STATUS[state];
-  const label = UI_COPY[preferences.locale].status[state];
+  const label = copy.status[state];
   return isExceptionTone(presentation.tone)
     ? <StatusPill tone={presentation.tone}>{label}</StatusPill>
     : <StatusIcon icon={presentation.icon} label={label} tone={presentation.tone} />;
@@ -240,13 +223,18 @@ function JourneyCompact({ labels, reasonFor, stateFor }: { labels: Record<Pipeli
             <span className="grid size-9 shrink-0 place-items-center rounded-md border border-border bg-card">
               <JourneyGlyph state={state} stepKey={step.key} />
             </span>
-            <span className="min-w-0 flex-1 truncate text-left text-sm font-medium text-foreground">{labels[step.key]}</span>
+            <span className="min-w-0 flex-1 text-left">
+              <span className="block truncate text-sm font-medium text-foreground">{labels[step.key]}</span>
+              {reason ? <span className="block text-xs text-muted-foreground" data-testid={`overview-compact-journey-reason-${step.key}`}>{reason}</span> : null}
+            </span>
             <JourneyStatus state={state} />
           </>
         );
         return (
           <li key={step.key}>
-            {reason ? <div aria-disabled="true" className="flex min-w-0 items-center gap-3 rounded-md border border-border bg-card px-3 py-2.5 opacity-75" data-testid={`overview-compact-journey-node-${step.key}`} title={reason}>{content}</div> : <Link className="flex min-w-0 items-center gap-3 rounded-md border border-border bg-card px-3 py-2.5 hover:bg-surface-subtle" data-testid={`overview-compact-journey-node-${step.key}`} href={stageHref[step.key]}>{content}</Link>}
+            {reason
+              ? <div aria-disabled="true" className="flex min-w-0 items-center gap-3 rounded-md border border-border bg-card px-3 py-2.5" data-testid={`overview-compact-journey-node-${step.key}`}>{content}</div>
+              : <Link className="flex min-w-0 items-center gap-3 rounded-md border border-border bg-card px-3 py-2.5 hover:bg-surface-subtle" data-testid={`overview-compact-journey-node-${step.key}`} href={stageHref[step.key]}>{content}</Link>}
           </li>
         );
       })}
@@ -256,7 +244,8 @@ function JourneyCompact({ labels, reasonFor, stateFor }: { labels: Record<Pipeli
 
 export function OverviewScreen() {
   const { preferences } = usePreferences();
-  const copy = UI_COPY[preferences.locale];
+  const copy = useCopy();
+  const labels = copy.overview.workspace;
   const {
     documents,
     activeDocumentId,
@@ -283,67 +272,8 @@ export function OverviewScreen() {
   const [pipelineName, setPipelineName] = useState("");
   const [managementBusy, setManagementBusy] = useState(false);
   const [managementError, setManagementError] = useState<string | null>(null);
+  const [revealedStep, setRevealedStep] = useState<JourneyStepKey | null>(null);
   const managementMenuRef = useRef<HTMLDetailsElement>(null);
-
-  const labels = preferences.locale === "tr"
-    ? {
-        description: "Seçili doküman ve indexing pipeline'ını yönetin; build aşamalarına buradan geçin.",
-        workspace: "Workspace",
-        workspaceHint: "Doküman ve pipeline seçimi bu çalışma alanının kaynağıdır.",
-        document: "Doküman",
-        pipeline: "Indexing pipeline",
-        chooseDocument: "Doküman seçin",
-        noPipeline: "Pipeline seçin",
-        newPipeline: "Yeni pipeline",
-        rename: "Yeniden adlandır",
-        remove: "Sil",
-        save: "Kaydet",
-        cancel: "Vazgeç",
-        namePlaceholder: "Pipeline adı",
-        confirmDelete: "Bu pipeline silinsin mi? Artifact’lar silinmez.",
-        noActivePipeline: "Bu doküman için pipeline seçilmedi.",
-        selectDocumentForPipeline: "Pipeline yönetmek için önce bir doküman seçin.",
-        continueTitle: "Devam et",
-        nextStep: "Sıradaki aşama",
-        clearPipeline: "Pipeline seçimini kaldır",
-        managePipeline: "Pipeline'ı yönet",
-        journey: "Pipeline journey",
-        journeyDescription: "Seçili workspace'in build ve deney aşamalarına geçin.",
-        whyMatters: "Bu neden önemli?",
-        whyMattersText: "Parse, chunk ve embedding seçimleri aşağı akıştaki retrieval sonucunu değiştirir. Her aşamayı seçili lineage üzerinden inceleyin.",
-        empty: "Henüz doküman yok. Başlamak için Documents ekranından bir PDF ekleyin.",
-        loading: "Doküman workspace’i yükleniyor…",
-        unavailable: "Doküman servisi kullanılamıyor.",
-      }
-    : {
-        description: "Manage the selected document and indexing pipeline, then move into each build stage.",
-        workspace: "Workspace",
-        workspaceHint: "The document and pipeline define the workspace you are building.",
-        document: "Document",
-        pipeline: "Indexing pipeline",
-        chooseDocument: "Select a document",
-        noPipeline: "Select a pipeline",
-        newPipeline: "New pipeline",
-        rename: "Rename",
-        remove: "Delete",
-        save: "Save",
-        cancel: "Cancel",
-        namePlaceholder: "Pipeline name",
-        confirmDelete: "Delete this pipeline? Artifacts will not be deleted.",
-        noActivePipeline: "No pipeline is selected for this document.",
-        selectDocumentForPipeline: "Select a document before managing pipelines.",
-        continueTitle: "Continue where you left off",
-        nextStep: "Next step",
-        clearPipeline: "Clear pipeline selection",
-        managePipeline: "Manage pipeline",
-        journey: "Pipeline journey",
-        journeyDescription: "Open the build and experiment stages for this workspace.",
-        whyMatters: "Why this matters",
-        whyMattersText: "Parse, chunk, and embedding choices change downstream retrieval. Inspect each stage through the selected lineage.",
-        empty: "No documents yet. Add a PDF from Documents to begin.",
-        loading: "Loading document workspace…",
-        unavailable: "The document service is unavailable.",
-      };
 
   const parseSummary = activeDocument?.parseRuns.find((run) => run.id === selectedParseRunId);
   const chunkSummary = activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId);
@@ -376,31 +306,16 @@ export function OverviewScreen() {
   });
   const pipelineState = overviewModel.pipelineState;
   const isFirstUse = persistenceStatus === "available" && documents.length === 0;
-  const continuationText = continuationCopy[preferences.locale][overviewModel.continuation.kind];
-  const continuationStatus = PIPELINE_STEP_STATUS[overviewModel.continuation.state];
-
-  const journeyLabels: Record<PipelineStepKey, string> = {
-    ...copy.overview.steps,
-    embed: preferences.locale === "tr" ? "Embedding" : "Embeddings",
-    retrieve: preferences.locale === "tr" ? "Getirme" : "Retrieval",
-    rerank: preferences.locale === "tr" ? "Yeniden sıralama" : "Reranking",
-    context: preferences.locale === "tr" ? "Bağlamı oluştur" : "Build Context",
-    generate: preferences.locale === "tr" ? "Cevap" : "Answer",
-    evaluate: preferences.locale === "tr" ? "Değerlendirme" : "Evaluation",
-  };
-  const groupLabels = preferences.locale === "tr"
-    ? { knowledge: "Hazırla", query: "Test et", quality: "Ölç" }
-    : { knowledge: "Prepare", query: "Test", quality: "Measure" };
+  const continuation = overviewModel.continuation;
+  const continuationStatus = PIPELINE_STEP_STATUS[continuation.state];
+  const journeyLabels = copy.overview.journey.steps;
+  const groupLabels = copy.navGroups;
 
   function lockedReason(step: PipelineStepKey): string | null {
-    if (pipelineState[step] !== "Locked") return null;
-    let code: BlockerCode = "missing_experiment";
-    if (!activeDocumentId) code = "missing_document";
-    else if (step === "chunk" && !selectedParseRunId) code = "missing_parse";
-    else if ((step === "embed" || step === "index" || step === "retrieve") && !selectedChunkRunId) code = "missing_chunk";
-    else if (step === "evaluate" && matchingDatasetIds.size === 0) code = "missing_dataset";
-    return blocker(preferences.locale, code).message;
+    const code = journeyLockReason(step, pipelineState);
+    return code ? blocker(preferences.locale, code).message : null;
   }
+  const revealedReason = revealedStep ? lockedReason(revealedStep) : null;
 
   async function savePipelineName() {
     const name = pipelineName.trim();
@@ -410,7 +325,7 @@ export function OverviewScreen() {
     try {
       const result = editing === "create" ? await createPipeline(name) : editing === "rename" && activePipeline ? await renamePipeline(activePipeline.id, name) : null;
       if (!result) {
-        setManagementError(preferences.locale === "tr" ? "Pipeline kaydedilemedi. Tekrar deneyin." : "The pipeline could not be saved. Try again.");
+        setManagementError(labels.saveFailed);
         return;
       }
       setEditing(null);
@@ -426,10 +341,14 @@ export function OverviewScreen() {
     setManagementError(null);
     try {
       if (await deletePipeline(activePipeline.id)) setConfirmDelete(false);
-      else setManagementError(preferences.locale === "tr" ? "Pipeline silinemedi. Tekrar deneyin." : "The pipeline could not be deleted. Try again.");
+      else setManagementError(labels.deleteFailed);
     } finally {
       setManagementBusy(false);
     }
+  }
+
+  function closeManagementMenu() {
+    if (managementMenuRef.current) managementMenuRef.current.open = false;
   }
 
   function beginCreatePipeline() {
@@ -437,7 +356,7 @@ export function OverviewScreen() {
     setManagementError(null);
     setEditing("create");
     setPipelineName("");
-    if (managementMenuRef.current) managementMenuRef.current.open = false;
+    closeManagementMenu();
   }
 
   function beginRenamePipeline() {
@@ -446,7 +365,7 @@ export function OverviewScreen() {
     setManagementError(null);
     setEditing("rename");
     setPipelineName(activePipeline.name);
-    if (managementMenuRef.current) managementMenuRef.current.open = false;
+    closeManagementMenu();
   }
 
   return (
@@ -454,127 +373,131 @@ export function OverviewScreen() {
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4" data-testid="figma-overview-main">
         <PageHeader
           data-testid="figma-overview-header"
-          description={isFirstUse ? (preferences.locale === "tr" ? "Bir PDF'nin RAG pipeline boyunca nasıl işlendiğini ve cevabın hangi kaynaklara dayandığını görün." : "See how a PDF moves through a RAG pipeline and which sources support the final answer.") : labels.description}
-          help={preferences.showLearningHints ? <div data-testid="figma-overview-learning-note"><HowItWorks>{labels.whyMattersText}</HowItWorks></div> : undefined}
+          description={isFirstUse ? copy.overview.firstUseDescription : copy.overview.description}
+          help={preferences.showLearningHints ? <div data-testid="figma-overview-learning-note"><HowItWorks>{copy.overview.howItWorks}</HowItWorks></div> : undefined}
           title={copy.overview.title}
         />
 
-        {isFirstUse ? <section className="mt-6 rounded-lg border border-border bg-card p-5 sm:p-6" data-testid="overview-first-use">
-          <h2 className="text-lg font-semibold text-foreground">{preferences.locale === "tr" ? "Bir dokümanla başlayın" : "Begin with a document"}</h2>
-          <p className="mt-2 max-w-[700px] text-sm leading-6 text-muted-foreground">{preferences.locale === "tr" ? "Kendi PDF'nizi ekleyin veya dört sayfalık kurgusal örnekle akışı deneyin. Önce parsing, ardından chunking ve retrieval sonuçlarını inceleyebilirsiniz." : "Add your own PDF or try the four-page fictional sample. Inspect parsing, then chunks and retrieval results as you go."}</p>
-          <ol className="mt-5 grid gap-3 sm:grid-cols-3">
-            {(
-              preferences.locale === "tr"
-                ? ["PDF ekle", "Aşamaları incele", "Kaynaklı cevap al"]
-                : ["Add a PDF", "Inspect each stage", "Get a sourced answer"]
-            ).map((step, index) => <li className="flex items-center gap-3 rounded-md border border-border bg-surface-subtle px-3 py-3 text-sm font-medium text-foreground" key={step}><span className="grid size-7 shrink-0 place-items-center rounded-full bg-secondary text-xs font-semibold text-foreground tabular-nums">{index + 1}</span>{step}</li>)}
-          </ol>
-          <div className="mt-5 flex flex-wrap items-center gap-3">
-            <SampleDocumentButton primary />
-            <Button asChild variant="outline"><Link href="/documents">{preferences.locale === "tr" ? "Kendi PDF'ni ekle" : "Add your own PDF"}<AppIcon className="size-4" name="arrowRight" /></Link></Button>
-          </div>
-          <p className="mt-3 text-xs leading-5 text-muted-foreground">{preferences.locale === "tr" ? "Örnek kurgusaldır. Kendi dosyalarınız hesabınıza kaydedilir; kişisel veya gizli içerik yüklemeyin." : "The sample is fictional. Your own files are saved to your account; avoid uploading personal or confidential content."}</p>
-        </section> : <>
-        <section className="mt-6 rounded-lg border border-border bg-card p-4" data-testid="workspace-control-plane">
-          <p className="text-xs text-muted-foreground">{labels.workspaceHint}</p>
-          <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-                <div className="min-w-0">
-                  <label className="mb-1.5 block text-xs font-medium text-foreground" htmlFor="overview-document">{labels.document}</label>
-                  <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
-                    <SelectTrigger aria-label={labels.document} className={selectorTriggerClass} data-testid="overview-document-selector" id="overview-document" title={activeDocument?.fileName ?? labels.chooseDocument}><SelectValue placeholder={labels.chooseDocument} /></SelectTrigger>
-                    <SelectContent>{documents.map((document) => <SelectItem className={selectorItemClass} key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                <div className="min-w-0">
-                  <label className="mb-1.5 block text-xs font-medium text-foreground" htmlFor="overview-pipeline">{labels.pipeline}</label>
-                  <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value)} value={activePipelineId ?? ""}>
-                    <SelectTrigger aria-label={labels.pipeline} className={selectorTriggerClass} data-testid="overview-pipeline-selector" id="overview-pipeline" title={activePipeline?.name ?? labels.noPipeline}><SelectValue placeholder={labels.noPipeline} /></SelectTrigger>
-                    <SelectContent>{pipelines.map((pipeline) => <SelectItem className={selectorItemClass} key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-            <TransitionDetails className="relative self-end" data-testid="pipeline-management" ref={managementMenuRef} variant="dropdown">
-              <summary className="flex h-9 cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-border bg-card px-3 text-sm font-medium text-foreground transition-colors hover:bg-secondary [&::-webkit-details-marker]:hidden">
-                <span>{labels.managePipeline}</span>
-                <AppIcon name="chevronDown" className="size-4 text-subtle-foreground" />
-              </summary>
-              <div className="absolute right-0 z-20 mt-2 flex w-[min(28rem,calc(100vw-4rem))] flex-wrap gap-2 rounded-md border border-border bg-card p-3 shadow-lg">
-                <Button disabled={!activeDocumentId || persistenceStatus !== "available" || managementBusy} onClick={beginCreatePipeline} size="sm" variant="secondary">{labels.newPipeline}</Button>
-                {activePipeline ? <Button onClick={() => void selectPipeline(null)} size="sm" variant="ghost" data-testid="clear-pipeline-selection">{labels.clearPipeline}</Button> : null}
-                <Button disabled={!activePipeline || managementBusy} onClick={beginRenamePipeline} size="sm" variant="outline">{labels.rename}</Button>
-                <Button disabled={!activePipeline || managementBusy} onClick={() => { setEditing(null); setManagementError(null); setConfirmDelete(true); if (managementMenuRef.current) managementMenuRef.current.open = false; }} size="sm" variant="ghost">{labels.remove}</Button>
-              </div>
-            </TransitionDetails>
-          </div>
-
-          <div className="mt-3.5 grid min-w-0 gap-3 border-t border-border pt-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" data-testid="continue-surface">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-sm font-medium text-foreground">{labels.continueTitle}</p>
-                {isExceptionTone(continuationStatus.tone) ? <StatusPill tone={continuationStatus.tone}>{copy.status[overviewModel.continuation.state]}</StatusPill> : null}
-              </div>
-              <p className="mt-1 truncate text-xs text-muted-foreground">{labels.nextStep}: <span className="font-medium text-foreground"><TransitionText>{continuationText.nextStep}</TransitionText></span></p>
+        {isFirstUse ? (
+          <section className="mt-6 rounded-lg border border-border bg-card p-5 sm:p-6" data-testid="overview-first-use">
+            <h2 className="text-lg font-semibold text-foreground">{copy.overview.firstUse.title}</h2>
+            <ol className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground" data-testid="overview-first-use-steps">
+              {copy.overview.firstUse.steps.map((step, index) => (
+                <li className="flex items-center gap-2" key={step}>
+                  {index > 0 ? <AppIcon aria-hidden="true" name="arrowRight" className="size-3.5 text-subtle-foreground" /> : null}
+                  <span className="tabular-nums text-subtle-foreground">{index + 1}</span>
+                  <span className="text-foreground">{step}</span>
+                </li>
+              ))}
+            </ol>
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <SampleDocumentButton primary />
+              <Button asChild variant="outline"><Link href="/documents">{copy.overview.firstUse.addOwnPdf}<AppIcon className="size-4" name="arrowRight" /></Link></Button>
             </div>
-            <Button asChild className="min-w-0" data-testid="overview-continue-action">
-              <Link href={overviewModel.continuation.href}>{continuationText.action}<AppIcon name="arrowRight" className="size-4" /></Link>
-            </Button>
-          </div>
-
-          {editing ? (
-            <TransitionPanel className="mt-4 flex flex-wrap items-end gap-2 border-t border-border pt-4" data-testid="pipeline-name-editor">
-              <label className="sr-only" htmlFor="overview-pipeline-name">{labels.namePlaceholder}</label>
-              <Input autoFocus className="max-w-sm" id="overview-pipeline-name" maxLength={100} onChange={(event) => setPipelineName(event.target.value)} placeholder={labels.namePlaceholder} value={pipelineName} />
-              <Button disabled={!pipelineName.trim() || managementBusy} onClick={() => void savePipelineName()} size="sm">{managementBusy ? (preferences.locale === "tr" ? "Kaydediliyor…" : "Saving…") : labels.save}</Button>
-              <Button disabled={managementBusy} onClick={() => { setEditing(null); setManagementError(null); }} size="sm" variant="ghost">{labels.cancel}</Button>
-            </TransitionPanel>
-          ) : null}
-
-          <DialogPrimitive.Root onOpenChange={(open) => { if (!open && !managementBusy) { setConfirmDelete(false); setManagementError(null); } }} open={confirmDelete && Boolean(activePipeline)}>
-            {activePipeline ? <DialogPrimitive.Portal>
-              <DialogPrimitive.Overlay className="steplab-overlay fixed inset-0 z-50 bg-overlay/35 dark:bg-overlay/65" />
-              <TransitionDialogContent className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 shadow-2xl focus:outline-none sm:p-6" data-testid="delete-pipeline-dialog">
-                <DialogPrimitive.Title className="text-base font-semibold text-foreground">{labels.remove}</DialogPrimitive.Title>
-                <DialogPrimitive.Description className="mt-2 text-sm leading-6 text-muted-foreground">{activePipeline.name} — {labels.confirmDelete}</DialogPrimitive.Description>
-                {managementError ? <p className="mt-3 text-sm text-destructive" role="alert">{managementError}</p> : null}
-                <div className="mt-5 flex justify-end gap-2">
-                  <DialogPrimitive.Close asChild><Button disabled={managementBusy} size="sm" variant="outline">{labels.cancel}</Button></DialogPrimitive.Close>
-                  <Button disabled={managementBusy} onClick={() => void confirmPipelineDelete()} size="sm" variant="destructive">{managementBusy ? (preferences.locale === "tr" ? "Siliniyor…" : "Deleting…") : labels.remove}</Button>
+            <p className="mt-3 text-xs text-muted-foreground" data-testid="overview-privacy-note">{copy.overview.firstUse.privacy}</p>
+          </section>
+        ) : (
+          <section className="mt-6 rounded-lg border border-border bg-card p-4" data-testid="workspace-control-plane">
+            <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+              <div className="min-w-0">
+                <label className="mb-1.5 block text-xs font-medium text-foreground" htmlFor="overview-document">{labels.document}</label>
+                <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
+                  <SelectTrigger aria-label={labels.document} className={selectorTriggerClass} data-testid="overview-document-selector" id="overview-document" title={activeDocument?.fileName ?? labels.chooseDocument}><SelectValue placeholder={labels.chooseDocument} /></SelectTrigger>
+                  <SelectContent>{documents.map((document) => <SelectItem className={selectorItemClass} key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="min-w-0">
+                <label className="mb-1.5 block text-xs font-medium text-foreground" htmlFor="overview-pipeline">{labels.pipeline}</label>
+                <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value)} value={activePipelineId ?? ""}>
+                  <SelectTrigger aria-label={labels.pipeline} className={selectorTriggerClass} data-testid="overview-pipeline-selector" id="overview-pipeline" title={activePipeline?.name ?? labels.choosePipeline}>
+                    {/* The trigger shows only the name; the "default" marker lives in the list. */}
+                    <SelectValue placeholder={labels.choosePipeline}>{activePipeline ? activePipeline.name : undefined}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>{pipelines.map((pipeline) => (
+                    <SelectItem className={selectorItemClass} key={pipeline.id} value={pipeline.id}>
+                      {pipeline.name}{pipeline.isDefault ? <span className="ml-1.5 text-xs font-normal text-subtle-foreground">{copy.common.defaultPipeline}</span> : null}
+                    </SelectItem>
+                  ))}</SelectContent>
+                </Select>
+              </div>
+              <TransitionDetails className="relative self-end" data-testid="pipeline-management" ref={managementMenuRef} variant="dropdown">
+                <summary className="flex h-9 cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-border bg-card px-3 text-sm font-medium text-foreground transition-colors hover:bg-secondary [&::-webkit-details-marker]:hidden">
+                  <span>{labels.managePipeline}</span>
+                  <AppIcon name="chevronDown" className="size-4 text-subtle-foreground" />
+                </summary>
+                <div className="absolute right-0 z-20 mt-2 flex w-[min(28rem,calc(100vw-4rem))] flex-wrap gap-2 rounded-md border border-border bg-card p-3 shadow-lg">
+                  <Button disabled={!activeDocumentId || persistenceStatus !== "available" || managementBusy} onClick={beginCreatePipeline} size="sm" variant="secondary">{labels.newPipeline}</Button>
+                  {activePipeline ? <Button onClick={() => void selectPipeline(null)} size="sm" variant="ghost" data-testid="clear-pipeline-selection">{labels.clearPipeline}</Button> : null}
+                  <Button disabled={!activePipeline || managementBusy} onClick={beginRenamePipeline} size="sm" variant="outline">{labels.rename}</Button>
+                  <Button disabled={!activePipeline || managementBusy} onClick={() => { setEditing(null); setManagementError(null); setConfirmDelete(true); closeManagementMenu(); }} size="sm" variant="ghost">{copy.common.delete}</Button>
                 </div>
-              </TransitionDialogContent>
-            </DialogPrimitive.Portal> : null}
-          </DialogPrimitive.Root>
-          {editing && managementError ? <p className="mt-2 text-sm text-destructive" role="alert">{managementError}</p> : null}
+              </TransitionDetails>
+            </div>
 
-          {activeDocumentId && !activePipeline ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{labels.noActivePipeline}</p> : null}
-          {!activeDocumentId && documents.length > 0 ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{labels.selectDocumentForPipeline}</p> : null}
-          {persistenceStatus === "checking" ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{labels.loading}</p> : null}
-          {persistenceStatus === "unavailable" ? <div className="mt-4 border-t border-border pt-3"><p className="text-xs leading-5 text-destructive">{labels.unavailable}</p><PipelineErrorMessage message={persistenceError?.message} /></div> : null}
-          {persistenceStatus === "available" && documents.length === 0 ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{labels.empty}</p> : null}
-        </section>
-        </>}
+            <div className="mt-3.5 flex min-w-0 flex-wrap items-center justify-end gap-x-4 gap-y-2 border-t border-border pt-3" data-testid="continue-surface">
+              {isExceptionTone(continuationStatus.tone) ? <StatusPill className="mr-auto" tone={continuationStatus.tone}>{copy.status[continuation.state]}</StatusPill> : null}
+              {continuation.kind === "checking" ? (
+                <Button className="min-w-0 max-sm:w-full" data-testid="overview-continue-action" disabled>{copy.overview.continuation.checking}</Button>
+              ) : (
+                <Button asChild className="min-w-0 max-sm:w-full" data-testid="overview-continue-action">
+                  <Link href={continuation.href}>{copy.overview.continuation[continuation.kind]}<AppIcon name="arrowRight" className="size-4" /></Link>
+                </Button>
+              )}
+            </div>
+
+            {editing ? (
+              <TransitionPanel className="mt-4 flex flex-wrap items-end gap-2 border-t border-border pt-4" data-testid="pipeline-name-editor">
+                <label className="sr-only" htmlFor="overview-pipeline-name">{labels.namePlaceholder}</label>
+                <Input autoFocus className="max-w-sm" id="overview-pipeline-name" maxLength={100} onChange={(event) => setPipelineName(event.target.value)} placeholder={labels.namePlaceholder} value={pipelineName} />
+                <Button disabled={!pipelineName.trim() || managementBusy} onClick={() => void savePipelineName()} size="sm">{managementBusy ? copy.common.saving : copy.common.save}</Button>
+                <Button disabled={managementBusy} onClick={() => { setEditing(null); setManagementError(null); }} size="sm" variant="ghost">{copy.common.cancel}</Button>
+              </TransitionPanel>
+            ) : null}
+
+            <DialogPrimitive.Root onOpenChange={(open) => { if (!open && !managementBusy) { setConfirmDelete(false); setManagementError(null); } }} open={confirmDelete && Boolean(activePipeline)}>
+              {activePipeline ? <DialogPrimitive.Portal>
+                <DialogPrimitive.Overlay className="steplab-overlay fixed inset-0 z-50 bg-overlay/35 dark:bg-overlay/65" />
+                <TransitionDialogContent className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 shadow-2xl focus:outline-none sm:p-6" data-testid="delete-pipeline-dialog">
+                  <DialogPrimitive.Title className="text-base font-semibold text-foreground">{labels.deleteTitle}</DialogPrimitive.Title>
+                  <DialogPrimitive.Description className="mt-2 text-sm leading-6 text-muted-foreground"><span className="font-medium text-foreground [overflow-wrap:anywhere]">{activePipeline.name}</span> — {labels.deleteDescription}</DialogPrimitive.Description>
+                  {managementError ? <p className="mt-3 text-sm text-destructive" role="alert">{managementError}</p> : null}
+                  <div className="mt-5 flex justify-end gap-2">
+                    <DialogPrimitive.Close asChild><Button disabled={managementBusy} size="sm" variant="outline">{copy.common.cancel}</Button></DialogPrimitive.Close>
+                    <Button disabled={managementBusy} onClick={() => void confirmPipelineDelete()} size="sm" variant="destructive">{managementBusy ? copy.common.deleting : copy.common.delete}</Button>
+                  </div>
+                </TransitionDialogContent>
+              </DialogPrimitive.Portal> : null}
+            </DialogPrimitive.Root>
+            {editing && managementError ? <p className="mt-2 text-sm text-destructive" role="alert">{managementError}</p> : null}
+
+            {activeDocumentId && !activePipeline ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{labels.noActivePipeline}</p> : null}
+            {!activeDocumentId && documents.length > 0 ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{labels.selectDocumentForPipeline}</p> : null}
+            {persistenceStatus === "unavailable" ? <div className="mt-4 space-y-2 border-t border-border pt-3"><p className="text-xs leading-5 text-destructive">{labels.unavailable}</p><PipelineErrorMessage message={persistenceError?.message} /></div> : null}
+          </section>
+        )}
 
         <section className="mt-6 rounded-lg border border-border bg-card px-5 pb-4 pt-5" data-testid="figma-overview-pipeline">
-          <div className="flex w-full items-center justify-between gap-4">
-            <h2 className="m-0 text-base font-semibold text-foreground">{labels.journey}</h2>
-            <p className="m-0 text-xs text-subtle-foreground max-sm:hidden">{labels.journeyDescription}</p>
-          </div>
+          <h2 className="m-0 text-base font-semibold text-foreground">{copy.overview.journey.title}</h2>
           <div className="relative mt-2 w-full overflow-hidden" data-testid="overview-journey">
             <div className="relative hidden h-54 w-full pt-3 min-[1440px]:block" data-testid="overview-journey-desktop">
               <div className="relative h-50 w-full">
-                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="figma-overview-prepare" style={journeyGroupPosition("prepare")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.knowledge}</span></div>
-                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="figma-overview-test" style={journeyGroupPosition("test")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.query}</span></div>
-                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="figma-overview-measure" style={journeyGroupPosition("measure")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.quality}</span></div>
+                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="figma-overview-prepare" style={journeyGroupPosition("prepare")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.prepare}</span></div>
+                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="figma-overview-test" style={journeyGroupPosition("test")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.test}</span></div>
+                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="figma-overview-measure" style={journeyGroupPosition("measure")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.measure}</span></div>
                 <JourneyConnectors stateFor={(step) => pipelineState[step]} />
-                {pipelineSteps.map((step) => <JourneyNode href={stageHref[step.key]} key={step.key} labels={journeyLabels} reason={lockedReason(step.key)} state={pipelineState[step.key]} step={step} />)}
+                {pipelineSteps.map((step) => <JourneyNode href={stageHref[step.key]} key={step.key} labels={journeyLabels} onReveal={setRevealedStep} reason={lockedReason(step.key)} state={pipelineState[step.key]} step={step} />)}
               </div>
             </div>
             <div className="min-[1440px]:hidden">
               <JourneyCompact labels={journeyLabels} reasonFor={lockedReason} stateFor={(step) => pipelineState[step]} />
             </div>
           </div>
+          {/* Visible reason for the hovered/focused/tapped locked desktop node (Q9). */}
+          <p aria-live="polite" className="mt-1 hidden min-h-5 text-xs text-muted-foreground min-[1440px]:block" data-testid="overview-journey-reason" id="overview-journey-reason">
+            {revealedReason ? <><AppIcon aria-hidden="true" name="lock" className="mr-1.5 inline size-3.5 align-[-2px]" />{journeyLabels[revealedStep!]}: {revealedReason}</> : null}
+          </p>
         </section>
-
       </div>
     </div>
   );
 }
-

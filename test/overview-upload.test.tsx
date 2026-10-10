@@ -34,9 +34,11 @@ describe("Phase 6B document ownership", () => {
     expect(screen.queryByTestId("overview-lineage")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Try a sample PDF" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Add your own PDF" })).toHaveAttribute("href", "/documents");
-    expect(screen.getByText(/Your own files are saved to your account/)).toBeVisible();
+    // The privacy warning is shortened to one sentence, never removed.
+    expect(screen.getByTestId("overview-privacy-note")).toHaveTextContent("The sample is fictional. Don't upload personal or confidential PDFs.");
+    expect(screen.getByTestId("overview-first-use-steps")).toHaveTextContent(/Add a PDF.*Inspect each stage.*Get a sourced answer/);
     expect(screen.queryByTestId("current-setup")).not.toBeInTheDocument();
-    expect(screen.getByTestId("overview-journey-compact")).toContainElement(screen.getAllByText("Build Context")[1]);
+    expect(within(screen.getByTestId("overview-journey-compact")).getByText("Context")).toBeInTheDocument();
     expect(screen.getAllByText("Retrieval").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByTestId("overview-continue-action")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Add PDF|Choose PDF|Parse Document|Reparse/i })).not.toBeInTheDocument();

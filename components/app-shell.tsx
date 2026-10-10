@@ -13,18 +13,18 @@ import { usePreferences } from "@/components/preferences-provider";
 import { PageTransition } from "@/components/page-transition";
 import { AppIcon, type SemanticIconName } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
-import { type AppCopy, type AppNavKey, UI_COPY } from "@/lib/copy";
+import { type AppCopy, type AppNavGroupKey, type AppNavKey, UI_COPY } from "@/lib/copy";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { UI_ASSETS } from "@/lib/ui-assets";
 import { cn } from "@/lib/utils";
 
 type NavItem = { key: AppNavKey; href: string; icon: SemanticIconName };
-type NavGroup = { label?: "pipeline" | "experiment" | "system"; items: NavItem[] };
+type NavGroup = { label?: AppNavGroupKey; items: NavItem[] };
 
 const navGroups: NavGroup[] = [
   { items: [{ key: "overview", href: "/", icon: "overview" }] },
   {
-    label: "pipeline",
+    label: "prepare",
     items: [
       { key: "documents", href: "/documents", icon: "document" },
       { key: "parse", href: "/parse", icon: "parse" },
@@ -33,11 +33,12 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    label: "experiment",
-    items: [
-      { key: "playground", href: "/playground", icon: "retrieve" },
-      { key: "evaluation", href: "/evaluation", icon: "evaluate" },
-    ],
+    label: "test",
+    items: [{ key: "playground", href: "/playground", icon: "retrieve" }],
+  },
+  {
+    label: "measure",
+    items: [{ key: "evaluation", href: "/evaluation", icon: "evaluate" }],
   },
 ];
 
@@ -116,7 +117,7 @@ type UserMenuProps = {
 };
 
 function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
-  const [openView, setOpenView] = useState<"menu" | "guides" | "help">("menu");
+  const [openView, setOpenView] = useState<"menu" | "help">("menu");
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -173,8 +174,8 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
       >
         <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-full bg-secondary text-2xs font-semibold text-foreground">{initials}</span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-xs text-muted-foreground">{displayName}</span>
-          <span className="sr-only">{user.email ?? copy.common.frontendFoundation}</span>
+          <span className="block truncate text-xs text-muted-foreground" data-testid="app-shell-user-name">{displayName}</span>
+          <span className="sr-only">{user.email ?? copy.common.accountFallback}</span>
         </span>
       </button>
 
@@ -188,30 +189,13 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
               <>
                 <div className="mb-1 border-b border-border px-2.5 pb-2.5 pt-1">
                   <p className="truncate text-sm font-semibold text-foreground">{displayName}</p>
-                  <p className="truncate text-xs text-subtle-foreground">{user.email ?? copy.common.frontendFoundation}</p>
+                  <p className="truncate text-xs text-subtle-foreground">{user.email ?? copy.common.accountFallback}</p>
                 </div>
-                <UserMenuItem icon="openBook" label={copy.guides} onClick={() => setOpenView("guides")} />
                 <UserMenuItem icon="help" label={copy.help} onClick={() => setOpenView("help")} />
                 <UserMenuItem href="/settings" icon="settings" label={copy.nav.settings} onClick={closeAfterNavigation} />
                 <div className="my-1 border-t" />
                 <UserMenuItem icon="logOut" label={copy.common.signOut} onClick={() => void handleSignOut()} />
               </>
-            )}
-
-            {openView === "guides" && (
-              <div className="p-1">
-                <button className="mb-2 flex items-center gap-1.5 rounded-sm px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-secondary hover:text-foreground" onClick={() => setOpenView("menu")} type="button">
-                  <AppIcon name="arrowLeft" className="size-3.5" />
-                  {copy.common.back}
-                </button>
-                <h2 className="px-1.5 text-sm font-semibold text-foreground">{copy.guidePanel.title}</h2>
-                <p className="px-1.5 pt-1.5 text-xs leading-5 text-muted-foreground">{copy.guidePanel.description}</p>
-                <nav aria-label={copy.guides} className="mt-3 grid gap-1 border-t pt-2 text-sm">
-                  <Link className="rounded-md px-2 py-1.5 hover:bg-secondary" href="/" onClick={closeAfterNavigation}>{copy.nav.overview}</Link>
-                  <Link className="rounded-md px-2 py-1.5 hover:bg-secondary" href="/documents" onClick={closeAfterNavigation}>{copy.nav.documents}</Link>
-                  <Link className="rounded-md px-2 py-1.5 hover:bg-secondary" href="/playground" onClick={closeAfterNavigation}>{copy.nav.playground}</Link>
-                </nav>
-              </div>
             )}
 
             {openView === "help" && (
@@ -221,10 +205,7 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
                   {copy.common.back}
                 </button>
                 <h2 className="px-1.5 text-sm font-semibold text-foreground">{copy.helpPanel.title}</h2>
-                <p className="px-1.5 pt-1.5 text-xs leading-5 text-muted-foreground">{copy.helpPanel.description}</p>
-                <Link className="mt-3 inline-flex border-t px-1.5 pt-2 text-sm font-medium text-foreground underline-offset-4 hover:underline" href="/settings" onClick={closeAfterNavigation}>
-                  {copy.helpPanel.settingsLink}
-                </Link>
+                <p className="px-1.5 pb-1 pt-1.5 text-xs leading-5 text-muted-foreground">{copy.helpPanel.description}</p>
               </div>
             )}
             </TransitionPanel>
@@ -244,7 +225,7 @@ function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: st
       <nav aria-label={copy.common.primaryNavigation} className="flex flex-1 flex-col overflow-hidden px-3 pb-4 pt-0">
         {navGroups.map((group) => (
           <div className={cn("space-y-0", group.label && "pt-6")} key={group.label ?? group.items[0].key}>
-            {group.label ? <p className="px-3 text-xs font-medium text-subtle-foreground">{copy.nav[group.label]}</p> : null}
+            {group.label ? <p className="px-3 text-xs font-medium text-subtle-foreground">{copy.navGroups[group.label]}</p> : null}
             <div className={cn(group.label && "pt-1.5")}>
               {group.items.map((item) => {
                 const isActive = isNavItemActive(item.key, pathname);

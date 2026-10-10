@@ -66,7 +66,8 @@ describe("AppShell navigation contract", () => {
   it("renders the grouped navigation in order", () => {
     renderShell("/documents");
     const navigation = screen.getByRole("navigation", { name: "Primary navigation" });
-    expect(navigation).toHaveTextContent(/Overview[\s\S]*Build[\s\S]*Documents[\s\S]*Parsing[\s\S]*Chunking[\s\S]*Embeddings[\s\S]*Test[\s\S]*Playground[\s\S]*Evaluation[\s\S]*Settings/);
+    // One taxonomy everywhere: Prepare · Test · Measure (Evaluation measures).
+    expect(navigation).toHaveTextContent(/Overview[\s\S]*Prepare[\s\S]*Documents[\s\S]*Parsing[\s\S]*Chunking[\s\S]*Embeddings[\s\S]*Test[\s\S]*Playground[\s\S]*Measure[\s\S]*Evaluation[\s\S]*Settings/);
     expect(within(navigation).getByRole("link", { name: "Documents" })).toHaveAttribute("href", "/documents");
     expect(within(navigation).getByRole("link", { name: "Playground" })).toHaveAttribute("href", "/playground");
     expect(within(navigation).getAllByRole("link").every((link) => link.dataset.prefetch === "false")).toBe(true);
@@ -128,12 +129,14 @@ describe("AppShell navigation contract", () => {
     await user.click(screen.getByRole("button", { name: "Ahmed Hafızoğlu — Account menu" }));
     const menu = screen.getByRole("dialog", { name: "Account menu" });
 
-    await waitFor(() => expect(within(menu).getByRole("button", { name: "Guides" })).toBeVisible());
-    expect(within(menu).getByRole("button", { name: "Help" })).toBeVisible();
+    await waitFor(() => expect(within(menu).getByRole("button", { name: "Help" })).toBeVisible());
+    // The Guides panel only repeated three nav links; Help no longer repeats Settings (N-4).
+    expect(within(menu).queryByRole("button", { name: "Guides" })).not.toBeInTheDocument();
     expect(within(menu).getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
     expect(within(menu).getByRole("button", { name: "Sign out" })).toBeVisible();
 
-    await user.click(within(menu).getByRole("button", { name: "Guides" }));
-    expect(within(menu).getByText("Learn the RAG flow")).toBeVisible();
+    await user.click(within(menu).getByRole("button", { name: "Help" }));
+    expect(within(menu).getByText("About RAG StepLab")).toBeVisible();
+    expect(within(menu).queryByText("Open settings")).not.toBeInTheDocument();
   });
 });

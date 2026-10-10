@@ -4,6 +4,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { usePathname } from "next/navigation";
 
 import { useAuthBootstrap } from "@/components/auth-provider";
+import { usePreferences } from "@/components/preferences-provider";
+import { UI_COPY } from "@/lib/copy";
 import { DocumentApiError } from "@/lib/document-api";
 import { validatePdfFile } from "@/lib/document-file";
 import {
@@ -201,6 +203,8 @@ type DocumentPipelineContextValue = {
   renamePipeline: (pipelineId: string, name: string) => Promise<DocumentPipeline | null>;
   deletePipeline: (pipelineId: string) => Promise<boolean>;
   reparseActiveDocument: () => Promise<void>;
+  /** Restarts browser polling for the in-flight parse after a poll timeout; never creates a run. */
+  resumeParseTracking: () => Promise<void>;
   runChunking: (strategy: ChunkStrategy, config: ChunkConfig) => Promise<ChunkRun | null>;
   runEmbedding: () => Promise<EmbeddingRun | null>;
   runExperiment: (input: Omit<ExperimentRequest, "documentId" | "chunkRunId" | "embeddingRunId">) => Promise<void>;
@@ -234,6 +238,13 @@ function isRunInFlight(status: string) {
 export function DocumentPipelineProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "/";
   const { userId: authoritativeUserId, ready: authReady, error: authError, retry: retryAuth } = useAuthBootstrap();
+  const { preferences } = usePreferences();
+  // Fallback error copy follows the interface locale; async callbacks read the
+  // latest copy through a ref so localisation never re-creates lineage callbacks.
+  const errorCopyRef = useRef(UI_COPY[preferences.locale].errors);
+  useEffect(() => {
+    errorCopyRef.current = UI_COPY[preferences.locale].errors;
+  }, [preferences.locale]);
   const [authUserId, setAuthUserId] = useState<string | null>(authoritativeUserId);
   const [parseStatus, setParseStatus] = useState<DocumentParseStatus>("not-started");
   const [parseProgress, setParseProgress] = useState(0);
@@ -428,7 +439,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setParseProgress((current) => Math.max(current, run.progress));
     setParsePhase(typeof run.runMetadata?.phase === "string" ? run.runMetadata.phase : null);
     if (run.status === "failed") {
-      const problem = run.error ?? { code: "parse_failed", message: "The parse run failed." };
+      const problem = run.error ?? { code: "parse_failed", message: errorCopyRef.current.parseRunFailed };
       setParseError(new DocumentApiError(problem.code, problem.message));
     } else {
       setParseError(null);
@@ -643,7 +654,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     } catch (error) {
       const wanted = selectedLineageRef.current.selectedParseRunId === runId || inspectedLineageRef.current.selectedParseRunId === runId;
       if (!isAbortError(error) && wanted && activeDocumentRef.current?.id === documentId) {
-        setParseError(asApiError(error, "The selected parse run could not be loaded."));
+        setParseError(asApiError(error, errorCopyRef.current.parseLoadFailed));
       }
       return null;
     } finally {
@@ -670,10 +681,10 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     } catch (error) {
       if (!isAbortError(error) && activeDocumentRef.current?.id === documentId) {
         if (selectedLineageRef.current.selectedChunkRunId === runId) {
-          setChunkError(asApiError(error, "The selected chunk run could not be loaded."));
+          setChunkError(asApiError(error, errorCopyRef.current.chunkLoadFailed));
           setChunkStatus("error");
         } else if (inspectedLineageRef.current.selectedChunkRunId === runId) {
-          setChunkError(asApiError(error, "The selected chunk run could not be loaded."));
+          setChunkError(asApiError(error, errorCopyRef.current.chunkLoadFailed));
         }
       }
       return null;
@@ -701,10 +712,10 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     } catch (error) {
       if (!isAbortError(error) && activeDocumentRef.current?.id === documentId) {
         if (selectedLineageRef.current.selectedEmbeddingRunId === runId) {
-          setEmbeddingError(asApiError(error, "The selected embedding run could not be loaded."));
+          setEmbeddingError(asApiError(error, errorCopyRef.current.embeddingLoadFailed));
           setEmbeddingStatus("error");
         } else if (inspectedLineageRef.current.selectedEmbeddingRunId === runId) {
-          setEmbeddingError(asApiError(error, "The selected embedding run could not be loaded."));
+          setEmbeddingError(asApiError(error, errorCopyRef.current.embeddingLoadFailed));
         }
       }
       return null;
@@ -785,7 +796,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       setParseStatus("completed");
     } catch (error) {
       if (!isCurrentRun() || activeDocumentRef.current?.id !== documentId || isAbortError(error)) return;
-      const apiError = asApiError(error, "The persisted document could not be parsed.");
+      const apiError = asApiError(error, errorCopyRef.current.parseFailed);
       setParseError(apiError);
       if (apiError.code !== "parse_poll_timeout") setParseStatus("failed");
     } finally {
@@ -888,7 +899,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     } catch (error) {
       if (isAbortError(error)) return;
       setCapabilities(null);
-      setPersistenceError(asApiError(error, "Persistent pipeline data could not be loaded."));
+      setPersistenceError(asApiError(error, errorCopyRef.current.workspaceLoadFailed));
       setPersistenceStatus("unavailable");
     }
   }, [applyBootstrap, authUserId, fetchBootstrap, replaceController, retryAuth]);
@@ -954,7 +965,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
           setActiveDocumentId(previousDocumentId);
         }
       }
-      setPersistenceError(asApiError(error, "The selected document could not be loaded."));
+      setPersistenceError(asApiError(error, errorCopyRef.current.documentLoadFailed));
       setPersistenceStatus(documents.length > 0 ? "available" : "unavailable");
     }
   }, [activeDocumentMetadata, activePipelineId, authUserId, buildDocumentSnapshot, commitDocumentSnapshot, documents, loadThenCommitDocument, pipelines, replaceController, resetLineageState, resumeParseRun]);
@@ -1007,7 +1018,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (nextDocument) await selectPersistedDocument(nextDocument.id, nextDocument);
     } catch (error) {
       if (!isAbortError(error)) {
-        setPersistenceError(asApiError(error, "The document could not be deleted."));
+        setPersistenceError(asApiError(error, errorCopyRef.current.documentDeleteFailed));
       }
       throw error;
     } finally {
@@ -1020,7 +1031,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     if (validationError) {
       throw new DocumentApiError(
         validationError === "invalidPdf" ? "invalid_file_type" : "file_too_large",
-        validationError === "invalidPdf" ? "Only PDF files are supported." : "The PDF must be 50 MB or smaller.",
+        validationError === "invalidPdf" ? errorCopyRef.current.invalidPdf : errorCopyRef.current.fileTooLarge,
       );
     }
     const selectionToken = selectionRequestRef.current;
@@ -1052,7 +1063,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       .catch((error: unknown) => {
         if (isAbortError(error)) return;
         setCapabilities(null);
-        setPersistenceError(asApiError(error, "Persistent pipeline data could not be loaded."));
+        setPersistenceError(asApiError(error, errorCopyRef.current.workspaceLoadFailed));
         setPersistenceStatus("unavailable");
       });
     return () => controller.abort();
@@ -1103,7 +1114,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       } : document));
     } catch (error) {
       if (!isCurrentRun() || isAbortError(error)) return;
-      const apiError = asApiError(error, "The persisted document could not be reparsed.");
+      const apiError = asApiError(error, errorCopyRef.current.parseFailed);
       setParseError(apiError);
       if (apiError.code !== "parse_poll_timeout") setParseStatus("failed");
     } finally {
@@ -1113,6 +1124,14 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       }
     }
   }, [applyParseRunStatus, commitCompletedParse, commitDocumentSnapshot, parseStatus, replaceController]);
+
+  const resumeParseTracking = useCallback(async () => {
+    const documentId = activeDocumentRef.current?.id;
+    const parseRunId = activeParseRunIdRef.current;
+    if (!documentId || !parseRunId) return;
+    setParseError(null);
+    await resumeParseRun(documentId, parseRunId, runIdRef.current);
+  }, [resumeParseRun]);
 
   const replacePipelineState = useCallback((pipeline: DocumentPipeline) => {
     pipelineRevisionRef.current.set(pipeline.id, pipeline.revision);
@@ -1210,7 +1229,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
           commitDocumentSnapshot(snapshot, false);
           if (!conflict) {
             if (pipelineMutationIsCurrent(context)) {
-              setPersistenceError(asApiError(error, "Pipeline selection could not be saved."));
+              setPersistenceError(asApiError(error, errorCopyRef.current.pipelineSaveFailed));
             }
             return false;
           }
@@ -1229,7 +1248,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
           return true;
         } catch (reconcileError) {
           if (!isAbortError(reconcileError) && pipelineMutationIsCurrent(context)) {
-            setPersistenceError(asApiError(reconcileError, "Pipeline conflict could not be reconciled."));
+            setPersistenceError(asApiError(reconcileError, errorCopyRef.current.pipelineConflict));
           }
           return false;
         } finally {
@@ -1273,7 +1292,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       commitDocumentSnapshot(snapshot, !pipeline);
     } catch (error) {
       if (!isAbortError(error)) {
-        setPersistenceError(asApiError(error, "Pipeline could not be selected."));
+        setPersistenceError(asApiError(error, errorCopyRef.current.pipelineSelectFailed));
       }
     } finally {
       removeControllerIfCurrent(controllersRef.current, "pipeline-select", controller);
@@ -1293,7 +1312,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         embeddingRunId: null,
       }, controller.signal);
       if (pipeline.documentId !== document.id) {
-        throw new DocumentApiError("incompatible_lineage", "The created pipeline belongs to a different document.");
+        throw new DocumentApiError("incompatible_lineage", errorCopyRef.current.pipelineOtherDocument);
       }
       if (!scope.isCurrent()) return null;
       setPipelines((current) => [...current, pipeline]);
@@ -1306,7 +1325,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       return pipeline;
     } catch (error) {
       if (isAbortError(error) || !scope.isCurrent()) return null;
-      setPersistenceError(asApiError(error, "Pipeline could not be created."));
+      setPersistenceError(asApiError(error, errorCopyRef.current.pipelineCreateFailed));
       return null;
     } finally {
       removeControllerIfCurrent(controllersRef.current, "pipeline-create", controller);
@@ -1363,11 +1382,11 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
           }
         } catch (reconcileError) {
           if (isAbortError(reconcileError) || !documentIsCurrent()) return null;
-          setPersistenceError(asApiError(reconcileError, "Pipeline rename conflict could not be reconciled."));
+          setPersistenceError(asApiError(reconcileError, errorCopyRef.current.pipelineConflict));
           return null;
         }
       }
-      setPersistenceError(asApiError(error, "Pipeline could not be renamed."));
+      setPersistenceError(asApiError(error, errorCopyRef.current.pipelineRenameFailed));
       return null;
     } finally {
       removeControllerIfCurrent(controllersRef.current, `pipeline-rename:${pipelineId}`, controller);
@@ -1395,7 +1414,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       return true;
     } catch (error) {
       if (isAbortError(error) || !documentIsCurrent()) return false;
-      setPersistenceError(asApiError(error, "Pipeline could not be deleted."));
+      setPersistenceError(asApiError(error, errorCopyRef.current.pipelineDeleteFailed));
       return false;
     } finally {
       removeControllerIfCurrent(controllersRef.current, `pipeline-delete:${pipelineId}`, controller);
@@ -1506,7 +1525,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const pipeline = activePipelineRef.current;
     const summary = document?.parseRuns.find((run) => run.id === runId);
     if (!document || !pipeline || pipeline.documentId !== document.id || !completedCompatibleRun(summary)) {
-      return rejectPipelineSelection("The selected parse run cannot be used by this pipeline.");
+      return rejectPipelineSelection(errorCopyRef.current.parseNotUsable);
     }
     const selection = { selectedParseRunId: runId, selectedChunkRunId: null, selectedEmbeddingRunId: null };
     const requestId = ++selectionRequestRef.current;
@@ -1524,7 +1543,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const summary = document?.chunkRuns.find((run) => run.id === runId);
     if (!document || !pipeline || pipeline.documentId !== document.id || !pipeline.parseRunId || !completedCompatibleRun(summary)
       || summary?.upstream.parseRunId !== pipeline.parseRunId) {
-      return rejectPipelineSelection("The selected chunk run is not a child of this pipeline's parse run.");
+      return rejectPipelineSelection(errorCopyRef.current.chunkNotChild);
     }
     const selection = { selectedParseRunId: pipeline.parseRunId, selectedChunkRunId: runId, selectedEmbeddingRunId: null };
     const requestId = ++selectionRequestRef.current;
@@ -1542,7 +1561,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const summary = document?.embeddingRuns.find((run) => run.id === runId);
     if (!document || !pipeline || pipeline.documentId !== document.id || !pipeline.parseRunId || !pipeline.chunkRunId
       || !completedCompatibleRun(summary) || summary?.upstream.chunkRunId !== pipeline.chunkRunId) {
-      return rejectPipelineSelection("The selected embedding run is not a child of this pipeline's chunk run.");
+      return rejectPipelineSelection(errorCopyRef.current.embeddingNotChild);
     }
     const selection = { selectedParseRunId: pipeline.parseRunId, selectedChunkRunId: pipeline.chunkRunId, selectedEmbeddingRunId: runId };
     const requestId = ++selectionRequestRef.current;
@@ -1583,7 +1602,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       return result;
     } catch (error) {
       if (isAbortError(error) || !scope.isCurrent()) return null;
-      setChunkError(asApiError(error, "Chunking could not be completed."));
+      setChunkError(asApiError(error, errorCopyRef.current.chunkingFailed));
       setChunkStatus("error");
       return null;
     } finally {
@@ -1619,7 +1638,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       return result;
     } catch (error) {
       if (isAbortError(error) || !scope.isCurrent()) return null;
-      setEmbeddingError(asApiError(error, "Embeddings could not be created."));
+      setEmbeddingError(asApiError(error, errorCopyRef.current.embeddingFailed));
       setEmbeddingStatus("error");
       return null;
     } finally {
@@ -1669,7 +1688,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       commitExperimentResult(result);
     } catch (error) {
       if (isAbortError(error) || !scope.isCurrent()) return;
-      setExperimentError(asApiError(error, "The experiment could not be completed."));
+      setExperimentError(asApiError(error, errorCopyRef.current.experimentFailed));
       setExperimentStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "experiment", controller);
@@ -1694,7 +1713,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     try {
       const result = await getExperiment(experimentId, controller.signal);
       if (result.documentId !== documentId) {
-        throw new DocumentApiError("incompatible_lineage", "The selected experiment belongs to a different document.");
+        throw new DocumentApiError("incompatible_lineage", errorCopyRef.current.experimentOtherDocument);
       }
       if (!scope.isCurrent()) return;
       cacheArtifact("experiment", experimentId, result);
@@ -1702,7 +1721,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (isRunInFlight(result.status)) setExperimentStatus("ready");
     } catch (error) {
       if (isAbortError(error) || !scope.isCurrent()) return;
-      setExperimentError(asApiError(error, "The experiment could not be loaded."));
+      setExperimentError(asApiError(error, errorCopyRef.current.experimentLoadFailed));
       setExperimentStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "experiment-load", controller);
@@ -1722,14 +1741,14 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     try {
       const dataset = await getEvaluationDataset(datasetId, controller.signal);
       if (dataset.documentId !== documentId) {
-        throw new DocumentApiError("incompatible_lineage", "The selected evaluation dataset belongs to a different document.");
+        throw new DocumentApiError("incompatible_lineage", errorCopyRef.current.datasetOtherDocument);
       }
       if (!scope.isCurrent()) return dataset;
       cacheArtifact("dataset", datasetId, dataset);
       return dataset;
     } catch (error) {
       if (!isAbortError(error) && scope.isCurrent()) {
-        setEvaluationError(asApiError(error, "The selected evaluation dataset could not be loaded."));
+        setEvaluationError(asApiError(error, errorCopyRef.current.datasetLoadFailed));
       }
       return null;
     } finally {
@@ -1757,7 +1776,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     try {
       const result = await getEvaluationRun(runId, controller.signal);
       if (!belongsToDocument(result)) {
-        throw new DocumentApiError("incompatible_lineage", "The selected evaluation run belongs to a different document.");
+        throw new DocumentApiError("incompatible_lineage", errorCopyRef.current.evaluationOtherDocument);
       }
       if (!scope.isCurrent()) return;
       cacheArtifact("evaluation", runId, result);
@@ -1765,7 +1784,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (isRunInFlight(result.status)) setEvaluationStatus("ready");
     } catch (error) {
       if (isAbortError(error) || !scope.isCurrent()) return;
-      setEvaluationError(asApiError(error, "The selected evaluation run could not be loaded."));
+      setEvaluationError(asApiError(error, errorCopyRef.current.evaluationLoadFailed));
       setEvaluationStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "evaluation-load", controller);
@@ -1820,7 +1839,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       commitExperimentResult(result);
     } catch (error) {
       if (isAbortError(error) || !scope.isCurrent()) return;
-      setExperimentError(asApiError(error, "The experiment could not continue."));
+      setExperimentError(asApiError(error, errorCopyRef.current.experimentContinueFailed));
       setExperimentStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "experiment-continue", controller);
@@ -1841,7 +1860,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       commitExperimentResult(result);
     } catch (error) {
       if (isAbortError(error) || !scope.isCurrent()) return;
-      setExperimentError(asApiError(error, "Generation could not be run again."));
+      setExperimentError(asApiError(error, errorCopyRef.current.generationRerunFailed));
       setExperimentStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "experiment-rerun-generation", controller);
@@ -1874,7 +1893,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       setEvaluationStatus(chunkRunId ? "ready" : "locked");
     } catch (error) {
       if (isAbortError(error) || !scope.isCurrent()) return;
-      setEvaluationError(asApiError(error, "The evaluation dataset could not be created."));
+      setEvaluationError(asApiError(error, errorCopyRef.current.datasetCreateFailed));
       setEvaluationStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "evaluation-dataset", controller);
@@ -1906,7 +1925,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       commitEvaluationResult(result);
     } catch (error) {
       if (isAbortError(error) || !scope.isCurrent()) return;
-      setEvaluationError(asApiError(error, "Evaluation could not be completed."));
+      setEvaluationError(asApiError(error, errorCopyRef.current.evaluationFailed));
       setEvaluationStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "evaluation", controller);
@@ -1942,7 +1961,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       commitEvaluationResult(detail);
     } catch (error) {
       if (isAbortError(error) || !scope.isCurrent()) return;
-      setEvaluationError(asApiError(error, "Evaluation history could not be loaded."));
+      setEvaluationError(asApiError(error, errorCopyRef.current.evaluationHistoryFailed));
       setEvaluationStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, "evaluation-history", controller);
@@ -1990,7 +2009,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       }
     } catch (error) {
       if (!isCurrent()) return;
-      setError(asApiError(error, "Run tracking could not be completed."));
+      setError(asApiError(error, errorCopyRef.current.trackingFailed));
       setStatus("error");
     } finally {
       removeControllerIfCurrent(controllersRef.current, kind, controller);
@@ -2014,10 +2033,11 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const effectivePersistenceStatus: PersistenceStatus = authBlocked ? "unavailable" : persistenceStatus;
   const effectivePersistenceError = useMemo(() => {
     if (!authBlocked) return persistenceError;
+    const errors = UI_COPY[preferences.locale].errors;
     return authError
-      ? new DocumentApiError("auth_unavailable", "Your session could not be verified. Retry or sign in again.")
-      : new DocumentApiError("auth_required", "Sign in to load your documents.");
-  }, [authBlocked, authError, persistenceError]);
+      ? new DocumentApiError("auth_unavailable", errors.authUnavailable)
+      : new DocumentApiError("auth_required", errors.authRequired);
+  }, [authBlocked, authError, persistenceError, preferences.locale]);
   const workspaceStatus: WorkspaceStatus = effectivePersistenceStatus === "unavailable"
     ? "unavailable"
     : !authReady || effectivePersistenceStatus === "checking" || (activeDocumentId !== null && activeDocument?.id !== activeDocumentId)
@@ -2043,7 +2063,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     pipelineSelectionMode: activePipeline ? "saved" : "scratch",
     reparseImpact,
     addDocument, selectPersistedDocument, deletePersistedDocument, selectParseRun, selectChunkRun, selectEmbeddingRun, inspectParseRun, inspectChunkRun, inspectEmbeddingRun,
-    setPipelineParseRun, setPipelineChunkRun, setPipelineEmbeddingRun, reparseActiveDocument, runChunking, runEmbedding,
+    setPipelineParseRun, setPipelineChunkRun, setPipelineEmbeddingRun, reparseActiveDocument, resumeParseTracking, runChunking, runEmbedding,
     runExperiment, loadExperiment, loadEvaluationDataset, loadEvaluationRun, resumeRunTracking, continueExperiment: continueCurrentExperiment, rerunGeneration: rerunCurrentGeneration,
     createDataset, runEvaluation, refreshPersistence, refreshEvaluationRuns,
     selectPipeline, createPipeline, renamePipeline, deletePipeline,
@@ -2053,7 +2073,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     evaluationRun, evaluationStatus, experimentError, experimentHistory, experimentRun, experimentStatus,
     inspectedLineage, lastReportedParseProgress, parseError, parsePhase, parseProgress, parseResult, parseStatus, effectivePersistenceError, effectivePersistenceStatus,
     pipelines, reparseImpact, selectedChunkRun, selectedChunkRunId, selectedEmbeddingRun, selectedEmbeddingRunId, selectedParseResult, selectedParseRunId, uploadNotice, workspaceStatus,
-    addDocument, deletePersistedDocument, reparseActiveDocument,
+    addDocument, deletePersistedDocument, reparseActiveDocument, resumeParseTracking,
     continueCurrentExperiment, inspectChunkRun, inspectEmbeddingRun, inspectParseRun, loadEvaluationDataset, loadEvaluationRun, loadExperiment, refreshEvaluationRuns, refreshPersistence, rerunCurrentGeneration,
     runChunking, runEmbedding, runEvaluation, runExperiment, resumeRunTracking,
     createPipeline, deletePipeline, renamePipeline, selectChunkRun, selectEmbeddingRun, selectParseRun, selectPersistedDocument, selectPipeline,
