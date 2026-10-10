@@ -154,6 +154,37 @@ def test_unfenced_or_stale_artifact_writes_are_rejected(pg, admin_engine):
     assert pg.get_chunk_row(claim["id"])["status"] == "running"
 
 
+def test_retried_completion_after_lost_ack_returns_the_durable_artifact(pg):
+    from app.chunking import chunk_structured
+
+    document = new_document(pg)
+    parse = completed_parse(pg, document["id"])
+    (claim, claimed), config = claim_chunk(pg, document["id"], parse["id"])
+    assert claimed
+    drafts = chunk_structured(pg.get_parse_row(parse["id"])["structured"], "fixed_token", config)
+    first = pg.complete_chunk_run(claim["id"], drafts, claim["lease_token"])
+    assert first["status"] == "completed" and first["lease_token"] is None
+    # The ack was lost: the retry with the original token is a read of the same
+    # artifact, and writes nothing (no duplicated chunks).
+    retried = pg.complete_chunk_run(claim["id"], drafts, claim["lease_token"])
+    assert retried is not None and retried["status"] == "completed"
+    assert [chunk["id"] for chunk in retried["chunks"]] == [chunk["id"] for chunk in first["chunks"]]
+    # A token-less call still never reads as success.
+    assert pg.complete_chunk_run(claim["id"], drafts) is None
+
+    embedding_claim, claimed = pg.claim_embedding_run(document["id"], first["id"], "gemini-embedding-2", 768, "format-v1")
+    assert claimed
+    values = [(chunk["id"], [1.0] + [0.0] * 767) for chunk in pg.get_chunks_for_embedding(first["id"])]
+    done = pg.complete_embedding_run(embedding_claim["id"], values, None, "m", embedding_claim["lease_token"])
+    again = pg.complete_embedding_run(embedding_claim["id"], values, None, "m", embedding_claim["lease_token"])
+    assert done["status"] == again["status"] == "completed"
+    assert again["embedding_count"] == len(values)
+
+    # A failed artifact is never returned as a successful completion.
+    pg.fail_embedding_run(embedding_claim["id"], "artifact_incomplete", "broken", unfenced=True)
+    assert pg.complete_embedding_run(embedding_claim["id"], values, None, "m", embedding_claim["lease_token"]) is None
+
+
 def test_document_delete_cascades_through_composite_lineage(pg, admin_engine):
     document = new_document(pg)
     parse = completed_parse(pg, document["id"])
