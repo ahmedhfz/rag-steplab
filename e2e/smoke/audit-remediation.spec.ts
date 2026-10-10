@@ -29,9 +29,9 @@ test("@critical desktop saved Playground draft and clipboard feedback", async ({
   await selectSeededDocument(page);
   const question = page.getByTestId("playground-question");
   await expect(question).not.toHaveValue("");
-  await expect(page.getByText("Unsaved changes", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("playground-run-state")).toHaveCount(0);
   await question.fill("My edited question");
-  await expect(page.getByText("Unsaved changes", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("playground-run-state")).toContainText("Settings changed");
   await page.getByTestId("playground-history").locator("summary").click();
   await page.getByRole("button", { name: /^Load Experiment/ }).first().click();
   await expect(question).not.toHaveValue("My edited question");

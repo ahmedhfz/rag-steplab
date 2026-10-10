@@ -55,15 +55,19 @@ test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğ
   await page.getByRole("button", { name: "Run experiment" }).click();
   await expect(page.getByRole("heading", { name: "Answer" })).toBeVisible({ timeout: 3 * 60_000 });
   await expect(page.getByTestId("playground-answer")).toBeVisible({ timeout: 3 * 60_000 });
-  await expect(page.getByText("C1", { exact: true }).first()).toBeVisible();
-  await page.getByRole("button", { name: "C1", exact: true }).click();
+  const citationChip = page.getByRole("button", { name: "Inspect source: C1" }).first();
+  await expect(citationChip).toBeVisible();
+  await citationChip.click();
   await expect(page.getByRole("dialog", { name: "Source inspector" })).toContainText("ORBIT-731");
   await page.getByRole("button", { name: "Close" }).click();
 
   await page.goto("/evaluation");
   await page.getByLabel("Dataset name").fill(`e2e-${runId}-golden-dataset`);
   await page.getByLabel("Golden question").fill("What is the laboratory beacon code?");
-  await page.getByLabel("Select from parsed source elements").getByRole("button", { name: /ORBIT-731/ }).click();
+  const picker = page.getByTestId("source-picker-relevant-elements");
+  await picker.getByRole("button", { name: /Choose sources/ }).click();
+  await picker.getByRole("searchbox", { name: "Search sources" }).fill("ORBIT-731");
+  await picker.getByRole("list", { name: "Parsed source elements" }).getByRole("button", { name: /ORBIT-731/ }).first().click();
   await page.getByLabel("Reference answer").fill("ORBIT-731");
   await page.getByRole("button", { name: "Create dataset" }).click();
   await page.getByRole("tab", { name: "Results" }).click();

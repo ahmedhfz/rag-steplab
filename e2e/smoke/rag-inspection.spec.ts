@@ -56,8 +56,13 @@ test("@critical Playground stage rail, provenance ve Source Inspector contractı
   await page.setViewportSize({ width: 1441, height: 1041 });
 
   await page.getByRole("button", { name: /Answer/ }).click();
-  await expect(page.getByText("Reference found", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "S1" }).click();
+  // One paragraph with an inline citation chip; the citation row carries the chunk title, page and validity icon.
+  await expect(page.getByTestId("playground-answer")).toContainText("ORBIT-731.[C1]");
+  const citations = page.getByTestId("playground-citations");
+  await expect(citations).toContainText("A citation confirms the source is in the context, not that it supports the claim.");
+  await expect(citations).toContainText("RAG StepLab Golden Fixture");
+  await expect(citations.getByTitle("Citation valid")).toBeVisible();
+  await page.getByRole("button", { name: "Inspect source: C1" }).first().click();
   await expect(page.getByRole("dialog", { name: "Source inspector" })).toContainText("laboratory beacon code is ORBIT-731");
   await expect(page.getByTestId("playground-screen")).not.toContainText("persisted backend");
 
@@ -77,13 +82,20 @@ test("Evaluation source picker, aggregate metrics, case diagnostics ve reload pe
   await expect(workspaceContext).not.toContainText("Seeded indexing pipeline");
   await expect(workspaceContext).toContainText("e2e-seeded-golden-dataset");
   await expect(page.getByTestId("evaluation-config-summary")).toContainText("Hybrid");
-  await expect(page.getByLabel("Select from parsed source elements")).toBeVisible();
+  // With a dataset the next step is running it, so Results opens by default.
+  await expect(page.getByRole("tab", { name: "Results" })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: "Dataset" }).click();
+  await expect(page.getByTestId("source-picker-relevant-elements").getByRole("button", { name: /Choose sources/ })).toBeVisible();
   await expect(page.getByText("element-fact", { exact: true })).toHaveCount(0);
   await page.getByRole("tab", { name: "Results" }).click();
   await expect(page.getByTestId("evaluation-config-summary")).toContainText("Hybrid");
   await expect(page.getByTestId("evaluation-retrieval-metrics")).toBeVisible();
   await expect(page.getByTestId("evaluation-answer-metrics")).toBeVisible();
   await expect(page.getByTestId("evaluation-answer-metrics")).toContainText("Abstention accuracy");
+  // Judge off: the lexical diagnostic replaces faithfulness; the threshold is visible.
+  await expect(page.getByTestId("evaluation-answer-metrics")).toContainText("Source word overlap (diagnostic)");
+  await expect(page.getByTestId("evaluation-answer-metrics")).not.toContainText("Faithfulness");
+  await expect(page.getByTestId("evaluation-case-threshold")).toContainText("Diagnostic threshold");
   await expect(page.getByText("Hit@K", { exact: true }).first()).toBeVisible();
   await expect(page.getByText(/What is the laboratory beacon code\?/).first()).toBeVisible();
   await expect(page.getByText(/What is the launch code\?/).first()).toBeVisible();
@@ -102,13 +114,20 @@ test("Evaluation dataset normal cevap ve yetersiz bağlam case'lerini ayrı kont
 
   await page.goto("/evaluation");
   await selectSeededDocument(page);
+  await page.getByRole("tab", { name: "Dataset" }).click();
+  // A pristine form is not an error.
+  await expect(page.getByText("Enter a dataset name.", { exact: true })).toHaveCount(0);
   await page.getByLabel("Dataset name").fill("Mixed outcome dataset");
   await page.getByLabel("Golden question").fill("What is the laboratory beacon code?");
-  const sourceButton = page.getByTestId("source-picker-relevant-elements").getByRole("button", { name: /Golden fact: The laboratory/ });
+  const picker = page.getByTestId("source-picker-relevant-elements");
+  await picker.getByRole("button", { name: /Choose sources/ }).click();
+  await picker.getByRole("searchbox", { name: "Search sources" }).fill("beacon");
+  const sourceButton = picker.getByRole("list", { name: "Parsed source elements" }).getByRole("button", { name: /Golden fact: The laboratory/ });
   await expect(sourceButton).toContainText("Golden fact: The laboratory beacon code is ORBIT-731.");
   await expect(sourceButton).toHaveCSS("font-size", "12px");
   await sourceButton.click();
-  await page.getByRole("button", { name: "Add case" }).click();
+  await expect(picker.getByRole("list", { name: "Source evidence" })).toContainText("Golden fact");
+  await page.getByRole("button", { name: "Add question" }).click();
   await page.getByLabel("Golden question").nth(1).fill("What is the launch code?");
   await page.getByRole("combobox", { name: "Expected result" }).nth(1).click();
   await page.getByRole("option", { name: "Insufficient context" }).click();
@@ -124,6 +143,8 @@ test("Evaluation dataset normal cevap ve yetersiz bağlam case'lerini ayrı kont
   expect(payload.cases).toHaveLength(2);
   expect(payload.cases[0]).toMatchObject({ expectedOutcome: "answer", relevantElementIds: ["element-fact"] });
   expect(payload.cases[1]).toMatchObject({ expectedOutcome: "insufficient_context", relevantElementIds: [] });
+  // The created dataset is the next thing to run.
+  await expect(page.getByRole("tab", { name: "Results" })).toHaveAttribute("aria-selected", "true");
 
   quality.assertClean();
 });
@@ -136,8 +157,9 @@ test("Evaluation compare gerçek run bağlamını ve değişen ayarları göster
   await selectSeededDocument(page);
   await page.getByRole("tab", { name: "Compare" }).click();
 
+  // Fewer than two selected runs: the history starts open.
   const history = page.getByTestId("evaluation-history");
-  await history.locator("summary").click();
+  await expect(history).toHaveAttribute("open", "");
   const checks = history.getByRole("checkbox");
   await expect(checks).toHaveCount(2);
   await checks.nth(0).check();
@@ -148,10 +170,12 @@ test("Evaluation compare gerçek run bağlamını ve değişen ayarları göster
   await expect(compatibility).toContainText("Context compatibility");
   await expect(compatibility).toContainText("Only changed");
   await expect(compatibility).toContainText("Changed settings");
-  await expect(compatibility).toContainText("Retrieval mode");
-  await expect(compatibility).toContainText("Same");
-  await expect(compatibility).toContainText("RUN A: Dense");
-  await expect(compatibility).toContainText("RUN B: Hybrid");
+  await expect(compatibility).toContainText("Settings differ");
+  await expect(compatibility.getByRole("table", { name: "Changed settings" })).toContainText("Retrieval modeDenseHybrid");
+  await expect(compatibility).not.toContainText("RUN A:");
+  // Judge on (A) vs off (B): answer-metric deltas are withheld, with the reason.
+  await expect(page.getByTestId("evaluation-method-mismatch")).toContainText("A: Judge model, B: Word overlap");
+  await expect(page.getByRole("table", { name: "Metric comparison" }).getByRole("row", { name: /^Faithfulness/ })).toContainText("Not comparable");
 
   quality.assertClean();
 });
@@ -184,7 +208,8 @@ test("Embedding yokken Keyword çalışabilir, Dense ve Hybrid remediation göst
 
   const blocker = page.getByTestId("playground-blocker");
   await expect(blocker).toContainText("Dense and hybrid retrieval require embeddings");
-  await expect(blocker.getByRole("link", { name: "Go to Embeddings" })).toBeVisible();
+  await expect(blocker.getByRole("link", { name: /compatible embeddings/ })).toHaveAttribute("href", "/embeddings");
+  await expect(blocker).not.toContainText("Action blocked");
   await expect(page.getByRole("button", { name: "Run experiment" })).toBeDisabled();
 
   await page.getByRole("button", { name: "Keyword", exact: true }).click();
@@ -203,12 +228,13 @@ test("Geçmiş experiment yüklemek aktif indexing pipeline'ı değiştirmez", a
   await expect(pipelineSelector).toContainText("Seeded indexing pipeline");
   const history = page.getByTestId("playground-history");
   await history.locator("summary").click();
-  await history.getByRole("button", { name: "Load Experiment 1" }).click();
+  await history.getByRole("button", { name: "Load Experiment #1" }).click();
   await expect(page.getByTestId("experiment-stage-trace").getByRole("button", { name: /^Answer/ })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("playground-stage-content")).toContainText("Answer");
-  await expect(page.getByTestId("playground-run-state")).toContainText("Viewing");
-  await expect(page.getByTestId("playground-run-state")).toContainText("Exact experiment loaded");
-  await expect(page.getByTestId("playground-run-state")).not.toContainText("Unsaved changes");
+  await expect(page.getByTestId("playground-result-meta")).toContainText("Experiment #1");
+  await expect(page.getByTestId("playground-result-meta")).toContainText("Reused");
+  // Draft and loaded run match: no band at all.
+  await expect(page.getByTestId("playground-run-state")).toHaveCount(0);
   await expect(pipelineSelector).toContainText("Seeded indexing pipeline");
 
   quality.assertClean();
