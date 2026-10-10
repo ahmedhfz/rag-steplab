@@ -306,7 +306,7 @@ export function ParseScreen() {
   }
 
   return (
-    <div className="min-w-0 overflow-x-clip bg-background" data-testid="parse-screen">
+    <div className="min-w-0 bg-background" data-testid="parse-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <PageHeader data-testid="parse-page-header" description={labels.description} title={copy.nav.parse} />
 

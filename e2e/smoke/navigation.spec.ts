@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installBrowserQualityGuards } from "../support/browser-quality";
+import { expectNoHorizontalOverflow } from "../support/overflow";
 import { installSeededApi } from "../support/seeded-api";
 import { selectSeededDocument } from "../support/seeded-workspace";
 
@@ -55,6 +56,7 @@ test("seeded state reload sonrası korunur ve responsive gezinme çalışır", a
   await mobileDocument.locator("summary").click();
   await expect(mobileDocument.getByRole("link", { name: "Open parsed content" })).toBeVisible();
   await mobileDocument.locator("summary").click();
+  await expectNoHorizontalOverflow(page, "documents at 390px");
   await page.screenshot({ path: "output/playwright/responsive-shell/documents-390.png", fullPage: true });
 
   await page.goto("/settings");
@@ -74,6 +76,8 @@ test("seeded state reload sonrası korunur ve responsive gezinme çalışır", a
     expect(layoutWidth).toBeLessThanOrEqual(width);
     await expect(page.locator("html")).toHaveJSProperty("scrollWidth", layoutWidth);
     await expect(page.locator("body")).toHaveJSProperty("scrollWidth", layoutWidth);
+    // Screen roots no longer clip: nothing may spill out of, or be cut off inside, its box.
+    await expectNoHorizontalOverflow(page, `settings at ${width}px`);
 
     const openNavigation = page.getByRole("button", { name: "Open navigation" });
     await openNavigation.click();

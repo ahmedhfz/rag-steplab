@@ -369,7 +369,7 @@ export function OverviewScreen() {
   }
 
   return (
-    <div className="min-w-0 overflow-x-clip bg-background" data-testid="figma-overview-root">
+    <div className="min-w-0 bg-background" data-testid="figma-overview-root">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4" data-testid="figma-overview-main">
         <PageHeader
           data-testid="figma-overview-header"

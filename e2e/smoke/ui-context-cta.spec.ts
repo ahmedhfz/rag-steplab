@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { installBrowserQualityGuards } from "../support/browser-quality";
+import { expectNoHorizontalOverflow } from "../support/overflow";
 import { installSeededApi, seededStressNames } from "../support/seeded-api";
 import { selectSeededDocument } from "../support/seeded-workspace";
 
@@ -22,14 +23,9 @@ const journeyViewports = [
   { width: 1920, height: 900 },
 ] as const;
 
+/** Document scroll and element-level spill/clip (screen roots no longer clip overflow away). */
 async function assertNoHorizontalOverflow(page: Page) {
-  const dimensions = await page.evaluate(() => ({
-    body: document.body.scrollWidth,
-    html: document.documentElement.scrollWidth,
-    viewport: window.innerWidth,
-  }));
-  expect(dimensions.body, "body horizontal overflow").toBeLessThanOrEqual(dimensions.viewport);
-  expect(dimensions.html, "html horizontal overflow").toBeLessThanOrEqual(dimensions.viewport);
+  await expectNoHorizontalOverflow(page, `${new URL(page.url()).pathname} at ${page.viewportSize()?.width}px`);
 }
 
 async function assertSingleLineTrigger(trigger: Locator) {

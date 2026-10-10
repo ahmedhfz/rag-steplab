@@ -686,7 +686,7 @@ export function RetrievalScreen() {
   }
 
   return (
-    <div className="min-w-0 overflow-x-clip bg-background" data-testid="playground-screen">
+    <div className="min-w-0 bg-background" data-testid="playground-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <PageHeader
           data-testid="playground-page-header"

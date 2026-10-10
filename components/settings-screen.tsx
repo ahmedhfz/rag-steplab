@@ -39,7 +39,7 @@ export function SettingsScreen() {
   ] as const;
 
   return (
-    <div className="min-w-0 overflow-x-clip bg-background" data-testid="settings-screen">
+    <div className="min-w-0 bg-background" data-testid="settings-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <PageHeader data-testid="settings-page-header" title={copy.settings.title} />
         <p aria-live="polite" className="sr-only" role="status">

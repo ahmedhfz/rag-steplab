@@ -579,7 +579,7 @@ function EvaluationWorkspace() {
 
   const panelClass = "mt-6";
   return (
-    <div className="min-w-0 overflow-x-clip bg-background" data-testid="evaluation-screen">
+    <div className="min-w-0 bg-background" data-testid="evaluation-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <PageHeader data-testid="evaluation-page-header" description={copy.description} title={copy.title} />
 
@@ -798,7 +798,7 @@ function EvaluationWorkspace() {
 
                   <Disclosure className="mt-6" contentClassName="grid gap-4 p-4 text-xs sm:grid-cols-2" data-testid="evaluation-run-details" title={copy.details}>
                     <div><p className="text-muted-foreground">{copy.configuration}</p><p className="mt-1 text-sm text-foreground">{configSummary(evaluationConfig(evaluationRun))}</p></div>
-                    <div><p className="text-muted-foreground">{copy.provenance}</p><p className="mt-1 text-sm text-foreground">{activeDocument?.fileName ?? "—"} · {activePipeline?.name ?? "—"}</p></div>
+                    <div className="min-w-0"><p className="text-muted-foreground">{copy.provenance}</p><p className="mt-1 text-sm text-foreground [overflow-wrap:anywhere]">{activeDocument?.fileName ?? "—"} · {activePipeline?.name ?? "—"}</p></div>
                     <div><p className="text-muted-foreground">{copy.output}</p><p className="mt-1 text-sm text-foreground tabular-nums">{formatCount(locale, caseCount, units.question)} · {copy.judge}: {results.judgeModel ?? (judgeUsed ? capabilities?.judgeModel : null) ?? "—"} · {copy.metricMethod}: {methodLabel(generationMetrics?.method)}</p></div>
                     <TechnicalDetails title={copy.identifiers}><p className="break-all font-mono text-xs text-muted-foreground">Run: {evaluationRun.id}</p><p className="mt-1 break-all font-mono text-xs text-muted-foreground">Dataset: {evaluationRun.datasetId}</p>{generationMetrics?.metricVersion ? <p className="mt-1 break-all font-mono text-xs text-muted-foreground">Metric: {generationMetrics.metricVersion}</p> : null}</TechnicalDetails>
                   </Disclosure>
