@@ -121,7 +121,8 @@ export function LoginScreen() {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: `${window.location.origin}/auth/confirm` },
+          // The validated deep link survives email confirmation; /auth/confirm re-validates it.
+          options: { emailRedirectTo: `${window.location.origin}/auth/confirm${nextPath === "/" ? "" : `?${new URLSearchParams({ next: nextPath }).toString()}`}` },
         });
         if (error) throw error;
         if (data.session) {
