@@ -65,7 +65,11 @@ const visualContracts: Record<VisualGroup, { maxMae: number; maxChangedPixelPerc
   auth: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
 };
 
-type RectExpectation = { x?: number; y?: number; width?: number; height?: number };
+/**
+ * `fluid` widths were measured without a scrollbar; at >=768px `scrollbar-gutter: stable`
+ * reserves the gutter, so the column (and `fluid` share of it) shrinks by that amount.
+ */
+type RectExpectation = { x?: number; y?: number; width?: number; height?: number; fluid?: number };
 
 async function rect(locator: Locator) {
   return locator.evaluate((element) => {
@@ -76,10 +80,13 @@ async function rect(locator: Locator) {
 
 async function assertRect(locator: Locator, expected: RectExpectation, label: string) {
   const actual = await rect(locator);
+  const gutter = expected.fluid ? viewport.width - await contentWidth(locator.page()) : 0;
   for (const property of ["x", "y", "width", "height"] as const) {
-    const expectedValue = expected[property];
+    let expectedValue = expected[property];
     if (expectedValue === undefined) continue;
-    expect(Math.abs(actual[property] - expectedValue), `${label}.${property}`).toBeLessThanOrEqual(1);
+    if (property === "width" && expected.fluid) expectedValue -= gutter * expected.fluid;
+    // Soft: one run reports every geometry drift and still writes references in update mode.
+    expect.soft(Math.abs(actual[property] - expectedValue), `${label}.${property}`).toBeLessThanOrEqual(1);
   }
 }
 
@@ -121,16 +128,16 @@ async function assertOverviewGeometry(page: Page, theme: "light" | "dark") {
   await assertRect(page.getByTestId("figma-overview-main"), { x: 248, y: 0, width: (await contentWidth(page)) - 248 }, "overview-main");
   // PageHeader has no fixed height; only the column and the stacking order are contracts.
   const header = page.getByTestId("figma-overview-header");
-  await assertRect(header, { x: 288, y: 40, width: 1113 }, "overview-header");
+  await assertRect(header, { x: 288, y: 40, width: 1113, fluid: 1 }, "overview-header");
   const workspace = page.getByTestId("workspace-control-plane");
-  await assertRect(workspace, { x: 288, width: 1113 }, "overview-control-plane");
+  await assertRect(workspace, { x: 288, width: 1113, fluid: 1 }, "overview-control-plane");
   await assertBelow(header, workspace, "overview-control-plane below header");
   await expect(page.getByTestId("continue-surface")).toBeVisible();
   await expect(page.getByTestId("overview-lineage")).toHaveCount(0);
   const pipeline = page.getByTestId("figma-overview-pipeline");
-  await assertRect(pipeline, { x: 288, width: 1113 }, "overview-pipeline");
+  await assertRect(pipeline, { x: 288, width: 1113, fluid: 1 }, "overview-pipeline");
   await assertBelow(workspace, pipeline, "overview-pipeline below control plane");
-  await assertRect(page.getByTestId("overview-journey"), { x: 309, width: 1071, height: 216 }, "overview-journey");
+  await assertRect(page.getByTestId("overview-journey"), { x: 309, width: 1071, fluid: 1, height: 216 }, "overview-journey");
   const journey = await rect(page.getByTestId("overview-journey"));
   const canvas = page.getByTestId("overview-journey-connectors");
   await expect(canvas).toHaveAttribute("viewBox", "0 0 1054.1 200");
@@ -208,9 +215,9 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
   }
   if (stateKey === "overview-first-use") {
     await assertRect(page.getByTestId("figma-overview-main"), { x: 248, y: 0, width: (await contentWidth(page)) - 248 }, "overview-main");
-    await assertRect(page.getByTestId("figma-overview-header"), { x: 288, y: 40, width: 1113 }, "overview-header");
+    await assertRect(page.getByTestId("figma-overview-header"), { x: 288, y: 40, width: 1113, fluid: 1 }, "overview-header");
     const firstUse = page.getByTestId("overview-first-use");
-    await assertRect(firstUse, { x: 288, width: 1113 }, "overview-first-use");
+    await assertRect(firstUse, { x: 288, width: 1113, fluid: 1 }, "overview-first-use");
     await expect(page.getByTestId("workspace-control-plane")).toHaveCount(0);
     await expect(firstUse.getByRole("button", { name: "Try a sample PDF" })).toBeVisible();
     await expect(firstUse.getByRole("link", { name: "Add your own PDF" })).toBeVisible();
@@ -234,35 +241,35 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
   await assertRect(page.getByTestId(rootTestId), { x: 248, width: (await contentWidth(page)) - 248 }, `${state.key}-root`);
 
   if (state.group === "documents") {
-    await assertRect(page.getByTestId("documents-page-header"), { x: 288, y: 40, width: 1113 }, "documents-header");
+    await assertRect(page.getByTestId("documents-page-header"), { x: 288, y: 40, width: 1113, fluid: 1 }, "documents-header");
   } else if (state.group === "parsing") {
     const header = page.getByTestId("parse-page-header");
     const controls = page.getByTestId("parse-workspace-controls");
-    await assertRect(header, { x: 288, y: 40, width: 1113 }, "parse-header");
-    await assertRect(controls, { x: 288, width: 1113 }, "parse-workspace-controls");
+    await assertRect(header, { x: 288, y: 40, width: 1113, fluid: 1 }, "parse-header");
+    await assertRect(controls, { x: 288, width: 1113, fluid: 1 }, "parse-workspace-controls");
     await assertBelow(header, controls, "parse controls below header");
     const controlsRect = await rect(controls);
     const statusRect = await rect(page.getByTestId("parse-document-status"));
     expect(statusRect.x, "parse-status starts after the context").toBeGreaterThan(controlsRect.x);
     expect(statusRect.x + statusRect.width, "parse-status stays in the column").toBeLessThanOrEqual(controlsRect.x + controlsRect.width + 1);
     expect(Math.abs(statusRect.y - controlsRect.y), "parse-status shares the controls row").toBeLessThanOrEqual(1);
-    await assertRect(page.getByTestId("parse-result-summary"), { x: 288, width: 1113 }, "parse-result");
+    await assertRect(page.getByTestId("parse-result-summary"), { x: 288, width: 1113, fluid: 1 }, "parse-result");
     await assertBelow(controls, page.getByTestId("parse-result-summary"), "parse result below controls");
   } else if (state.group === "chunking") {
     const header = page.getByTestId("chunking-page-header");
-    await assertRect(header, { x: 288, y: 40, width: 1113 }, "chunking-header");
-    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 289, width: 556, height: 53 }, "chunking-context");
+    await assertRect(header, { x: 288, y: 40, width: 1113, fluid: 1 }, "chunking-header");
+    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 289, width: 556, fluid: 0.5, height: 53 }, "chunking-context");
     await assertBelow(header, page.getByTestId("pipeline-context-bar"), "chunking context below header");
-    await assertRect(page.getByTestId("chunking-workspace"), { x: 288, width: 1113 }, "chunking-workspace");
+    await assertRect(page.getByTestId("chunking-workspace"), { x: 288, width: 1113, fluid: 1 }, "chunking-workspace");
     await assertBelow(page.getByTestId("pipeline-context-bar"), page.getByTestId("chunking-workspace"), "chunking workspace below context");
   } else if (state.group === "embeddings") {
     const header = page.getByTestId("embeddings-page-header");
-    await assertRect(header, { x: 288, y: 40, width: 1113 }, "embeddings-header");
-    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 289, width: 556, height: 53 }, "embeddings-context");
+    await assertRect(header, { x: 288, y: 40, width: 1113, fluid: 1 }, "embeddings-header");
+    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 289, width: 556, fluid: 0.5, height: 53 }, "embeddings-context");
     await assertBelow(header, page.getByTestId("pipeline-context-bar"), "embeddings context below header");
     await expect(page.getByTestId("embedding-input")).toHaveCount(0);
     const embeddingWorkspace = page.getByTestId("embeddings-workspace");
-    await assertRect(embeddingWorkspace, { x: 288, width: 1113 }, "embeddings-workspace");
+    await assertRect(embeddingWorkspace, { x: 288, width: 1113, fluid: 1 }, "embeddings-workspace");
     await assertBelow(page.getByTestId("pipeline-context-bar"), embeddingWorkspace, "embeddings workspace below context");
     expect((await rect(embeddingWorkspace)).height, `${state.key}-workspace-height`).toBeGreaterThan(stateKey === "embeddings-ready" ? 60 : 150);
     await expect(page.getByTestId("embedding-lineage")).toBeVisible();
@@ -272,8 +279,8 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     expect(outputRect.x - inputRect.x - inputRect.width).toBeLessThan(80);
   } else if (state.group === "playground") {
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: (await contentWidth(page)) - 248, height: 53 }, "playground-context-bar");
-    await assertRect(page.getByTestId("playground-page-header"), { x: 288, y: 93, width: 1113 }, "playground-header");
-    await assertRect(page.getByTestId("playground-input"), { x: 288, width: 1113 }, "playground-input");
+    await assertRect(page.getByTestId("playground-page-header"), { x: 288, y: 93, width: 1113, fluid: 1 }, "playground-header");
+    await assertRect(page.getByTestId("playground-input"), { x: 288, width: 1113, fluid: 1 }, "playground-input");
     await assertBelow(page.getByTestId("playground-page-header"), page.getByTestId("playground-input"), "playground input below header");
     const primaryControls = [
       page.getByTestId("playground-mode-control"),
@@ -289,17 +296,17 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     const expectedThumbOffset = await rerankerSwitch.getAttribute("data-state") === "checked" ? 18 : 2;
     expect(Math.abs(thumbRect.x - switchRect.x - expectedThumbOffset), `${state.key}-reranker-thumb-offset`).toBeLessThanOrEqual(1);
     if (stateKey !== "playground-empty") {
-      await assertRect(page.getByTestId("playground-stage-layout"), { x: 288, width: 1113 }, "playground-stage-layout");
+      await assertRect(page.getByTestId("playground-stage-layout"), { x: 288, width: 1113, fluid: 1 }, "playground-stage-layout");
       await assertRect(page.getByTestId("playground-stage-rail"), { width: 260 }, "playground-stage-rail");
-      await assertRect(page.getByTestId("playground-stage-content"), { x: 568, width: 833 }, "playground-stage-content");
+      await assertRect(page.getByTestId("playground-stage-content"), { x: 568, width: 833, fluid: 1 }, "playground-stage-content");
     }
   } else if (state.group === "evaluation") {
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: (await contentWidth(page)) - 248, height: 53 }, "evaluation-context-bar");
-    await assertRect(page.getByTestId("evaluation-page-header"), { x: 288, y: 93, width: 1113 }, "evaluation-header");
-    await assertRect(page.getByTestId("evaluation-workspace-context"), { x: 288, width: 1113 }, "evaluation-workspace-context");
+    await assertRect(page.getByTestId("evaluation-page-header"), { x: 288, y: 93, width: 1113, fluid: 1 }, "evaluation-header");
+    await assertRect(page.getByTestId("evaluation-workspace-context"), { x: 288, width: 1113, fluid: 1 }, "evaluation-workspace-context");
     await assertBelow(page.getByTestId("evaluation-page-header"), page.getByTestId("evaluation-workspace-context"), "evaluation context below header");
     const panel = page.getByTestId(`evaluation-panel-${stateKey.replace("evaluation-", "")}`);
-    await assertRect(panel, { x: 288, width: 1113 }, `${state.key}-panel`);
+    await assertRect(panel, { x: 288, width: 1113, fluid: 1 }, `${state.key}-panel`);
     if (stateKey === "evaluation-compare") {
       const cards = page.getByTestId("evaluation-compare-content").locator("article");
       await expect(cards).toHaveCount(2);
@@ -309,7 +316,7 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
       expect(second.x - first.x).toBeGreaterThan(first.width);
     }
   } else {
-    await assertRect(page.getByTestId("settings-page-header"), { x: 288, y: 40, width: 1113 }, "settings-header");
+    await assertRect(page.getByTestId("settings-page-header"), { x: 288, y: 40, width: 1113, fluid: 1 }, "settings-header");
     await assertRect(page.getByTestId("settings-card"), { x: 288, width: 720 }, "settings-card");
   }
 }
