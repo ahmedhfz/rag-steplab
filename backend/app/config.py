@@ -56,6 +56,9 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+DEFAULT_GEMINI_TEXT_MODEL = "gemini-3.5-flash-lite"
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str = "development"
@@ -71,9 +74,11 @@ class Settings:
     gemini_api_key: str | None = None
     gemini_embedding_model: str = "gemini-embedding-2"
     gemini_embedding_dimensions: int = 768
-    gemini_generation_model: str = "gemini-flash-lite-latest"
-    gemini_rerank_model: str = "gemini-flash-lite-latest"
-    gemini_judge_model: str = "gemini-flash-lite-latest"
+    # Pinned model IDs keep experiments reproducible and stage results
+    # cacheable; "-latest" aliases are treated as mutable and never reused.
+    gemini_generation_model: str = DEFAULT_GEMINI_TEXT_MODEL
+    gemini_rerank_model: str = DEFAULT_GEMINI_TEXT_MODEL
+    gemini_judge_model: str = DEFAULT_GEMINI_TEXT_MODEL
     gemini_timeout_seconds: int = 60
     gemini_max_retries: int = 2
     cors_origins: tuple[str, ...] = ("http://localhost:3000", "http://127.0.0.1:3000")
@@ -95,6 +100,10 @@ class Settings:
     local_parse_worker_enabled: bool = False
     docling_artifacts_path: str | None = None
     docling_parser_version: str = "docling-2.117.0"
+    # Explicit parse budgets: an over-limit PDF fails with a clear code
+    # instead of an OOM or the Modal hard timeout.
+    docling_max_num_pages: int = 200
+    docling_document_timeout_seconds: int = 780
 
 
 PARSE_WORKER_TIMEOUT_SECONDS = 900
@@ -151,11 +160,9 @@ def get_settings() -> Settings:
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         gemini_embedding_model=os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-2"),
         gemini_embedding_dimensions=_int("GEMINI_EMBEDDING_DIMENSIONS", 768),
-        gemini_generation_model=os.getenv(
-            "GEMINI_GENERATION_MODEL", "gemini-flash-lite-latest"
-        ),
-        gemini_rerank_model=os.getenv("GEMINI_RERANK_MODEL", "gemini-flash-lite-latest"),
-        gemini_judge_model=os.getenv("GEMINI_JUDGE_MODEL", "gemini-flash-lite-latest"),
+        gemini_generation_model=os.getenv("GEMINI_GENERATION_MODEL", DEFAULT_GEMINI_TEXT_MODEL),
+        gemini_rerank_model=os.getenv("GEMINI_RERANK_MODEL", DEFAULT_GEMINI_TEXT_MODEL),
+        gemini_judge_model=os.getenv("GEMINI_JUDGE_MODEL", DEFAULT_GEMINI_TEXT_MODEL),
         gemini_timeout_seconds=_int("GEMINI_TIMEOUT_SECONDS", 60),
         gemini_max_retries=_int("GEMINI_MAX_RETRIES", 2),
         cors_origins=origins,
@@ -176,6 +183,8 @@ def get_settings() -> Settings:
         ),
         docling_artifacts_path=os.getenv("DOCLING_ARTIFACTS_PATH") or None,
         docling_parser_version=os.getenv("DOCLING_PARSER_VERSION", "docling-2.117.0"),
+        docling_max_num_pages=max(1, _int("DOCLING_MAX_NUM_PAGES", 200)),
+        docling_document_timeout_seconds=max(30, _int("DOCLING_DOCUMENT_TIMEOUT_SECONDS", 780)),
     )
 
 
