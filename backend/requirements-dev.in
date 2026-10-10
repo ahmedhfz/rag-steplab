@@ -1,0 +1,4 @@
+# Yerel geliştirme: CI araçları + tam Docling worker yığını.
+-r requirements-ci.in
+-r requirements-worker.in
+-c requirements.txt

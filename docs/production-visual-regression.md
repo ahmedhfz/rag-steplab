@@ -70,7 +70,13 @@ npm run e2e:visual:production
 
 Bu ağır suite yalnız classifier `production_visual=true` ürettiğinde PR CI'da çalışır. Tema-wide kaynaklar (`app/globals.css`, root layout, preference/theme altyapısı), görsel bileşenler ve baseline/spec değişiklikleri bu gate'i açar. Bu sınıflandırma tek başına `auth_e2e` açmaz; auth E2E yalnız auth-sensitive dosyalar değiştiğinde çalışır.
 
-Production referanslarını yalnızca bilinçli bir baseline değişikliğinde güncelleyin:
+Production referanslarını yalnızca bilinçli bir baseline değişikliğinde güncelleyin.
+Tercih edilen yol, referansları CI ile aynı Linux/Chromium ortamında üretmektir:
+`Heavy validation` workflow'unu ilgili branch'te `production-visual-update` ile
+çalıştırın; değişen/yeni/orphan PNG listesi job özetinde, üretilen referanslar
+artifact'tadır. Orphan PNG'leri silin, artifact'taki dosyaları commit edin. Linux
+referanslarına geçildikten sonra Windows rasterization farkı için gevşetilen
+eşikler sıkılaştırılabilir. Yerel üretim yalnız geçici inceleme içindir:
 
 ```bash
 UPDATE_PRODUCTION_VISUAL_REFERENCES=1 npm run e2e:visual:production

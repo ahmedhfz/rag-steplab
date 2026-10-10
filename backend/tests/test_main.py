@@ -239,9 +239,6 @@ def test_returns_safe_error_when_docling_cannot_parse(monkeypatch):
 
 
 def test_async_experiment_queues_json_serializable_lifecycle(monkeypatch):
-    import importlib
-
-    main_module = importlib.import_module("app.main")
     started_at = datetime(2026, 8, 23, 20, 0, tzinfo=timezone.utc)
     monkeypatch.setattr(
         "app.main.queue_experiment",
@@ -281,9 +278,6 @@ def test_async_experiment_queues_json_serializable_lifecycle(monkeypatch):
 
 
 def test_async_evaluation_returns_real_queued_case_lifecycle(monkeypatch):
-    import importlib
-
-    main_module = importlib.import_module("app.main")
     monkeypatch.setattr(
         "app.main.queue_evaluation",
         lambda *_args, **_kwargs: {

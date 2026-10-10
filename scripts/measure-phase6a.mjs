@@ -9,7 +9,7 @@ if (!documentId) {
   console.log(JSON.stringify({
     status: "skipped",
     reason: "RAG_DOCUMENT_ID is not set; no authenticated document was measured.",
-    usage: "RAG_API_BASE_URL=... RAG_API_TOKEN=... RAG_DOCUMENT_ID=... npm run perf:phase6a",
+    usage: "RAG_API_BASE_URL=... RAG_API_TOKEN=... RAG_DOCUMENT_ID=... npm run perf:summary",
   }, null, 2));
   process.exit(0);
 }

@@ -45,23 +45,18 @@ worker_secrets = _named_secrets("MODAL_WORKER_SECRET_NAMES", "rag-steplab-parser
 
 # Keep API and worker dependency sets separate. The API image can import the
 # parser module, while only the worker image carries the pinned full Docling
-# distribution and its model tooling.
+# distribution and its model tooling. Both install the hash-locked files that CI
+# tests and audits (generated from requirements*.in; pip enforces the hashes).
 api_image = (
     modal.Image.debian_slim(python_version="3.13")
     .pip_install_from_requirements(str(_BACKEND_ROOT / "requirements.txt"))
-    .pip_install("modal==1.5.4")
     .add_local_python_source("app")
 )
 worker_image = (
     modal.Image.debian_slim(python_version="3.13")
-    # CPU-only wheels avoid pulling multi-gigabyte CUDA runtime layers into a
-    # CPU worker. Versions match the tested Docling 2.117.0 environment.
-    .pip_install(
-        "torch==2.13.0+cpu",
-        "torchvision==0.28.0+cpu",
-        index_url="https://download.pytorch.org/whl/cpu",
-    )
     .pip_install_from_requirements(str(_BACKEND_ROOT / "requirements.txt"))
+    # The worker lock pins the CPU-only torch/torchvision wheels by URL and hash,
+    # so the CPU worker never pulls multi-gigabyte CUDA runtime layers.
     .pip_install_from_requirements(str(_BACKEND_ROOT / "requirements-worker.txt"))
     # Keep this runtime-only layer after the Python dependency layers so a
     # package-list change does not force the large Docling/Torch stack to rebuild.
