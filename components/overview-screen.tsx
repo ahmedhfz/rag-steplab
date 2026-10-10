@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { isExceptionTone, PIPELINE_STEP_STATUS, StatusIcon, StatusPill } from "@/components/ui/status-pill";
 import { useCopy } from "@/lib/copy";
 import { blocker } from "@/lib/blockers";
-import { buildOverviewViewModel, journeyLockReason } from "@/lib/figma-view-models";
+import { buildOverviewViewModel, journeyLockReason } from "@/lib/overview-view-model";
 import {
   buildJourneyConnectorPath,
   deriveJourneyConnectorState,
@@ -369,12 +369,12 @@ export function OverviewScreen() {
   }
 
   return (
-    <div className="min-w-0 bg-background" data-testid="figma-overview-root">
-      <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4" data-testid="figma-overview-main">
+    <div className="min-w-0 bg-background" data-testid="overview-screen">
+      <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4" data-testid="overview-main">
         <PageHeader
-          data-testid="figma-overview-header"
+          data-testid="overview-page-header"
           description={isFirstUse ? copy.overview.firstUseDescription : copy.overview.description}
-          help={preferences.showLearningHints ? <div data-testid="figma-overview-learning-note"><HowItWorks>{copy.overview.howItWorks}</HowItWorks></div> : undefined}
+          help={preferences.showLearningHints ? <div data-testid="overview-learning-note"><HowItWorks>{copy.overview.howItWorks}</HowItWorks></div> : undefined}
           title={copy.overview.title}
         />
 
@@ -476,14 +476,14 @@ export function OverviewScreen() {
           </section>
         )}
 
-        <section className="mt-6 rounded-lg border border-border bg-card px-5 pb-4 pt-5" data-testid="figma-overview-pipeline">
+        <section className="mt-6 rounded-lg border border-border bg-card px-5 pb-4 pt-5" data-testid="overview-pipeline">
           <h2 className="m-0 text-base font-semibold text-foreground">{copy.overview.journey.title}</h2>
           <div className="relative mt-2 w-full overflow-hidden" data-testid="overview-journey">
             <div className="relative hidden h-54 w-full pt-3 min-[1440px]:block" data-testid="overview-journey-desktop">
               <div className="relative h-50 w-full">
-                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="figma-overview-prepare" style={journeyGroupPosition("prepare")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.prepare}</span></div>
-                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="figma-overview-test" style={journeyGroupPosition("test")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.test}</span></div>
-                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="figma-overview-measure" style={journeyGroupPosition("measure")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.measure}</span></div>
+                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="overview-group-prepare" style={journeyGroupPosition("prepare")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.prepare}</span></div>
+                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="overview-group-test" style={journeyGroupPosition("test")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.test}</span></div>
+                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="overview-group-measure" style={journeyGroupPosition("measure")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.measure}</span></div>
                 <JourneyConnectors stateFor={(step) => pipelineState[step]} />
                 {pipelineSteps.map((step) => <JourneyNode href={stageHref[step.key]} key={step.key} labels={journeyLabels} onReveal={setRevealedStep} reason={lockedReason(step.key)} state={pipelineState[step.key]} step={step} />)}
               </div>

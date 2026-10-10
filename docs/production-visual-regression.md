@@ -12,7 +12,7 @@ Figma node'ları yapı ve desktop geometriyi doğrular. Runtime state'in kaynağ
 
 ## Kapsanan state'ler
 
-`e2e/visual/figma-production.spec.ts` aşağıdaki 17 Light state'i `1441 × 1041` desktop viewport'unda çalıştırır:
+`e2e/visual/production-visual.spec.ts` aşağıdaki 17 Light state'i `1441 × 1041` desktop viewport'unda çalıştırır:
 
 - Overview: first-use/no document ve canonical active pipeline
 - Documents: populated library

@@ -8,9 +8,9 @@ import { installSeededApi, type SeededScenario } from "../support/seeded-api";
 import { selectSeededDocument } from "../support/seeded-workspace";
 
 const viewport = { width: 1441, height: 1041 } as const;
-const artifactDirectory = path.resolve("output/playwright/figma-production");
+const artifactDirectory = path.resolve("output/playwright/production-visual");
 const referenceDirectory = path.resolve("e2e/visual/reference/production");
-const visualDiff = path.resolve("e2e/visual/figma-visual-diff.mjs");
+const visualDiff = path.resolve("e2e/visual/visual-diff.mjs");
 const updateReferences = process.env.UPDATE_PRODUCTION_VISUAL_REFERENCES === "1";
 
 type VisualGroup = "overview" | "documents" | "parsing" | "chunking" | "embeddings" | "playground" | "evaluation" | "settings" | "auth";
@@ -125,16 +125,16 @@ async function assertShellGeometry(page: Page) {
 }
 
 async function assertOverviewGeometry(page: Page, theme: "light" | "dark") {
-  await assertRect(page.getByTestId("figma-overview-main"), { x: 248, y: 0, width: (await contentWidth(page)) - 248 }, "overview-main");
+  await assertRect(page.getByTestId("overview-main"), { x: 248, y: 0, width: (await contentWidth(page)) - 248 }, "overview-main");
   // PageHeader has no fixed height; only the column and the stacking order are contracts.
-  const header = page.getByTestId("figma-overview-header");
+  const header = page.getByTestId("overview-page-header");
   await assertRect(header, { x: 288, y: 40, width: 1113, fluid: 1 }, "overview-header");
   const workspace = page.getByTestId("workspace-control-plane");
   await assertRect(workspace, { x: 288, width: 1113, fluid: 1 }, "overview-control-plane");
   await assertBelow(header, workspace, "overview-control-plane below header");
   await expect(page.getByTestId("continue-surface")).toBeVisible();
   await expect(page.getByTestId("overview-lineage")).toHaveCount(0);
-  const pipeline = page.getByTestId("figma-overview-pipeline");
+  const pipeline = page.getByTestId("overview-pipeline");
   await assertRect(pipeline, { x: 288, width: 1113, fluid: 1 }, "overview-pipeline");
   await assertBelow(workspace, pipeline, "overview-pipeline below control plane");
   await assertRect(page.getByTestId("overview-journey"), { x: 309, width: 1071, fluid: 1, height: 216 }, "overview-journey");
@@ -144,9 +144,9 @@ async function assertOverviewGeometry(page: Page, theme: "light" | "dark") {
   await expect(canvas).toHaveAttribute("preserveAspectRatio", "none");
   await expect(canvas.locator("path")).toHaveCount(8);
 
-  const prepare = await rect(page.getByTestId("figma-overview-prepare"));
-  const testGroup = await rect(page.getByTestId("figma-overview-test"));
-  const measure = await rect(page.getByTestId("figma-overview-measure"));
+  const prepare = await rect(page.getByTestId("overview-group-prepare"));
+  const testGroup = await rect(page.getByTestId("overview-group-test"));
+  const measure = await rect(page.getByTestId("overview-group-measure"));
   const expectedGroupRatios = {
     prepare: { left: 25.034 / 1054.1, width: 441 / 1054.1 },
     test: { left: 476.356 / 1054.1, width: 428 / 1054.1 },
@@ -185,7 +185,7 @@ async function assertOverviewGeometry(page: Page, theme: "light" | "dark") {
   expect(evaluation!.x + evaluation!.width / 2).toBeGreaterThanOrEqual(measure.x);
   expect(evaluation!.x + evaluation!.width / 2).toBeLessThanOrEqual(measure.x + measure.width);
   // "How it works" lives in the PageHeader help slot, under the title block.
-  const learningNote = page.getByTestId("figma-overview-learning-note");
+  const learningNote = page.getByTestId("overview-learning-note");
   await assertRect(learningNote, { x: 288 }, "overview-learning-note");
   const headerRect = await rect(header);
   const noteRect = await rect(learningNote);
@@ -215,14 +215,14 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     return;
   }
   if (stateKey === "overview-first-use") {
-    await assertRect(page.getByTestId("figma-overview-main"), { x: 248, y: 0, width: (await contentWidth(page)) - 248 }, "overview-main");
-    await assertRect(page.getByTestId("figma-overview-header"), { x: 288, y: 40, width: 1113, fluid: 1 }, "overview-header");
+    await assertRect(page.getByTestId("overview-main"), { x: 248, y: 0, width: (await contentWidth(page)) - 248 }, "overview-main");
+    await assertRect(page.getByTestId("overview-page-header"), { x: 288, y: 40, width: 1113, fluid: 1 }, "overview-header");
     const firstUse = page.getByTestId("overview-first-use");
     await assertRect(firstUse, { x: 288, width: 1113, fluid: 1 }, "overview-first-use");
     await expect(page.getByTestId("workspace-control-plane")).toHaveCount(0);
     await expect(firstUse.getByRole("button", { name: "Try a sample PDF" })).toBeVisible();
     await expect(firstUse.getByRole("link", { name: "Add your own PDF" })).toBeVisible();
-    expect((await rect(page.getByTestId("figma-overview-pipeline"))).y).toBeGreaterThan((await rect(firstUse)).y + (await rect(firstUse)).height);
+    expect((await rect(page.getByTestId("overview-pipeline"))).y).toBeGreaterThan((await rect(firstUse)).y + (await rect(firstUse)).height);
     return;
   }
 

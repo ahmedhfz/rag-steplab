@@ -20,7 +20,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("Phase 6B pipeline IA", () => {
+describe("Pipeline stage availability", () => {
   it("renders Documents with one clickable PDF drop surface", () => {
     renderWithPipeline(<DocumentsScreen />);
 

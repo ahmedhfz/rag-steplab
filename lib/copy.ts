@@ -1,5 +1,5 @@
 import { usePreferences } from "@/components/preferences-provider";
-import type { OverviewContinuationKind } from "@/lib/figma-view-models";
+import type { OverviewContinuationKind } from "@/lib/overview-view-model";
 import type { ChunkStrategy } from "@/lib/rag-api-types";
 import type { PipelineStepKey, PipelineStepState } from "@/lib/rag-ui-types";
 

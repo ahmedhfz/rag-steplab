@@ -96,9 +96,9 @@ async function assertCompleteDesktopJourney(page: Page) {
     return {
       journey: rectOf("overview-journey-desktop"),
       canvas: rectOf("overview-journey-connectors"),
-      prepare: rectOf("figma-overview-prepare"),
-      test: rectOf("figma-overview-test"),
-      measure: rectOf("figma-overview-measure"),
+      prepare: rectOf("overview-group-prepare"),
+      test: rectOf("overview-group-test"),
+      measure: rectOf("overview-group-measure"),
       evaluation: rectOf("overview-journey-node-evaluate"),
     };
   });
