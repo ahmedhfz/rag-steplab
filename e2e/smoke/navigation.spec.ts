@@ -68,8 +68,11 @@ test("seeded state reload sonrası korunur ve responsive gezinme çalışır", a
 
   for (const width of [390, 768, 1024]) {
     await page.setViewportSize({ width, height: 844 });
-    await expect(page.locator("html")).toHaveJSProperty("scrollWidth", width);
-    await expect(page.locator("body")).toHaveJSProperty("scrollWidth", width);
+    // Taşma yok: içerik genişliği, ayrılmış scrollbar gutter'ı hariç görünür genişliği aşmaz.
+    const layoutWidth = await page.evaluate(() => document.documentElement.clientWidth);
+    expect(layoutWidth).toBeLessThanOrEqual(width);
+    await expect(page.locator("html")).toHaveJSProperty("scrollWidth", layoutWidth);
+    await expect(page.locator("body")).toHaveJSProperty("scrollWidth", layoutWidth);
 
     const openNavigation = page.getByRole("button", { name: "Open navigation" });
     await openNavigation.click();

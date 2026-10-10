@@ -185,7 +185,13 @@
 
   html {
     background: var(--background);
-    scrollbar-gutter: stable;
+  }
+
+  /* Scrollbar görünüp kaybolunca başlık kaymasın; dar ekranlarda scrollbar zaten overlay. */
+  @media (min-width: 768px) {
+    html {
+      scrollbar-gutter: stable;
+    }
   }
 
   body {

@@ -104,16 +104,21 @@ async function assertBelow(above: Locator, below: Locator, label: string) {
   expect(bottom.y, label).toBeGreaterThanOrEqual(top.y + top.height - 1);
 }
 
+/** Layout width without the reserved scrollbar gutter (`scrollbar-gutter: stable` at >=768px). */
+async function contentWidth(page: Page) {
+  return page.evaluate(() => document.documentElement.clientWidth);
+}
+
 async function assertShellGeometry(page: Page) {
   const browserViewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
   expect(browserViewport).toEqual(viewport);
   await assertRect(page.getByTestId("app-shell-sidebar"), { x: 0, y: 0, width: 248, height: viewport.height }, "sidebar");
-  await assertRect(page.getByTestId("app-shell-main"), { x: 248, width: viewport.width - 248 }, "main");
-  await expect(page.locator("html")).toHaveJSProperty("scrollWidth", viewport.width);
+  await assertRect(page.getByTestId("app-shell-main"), { x: 248, width: (await contentWidth(page)) - 248 }, "main");
+  await expect(page.locator("html")).toHaveJSProperty("scrollWidth", await contentWidth(page));
 }
 
 async function assertOverviewGeometry(page: Page, theme: "light" | "dark") {
-  await assertRect(page.getByTestId("figma-overview-main"), { x: 248, y: 0, width: 1193 }, "overview-main");
+  await assertRect(page.getByTestId("figma-overview-main"), { x: 248, y: 0, width: (await contentWidth(page)) - 248 }, "overview-main");
   // PageHeader has no fixed height; only the column and the stacking order are contracts.
   const header = page.getByTestId("figma-overview-header");
   await assertRect(header, { x: 288, y: 40, width: 1113 }, "overview-header");
@@ -202,7 +207,7 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     return;
   }
   if (stateKey === "overview-first-use") {
-    await assertRect(page.getByTestId("figma-overview-main"), { x: 248, y: 0, width: 1193 }, "overview-main");
+    await assertRect(page.getByTestId("figma-overview-main"), { x: 248, y: 0, width: (await contentWidth(page)) - 248 }, "overview-main");
     await assertRect(page.getByTestId("figma-overview-header"), { x: 288, y: 40, width: 1113 }, "overview-header");
     const firstUse = page.getByTestId("overview-first-use");
     await assertRect(firstUse, { x: 288, width: 1113 }, "overview-first-use");
@@ -226,7 +231,7 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
             : state.group === "evaluation"
               ? "evaluation-screen"
               : "settings-screen";
-  await assertRect(page.getByTestId(rootTestId), { x: 248, width: 1193 }, `${state.key}-root`);
+  await assertRect(page.getByTestId(rootTestId), { x: 248, width: (await contentWidth(page)) - 248 }, `${state.key}-root`);
 
   if (state.group === "documents") {
     await assertRect(page.getByTestId("documents-page-header"), { x: 288, y: 40, width: 1113 }, "documents-header");
@@ -266,7 +271,7 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     const outputRect = await rect(page.getByTestId("embedding-output-result"));
     expect(outputRect.x - inputRect.x - inputRect.width).toBeLessThan(80);
   } else if (state.group === "playground") {
-    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: 1193, height: 53 }, "playground-context-bar");
+    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: (await contentWidth(page)) - 248, height: 53 }, "playground-context-bar");
     await assertRect(page.getByTestId("playground-page-header"), { x: 288, y: 93, width: 1113 }, "playground-header");
     await assertRect(page.getByTestId("playground-input"), { x: 288, width: 1113 }, "playground-input");
     await assertBelow(page.getByTestId("playground-page-header"), page.getByTestId("playground-input"), "playground input below header");
@@ -289,7 +294,7 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
       await assertRect(page.getByTestId("playground-stage-content"), { x: 568, width: 833 }, "playground-stage-content");
     }
   } else if (state.group === "evaluation") {
-    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: 1193, height: 53 }, "evaluation-context-bar");
+    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: (await contentWidth(page)) - 248, height: 53 }, "evaluation-context-bar");
     await assertRect(page.getByTestId("evaluation-page-header"), { x: 288, y: 93, width: 1113 }, "evaluation-header");
     await assertRect(page.getByTestId("evaluation-workspace-context"), { x: 288, width: 1113 }, "evaluation-workspace-context");
     await assertBelow(page.getByTestId("evaluation-page-header"), page.getByTestId("evaluation-workspace-context"), "evaluation context below header");
@@ -526,7 +531,7 @@ test.describe("canonical desktop auth route inventory", () => {
         expect(confirmationBounds.y).toBeGreaterThan(passwordBounds.y + passwordBounds.height);
         expect(submitBounds.y - (confirmationBounds.y + confirmationBounds.height)).toBeGreaterThanOrEqual(23);
         expect(submitBounds.y + submitBounds.height).toBeLessThanOrEqual(state.viewport.height);
-        await expect(html).toHaveJSProperty("scrollWidth", state.viewport.width);
+        await expect(html).toHaveJSProperty("scrollWidth", await contentWidth(page));
 
         await settle(page);
         await mkdir(artifactDirectory, { recursive: true });
