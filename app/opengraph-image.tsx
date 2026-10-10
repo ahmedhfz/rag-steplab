@@ -1,6 +1,7 @@
 import { ImageResponse } from "next/og";
 
 import { BRAND_MARK_VIEWBOX, brandMarkShapes } from "@/components/brand-mark";
+import { UI_COPY } from "@/lib/copy";
 
 // Statically generated at build time: no request data, no network, only the font bundled with next/og.
 export const alt = "RAG StepLab: inspect every RAG step from PDF to answer.";
@@ -19,7 +20,9 @@ const COLOR = {
   brandBorder: "#e3a9b9",
 } as const;
 
-const STEPS = ["Document", "Parsing", "Chunking", "Embedding", "Retrieval", "Answer"] as const;
+// Same names as the Overview journey and the login hero (English: the share card has no locale).
+const JOURNEY = UI_COPY.en.overview.journey.steps;
+const STEPS = [JOURNEY.document, JOURNEY.parse, JOURNEY.chunk, JOURNEY.embed, JOURNEY.retrieve, JOURNEY.generate];
 
 export default function OpenGraphImage() {
   return new ImageResponse(
@@ -44,10 +47,8 @@ export default function OpenGraphImage() {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <div style={{ fontSize: 64, lineHeight: 1.1, letterSpacing: -1.5 }}>Build your RAG, one step at a time.</div>
-          <div style={{ fontSize: 30, lineHeight: 1.35, color: COLOR.muted }}>
-            From PDF to answer: inspect parsing, chunks, retrieval, and sources.
-          </div>
+          <div style={{ fontSize: 64, lineHeight: 1.1, letterSpacing: -1.5 }}>{UI_COPY.en.overview.title}</div>
+          <div style={{ fontSize: 30, lineHeight: 1.35, color: COLOR.muted }}>{UI_COPY.en.auth.hero.description}</div>
         </div>
 
         <div style={{ display: "flex", alignItems: "center" }}>

@@ -10,6 +10,9 @@ import { usePreferences } from "@/components/preferences-provider";
 import { useCopy } from "@/lib/copy";
 import { cn } from "@/lib/utils";
 
+/** Client-side minimum for new passwords; the copy interpolates the same value. */
+export const MIN_PASSWORD_LENGTH = 10;
+
 export function AuthShell({ children }: { children: React.ReactNode }) {
   const { preferences, setLocale } = usePreferences();
   const copy = useCopy().auth;

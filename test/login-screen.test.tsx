@@ -43,7 +43,7 @@ describe("LoginScreen", () => {
     expect(heroStepLabels()).toEqual(["Doküman", "Ayrıştırma", "Chunking", "Embedding", "Retrieval", "Cevap"]);
     // Only the answer step carries the brand accent; the icons are decorative.
     expect(hero.querySelectorAll(".text-brand")).toHaveLength(1);
-    expect(within(screen.getByTestId("auth-hero-step-answer")).getByText("Cevap")).toBeInTheDocument();
+    expect(within(screen.getByTestId("auth-hero-step-generate")).getByText("Cevap")).toBeInTheDocument();
     for (const icon of hero.querySelectorAll("svg")) expect(icon).toHaveAttribute("aria-hidden", "true");
   });
 
@@ -56,7 +56,7 @@ describe("LoginScreen", () => {
     expect(screen.getByTestId("auth-intro")).toHaveTextContent(/^PDF'den cevaba/);
 
     await user.click(screen.getByRole("button", { name: "EN" }));
-    await waitFor(() => expect(heroStepLabels()).toEqual(["Document", "Parsing", "Chunking", "Embedding", "Retrieval", "Answer"]));
+    await waitFor(() => expect(heroStepLabels()).toEqual(["Document", "Parsing", "Chunking", "Embeddings", "Retrieval", "Answer"]));
     expect(screen.getByRole("region", { name: "From PDF to answer" })).toBeInTheDocument();
     expect(screen.getByTestId("auth-intro")).toHaveTextContent(/^From PDF to answer/);
     // E2E helpers sign in through these exact English names.

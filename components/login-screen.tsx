@@ -6,14 +6,14 @@ import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore } from "react";
 
 import { shakeValidation } from "@/lib/transitions";
-import { AuthShell } from "@/components/auth-shell";
+import { AuthShell, MIN_PASSWORD_LENGTH } from "@/components/auth-shell";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePreferences } from "@/components/preferences-provider";
 import { safeNextPath } from "@/lib/auth-redirect";
 import { getSupabaseBrowserClient, supabaseAuthErrorMessage } from "@/lib/supabase/browser";
-import { type AppCopy, type AppLocale, useCopy } from "@/lib/copy";
+import { type AppCopy, type AppLocale, interpolate, useCopy } from "@/lib/copy";
 
 function GoogleMark() {
   return (
@@ -102,8 +102,8 @@ export function LoginScreen() {
         return;
       }
       if (mode === "signup") {
-        if (password.length < 10) {
-          setStatusMessage(auth.messages.passwordTooShort);
+        if (password.length < MIN_PASSWORD_LENGTH) {
+          setStatusMessage(interpolate(auth.messages.passwordTooShort, { min: MIN_PASSWORD_LENGTH }));
           return;
         }
         if (password !== confirmation) {
@@ -161,14 +161,14 @@ export function LoginScreen() {
           {mode !== "forgot" ? <div className="mt-4 space-y-2">
             <div className="flex items-center justify-between text-sm font-medium text-foreground"><label htmlFor="login-password">{labels.password}</label>{mode === "signin" ? <button className="font-medium text-brand hover:underline" onClick={() => setAuthMode("forgot")} type="button">{labels.forgot}</button> : null}</div>
             <div className="relative">
-              <Input autoComplete={mode === "signup" ? "new-password" : "current-password"} className="h-10 pr-10" id="login-password" minLength={mode === "signup" ? 10 : undefined} onChange={(event) => setPassword(event.target.value)} placeholder={labels.passwordPlaceholder} required type={showPassword ? "text" : "password"} value={password} />
+              <Input autoComplete={mode === "signup" ? "new-password" : "current-password"} className="h-10 pr-10" id="login-password" minLength={mode === "signup" ? MIN_PASSWORD_LENGTH : undefined} onChange={(event) => setPassword(event.target.value)} placeholder={labels.passwordPlaceholder} required type={showPassword ? "text" : "password"} value={password} />
               <button aria-label={showPassword ? labels.hidePassword : labels.showPassword} className="absolute right-2.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded-sm text-subtle-foreground transition-colors hover:text-foreground" onClick={() => setShowPassword((current) => !current)} type="button"><IconSwap active={showPassword} first={<AppIcon name="eye" className="size-4" />} second={<AppIcon name="eyeOff" className="size-4" />} /></button>
             </div>
           </div> : null}
 
           {mode === "signup" ? <div className="mt-4 space-y-2">
             <label className="text-sm font-medium text-foreground" htmlFor="login-password-confirm">{labels.confirm}</label>
-            <Input autoComplete="new-password" className="h-10" id="login-password-confirm" minLength={10} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.confirmPlaceholder} required type="password" value={confirmation} />
+            <Input autoComplete="new-password" className="h-10" id="login-password-confirm" minLength={MIN_PASSWORD_LENGTH} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.confirmPlaceholder} required type="password" value={confirmation} />
           </div> : null}
 
           <Button className="mt-6 w-full" size="lg" disabled={busy} type="submit"><TransitionText>{busy ? labels.wait : submitLabel}</TransitionText>{mode === "signin" && !busy ? <AppIcon name="arrowRight" className="size-4" /> : null}</Button>

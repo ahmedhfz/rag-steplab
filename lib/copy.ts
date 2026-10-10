@@ -33,7 +33,6 @@ const en = {
     hero: {
       title: "From PDF to answer",
       description: "Inspect every RAG step and the sources behind each answer.",
-      steps: { document: "Document", parsing: "Parsing", chunking: "Chunking", embedding: "Embedding", retrieval: "Retrieval", answer: "Answer" },
     },
     login: {
       form: "Sign-in form",
@@ -78,7 +77,7 @@ const en = {
     messages: {
       resetLinkSent: "A password reset link was sent to your email.",
       accountCreated: "Account created. Confirm your email address before continuing.",
-      passwordTooShort: "Your password must be at least 10 characters.",
+      passwordTooShort: "Your password must be at least {min} characters.",
       passwordMismatch: "The passwords do not match.",
     },
     errors: {
@@ -701,7 +700,6 @@ const tr: AppCopy = {
     hero: {
       title: "PDF'den cevaba",
       description: "Her RAG adımını ve cevapların dayandığı kaynakları inceleyin.",
-      steps: { document: "Doküman", parsing: "Ayrıştırma", chunking: "Chunking", embedding: "Embedding", retrieval: "Retrieval", answer: "Cevap" },
     },
     login: {
       form: "Giriş formu",
@@ -746,7 +744,7 @@ const tr: AppCopy = {
     messages: {
       resetLinkSent: "Şifre yenileme bağlantısı e-posta adresinize gönderildi.",
       accountCreated: "Kayıt tamamlandı. Devam etmek için e-posta adresinizi doğrulayın.",
-      passwordTooShort: "Şifreniz en az 10 karakter olmalı.",
+      passwordTooShort: "Şifreniz en az {min} karakter olmalı.",
       passwordMismatch: "Şifreler eşleşmiyor.",
     },
     errors: {

@@ -1,18 +1,18 @@
 "use client";
 
 import { AppIcon, type SemanticIconName } from "@/components/ui/app-icon";
-import { type AppCopy, useCopy } from "@/lib/copy";
+import { useCopy } from "@/lib/copy";
+import type { PipelineStepKey } from "@/lib/rag-ui-types";
 import { cn } from "@/lib/utils";
 
-type HeroStepKey = keyof AppCopy["auth"]["hero"]["steps"];
-
-const HERO_STEPS: readonly { key: HeroStepKey; icon: SemanticIconName }[] = [
+/** The learning path from PDF to answer; labels come from the Overview journey so names match everywhere. */
+const HERO_STEPS: readonly { key: PipelineStepKey; icon: SemanticIconName }[] = [
   { key: "document", icon: "document" },
-  { key: "parsing", icon: "parse" },
-  { key: "chunking", icon: "chunk" },
-  { key: "embedding", icon: "embed" },
-  { key: "retrieval", icon: "retrieve" },
-  { key: "answer", icon: "generate" },
+  { key: "parse", icon: "parse" },
+  { key: "chunk", icon: "chunk" },
+  { key: "embed", icon: "embed" },
+  { key: "retrieve", icon: "retrieve" },
+  { key: "generate", icon: "generate" },
 ];
 
 /**
@@ -20,7 +20,9 @@ const HERO_STEPS: readonly { key: HeroStepKey; icon: SemanticIconName }[] = [
  * tokens and the app's own stage icons. The answer is the single brand accent.
  */
 export function LoginHero({ className }: { className?: string }) {
-  const hero = useCopy().auth.hero;
+  const copy = useCopy();
+  const hero = copy.auth.hero;
+  const stepLabels = copy.overview.journey.steps;
   const lastIndex = HERO_STEPS.length - 1;
 
   return (
@@ -44,7 +46,7 @@ export function LoginHero({ className }: { className?: string }) {
               >
                 <AppIcon name={step.icon} className="size-4.5" />
               </span>
-              <span className="text-sm font-medium text-foreground">{hero.steps[step.key]}</span>
+              <span className="text-sm font-medium text-foreground">{stepLabels[step.key]}</span>
             </li>
           );
         })}

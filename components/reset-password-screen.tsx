@@ -6,11 +6,11 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { shakeValidation } from "@/lib/transitions";
-import { AuthShell } from "@/components/auth-shell";
+import { AuthShell, MIN_PASSWORD_LENGTH } from "@/components/auth-shell";
 import { usePreferences } from "@/components/preferences-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useCopy } from "@/lib/copy";
+import { interpolate, useCopy } from "@/lib/copy";
 import { getSupabaseBrowserClient, supabaseAuthErrorMessage } from "@/lib/supabase/browser";
 
 export function ResetPasswordScreen() {
@@ -25,7 +25,7 @@ export function ResetPasswordScreen() {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (password.length < 10) return setStatus(auth.messages.passwordTooShort);
+    if (password.length < MIN_PASSWORD_LENGTH) return setStatus(interpolate(auth.messages.passwordTooShort, { min: MIN_PASSWORD_LENGTH }));
     if (password !== confirmation) { shakeValidation(document.getElementById("reset-password-confirmation")); return setStatus(auth.messages.passwordMismatch); }
     setBusy(true);
     setStatus("");
@@ -48,11 +48,11 @@ export function ResetPasswordScreen() {
         <form aria-describedby="reset-password-status" className="mt-7" onSubmit={submit}>
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground" htmlFor="reset-password">{labels.password}</label>
-            <Input aria-label={labels.password} autoComplete="new-password" className="h-10" id="reset-password" minLength={10} onChange={(event) => setPassword(event.target.value)} placeholder={labels.passwordPlaceholder} required type="password" value={password} />
+            <Input aria-label={labels.password} autoComplete="new-password" className="h-10" id="reset-password" minLength={MIN_PASSWORD_LENGTH} onChange={(event) => setPassword(event.target.value)} placeholder={labels.passwordPlaceholder} required type="password" value={password} />
           </div>
           <div className="mt-4 space-y-2">
             <label className="text-sm font-medium text-foreground" htmlFor="reset-password-confirmation">{labels.confirmation}</label>
-            <Input aria-label={labels.confirmation} autoComplete="new-password" className="h-10" id="reset-password-confirmation" minLength={10} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.confirmationPlaceholder} required type="password" value={confirmation} />
+            <Input aria-label={labels.confirmation} autoComplete="new-password" className="h-10" id="reset-password-confirmation" minLength={MIN_PASSWORD_LENGTH} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.confirmationPlaceholder} required type="password" value={confirmation} />
           </div>
           <Button className="mt-6 w-full" size="lg" disabled={busy} type="submit"><TransitionText>{busy ? labels.busy : labels.submit}</TransitionText></Button>
         </form>
