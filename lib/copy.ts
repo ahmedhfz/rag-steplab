@@ -30,6 +30,11 @@ const en = {
   auth: {
     home: "RAG StepLab home",
     language: "Language",
+    serviceErrors: {
+      configurationMissing: "Authentication is not configured.",
+      sessionUnavailable: "Your session could not be verified. Please try again.",
+      generic: "The request could not be completed. Please try again.",
+    },
     hero: {
       title: "From PDF to answer",
       description: "Inspect every RAG step and the sources behind each answer.",
@@ -700,6 +705,11 @@ const tr: AppCopy = {
   auth: {
     home: "RAG StepLab ana sayfa",
     language: "Dil",
+    serviceErrors: {
+      configurationMissing: "Kimlik doğrulama yapılandırması eksik.",
+      sessionUnavailable: "Oturum doğrulanamadı. Lütfen tekrar deneyin.",
+      generic: "İşlem tamamlanamadı. Lütfen tekrar deneyin.",
+    },
     hero: {
       title: "PDF'den cevaba",
       description: "Her RAG adımını ve cevapların dayandığı kaynakları inceleyin.",
