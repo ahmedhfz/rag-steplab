@@ -9,13 +9,15 @@ import { Dialog as DialogPrimitive } from "radix-ui";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { SampleDocumentButton } from "@/components/sample-document-button";
-import { LearningHint, PipelineErrorMessage } from "@/components/pipeline-learning-ui";
+import { PipelineErrorMessage } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
-import { StatusIndicator } from "@/components/status-indicator";
 import { AppIcon, type SemanticIconName } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
+import { HowItWorks } from "@/components/ui/disclosure";
 import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/ui/page-header";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { isExceptionTone, PIPELINE_STEP_STATUS, StatusIcon, StatusPill } from "@/components/ui/status-pill";
 import { UI_COPY, type AppLocale } from "@/lib/copy";
 import { blocker, type BlockerCode } from "@/lib/blockers";
 import { buildOverviewViewModel } from "@/lib/figma-view-models";
@@ -104,7 +106,7 @@ const continuationCopy: Record<AppLocale, Record<OverviewContinuationKind, { act
   },
 };
 
-const selectorTriggerClass = "h-10 min-w-0 max-w-full overflow-hidden [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]]:truncate [&_[data-slot=select-value]]:whitespace-nowrap";
+const selectorTriggerClass = "min-w-0 max-w-full overflow-hidden [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]]:truncate [&_[data-slot=select-value]]:whitespace-nowrap";
 const selectorItemClass = "h-auto min-h-8 whitespace-normal break-words";
 
 function JourneyGlyph({ stepKey, state }: { stepKey: JourneyStepKey; state: PipelineStepState }) {
@@ -112,7 +114,7 @@ function JourneyGlyph({ stepKey, state }: { stepKey: JourneyStepKey; state: Pipe
   return (
     <AppIcon
       aria-hidden="true"
-      className="size-[19px]"
+      className="size-4.5"
       data-state={state}
       data-testid={`overview-journey-glyph-${stepKey}`}
       name={journeyIcons[stepKey]}
@@ -125,7 +127,7 @@ function JourneyConnectors({ stateFor }: { stateFor: (step: JourneyStepKey) => P
   return (
     <svg
       aria-hidden="true"
-      className="pointer-events-none absolute left-0 top-px z-[1] h-[199.975px] w-full overflow-visible"
+      className="pointer-events-none absolute left-0 top-px z-[1] h-50 w-full overflow-visible"
       data-testid="overview-journey-connectors"
       height={JOURNEY_CANVAS.height}
       preserveAspectRatio="none"
@@ -173,7 +175,7 @@ function JourneyNode({
   const content = (
     <>
       <span
-        className="relative grid size-10 place-items-center rounded-[10px] border transition-colors"
+        className="relative grid size-10 place-items-center rounded-md border transition-colors"
         data-state={state}
         style={{
           backgroundColor: visual.backgroundColor,
@@ -184,14 +186,14 @@ function JourneyNode({
       >
         <JourneyGlyph state={state} stepKey={step.key} />
         {completed ? (
-          <span className="absolute -right-1 -top-1 grid size-3.5 place-items-center rounded-full bg-success">
-            <AppIcon name="check" className="size-[9px] text-primary-foreground" />
+          <span aria-hidden="true" className="absolute -right-1 -top-1 grid size-3.5 place-items-center rounded-full bg-muted-foreground text-card" data-testid={`overview-journey-check-${step.key}`}>
+            <AppIcon name="check" className="size-2.5" strokeWidth={2.5} />
           </span>
         ) : null}
       </span>
       <span
         className={cn(
-          "absolute left-1/2 w-28 -translate-x-1/2 text-center text-[11.5px] font-medium leading-4 text-foreground",
+          "absolute left-1/2 w-28 -translate-x-1/2 text-center text-xs font-medium leading-4 text-foreground",
           position.label === "above" ? "-top-6" : "top-12",
         )}
       >
@@ -202,8 +204,8 @@ function JourneyNode({
   );
 
   const className = cn(
-    "absolute z-10 outline-none focus-visible:ring-2 focus-visible:ring-ring/25 focus-visible:ring-offset-2",
-    reason ? "cursor-not-allowed" : "rounded-[10px] hover:ring-2 hover:ring-accent-border",
+    "absolute z-10",
+    reason ? "cursor-not-allowed" : "rounded-md hover:ring-2 hover:ring-input",
   );
   const style = { left: position.left, top: position.top };
   return reason ? (
@@ -217,6 +219,16 @@ function JourneyNode({
   );
 }
 
+/** Exceptions (processing/error/stale) show text; everything else stays icon-only. */
+function JourneyStatus({ state }: { state: PipelineStepState }) {
+  const { preferences } = usePreferences();
+  const presentation = PIPELINE_STEP_STATUS[state];
+  const label = UI_COPY[preferences.locale].status[state];
+  return isExceptionTone(presentation.tone)
+    ? <StatusPill tone={presentation.tone}>{label}</StatusPill>
+    : <StatusIcon icon={presentation.icon} label={label} tone={presentation.tone} />;
+}
+
 function JourneyCompact({ labels, reasonFor, stateFor }: { labels: Record<PipelineStepKey, string>; reasonFor: (step: PipelineStepKey) => string | null; stateFor: (step: PipelineStepKey) => PipelineStepState }) {
   return (
     <ol className="grid gap-2" data-testid="overview-journey-compact">
@@ -225,16 +237,16 @@ function JourneyCompact({ labels, reasonFor, stateFor }: { labels: Record<Pipeli
         const state = stateFor(step.key);
         const content = (
           <>
-            <span className="grid size-9 shrink-0 place-items-center rounded-[10px] border border-border bg-card">
+            <span className="grid size-9 shrink-0 place-items-center rounded-md border border-border bg-card">
               <JourneyGlyph state={state} stepKey={step.key} />
             </span>
             <span className="min-w-0 flex-1 truncate text-left text-sm font-medium text-foreground">{labels[step.key]}</span>
-            <StatusIndicator state={state} />
+            <JourneyStatus state={state} />
           </>
         );
         return (
           <li key={step.key}>
-            {reason ? <div aria-disabled="true" className="flex min-w-0 items-center gap-3 rounded-[10px] border border-border bg-card px-3 py-2.5 opacity-75" data-testid={`overview-compact-journey-node-${step.key}`} title={reason}>{content}</div> : <Link className="flex min-w-0 items-center gap-3 rounded-[10px] border border-border bg-card px-3 py-2.5 outline-none hover:border-accent-border focus-visible:ring-2 focus-visible:ring-ring/25" data-testid={`overview-compact-journey-node-${step.key}`} href={stageHref[step.key]}>{content}</Link>}
+            {reason ? <div aria-disabled="true" className="flex min-w-0 items-center gap-3 rounded-md border border-border bg-card px-3 py-2.5 opacity-75" data-testid={`overview-compact-journey-node-${step.key}`} title={reason}>{content}</div> : <Link className="flex min-w-0 items-center gap-3 rounded-md border border-border bg-card px-3 py-2.5 hover:bg-surface-subtle" data-testid={`overview-compact-journey-node-${step.key}`} href={stageHref[step.key]}>{content}</Link>}
           </li>
         );
       })}
@@ -365,6 +377,7 @@ export function OverviewScreen() {
   const pipelineState = overviewModel.pipelineState;
   const isFirstUse = persistenceStatus === "available" && documents.length === 0;
   const continuationText = continuationCopy[preferences.locale][overviewModel.continuation.kind];
+  const continuationStatus = PIPELINE_STEP_STATUS[overviewModel.continuation.state];
 
   const journeyLabels: Record<PipelineStepKey, string> = {
     ...copy.overview.steps,
@@ -439,21 +452,22 @@ export function OverviewScreen() {
   return (
     <div className="min-w-0 overflow-x-clip bg-background" data-testid="figma-overview-root">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4" data-testid="figma-overview-main">
-        <header className="min-h-[82px] w-full" data-testid="figma-overview-header">
-          <h1 className="m-0 text-[28px] font-semibold leading-[34px] tracking-[-0.56px] text-foreground">{copy.overview.title}</h1>
-          <p className="mt-[6px] w-full max-w-[640px] text-sm leading-[21px] text-muted-foreground">{isFirstUse ? (preferences.locale === "tr" ? "Bir PDF'nin RAG pipeline boyunca nasıl işlendiğini ve cevabın hangi kaynaklara dayandığını görün." : "See how a PDF moves through a RAG pipeline and which sources support the final answer.") : labels.description}</p>
-        </header>
+        <PageHeader
+          data-testid="figma-overview-header"
+          description={isFirstUse ? (preferences.locale === "tr" ? "Bir PDF'nin RAG pipeline boyunca nasıl işlendiğini ve cevabın hangi kaynaklara dayandığını görün." : "See how a PDF moves through a RAG pipeline and which sources support the final answer.") : labels.description}
+          help={preferences.showLearningHints ? <div data-testid="figma-overview-learning-note"><HowItWorks>{labels.whyMattersText}</HowItWorks></div> : undefined}
+          title={copy.overview.title}
+        />
 
-        {isFirstUse ? <section className="mt-5 rounded-[16px] border-[1.712px] border-border bg-card p-5 sm:p-6" data-testid="overview-first-use">
-          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-brand">{preferences.locale === "tr" ? "İlk adım" : "Start here"}</p>
-          <h2 className="mt-2 text-xl font-semibold tracking-[-0.02em] text-foreground">{preferences.locale === "tr" ? "Bir dokümanla başlayın" : "Begin with a document"}</h2>
+        {isFirstUse ? <section className="mt-6 rounded-lg border border-border bg-card p-5 sm:p-6" data-testid="overview-first-use">
+          <h2 className="text-lg font-semibold text-foreground">{preferences.locale === "tr" ? "Bir dokümanla başlayın" : "Begin with a document"}</h2>
           <p className="mt-2 max-w-[700px] text-sm leading-6 text-muted-foreground">{preferences.locale === "tr" ? "Kendi PDF'nizi ekleyin veya dört sayfalık kurgusal örnekle akışı deneyin. Önce parsing, ardından chunking ve retrieval sonuçlarını inceleyebilirsiniz." : "Add your own PDF or try the four-page fictional sample. Inspect parsing, then chunks and retrieval results as you go."}</p>
           <ol className="mt-5 grid gap-3 sm:grid-cols-3">
             {(
               preferences.locale === "tr"
                 ? ["PDF ekle", "Aşamaları incele", "Kaynaklı cevap al"]
                 : ["Add a PDF", "Inspect each stage", "Get a sourced answer"]
-            ).map((step, index) => <li className="flex items-center gap-3 rounded-[10px] border border-border bg-surface-subtle px-3 py-3 text-sm font-medium text-foreground" key={step}><span className="grid size-7 shrink-0 place-items-center rounded-full bg-accent text-xs font-semibold text-brand">{index + 1}</span>{step}</li>)}
+            ).map((step, index) => <li className="flex items-center gap-3 rounded-md border border-border bg-surface-subtle px-3 py-3 text-sm font-medium text-foreground" key={step}><span className="grid size-7 shrink-0 place-items-center rounded-full bg-secondary text-xs font-semibold text-foreground tabular-nums">{index + 1}</span>{step}</li>)}
           </ol>
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <SampleDocumentButton primary />
@@ -461,12 +475,9 @@ export function OverviewScreen() {
           </div>
           <p className="mt-3 text-xs leading-5 text-muted-foreground">{preferences.locale === "tr" ? "Örnek kurgusaldır. Kendi dosyalarınız hesabınıza kaydedilir; kişisel veya gizli içerik yüklemeyin." : "The sample is fictional. Your own files are saved to your account; avoid uploading personal or confidential content."}</p>
         </section> : <>
-        <section className="mt-5 rounded-[16px] border-[1.712px] border-border bg-card p-4" data-testid="workspace-control-plane">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <p className="text-[13px] font-semibold uppercase leading-[19.5px] tracking-[0.78px] text-subtle-foreground">{labels.workspace}</p>
-            <p className="text-xs leading-[18px] text-muted-foreground">{labels.workspaceHint}</p>
-          </div>
-          <div className="mt-2.5 grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+        <section className="mt-6 rounded-lg border border-border bg-card p-4" data-testid="workspace-control-plane">
+          <p className="text-xs text-muted-foreground">{labels.workspaceHint}</p>
+          <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
                 <div className="min-w-0">
                   <label className="mb-1.5 block text-xs font-medium text-foreground" htmlFor="overview-document">{labels.document}</label>
                   <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
@@ -482,11 +493,11 @@ export function OverviewScreen() {
                   </Select>
                 </div>
             <TransitionDetails className="relative self-end" data-testid="pipeline-management" ref={managementMenuRef} variant="dropdown">
-              <summary className="flex h-[42px] cursor-pointer list-none items-center justify-between gap-3 rounded-[10px] border border-input bg-card px-3 text-xs font-medium text-muted-foreground outline-none hover:border-hover-border hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/25">
+              <summary className="flex h-9 cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-border bg-card px-3 text-sm font-medium text-foreground transition-colors hover:bg-secondary [&::-webkit-details-marker]:hidden">
                 <span>{labels.managePipeline}</span>
-                <AppIcon name="chevronDown" className="size-3.5 text-subtle-foreground" />
+                <AppIcon name="chevronDown" className="size-4 text-subtle-foreground" />
               </summary>
-              <div className="absolute right-0 z-20 mt-2 flex w-[min(28rem,calc(100vw-4rem))] flex-wrap gap-2 rounded-[10px] border border-border bg-card p-3 shadow-lg">
+              <div className="absolute right-0 z-20 mt-2 flex w-[min(28rem,calc(100vw-4rem))] flex-wrap gap-2 rounded-md border border-border bg-card p-3 shadow-lg">
                 <Button disabled={!activeDocumentId || persistenceStatus !== "available" || managementBusy} onClick={beginCreatePipeline} size="sm" variant="secondary">{labels.newPipeline}</Button>
                 {activePipeline ? <Button onClick={() => void selectPipeline(null)} size="sm" variant="ghost" data-testid="clear-pipeline-selection">{labels.clearPipeline}</Button> : null}
                 <Button disabled={!activePipeline || managementBusy} onClick={beginRenamePipeline} size="sm" variant="outline">{labels.rename}</Button>
@@ -498,12 +509,12 @@ export function OverviewScreen() {
           <div className="mt-3.5 grid min-w-0 gap-3 border-t border-border pt-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" data-testid="continue-surface">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <p className="text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.66px] text-subtle-foreground">{labels.continueTitle}</p>
-                <StatusIndicator state={overviewModel.continuation.state} />
+                <p className="text-sm font-medium text-foreground">{labels.continueTitle}</p>
+                {isExceptionTone(continuationStatus.tone) ? <StatusPill tone={continuationStatus.tone}>{copy.status[overviewModel.continuation.state]}</StatusPill> : null}
               </div>
               <p className="mt-1 truncate text-xs text-muted-foreground">{labels.nextStep}: <span className="font-medium text-foreground"><TransitionText>{continuationText.nextStep}</TransitionText></span></p>
             </div>
-            <Button asChild className="h-[42px] min-w-0 gap-2 rounded-[10px] px-4 text-sm" data-testid="overview-continue-action">
+            <Button asChild className="min-w-0" data-testid="overview-continue-action">
               <Link href={overviewModel.continuation.href}>{continuationText.action}<AppIcon name="arrowRight" className="size-4" /></Link>
             </Button>
           </div>
@@ -520,7 +531,7 @@ export function OverviewScreen() {
           <DialogPrimitive.Root onOpenChange={(open) => { if (!open && !managementBusy) { setConfirmDelete(false); setManagementError(null); } }} open={confirmDelete && Boolean(activePipeline)}>
             {activePipeline ? <DialogPrimitive.Portal>
               <DialogPrimitive.Overlay className="steplab-overlay fixed inset-0 z-50 bg-overlay/35 dark:bg-overlay/65" />
-              <TransitionDialogContent className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-border bg-card p-5 shadow-2xl focus:outline-none sm:p-6" data-testid="delete-pipeline-dialog">
+              <TransitionDialogContent className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 shadow-2xl focus:outline-none sm:p-6" data-testid="delete-pipeline-dialog">
                 <DialogPrimitive.Title className="text-base font-semibold text-foreground">{labels.remove}</DialogPrimitive.Title>
                 <DialogPrimitive.Description className="mt-2 text-sm leading-6 text-muted-foreground">{activePipeline.name} — {labels.confirmDelete}</DialogPrimitive.Description>
                 {managementError ? <p className="mt-3 text-sm text-destructive" role="alert">{managementError}</p> : null}
@@ -541,17 +552,17 @@ export function OverviewScreen() {
         </section>
         </>}
 
-        <section className="mt-6 rounded-[16px] border-[1.712px] border-border bg-card px-5 pb-4 pt-5" data-testid="figma-overview-pipeline">
-          <div className="flex min-h-[22px] w-full items-center justify-between gap-4">
-            <h2 className="m-0 text-base font-semibold leading-[22px] text-foreground">{labels.journey}</h2>
-            <p className="m-0 text-[12.5px] leading-[18.75px] text-subtle-foreground max-sm:hidden">{labels.journeyDescription}</p>
+        <section className="mt-6 rounded-lg border border-border bg-card px-5 pb-4 pt-5" data-testid="figma-overview-pipeline">
+          <div className="flex w-full items-center justify-between gap-4">
+            <h2 className="m-0 text-base font-semibold text-foreground">{labels.journey}</h2>
+            <p className="m-0 text-xs text-subtle-foreground max-sm:hidden">{labels.journeyDescription}</p>
           </div>
           <div className="relative mt-2 w-full overflow-hidden" data-testid="overview-journey">
-            <div className="relative hidden h-[216px] w-full pt-3 min-[1440px]:block" data-testid="overview-journey-desktop">
-              <div className="relative h-[200px] w-full">
-                <div className="absolute top-1 h-[192px] rounded-[14px] border-[1.712px] border-border/60 bg-technical" data-testid="figma-overview-prepare" style={journeyGroupPosition("prepare")}><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-subtle-foreground">{groupLabels.knowledge}</span></div>
-                <div className="absolute top-1 h-[192px] rounded-[14px] border-[1.712px] border-border/60 bg-technical" data-testid="figma-overview-test" style={journeyGroupPosition("test")}><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-subtle-foreground">{groupLabels.query}</span></div>
-                <div className="absolute top-1 h-[192px] rounded-[14px] border-[1.712px] border-solid border-border/60 bg-accent/60" data-testid="figma-overview-measure" style={journeyGroupPosition("measure")}><span className="absolute left-3.5 top-3 font-mono text-[10px] font-medium uppercase leading-[15px] tracking-[0.8px] text-subtle-foreground">{groupLabels.quality}</span></div>
+            <div className="relative hidden h-54 w-full pt-3 min-[1440px]:block" data-testid="overview-journey-desktop">
+              <div className="relative h-50 w-full">
+                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="figma-overview-prepare" style={journeyGroupPosition("prepare")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.knowledge}</span></div>
+                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="figma-overview-test" style={journeyGroupPosition("test")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.query}</span></div>
+                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="figma-overview-measure" style={journeyGroupPosition("measure")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.quality}</span></div>
                 <JourneyConnectors stateFor={(step) => pipelineState[step]} />
                 {pipelineSteps.map((step) => <JourneyNode href={stageHref[step.key]} key={step.key} labels={journeyLabels} reason={lockedReason(step.key)} state={pipelineState[step.key]} step={step} />)}
               </div>
@@ -562,7 +573,6 @@ export function OverviewScreen() {
           </div>
         </section>
 
-        <div className="mt-5" data-testid="figma-overview-learning-note"><LearningHint locale={preferences.locale}>{labels.whyMattersText}</LearningHint></div>
       </div>
     </div>
   );

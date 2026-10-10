@@ -1,7 +1,5 @@
 "use client";
 
-import { TransitionDetails } from "@/components/ui/transitions";
-
 import Link from "next/link";
 
 import { ChunkingWorkspace, EmbeddingWorkspace } from "@/components/chunks-pipeline";
@@ -10,6 +8,9 @@ import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
+import { Disclosure } from "@/components/ui/disclosure";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusPill } from "@/components/ui/status-pill";
 import type { AppLocale } from "@/lib/copy";
 import type { RunSummary } from "@/lib/rag-api-types";
 
@@ -52,26 +53,22 @@ function ArtifactHistory({
 
   return (
     <section className="mt-8" data-testid={`${kind}-history`}>
-      <TransitionDetails className="rounded-[12px] border-[1.712px] border-border bg-card">
-        <summary className="flex h-[46px] cursor-pointer list-none items-center justify-between px-4 text-[13px] font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/25 sm:px-5">
-          <span>{title} ({runs.length})</span><AppIcon name="chevronDown" className="size-3.5 text-subtle-foreground" />
-        </summary>
-        <div className="space-y-2 border-t-[1.712px] border-border p-4">
+      <Disclosure contentClassName="space-y-2 p-4" title={`${title} (${runs.length})`}>
           {runs.map((run) => {
             const selectable = runSelectable(run);
             const isSelected = run.id === selectedId;
             const isInspected = run.id === (inspectedId ?? selectedId);
             return (
-              <div className="flex flex-col gap-3 rounded-[10px] border-[1.712px] border-border bg-card p-3 sm:flex-row sm:items-center sm:justify-between" data-testid={`${kind}-history-row`} key={run.id}>
+              <div className="flex flex-col gap-3 rounded-md border border-border p-3 sm:flex-row sm:items-center sm:justify-between" data-testid={`${kind}-history-row`} key={run.id}>
                 <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <span className="font-semibold">{kind === "chunk" ? "Chunk run" : "Embedding"} {run.runNumber ?? "—"}</span>
-                    {isSelected ? <span className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] text-brand">{labels.selected}</span> : null}
-                    {!isSelected && isInspected ? <span className="rounded-full bg-warning-subtle px-1.5 py-0.5 text-[10px] text-warning">{labels.inspected}</span> : null}
-                    {run.id === defaultId ? <span className="rounded-full bg-success-subtle px-1.5 py-0.5 text-[10px] text-success">{labels.active}</span> : null}
-                    {run.historicalLineage ? <span className="rounded-full bg-warning-subtle px-1.5 py-0.5 text-[10px] text-warning">{labels.historical}</span> : null}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    <span className="font-semibold tabular-nums">{kind === "chunk" ? "Chunk run" : "Embedding"} {run.runNumber ?? "—"}</span>
+                    {isSelected ? <StatusPill tone="neutral">{labels.selected}</StatusPill> : null}
+                    {!isSelected && isInspected ? <StatusPill tone="warning">{labels.inspected}</StatusPill> : null}
+                    {run.id === defaultId ? <StatusPill tone="neutral">{labels.active}</StatusPill> : null}
+                    {run.historicalLineage ? <StatusPill tone="warning">{labels.historical}</StatusPill> : null}
                   </div>
-                  <div className="mt-1 text-[11px] text-muted-foreground">{labels.status}: {runStatusLabel(run, locale)}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">{labels.status}: {runStatusLabel(run, locale)}</div>
                   {run.error?.message ? <p className="mt-1 text-xs text-destructive">{run.error.message}</p> : null}
                   {!run.isCompatible && run.compatibilityReason ? <p className="mt-1 text-xs text-warning">{run.compatibilityReason}</p> : null}
                 </div>
@@ -82,21 +79,8 @@ function ArtifactHistory({
               </div>
             );
           })}
-        </div>
-      </TransitionDetails>
+      </Disclosure>
     </section>
-  );
-}
-
-function StageHeader({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
-  return (
-    <header className="flex min-h-[92px] items-start justify-between gap-6 max-md:flex-col" data-testid={`${title.toLowerCase()}-page-header`}>
-      <div className="max-w-[720px]">
-        <p className="text-xs font-semibold uppercase leading-[18px] tracking-[0.96px] text-brand">{eyebrow}</p>
-        <h1 className="mt-2 text-[30px] font-semibold leading-9 tracking-[-0.6px] text-foreground">{title}</h1>
-        <p className="mt-2 text-sm leading-[21px] text-muted-foreground">{description}</p>
-      </div>
-    </header>
   );
 }
 
@@ -104,7 +88,7 @@ export function StageNextAction({ href, label, disabled, testId }: { href: strin
   if (disabled) return null;
   return (
     <footer className="mt-8 flex justify-end border-t border-border pt-5" data-testid={`${testId}-footer`}>
-      <Button asChild className="h-[42px] gap-2 rounded-[10px] px-4 text-sm" data-testid={testId}>
+      <Button asChild data-testid={testId}>
         <Link href={href}>{label}<AppIcon name="arrowRight" className="size-4" /></Link>
       </Button>
     </footer>
@@ -123,8 +107,8 @@ export function ChunkingScreen() {
   return (
     <div className="min-w-0 overflow-x-clip bg-background" data-testid="chunking-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
-        <StageHeader description={labels.description} eyebrow={locale === "tr" ? "Hazırla" : "Build"} title="Chunking" />
-        <div className="mt-3 w-fit max-w-full overflow-hidden rounded-[14px] border border-border bg-card [&>[data-testid=pipeline-context-bar]]:border-b-0">
+        <PageHeader data-testid="chunking-page-header" description={labels.description} title="Chunking" />
+        <div className="mt-6 w-fit max-w-full overflow-hidden rounded-lg border border-border bg-card [&>[data-testid=pipeline-context-bar]]:border-b-0">
           <PipelineContextBar showLineage={false} />
         </div>
         <ChunkingWorkspace locale={locale} />
@@ -148,12 +132,8 @@ export function EmbeddingsScreen() {
   return (
     <div className="min-w-0 overflow-x-clip bg-background" data-testid="embeddings-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
-        <StageHeader
-          description={labels.description}
-          eyebrow={locale === "tr" ? "Hazırla" : "Build"}
-          title="Embeddings"
-        />
-        <div className="mt-3 w-fit max-w-full overflow-hidden rounded-[14px] border border-border bg-card [&>[data-testid=pipeline-context-bar]]:border-b-0">
+        <PageHeader data-testid="embeddings-page-header" description={labels.description} title="Embeddings" />
+        <div className="mt-6 w-fit max-w-full overflow-hidden rounded-lg border border-border bg-card [&>[data-testid=pipeline-context-bar]]:border-b-0">
           <PipelineContextBar showLineage={false} />
         </div>
         <EmbeddingWorkspace locale={locale} />

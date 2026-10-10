@@ -60,9 +60,9 @@ export function DocumentUploadPanel() {
         aria-busy={isSubmitting}
         aria-describedby={validationError || submitError ? "document-upload-feedback" : undefined}
         className={cn(
-          "mt-7 flex min-h-[148px] w-full flex-col items-center justify-center rounded-[16px] border-[1.712px] border-dashed border-input bg-surface-subtle px-6 py-6 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25 focus-visible:ring-offset-2",
+          "mt-6 flex min-h-[148px] w-full flex-col items-center justify-center rounded-lg border border-dashed border-input bg-surface-subtle px-6 py-6 text-center transition-colors",
           dragActive && "border-brand bg-accent",
-          !isSubmitting && "cursor-pointer hover:border-brand hover:bg-accent",
+          !isSubmitting && "cursor-pointer hover:border-hover-border hover:bg-secondary",
           isSubmitting && "cursor-wait",
         )}
         data-testid="pdf-drop-zone"
@@ -74,10 +74,10 @@ export function DocumentUploadPanel() {
         onDrop={(event) => { event.preventDefault(); setDragActive(false); void addFile(event.dataTransfer.files?.[0]); }}
         type="button"
       >
-        <span className="grid size-10 place-items-center rounded-[12px] bg-card text-brand shadow-[0_1px_1.5px_rgba(0,0,0,0.08)]">
-          <IconSwap active={isSubmitting} first={<AppIcon name="upload" className="size-[22px]" />} second={<AppIcon name="loading" className="size-[22px] animate-spin" />} />
+        <span className="grid size-10 place-items-center rounded-lg bg-card text-brand shadow-xs">
+          <IconSwap active={isSubmitting} first={<AppIcon name="upload" className="size-5" />} second={<AppIcon name="loading" className="size-5 animate-spin" />} />
         </span>
-        <span className="mt-3 text-[15px] font-medium leading-[22.5px] text-foreground">
+        <span className="mt-3 text-base font-medium text-foreground">
           {isSubmitting
             ? `${labels.saving}${selectedFile ? ` ${selectedFile.name}` : ""}`
             : dragActive
@@ -86,7 +86,7 @@ export function DocumentUploadPanel() {
                 ? "PDF'yi buraya sürükleyin"
                 : "Drag & drop a PDF here"}
         </span>
-        <span className="mt-1 text-[13px] leading-[19.5px] text-muted-foreground">
+        <span className="mt-1 text-sm text-muted-foreground">
           {preferences.locale === "tr" ? "veya " : "or "}
           <span className="font-medium text-brand underline-offset-4">
             {preferences.locale === "tr" ? "dosyalarınıza göz atın" : "browse your files"}

@@ -5,30 +5,29 @@ import { Slot } from "radix-ui"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 rounded-[10px] text-sm font-medium whitespace-nowrap transition-[background-color,border-color,color,box-shadow,transform,opacity] duration-150 ease-out outline-none active:scale-[0.98] focus-visible:border-brand focus-visible:ring-[3px] focus-visible:ring-ring/20 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-[background-color,border-color,color,box-shadow,transform,opacity] duration-150 ease-out outline-none active:scale-[0.98] disabled:pointer-events-none aria-invalid:border-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
-        default: "bg-foreground text-primary-foreground hover:bg-strong-hover",
+        // Disabled primary reads as an unavailable surface, not a faded black slab.
+        default: "bg-foreground text-primary-foreground hover:bg-strong-hover disabled:bg-secondary disabled:text-subtle-foreground",
         destructive:
-          "bg-destructive text-primary-foreground hover:bg-destructive/90 focus-visible:ring-destructive/20",
+          "bg-destructive text-primary-foreground hover:bg-destructive/90 disabled:opacity-50",
         outline:
-          "border border-border bg-card text-foreground hover:border-brand hover:bg-accent hover:text-accent-foreground",
+          "border border-border bg-card text-foreground hover:bg-secondary disabled:opacity-50",
         secondary:
-          "bg-secondary text-foreground hover:bg-border",
+          "bg-secondary text-foreground hover:bg-border disabled:opacity-50",
         ghost:
-          "hover:bg-accent hover:text-accent-foreground",
-        link: "text-primary underline-offset-4 hover:underline",
+          "text-foreground hover:bg-secondary disabled:opacity-50",
+        link: "text-primary underline-offset-4 hover:underline disabled:opacity-50",
       },
       size: {
-        default: "h-10 px-4 py-2 has-[>svg]:px-3",
-        xs: "h-10 gap-1 rounded-[8px] px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: "h-9 gap-1.5 rounded-[9px] px-3 has-[>svg]:px-2.5",
-        lg: "h-11 rounded-[10px] px-6 has-[>svg]:px-4",
-        icon: "size-10",
-        "icon-xs": "size-10 rounded-[8px] [&_svg:not([class*='size-'])]:size-3",
-        "icon-sm": "size-10",
-        "icon-lg": "size-11",
+        default: "h-9 px-3.5 has-[>svg]:px-3",
+        sm: "h-8 gap-1.5 px-3 has-[>svg]:px-2.5",
+        lg: "h-10 px-4 text-base has-[>svg]:px-3.5",
+        icon: "size-9",
+        "icon-sm": "size-8",
+        "icon-lg": "size-10",
       },
     },
     defaultVariants: {

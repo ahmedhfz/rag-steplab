@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { PreferencesProvider } from "@/components/preferences-provider";
-import { LearningHint } from "@/components/pipeline-learning-ui";
+import { HowItWorks } from "@/components/ui/disclosure";
 import { SettingsScreen } from "@/components/settings-screen";
 import { PREFERENCES_STORAGE_KEY } from "@/lib/theme";
 
@@ -34,15 +34,17 @@ describe("PreferencesProvider and SettingsScreen", () => {
     const user = userEvent.setup();
     render(
       <PreferencesProvider>
-        <LearningHint locale="en">Chunk size changes retrieval precision.</LearningHint>
+        <HowItWorks>Chunk size changes retrieval precision.</HowItWorks>
       </PreferencesProvider>,
     );
 
-    const disclosure = screen.getByText("Why this matters").closest("details");
+    const disclosure = screen.getByTestId("how-it-works");
+    expect(disclosure.tagName).toBe("DETAILS");
+    expect(disclosure).toHaveTextContent("How it works");
     expect(disclosure).not.toHaveAttribute("open");
     expect(screen.getByRole("note")).not.toBeVisible();
 
-    await user.click(screen.getByText("Why this matters"));
+    await user.click(screen.getByText("How it works"));
 
     expect(disclosure).toHaveAttribute("open");
     expect(screen.getByRole("note")).toBeVisible();
@@ -52,11 +54,11 @@ describe("PreferencesProvider and SettingsScreen", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ locale: "en", showLearningHints: false, theme: "system" }));
     render(
       <PreferencesProvider>
-        <LearningHint locale="en">Hidden learning note.</LearningHint>
+        <HowItWorks>Hidden learning note.</HowItWorks>
       </PreferencesProvider>,
     );
 
-    await waitFor(() => expect(screen.queryByText("Why this matters")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByTestId("how-it-works")).not.toBeInTheDocument());
     expect(screen.queryByText("Hidden learning note.")).not.toBeInTheDocument();
   });
 
