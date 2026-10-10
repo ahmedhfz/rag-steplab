@@ -31,6 +31,9 @@ concurrency:
 jobs:
   release:
     name: Production release
+    # workflow_dispatch başka bir branch'ten seçilirse GITHUB_SHA o branch'tir ve `ref` ancestry
+    # kontrolü main'e değil ona göre yapılır; environment branch policy'sine ek olarak burada da durdurulur.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # Production secret'ları yalnız bu environment'ta; deployment branch policy = main.
