@@ -108,7 +108,59 @@ def test_negatively_cached_kid_is_accepted_once_the_cached_jwks_contains_it(jwks
     # JWKS cache; tokens with that kid must not stay rejected for the TTL.
     original = jwks.get_signing_keys
     monkeypatch.setattr(jwks, "get_signing_keys", lambda refresh=False: [*original(refresh), rotated])
+    monkeypatch.setattr(auth, "_JWKS_REFRESH_INTERVAL_SECONDS", 0.0)
+    with pytest.raises(ApiProblem):
+        verify_access_token(_token(kid="some-other-unknown"))  # triggers the refresh
     assert verify_access_token(_token(kid="rotated")).id == SUBJECT
+
+
+class SlowJwks(FakeJwks):
+    def __init__(self, *, fail=False):
+        super().__init__()
+        self.fail = fail
+        self.calls = 0
+
+    def get_signing_keys(self, refresh=False):
+        self.calls += 1
+        time.sleep(0.05)
+        if self.fail:
+            raise RuntimeError("JWKS endpoint unavailable")
+        return super().get_signing_keys(refresh)
+
+
+def _burst(count, token):
+    from concurrent.futures import ThreadPoolExecutor
+
+    def verify(_):
+        try:
+            return verify_access_token(token).id
+        except ApiProblem as exc:
+            return exc.code
+
+    with ThreadPoolExecutor(max_workers=count) as pool:
+        return list(pool.map(verify, range(count)))
+
+
+@pytest.mark.parametrize("phase", ["cold", "expired"])
+def test_jwks_fetch_is_single_flight_on_cold_start_and_cache_expiry(jwks, monkeypatch, phase):
+    slow = SlowJwks()
+    monkeypatch.setattr(auth, "_jwks_client", lambda _url: slow)
+    token = _token()
+    if phase == "expired":
+        assert verify_access_token(token).id == SUBJECT
+        monkeypatch.setattr(auth, "_JWKS_CACHE_SECONDS", 0.0)
+        monkeypatch.setattr(auth, "_last_jwks_refresh", None)
+        slow.calls = 0
+    assert _burst(16, token) == [SUBJECT] * 16
+    assert slow.calls == 1
+
+
+def test_failing_jwks_endpoint_is_not_refetched_by_every_request(jwks, monkeypatch):
+    failing = SlowJwks(fail=True)
+    monkeypatch.setattr(auth, "_jwks_client", lambda _url: failing)
+    results = _burst(16, _token())
+    assert set(results) == {"authentication_required"}
+    assert failing.calls == 1
 
 
 def test_disallowed_algorithm_never_reaches_the_jwks_endpoint(jwks, monkeypatch):

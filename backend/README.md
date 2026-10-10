@@ -17,9 +17,13 @@ dosya başında kabul edilir (önünde en çok 8 bayt BOM/boşluk); gzip/zip/bzi
 imzaları reddedilir, çünkü Docling format tespiti PDF allowlist'inden önce çalışır.
 Dosya adı en çok 255 karakterdir. Kullanıcı başına `MAX_DOCUMENTS_PER_USER`
 (varsayılan 200) ve `MAX_STORAGE_BYTES_PER_USER` (varsayılan 2 GiB) kotası vardır
-(0 kapatır; eşzamanlı yüklemelerde bir doküman aşılabilir). JWKS'te bilinmeyen
-`kid` 60 sn negatif cache'lenir ve zorunlu yenileme süreç başına 5 sn'de bir ile
-sınırlıdır; `ES256`/`RS256` dışı algoritmalar anahtar çekilmeden reddedilir.
+(0 kapatır). Kota, owner başına advisory lock altında doküman insert'i ile atomik
+kontrol edilir; silinmiş dokümanların Storage cleanup'ı tamamlanmamış (pending/dead)
+objeleri bayt kotasına dahildir. JWKS anahtarları 300 sn önbellekte tutulur; JWKS
+isteği süreç başına tek uçuşludur (single-flight) ve uç nokta hata verse de en çok
+5 sn'de bir yapılır. Bilinmeyen `kid` 60 sn negatif cache'lenir (önbellekteki bir
+`kid` her zaman kabul edilir); `ES256`/`RS256` dışı algoritmalar anahtar çekilmeden
+reddedilir.
 
 ## Async parse sözleşmesi
 
