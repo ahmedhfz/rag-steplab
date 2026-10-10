@@ -118,6 +118,17 @@ describe("Figma presentation state adapters", () => {
     expect(failed.continuation).toEqual({ href: "/evaluation", kind: "evaluation-error", state: "Error" });
   });
 
+  it("keeps the Playground as the next step until the experiment has produced an answer", () => {
+    for (const target of ["retrieval", "reranking", "context"] as const) {
+      const stageStatuses = Object.fromEntries(
+        (["retrieval", "reranking", "context"] as const).slice(0, ["retrieval", "reranking", "context"].indexOf(target) + 1).map((stage) => [stage, "completed"]),
+      ) as Record<string, "completed">;
+      const stopped = buildOverviewViewModel({ ...overviewInput(), evaluation: undefined, hasEvaluationDataset: false, experiment: { status: "completed", stageStatuses } });
+      expect(stopped.continuation, target).toEqual({ href: "/playground", kind: "playground", state: "Ready" });
+      expect(stopped.pipelineState.evaluate, target).toBe("Locked");
+    }
+  });
+
   it("explains locked journey steps by the first unfinished upstream step", () => {
     const embeddingsReady = buildOverviewViewModel({
       ...overviewInput(),

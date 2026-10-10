@@ -109,9 +109,10 @@ export function buildOverviewViewModel({
           : "Ready";
   const chunkState = chunk?.status === "completed" && chunk.isCompatible ? "Completed" : operationToStepState(chunkStatus);
   const embeddingState = embedding?.status === "completed" && embedding.isCompatible ? "Completed" : operationToStepState(embeddingStatus);
-  // A completed experiment makes Evaluation the next learning step even before
-  // a dataset exists: the dataset is created on the Evaluation page itself.
-  const experimentCompleted = experiment?.status === "completed";
+  // An experiment that produced an answer makes Evaluation the next learning step
+  // even before a dataset exists (the dataset is created on the Evaluation page).
+  // A run that stopped at retrieval, reranking or context still continues in the Playground.
+  const experimentCompleted = experiment?.status === "completed" && experiment.stageStatuses.generation === "completed";
   const evaluationState: PipelineStepState = evaluation
     ? evaluation.status === "completed"
       ? "Completed"
