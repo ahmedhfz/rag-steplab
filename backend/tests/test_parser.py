@@ -93,7 +93,7 @@ def test_parse_to_structure_aware_chunking_keeps_text_and_real_section_boundarie
     document = semantic_document(items)
     pages = parsed_page_cells((50, 100, 150, 110), (50, 112, 350, 122))
     monkeypatch.setattr("app.parser._get_document_converter", lambda *_args: SimpleNamespace(
-        convert=lambda path: SimpleNamespace(document=document, pages=pages)))
+        convert=lambda path, **_kwargs: SimpleNamespace(document=document, pages=pages)))
     parsed = parse_pdf_file(Path("lesson.pdf"), "lesson.pdf", 123)
     before = chunk_structured(build_structured_content(document), "structure_aware",
                               {"chunk_size_tokens": 512, "overlap_tokens": 0})
@@ -360,7 +360,7 @@ def test_build_page_elements_preserves_headings_and_joins_paragraph_lines():
 
 def test_parse_pdf_file_uses_full_document_converter_and_existing_normalizer(monkeypatch):
     class Converter:
-        def convert(self, path):
+        def convert(self, path, **_kwargs):
             assert path == Path("lesson.pdf")
             return SimpleNamespace(document=FakeDocument())
 
@@ -382,7 +382,7 @@ def test_parse_pdf_file_uses_full_document_converter_and_existing_normalizer(mon
 
 def test_parse_pdf_file_reports_real_lifecycle_checkpoints(monkeypatch):
     class Converter:
-        def convert(self, _path):
+        def convert(self, _path, **_kwargs):
             return SimpleNamespace(document=FakeDocument())
 
     monkeypatch.setattr("app.parser._get_document_converter", lambda *_args, **_kwargs: Converter())
@@ -415,7 +415,7 @@ def test_parse_pdf_file_accepts_a_document_without_semantic_tables(monkeypatch):
     )
     monkeypatch.setattr(
         "app.parser._get_document_converter",
-        lambda *_args, **_kwargs: SimpleNamespace(convert=lambda _path: SimpleNamespace(document=document)),
+        lambda *_args, **_kwargs: SimpleNamespace(convert=lambda _path, **_kwargs: SimpleNamespace(document=document)),
     )
 
     result = parse_pdf_file(Path("lesson.pdf"), "lesson.pdf", 123)
