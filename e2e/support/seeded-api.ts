@@ -429,6 +429,19 @@ function scenarioState(scenario: SeededScenario, includeEmbedding = true) {
   };
 }
 
+// Seeded testler hosted API'ye asla gitmez: API'ye benzeyen ama fixture'ı olmayan istek
+// gerçek dedicated token'la backend'e geçmek yerine reddedilir (fail-closed).
+const seededApiOrigins = new Set(["http://127.0.0.1:8000", "http://localhost:8000"]);
+for (const value of [process.env.E2E_API_BASE_URL, process.env.NEXT_PUBLIC_API_BASE_URL]) {
+  try {
+    if (value) seededApiOrigins.add(new URL(value).origin);
+  } catch {}
+}
+
+function isApiRequest(url: URL) {
+  return url.pathname.startsWith("/api/rag/") || seededApiOrigins.has(url.origin) || url.hostname.endsWith(".modal.run");
+}
+
 async function json(route: Route, value: unknown, status = 200) {
   await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
 }
@@ -459,6 +472,7 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
     latestParseStatus: string | null;
   })[] = [];
   const parseRequests: string[] = [];
+  const unmatchedApiRequests: string[] = [];
 
   await page.addInitScript(({ theme, locale }) => {
     // İlk navigation'da temizle; sonraki route navigation'larında seçili lineage korunmalıdır.
@@ -647,9 +661,20 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
     if (pathname === `/documents/${documentId}/source-url`) return json(route, { sourceUrl: `/documents/${documentId}/source`, mode: "proxy", expiresIn: 60 });
     if (pathname === `/documents/${documentId}/source`) return route.fulfill({ status: 200, contentType: "application/pdf", body: pdf });
 
+    if (isApiRequest(url)) {
+      if (method === "OPTIONS") {
+        return route.fulfill({ status: 204, headers: {
+          "access-control-allow-origin": request.headers().origin ?? "*",
+          "access-control-allow-methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
+          "access-control-allow-headers": "authorization,content-type",
+        } });
+      }
+      unmatchedApiRequests.push(`${method} ${pathname}`);
+      return json(route, { error: { code: "seeded_api_unmatched", message: `Seeded API has no fixture for ${method} ${pathname}.` } }, 501);
+    }
     await route.continue();
   });
-  return { uploads, parseRequests };
+  return { uploads, parseRequests, unmatchedApiRequests };
 }
 
 export const seededIds = { documentId, parseRunId, chunkRunId, embeddingRunId, experimentId, datasetId, evaluationRunId, evaluationRunIdB };

@@ -21,23 +21,11 @@ Supabase schema, private Storage bucket, Supabase CLI migration lineage'ı ve
 RAG pipeline aynı kalır. Browser yalnız FastAPI yüzeyiyle konuşur; Docling worker
 public endpoint değildir.
 
-## Async parse contract
+## Parse polling
 
-```text
-POST /documents/parse (multipart PDF)
-    → Storage upload + document + queued run
-    → HTTP 202 { documentId, parseRunId, status: "queued" }
-    → GET /parse-runs/{parseRunId}
-    → queued → running → completed | failed
-```
-
-Persisted source için `POST /documents/{documentId}/parse` aynı lifecycle'ı
-kullanır. `completed` yanıtı normalized structured content, Markdown, summary
-ve provenance içerir. Database'de internal `interrupted` tutulsa bile public
-API ve frontend bunu `failed` + `error.code = parse_interrupted` olarak gösterir.
-Public `interrupted` state yoktur.
-
-Frontend 2 saniyede bir poll eder. Browser 15 dakika sonunda gerçek run'ı
+Async parse sözleşmesi (`202 → queued → running → completed | failed`,
+`parse_interrupted` normalizasyonu) [backend/README.md](../backend/README.md#async-parse-sözleşmesi)
+içinde tanımlıdır. Frontend 2 saniyede bir poll eder. Browser 15 dakika sonunda gerçek run'ı
 failed yapmadan takibi durdurur; refresh durable polling'i sürdürür. Transient
 network/5xx/408/429 hataları run'ı failed yapmaz. queued/running sırasında
 ikinci submit hem UI hem database unique inflight guard ile engellenir. Fake
@@ -47,12 +35,27 @@ işaretlenen ve bir sonraki checkpoint'i geçmeyen görsel ilerleme gösterebili
 
 ## Modal App
 
-Tek `rag-steplab-api` Modal App iki farklı compute profili kullanır:
+Tek `rag-steplab-api` Modal App üç farklı compute profili kullanır
+(`backend/modal_app.py`):
 
-| Bileşen | CPU | Bellek | Timeout | Min/Max |
-| --- | ---: | ---: | ---: | ---: |
-| FastAPI ASGI (`api_eu`) | 0.5 | 1024 MiB | 300 s | 1 / 2 |
-| Full Docling worker | 2.0 | 4096 MiB | 900 s | 0 / 1 |
+| Bileşen | Function | CPU | Bellek | Timeout | Min/Max |
+| --- | --- | ---: | ---: | ---: | ---: |
+| FastAPI ASGI | `api_eu` | 0.5 | 1024 MiB | 300 s | 1 / 2 |
+| Full Docling parse worker | `parse_worker` (`benchmark_parse` aynı profili kullanır) | 2.0 | 4096 MiB | 900 s | 0 / 1 |
+| Pipeline worker (experiment, evaluation) | `pipeline_worker` | 1.0 | 2048 MiB | 1800 s | 0 / 1 |
+
+Pipeline worker API image'ını kullanır (Docling taşımaz). Embedding run'ları
+şu an API isteği içinde senkron çalışır; lease süreleri aynı pipeline bütçesini
+kullanır. Pipeline worker timeout ve startup
+timeout `PIPELINE_WORKER_TIMEOUT_SECONDS` / `PIPELINE_WORKER_STARTUP_TIMEOUT_SECONDS`
+ile ayarlanır (varsayılan 1800 s / 300 s); backend lease/timeout hesabı aynı
+değişkenleri okur, bu yüzden Modal deploy'u ile API secret'ında aynı değer
+tutulmalıdır. Legacy `api` yalnız rollback içindir. `prefetch_docling_models`
+(1800 s) ve `remote_import_smoke` (300 s) operasyonel yardımcı Function'lardır.
+Deploy anı değişkenleri: `MODAL_API_COMPUTE_REGION` (varsayılan `eu`),
+`MODAL_API_ROUTING_REGION` (`eu-west`), `MODAL_API_SECRET_NAMES`
+(`rag-steplab-api-runtime`) ve `MODAL_WORKER_SECRET_NAMES`
+(`rag-steplab-parser-runtime`); secret değerleri Modal Secret içinde kalır.
 
 Production Supabase `eu-central-1` yakınlığı için yalnız interactive API
 `region=eu` ve `routing_region=eu-west` kullanır. Routing region mevcut Function
@@ -77,9 +80,9 @@ Bu yol Docling Volume dışında kalır; boş Volume OCR modelini maskelemez.
 `prefetch_docling_models` yalnız layout/tableformer indirir ve image OCR
 manifestini doğrular. RapidOCR default downloader ile başka recognition
 profili hazırlamayın. Request sırasında OCR indirmesi veya sessiz fallback
-yoktur. Runtime pin'leri `requirements-worker.txt` içindedir. Bu değişiklik
-henüz deploy edildiği anlamına gelmez; yeni worker image + yetkili hosted parse
-doğrulaması ayrı release adımıdır.
+yoktur. Runtime pin'leri `requirements-worker.txt` içindedir. OCR profil
+değişiklikleri yeni worker image'ı ve yetkili hosted parse doğrulaması gerektirir;
+kaynak değişikliği tek başına deploy edildiği anlamına gelmez.
 
 Karaman regression PDF'iyle ilk ölçüm:
 
@@ -119,56 +122,77 @@ HSTS uygulama tarafından tekrar
 üretilmez: production TLS/HSTS davranışı Vercel edge katmanının sorumluluğudur
 ve release smoke'ta response header olarak ayrıca doğrulanmalıdır.
 
-CI, production npm dependency audit'i ile worker/base ve CI Python requirement
-audit'lerini çalıştırır. Worker audit'i `docling==2.117.0` için yayımlanan on
+CI, production npm dependency audit'i ile worker/base ve CI Python lock
+audit'lerini çalıştırır. Python bağımlılıkları `backend/requirements*.in`
+girdilerinden üretilen hash'li `uv` lock'larıdır (`backend/requirements*.txt`);
+Modal image'ları ve CI aynı lock'ları kurar, audit deploy edilen pin'leri denetler. Worker audit'i `docling==2.117.0` için yayımlanan on
 advisory'yi (`ci.yml` içindeki liste) bilinçli olarak muaf tutar: bunlar HTML,
 LaTeX, OpenDocument, METS-GBS, Docling JSON backend'leri, KServe OCR ve plugin
 yükleme yollarını etkiler. Upload `%PDF-` imzası ister ve converter
-`allowed_formats=[PDF]` ile kısıtlıdır. Düzeltilmiş sürümler (2.132.0 ve
+`allowed_formats=[PDF]` ile kısıtlıdır. PYSEC-2026-4194 (METS-GBS format tespiti)
+muafiyeti ayrıca upload'ın `%PDF-` imzasını offset 0'da zorunlu kılıp gzip/zip
+magic'ini reddetmesine dayanır; bu kontrol gevşetilirse muafiyet geçersizdir. Düzeltilmiş sürümler (2.132.0 ve
 2.135.0, `docling-ibm-models` 4.x) örnek TR PDF'inin 4. sayfasındaki iki
 paragrafı ham Docling çıktısında düşürdüğünden yükseltme yapılmadı; yeni Docling
 sürümü aynı örnekte içerik kaybetmediği doğrulanınca muafiyet kaldırılır.
-Dependabot npm, pip ve GitHub Actions için haftalık,
+Dependabot npm, Python (`uv` lock'ları) ve SHA ile pinli GitHub Actions için haftalık,
 bounded PR üretir. Repository private ve GitHub Code Scanning etkin olmadığı
-için bu değişiklik CodeQL workflow'u eklemez; ücretsiz uygunluk doğrulanmadan
+için CodeQL workflow'u bilinçli olarak yoktur; ücretsiz uygunluk doğrulanmadan
 Advanced Security gerektiren bir gate zorunlu kılınmaz.
 
 ## Deploy sırası ve gerçek otomatik kapılar
 
 1. PR'da değişikliğe göre yerel hedefli kontrolleri çalıştır. `.github/workflows/ci.yml`
-   classifier'ın seçtiği frontend/backend/migration ve auth/critical/visual
-   kontrollerini uygular; her PR tüm E2E profillerini çalıştırmaz.
+   classifier'ın seçtiği frontend/backend/migration ve auth/seeded/visual
+   kontrollerini uygular; her PR tüm E2E profillerini çalıştırmaz. Worker/image
+   değişikliğinde opt-in `Modal image build` job'u (`MODAL_IMAGE_CHECK=true`)
+   image'ları Modal `ci` environment'ında geçici app olarak build edip remote import
+   smoke'u çalıştırır; deploy etmez.
 2. İlgili PR kontrolleri ve inceleme tamamlanınca yetkili merge yapılır.
-3. `.github/workflows/release.yml`, yalnız `main` üzerinde `backend/app/**`,
-   `backend/modal_app.py`, runtime/worker requirements veya `supabase/migrations/**`
-   değiştiğinde tetiklenir. Her main push'u için genel frontend release kapısı değildir.
-4. Release secret hygiene kontrolü yapar. Classifier `modal_deploy=true` ise hafif
-   backend bağımlılıklarıyla backend testleri çalışır. `migration=true` ise local
-   reset/test/lint ve authority kontrolünden sonra linked migration dry-run/apply
-   ve `upToDate` doğrulaması yapılır. Migration başarısızsa aynı job'ın sonraki
-   Modal adımı ilerlemez; Vercel deployment'ı bu job tarafından yönetilmez.
-5. `modal_deploy=true` ise `main` environment'ına Git SHA tag'iyle rolling deploy,
-   tag doğrulaması ve API health/ready/auth koruma kontrolleri yapılır.
-   `worker_provider=true` ise ayrıca remote import smoke çalışır.
-6. Docling prefetch, Karaman semantic smoke ve hosted full-RAG ayrı yetkili
+3. `.github/workflows/release.yml` her `main` push'unda `production-release`
+   GitHub environment'ında çalışır ve kararlarını diff'ten değil production
+   durumundan verir. İptal edilen veya başarısız bir run'ın işi sonraki run'da
+   kaybolmaz.
+4. Migration: `supabase db push --linked --dry-run` bekleyen migration gösterirse
+   local reset/test/lint ve authority kontrolünden sonra apply edilir; ardından
+   `upToDate` ve salt okunur `supabase db diff --linked --schema rag_lab` drift
+   kontrolü yapılır. Bunlardan biri başarısızsa Modal adımı ilerlemez.
+5. Modal: canlı Modal tag'i (son deploy edilen Git SHA) ile hedef SHA arasında
+   backend/runtime değişikliği varsa (veya tag bilinmiyorsa) backend testlerinden
+   sonra `main` environment'ına SHA tag'iyle rolling deploy, tag doğrulaması ve
+   worker değiştiyse remote import smoke yapılır. API health/ready/auth koruma
+   kontrolü her run'da çalışır.
+6. Vercel production promotion'ı Vercel **Deployment Checks** ile bu job'un
+   (`Production release`) başarısına bağlanır: Vercel build'i paralel yapsa da yeni
+   frontend, migration ve Modal deploy'u bitmeden production domain'ine atanmaz.
+   Bu ayar Vercel project settings'tedir; kapalıysa sıra garanti edilmez.
+7. Docling prefetch, Karaman semantic smoke ve hosted full-RAG ayrı yetkili
    operasyonlardır; release workflow'u bunları otomatik çalıştırmaz. Model/cache
    değişikliği gerektirmedikçe her deploy'da prefetch yapmayın.
-7. Vercel rollout/cutover ve production browser/full-RAG doğrulamasını ayrıca
-   planlayın. Mevcut `.github/workflows/e2e-full.yml` yalnız manuel Heavy validation
-   workflow'udur; schedule yoktur. Deployment başarı kanıtı ile gerçek provider
-   ve corpus sonucu ayrı raporlanır.
+8. `.github/workflows/e2e-full.yml` yalnız manuel Heavy validation workflow'udur;
+   schedule yoktur. Seeded/auth/visual profilleri düşük yetkili E2E secret'larıyla
+   çalışır; `full-rag` yalnız `production-e2e` environment'ında, global tek koşu
+   olarak ve kendi `E2E_RUN_ID` namespace'ini temizleyerek çalışır.
+   `production-visual-update` referans PNG'lerini CI ile aynı Linux ortamında üretip
+   değişen/yeni/orphan listesiyle artifact olarak verir. Deployment başarı kanıtı ile
+   gerçek provider ve corpus sonucu ayrı raporlanır.
 
 Supabase Dashboard repository integration kullanılmaz; migration authority
 GitHub Actions + Supabase CLI'dır. Linked işlem için `SUPABASE_ACCESS_TOKEN` ve
 `SUPABASE_PROJECT_REF`; Modal için `MODAL_TOKEN_ID` ve `MODAL_TOKEN_SECRET`
-gerekir. Secret değerleri çıktıya veya repository'ye yazılmaz.
+gerekir. Bu secret'lar repository seviyesinde değil `production-release`
+environment'ındadır (deployment branch policy: `main`); service-role
+`E2E_SUPABASE_SECRET_KEY` yalnız `production-e2e` environment'ındadır. Secret'lar
+yalnız kullanan adımların env'ine verilir; secret gören job'larda `npm ci
+--ignore-scripts` kullanılır. GitHub environment adları büyük/küçük harf duyarsız
+olduğu için Vercel'in oluşturduğu `Production`/`Preview` environment'larıyla
+çakışmayan adlar seçilmiştir. Secret değerleri çıktıya veya repository'ye yazılmaz.
 
 Release komutu:
 `modal deploy --env main --tag "$GITHUB_SHA" --strategy rolling backend/modal_app.py`.
-Workflow Modal tag'ini doğrular; Vercel SHA eşleşmesini garanti etmez. Uçtan uca
-release doğrulaması istendiğinde Vercel deployment SHA'sını ayrıca kontrol edin.
-Manual full-RAG workflow'u sabit production URL'sini kullanır; seçili Git ref ile
-canlı frontend/backend SHA'larının eşit olduğunu bu koşudan çıkarmayın.
+Workflow Modal tag'ini doğrular. Manual full-RAG workflow'u sabit production URL'sini
+kullanır; seçili Git ref ile canlı frontend/backend SHA'larının eşit olduğunu bu
+koşudan çıkarmayın.
 
 ## Migration authority
 
@@ -183,8 +207,8 @@ Supabase CLI
 Supabase PostgreSQL
 ```
 
-Yeni migration üretmek için repository root'unda
-`supabase migration new <descriptive_name>` kullanılır.
+Local komut akışı [supabase/AGENTS.md](../supabase/AGENTS.md), karar ve production
+baseline [migrations.md](architecture/migrations.md) içindedir.
 `supabase migration fetch --linked` remote history'yi yeniden oluşturmak
 için kullanılabilir. Existing production baseline migration'ı remote'da tekrar
 çalıştırılmaz; Supabase migration repair ile applied olarak işaretlenir.
@@ -211,8 +235,10 @@ Aşağıdaki hosted smoke veri oluşturur ve provider maliyeti doğurabilir; sı
 local test değildir. Authenticated API için dedicated kullanıcıya ait
 `SMOKE_ACCESS_TOKEN` process environment'ta güvenli şekilde sağlanmalıdır;
 token değeri komuta, loga veya belgeye yazılmaz. Hedef, PDF ve izin verilen veri
-etkisini doğrulamadan çalıştırmayın. Script'in ürettiği kayıtların temizliğini
-ayrı kapsamlandırın; E2E cleanup'ın her smoke verisini sildiğini varsaymayın.
+etkisini doğrulamadan çalıştırmayın. Script PDF'i `e2e-smoke-<run>.pdf` adıyla
+yükler ve kendi oluşturduğu dokümanı koşu sonunda siler (bağlı run/dataset
+kayıtları cascade ile gider); `SMOKE_KEEP_DATA=1` veriyi bırakır. SHA tekilleştirmesi
+mevcut bir dokümanı döndürürse o doküman silinmez.
 
 ```powershell
 backend\.venv\Scripts\python.exe -m pytest backend/tests
@@ -232,9 +258,13 @@ $env:SMOKE_TIMEOUT_MS = "60000"
 node scripts/smoke.mjs
 ```
 
+Ek isteğe bağlı değişkenler: `SMOKE_PARSE_TIMEOUT_MS` (parse bekleme süresi,
+varsayılan 900000) ve `SMOKE_REQUIRE_JUDGE=1` (evaluation'da judge'ı açar ve
+judge modelinin raporlanmasını zorunlu kılar).
+
 Semantic gate 8 sayfa, 9–11 tablo, 24–28 gerçek başlık, page provenance ve
 `BAT-S12`, `INV-T17`, `12,84 GWh`, `%17,6`, `%25` marker'larını doğrular. Full
-gate üç chunk stratejisi, embedding, dense/keyword/hybrid-RRF, rerank, context,
+gate üç chunk stratejisi, embedding, dense/keyword/hybrid, rerank, context,
 grounded generation/citations, evaluation, history ve lineage compatibility
 zincirini yürütür. Production normalization sonucu tablo sayısı sıfırsa parse
 `docling_tables_missing` ile failed olur; lightweight fallback çalıştırılmaz.
@@ -242,11 +272,19 @@ Raw PDF, prompt/context veya secret loglanmaz.
 
 ## Rollback
 
-Modal revision hatasında önceki sağlıklı Modal deployment yeniden deploy
-edilir. Frontend sorunu varsa Vercel'in önceki sağlıklı deployment'ı promote
-edilir. Database migration downgrade yalnız yeni kod eski schema ile
-çalışamıyorsa ve mevcut queued/running run kalmadığı doğrulandıktan sonra
-uygulanır. Supabase project, schema veya Storage bucket yeniden oluşturulmaz.
+Modal revision hatasında `Production release` workflow'u `workflow_dispatch` ile
+`ref` = önceki sağlıklı `main` commit SHA'sı verilerek çalıştırılır. Workflow
+SHA'nın `main` geçmişinde olduğunu doğrular, migration ve drift adımlarını atlar
+(rollback şemayı geri almaz), o SHA'yı ayrı checkout'tan test edip aynı SHA
+tag'iyle deploy eder ve health kontrolünü yapar. `force_modal_deploy` aynı SHA'yı
+yeniden deploy eder. Geri dönülen kodun mevcut şemayla çalıştığı (expand/contract)
+önceden doğrulanmalıdır.
+
+Frontend sorunu varsa Vercel'in önceki sağlıklı deployment'ı promote edilir
+(Vercel dashboard "Instant Rollback" veya `vercel rollback <deployment-url>`).
+Database migration downgrade yalnız yeni kod eski schema ile çalışamıyorsa ve
+mevcut queued/running run kalmadığı doğrulandıktan sonra uygulanır. Supabase
+project, schema veya Storage bucket yeniden oluşturulmaz.
 
 ## Legacy Render emergency recreation
 

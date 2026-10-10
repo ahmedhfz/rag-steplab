@@ -37,9 +37,11 @@ ve hücre geometrisini korur; confidence tanısal skordur, doğruluk olasılığ
 `RUN_OCR_REGRESSION=1 pytest tests/test_ocr_recognition.py` gerçek model testidir;
 hafif CI'nin bu modelleri taşıması gerekmez.
 
-CI için hafif bağımlılıklar `backend/requirements-ci.txt`, worker/Docling/ML
-bağımlılıkları `backend/requirements-worker.txt` ve çalışma bağımlılıkları
-ilgili requirements dosyalarındadır; CI'ye ağır worker paketleri eklemeyin.
+Bağımlılıklar `backend/requirements*.in` dosyalarında düzenlenir; `.txt`
+karşılıkları hash'li üretilmiş lock'tur (`npm run python:lock`, elle düzenlenmez).
+CI için hafif bağımlılıklar `requirements-ci`, worker/Docling/ML bağımlılıkları
+`requirements-worker`, çalışma bağımlılıkları `requirements` dosyalarındadır;
+CI'ye ağır worker paketleri eklemeyin.
 Kurulum ve deployment ayrıntıları `backend/README.md` ile `docs/deployment.md`
 kanoniktir. Backend değişikliklerinde önce ilgili `backend/tests/` testini,
 sonra classifier/workflow'un seçtiği backend ve gerekirse seeded E2E gate'ini

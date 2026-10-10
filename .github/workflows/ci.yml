@@ -17,15 +17,16 @@ jobs:
     name: CI result
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
-      E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
-      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    # Secret'lar job seviyesinde değil, yalnız kullanan adımların env'inde tanımlanır;
+    # npm/pip kurulumları ve araç adımları onları görmez.
+    outputs:
+      modal_image: ${{ steps.classify.outputs.modal_image }}
     steps:
       - name: Checkout full history
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Classify changed files
         id: classify
@@ -36,50 +37,82 @@ jobs:
         run: |
           set -euo pipefail
           node .github/scripts/classify-changes.mjs --self-test
-          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > changed-files.txt
+          # Üç nokta = merge-base: base ilerlemişse PR'da olmayan dosyalar sınıflandırılmaz.
+          merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+          git diff --name-only "$merge_base" "$HEAD_SHA" > changed-files.txt
           node .github/scripts/classify-changes.mjs < changed-files.txt | tee classification.txt
           cat classification.txt >> "$GITHUB_OUTPUT"
+          echo "merge_base=$merge_base" >> "$GITHUB_OUTPUT"
+          if grep -qE '^(auth_e2e|seeded_e2e|production_visual)=true$' classification.txt; then
+            echo "browser_e2e=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "browser_e2e=false" >> "$GITHUB_OUTPUT"
+          fi
+          if grep -qx 'docs_only=true' classification.txt; then
+            echo "Docs-only change: no code checks are required." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Reject secret-shaped tracked values
-        shell: bash
-        run: |
-          set -euo pipefail
-          if secret_files="$(git grep -lE 'AIza[0-9A-Za-z_-]{20,}|(ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{10,}|postgres(ql)?://[^[:space:]]+:[^@[:space:]]+@' -- .)"; then
-            echo "::error::A secret-shaped value was found in tracked files (content is intentionally not printed)."
-            printf '%s\n' "$secret_files"
-            exit 1
-          fi
+        run: bash .github/scripts/scan-secrets.sh
 
       - name: Validate GitHub Actions workflows
         if: steps.classify.outputs.workflow_config == 'true'
-        uses: docker://rhysd/actionlint:1.7.12
-        with:
-          args: -color
+        # Docker Hub rate limit/timeout'una bağlı kalmamak için GitHub release binary'si
+        # checksum ile doğrulanıp kullanılır; shellcheck runner image'ından gelir.
+        shell: bash
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 --output "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+
+      - name: Validate Dependabot config
+        if: steps.classify.outputs.dependabot_config == 'true'
+        run: |
+          set -euo pipefail
+          yq -e '.version == 2' .github/dependabot.yml >/dev/null
+          yq -e '.updates | length > 0' .github/dependabot.yml >/dev/null
+          yq -e '.updates | all_c(has("package-ecosystem") and has("directory") and has("schedule"))' .github/dependabot.yml >/dev/null
+          echo "Dependabot config is structurally valid."
 
       - name: Set up Node.js
         if: steps.classify.outputs.node == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install frontend dependencies
         if: steps.classify.outputs.node == 'true'
-        run: npm ci
+        # Lifecycle script gerekmez: tek install script'i unrs-resolver'ın native binding
+        # kontrolüdür ve binding optionalDependencies ile zaten kurulur.
+        run: npm ci --ignore-scripts
 
       - name: Audit production npm dependencies
         if: steps.classify.outputs.node == 'true'
         run: npm audit --omit=dev --audit-level=high
 
-      - name: Lint changed JavaScript and TypeScript
+      - name: Lint JavaScript and TypeScript
         if: steps.classify.outputs.frontend == 'true' || steps.classify.outputs.playwright_list == 'true'
         shell: bash
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          LINT_FULL: ${{ steps.classify.outputs.lint_full }}
+          MERGE_BASE: ${{ steps.classify.outputs.merge_base }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          mapfile -t lint_files < <(git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" | grep -E '\.(cjs|mjs|js|jsx|ts|tsx)$' || true)
+          if [ "$LINT_FULL" = "true" ]; then
+            echo "ESLint config, package or TypeScript settings changed: linting the whole repository."
+            npm run lint
+            exit 0
+          fi
+          mapfile -t lint_files < <(git diff --name-only --diff-filter=ACMR "$MERGE_BASE" "$HEAD_SHA" | grep -E '\.(cjs|mjs|js|jsx|ts|tsx|mts|cts)$' || true)
           if [ "${#lint_files[@]}" -eq 0 ]; then
             echo "No changed lintable files."
             exit 0
@@ -93,12 +126,13 @@ jobs:
       - name: Run changed Vitest tests
         if: steps.classify.outputs.frontend == 'true' && steps.classify.outputs.frontend_full_tests != 'true'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: npm test -- --changed "$BASE_SHA" --passWithNoTests --maxWorkers=1
+          MERGE_BASE: ${{ steps.classify.outputs.merge_base }}
+        # vitest.config.mts forceRerunTriggers, readFileSync ile okunan dosyalar değişince tüm suite'i koşar.
+        run: npm test -- --changed "$MERGE_BASE" --passWithNoTests
 
       - name: Run full Vitest fallback
         if: steps.classify.outputs.frontend_full_tests == 'true'
-        run: npm test -- --maxWorkers=1
+        run: npm test
 
       - name: Validate Playwright inventory
         if: steps.classify.outputs.playwright_list == 'true'
@@ -106,30 +140,49 @@ jobs:
 
       - name: Set up Python
         if: steps.classify.outputs.backend == 'true'
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.13"
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: backend/requirements-ci.txt
 
-      - name: Install lightweight backend dependencies
+      - name: Install locked backend CI dependencies
         if: steps.classify.outputs.backend == 'true'
-        run: python -m pip install --disable-pip-version-check -r backend/requirements-ci.txt
+        run: python -m pip install --disable-pip-version-check --require-hashes -r backend/requirements-ci.txt
 
-      - name: Audit Python requirement files
+      - name: Check Python lock files
+        if: steps.classify.outputs.backend == 'true'
+        run: node .github/scripts/python-locks.mjs --check
+
+      - name: Lint and type-check backend
+        if: steps.classify.outputs.backend == 'true'
+        working-directory: backend
+        run: |
+          python -m ruff check .
+          python -m mypy
+
+      - name: Audit Python lock files
         if: steps.classify.outputs.backend == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --disable-pip-version-check pip-audit==2.10.0
-          # requirements-worker.txt includes the base backend requirements.
-          # Docling 2.117.0 advisories cover non-PDF backends/KServe/plugins; fixed
-          # releases (>=2.132.0) drop PDF text. See docs/deployment.md before removing.
+          # Ayrı venv: denetim aracı test edilen ortamın paketlerini değiştirmez.
+          python -m venv "$RUNNER_TEMP/pip-audit"
+          "$RUNNER_TEMP/pip-audit/bin/python" -m pip install --disable-pip-version-check --quiet pip-audit==2.10.0
+          # Lock'lar tam ve hash'li olduğu için yeniden çözümleme yapılmaz; deploy edilen pin'ler denetlenir.
+          # Docling 2.117.0 muafiyetleri: düzeltilmiş sürümler (>=2.131/2.132) örnek TR PDF'inde
+          # içerik düşürdüğü için yükseltme bekliyor (docs/deployment.md). PDF-only akışta erişilemeyen
+          # backend'ler (HTML/LaTeX/ODF/JATS/Docling JSON/KServe/plugin) muaf. PYSEC-2026-4194
+          # (METS-GBS format tespitinde bellek tüketimi) muafiyeti, upload'ın `%PDF-` imzasını offset 0'da
+          # zorunlu kılıp gzip/zip magic'ini reddetmesine dayanır (backend/app/main.py `_ensure_file`);
+          # bu kontrol gevşetilirse muafiyet geçersizdir.
           docling_ignores=(
             PYSEC-2026-4189 PYSEC-2026-4190 PYSEC-2026-4191 PYSEC-2026-4192 PYSEC-2026-4193
             PYSEC-2026-4194 PYSEC-2026-4195 PYSEC-2026-4196 CVE-2026-105748 CVE-2026-105751
           )
-          python -m pip_audit --progress-spinner off -r backend/requirements-worker.txt \
-            "${docling_ignores[@]/#/--ignore-vuln=}"
-          python -m pip_audit --progress-spinner off -r backend/requirements-ci.txt
+          audit=("$RUNNER_TEMP/pip-audit/bin/python" -m pip_audit --progress-spinner off --disable-pip)
+          "${audit[@]}" -r backend/requirements-ci.txt
+          "${audit[@]}" -r backend/requirements-worker.txt "${docling_ignores[@]/#/--ignore-vuln=}"
 
       - name: Run all backend unit and contract tests
         if: steps.classify.outputs.backend == 'true'
@@ -137,7 +190,7 @@ jobs:
 
       - name: Install Supabase CLI
         if: steps.classify.outputs.database == 'true'
-        uses: supabase/setup-cli@v3
+        uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
         with:
           version: 2.116.0
 
@@ -157,24 +210,46 @@ jobs:
         continue-on-error: true
         run: supabase stop --project-id rag-steplab --no-backup
 
+      - name: Check E2E credentials
+        if: steps.classify.outputs.browser_e2e == 'true'
+        shell: bash
+        env:
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in E2E_USER_EMAIL E2E_USER_PASSWORD VERCEL_AUTOMATION_BYPASS_SECRET; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            store="Settings > Secrets and variables > Actions"
+            # Dependabot PR'ları yalnız Dependabot secret'larını alır.
+            [ "$PR_AUTHOR" = "dependabot[bot]" ] && store="Settings > Secrets and variables > Dependabot"
+            echo "::error::Browser E2E needs ${missing[*]}. Add the low-privilege E2E secrets under $store."
+            exit 1
+          fi
+
       - name: Restore Playwright Chromium
-        if: steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true' || steps.classify.outputs.production_visual == 'true'
+        if: steps.classify.outputs.browser_e2e == 'true'
         id: playwright-cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install Chromium system dependencies
-        if: (steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true' || steps.classify.outputs.production_visual == 'true') && steps.playwright-cache.outputs.cache-hit == 'true'
+        if: steps.classify.outputs.browser_e2e == 'true' && steps.playwright-cache.outputs.cache-hit == 'true'
         run: npx playwright install-deps chromium
 
       - name: Install Chromium and system dependencies
-        if: (steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true' || steps.classify.outputs.production_visual == 'true') && steps.playwright-cache.outputs.cache-hit != 'true'
+        if: steps.classify.outputs.browser_e2e == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
 
       - name: Wait for exact Vercel Preview deployment
-        if: steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true' || steps.classify.outputs.production_visual == 'true'
+        if: steps.classify.outputs.browser_e2e == 'true'
         id: deployment
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -186,23 +261,33 @@ jobs:
         if: steps.classify.outputs.auth_e2e == 'true'
         env:
           E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: npm run e2e:auth
 
-      - name: Run critical smoke suite
-        if: steps.classify.outputs.critical_e2e == 'true'
+      - name: Run seeded smoke suite
+        if: steps.classify.outputs.seeded_e2e == 'true'
         env:
           E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
-        run: npm run e2e:critical
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        # Tüm seeded smoke (etiketsiz testler dahil); @critical alt kümesi yalnız yerel kısa yol.
+        run: npm run e2e:smoke
 
       - name: Run production visual suite
         if: steps.classify.outputs.production_visual == 'true'
         env:
           E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: npm run e2e:visual:production
 
       - name: Upload Playwright failure artifacts
-        if: failure() && (steps.classify.outputs.auth_e2e == 'true' || steps.classify.outputs.critical_e2e == 'true' || steps.classify.outputs.production_visual == 'true')
-        uses: actions/upload-artifact@v7
+        if: failure() && steps.classify.outputs.browser_e2e == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-pr-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -210,3 +295,56 @@ jobs:
             !output/playwright/.auth/**
           if-no-files-found: ignore
           retention-days: 3
+
+  modal-image:
+    name: Modal image build
+    needs: ci
+    # Opt-in: Modal `ci` environment'ı ve `modal-ci` GitHub environment'ı (required reviewer)
+    # kurulunca repository variable MODAL_IMAGE_CHECK=true ile açılır. Deploy yapmaz.
+    if: needs.ci.outputs.modal_image == 'true' && vars.MODAL_IMAGE_CHECK == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: modal-ci
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: backend/requirements-ci.txt
+
+      - name: Install locked backend CI dependencies
+        run: python -m pip install --disable-pip-version-check --require-hashes -r backend/requirements-ci.txt
+
+      - name: Build images and run remote import smoke in an ephemeral app
+        working-directory: backend
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_ENVIRONMENT: ci
+          # Production adlarıyla çakışmayan app/volume; runtime secret'ı gerekmez.
+          MODAL_APP_NAME: rag-steplab-image-check
+          MODAL_DOCLING_VOLUME_NAME: rag-steplab-image-check-models
+          MODAL_API_SECRET_NAMES: ""
+          MODAL_WORKER_SECRET_NAMES: ""
+        run: |
+          python - <<'PY'
+          import os
+
+          import modal
+          import modal_app
+
+          # app.run() geçici (ephemeral) app'tir: iki image'ı build eder, smoke'u çalıştırır ve kapanır.
+          with modal.enable_output(), modal_app.app.run(environment_name=os.environ["MODAL_ENVIRONMENT"]):
+              result = modal_app.remote_import_smoke.remote()
+          print({key: result[key] for key in ("appImported", "parserImported", "doclingVersion")})
+          assert result["appImported"] and result["parserImported"], result
+          assert result["doclingVersion"] == "2.117.0", result["doclingVersion"]
+          PY

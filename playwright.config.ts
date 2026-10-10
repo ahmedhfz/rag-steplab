@@ -53,6 +53,8 @@ export default defineConfig({
       name: "full-rag",
       testMatch: /full\/.*\.spec\.ts/,
       fullyParallel: false,
+      // Gerçek provider koşusu: retry maliyeti ve hosted veriyi ikiye katlar, flake'i gizler.
+      retries: 0,
       use: { ...devices["Desktop Chrome"], storageState: vercelBypassState },
     },
     {
