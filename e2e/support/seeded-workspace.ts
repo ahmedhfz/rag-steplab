@@ -8,5 +8,5 @@ export async function selectSeededDocument(page: Page, documentName = "e2e-seede
   await page.getByRole("option", { name: documentName }).click();
   await expect(documentContext).toContainText(documentName);
   const lineage = page.getByRole("navigation", { name: /lineage/i });
-  if (await lineage.count()) await expect(lineage).toContainText("Parse");
+  if (await lineage.count()) await expect(lineage).toContainText("Parsing");
 }

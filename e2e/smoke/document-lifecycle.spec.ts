@@ -89,7 +89,7 @@ test("@critical chunk ve embedding UI yalnız ilgili katmanın seeded contractı
   await expect(page.getByRole("status").filter({ hasText: "Embedding in progress" })).toContainText("1 chunk · Embedding in progress; per-chunk progress isn't available.");
   await page.getByTestId("embedding-details").locator("summary").click();
   await expect(page.getByText("gemini-embedding-2", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("768", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("768 dimensions", { exact: true }).first()).toBeVisible();
 
   quality.assertClean();
 });
