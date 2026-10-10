@@ -8,18 +8,16 @@ import uuid
 
 from app.config import chunk_lease_duration_seconds, embedding_claim_lease_seconds, get_settings
 from app.maintenance import new_reservation_id
-from tests.postgres_support import (  # noqa: F401 - pytest fixtures
+# The admin_engine/pg fixtures are registered in conftest.py.
+from tests.postgres_support import (
     OWNER_A,
     OWNER_B,
-    admin_engine,
     admin_execute,
     admin_scalar,
-    app_database_url,
     claim_chunk,
     completed_chunk,
     completed_parse,
     new_document,
-    pg,
     requires_postgres,
 )
 
