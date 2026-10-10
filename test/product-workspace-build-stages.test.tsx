@@ -110,16 +110,14 @@ function asyncNoop() {
 
 function createPipelineValue() {
   return {
-    pendingUpload: null,
-    fileError: null,
     parseStatus: "completed",
     parseProgress: 100,
     parseProgressEstimated: false,
     parsePhase: "completed",
     parseResult: null,
     parseError: null,
-    activity: [],
     persistenceStatus: "available",
+    workspaceStatus: "ready",
     persistenceError: null,
     capabilities: { embeddingModel: "gemini", embeddingDimensions: 768, generationModel: "gemini", rerankModel: "gemini", judgeModel: "gemini", embeddingFormatVersion: "v1", limits: {} },
     documents: [documentItem],
@@ -129,6 +127,9 @@ function createPipelineValue() {
     selectedParseRunId: parseRun.id,
     selectedChunkRunId: chunkRun.id,
     selectedEmbeddingRunId: embeddingRun.id,
+    selectedParseResult: null,
+    selectedChunkRun: chunkRun,
+    selectedEmbeddingRun: embeddingRun,
     inspectedParseRunId: null,
     inspectedChunkRunId: null,
     inspectedEmbeddingRunId: null,
@@ -152,7 +153,7 @@ function createPipelineValue() {
     activePipelineId: savedPipeline.id,
     activePipeline: savedPipeline,
     pipelineSelectionMode: "saved",
-    selectFile: vi.fn(),
+    reparseImpact: { target: "pipeline", pipelineId: savedPipeline.id, pipelineName: savedPipeline.name, clearsChunk: true, clearsEmbedding: true, requiresConfirmation: true },
     addDocument: vi.fn(asyncNoop),
     selectPersistedDocument: vi.fn(asyncNoop),
     selectParseRun: vi.fn(asyncNoop),
@@ -168,10 +169,7 @@ function createPipelineValue() {
     createPipeline: vi.fn(asyncNoop),
     renamePipeline: vi.fn(asyncNoop),
     deletePipeline: vi.fn(asyncNoop),
-    removeFile: vi.fn(),
-    parseSelectedFile: vi.fn(asyncNoop),
     reparseActiveDocument: vi.fn(asyncNoop),
-    parseActiveDocument: vi.fn(asyncNoop),
     runChunking: vi.fn(asyncNoop),
     runEmbedding: vi.fn(asyncNoop),
     runExperiment: vi.fn(asyncNoop),
@@ -193,11 +191,11 @@ function renderScreen(node: React.ReactNode) {
 
 describe("Product workspace and build-stage semantic contract", () => {
   it("distinguishes checking from unavailable and avoids duplicate blocker copy", () => {
-    pipeline.value = { ...createPipelineValue(), persistenceStatus: "checking" };
+    pipeline.value = { ...createPipelineValue(), persistenceStatus: "checking", workspaceStatus: "loading" };
     const view = renderScreen(<ParseScreen />);
     expect(screen.getByText("Checking document service…")).toBeVisible();
     expect(screen.queryByText("The document service is unavailable.")).not.toBeInTheDocument();
-    pipeline.value = { ...createPipelineValue(), persistenceStatus: "unavailable" };
+    pipeline.value = { ...createPipelineValue(), persistenceStatus: "unavailable", workspaceStatus: "unavailable" };
     view.rerender(<PreferencesProvider><ParseScreen /></PreferencesProvider>);
     expect(screen.getAllByText("The document service is unavailable.")).toHaveLength(1);
   });
@@ -213,6 +211,28 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(next).toHaveAttribute("aria-checked", "true");
     expect(radios.filter((radio) => radio.tabIndex === 0)).toHaveLength(1);
   });
+  it("starts the chunking form from the selected chunk run and reports whether it is up to date", () => {
+    const recursiveRun = { ...chunkRun, strategy: "recursive_token", config: { chunkSizeTokens: 256, overlapTokens: 32 } };
+    pipeline.value = {
+      ...createPipelineValue(),
+      activeDocument: { ...activeDocument, chunkRuns: [recursiveRun] },
+      chunkRun: recursiveRun,
+      selectedChunkRun: recursiveRun,
+    };
+    renderScreen(<ChunkingScreen />);
+
+    expect(screen.getByRole("radio", { name: /Recursive/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByLabelText(/Chunk size/)).toHaveValue(256);
+    expect(screen.getByLabelText(/Overlap/)).toHaveValue(32);
+    const card = screen.getByTestId("chunking-config-card");
+    expect(card).toHaveAttribute("data-chunk-up-to-date", "true");
+    expect(card).toHaveAttribute("data-chunk-config-dirty", "false");
+
+    fireEvent.change(screen.getByLabelText(/Chunk size/), { target: { value: "300" } });
+    expect(card).toHaveAttribute("data-chunk-up-to-date", "false");
+    expect(card).toHaveAttribute("data-chunk-config-dirty", "true");
+  });
+
   it("keeps chunk heading and page metadata single-sourced in the inspector", () => {
     const detailedChunk = {
       id: "chunk-1-1",
@@ -328,6 +348,7 @@ describe("Product workspace and build-stage semantic contract", () => {
       activeDocument: { ...activeDocument, activeEmbeddingRunId: null, embeddingRuns: [] },
       activePipeline: { ...savedPipeline, embeddingRunId: null },
       embeddingRun: null,
+      selectedEmbeddingRun: null,
       pipelines: [{ ...savedPipeline, embeddingRunId: null }],
       selectedEmbeddingRunId: null,
     };

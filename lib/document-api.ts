@@ -1,11 +1,9 @@
-import type {
-  DocumentParseResponse,
-  ParseJobAcceptedResponse,
-  ParseJobFailedResponse,
-  ParsedElementType,
-} from "@/lib/document-parse-types";
-import { getSupabaseAccessToken } from "@/lib/supabase/browser";
-import { resolveApiBaseUrl } from "@/lib/api-base-url";
+import type { DocumentParseResponse, ParsedElementType } from "@/lib/document-parse-types";
+
+/**
+ * Error contract and parse-payload guard shared by the RAG API client
+ * (`lib/rag-api.ts`), which is the only module that performs requests.
+ */
 
 export type DocumentApiErrorCode =
   | "backend_unavailable"
@@ -20,6 +18,10 @@ export type DocumentApiErrorCode =
   | "provider_error"
   | "parse_interrupted"
   | "parse_poll_timeout"
+  | "run_poll_timeout"
+  | "request_timeout"
+  | "auth_required"
+  | "auth_unavailable"
   | "not_found"
   | "unknown"
   | (string & {});
@@ -36,46 +38,8 @@ export class DocumentApiError extends Error {
   }
 }
 
-type ApiErrorPayload = { error?: { code?: unknown; message?: unknown } };
-
-export type ParseDocumentResponse = DocumentParseResponse | ParseJobAcceptedResponse | ParseJobFailedResponse;
-
-function getApiBaseUrl() {
-  const apiBaseUrl = resolveApiBaseUrl(process.env.NEXT_PUBLIC_API_BASE_URL, process.env.NODE_ENV);
-  if (apiBaseUrl) return apiBaseUrl;
-  throw new DocumentApiError("configuration_error", "NEXT_PUBLIC_API_BASE_URL is required in production.");
-}
-
 function isParsedElementType(value: unknown): value is ParsedElementType {
   return value === "heading" || value === "paragraph" || value === "list" || value === "table" || value === "other";
-}
-
-export function isParseJobAcceptedResponse(value: unknown): value is ParseJobAcceptedResponse {
-  if (!value || typeof value !== "object") return false;
-  const response = value as Partial<ParseJobAcceptedResponse> & { document_id?: unknown; parse_run_id?: unknown };
-  const documentId = response.documentId ?? response.document_id;
-  const parseRunId = response.parseRunId ?? response.parse_run_id;
-  return typeof documentId === "string"
-    && typeof parseRunId === "string"
-    && (response.status === "queued" || response.status === "running");
-}
-
-export function isParseJobFailedResponse(value: unknown): value is ParseJobFailedResponse {
-  if (!value || typeof value !== "object") return false;
-  const response = value as Partial<ParseJobFailedResponse> & {
-    document_id?: unknown;
-    parse_run_id?: unknown;
-  };
-  const documentId = response.documentId ?? response.document_id;
-  const parseRunId = response.parseRunId ?? response.parse_run_id;
-  const error = response.error;
-  return typeof documentId === "string"
-    && typeof parseRunId === "string"
-    && response.status === "failed"
-    && Boolean(error)
-    && typeof error === "object"
-    && typeof (error as { code?: unknown }).code === "string"
-    && typeof (error as { message?: unknown }).message === "string";
 }
 
 export function isDocumentParseResponse(value: unknown): value is DocumentParseResponse {
@@ -107,66 +71,4 @@ export function isDocumentParseResponse(value: unknown): value is DocumentParseR
     if (!element || typeof element !== "object") return false;
     return typeof element.id === "string" && isParsedElementType(element.type) && typeof element.text === "string" && Array.isArray(element.pageNumbers);
   });
-}
-
-async function readErrorPayload(response: Response): Promise<{ code: DocumentApiErrorCode; message: string }> {
-  try {
-    const payload = (await response.json()) as ApiErrorPayload;
-    const code = payload.error?.code;
-    const message = payload.error?.message;
-    return {
-      code: typeof code === "string" && code ? code : "unknown",
-      message: typeof message === "string" ? message : "The parsing backend returned an error.",
-    };
-  } catch {
-    return { code: "unknown", message: "The parsing backend returned an unreadable error." };
-  }
-}
-
-export async function parseDocument(file: File, signal?: AbortSignal): Promise<ParseDocumentResponse> {
-  const formData = new FormData();
-  formData.append("file", file, file.name);
-
-  let response: Response;
-  try {
-    const accessToken = await getSupabaseAccessToken();
-    if (!accessToken && process.env.NODE_ENV !== "test") {
-      throw new DocumentApiError("auth_required", "Oturum açmanız gerekiyor.");
-    }
-    const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
-    response = await fetch(`${getApiBaseUrl()}/documents/parse`, {
-      method: "POST",
-      body: formData,
-      signal,
-      headers,
-    });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
-    if (error instanceof DocumentApiError) throw error;
-    if (error instanceof Error && error.message === "supabase_session_unavailable") {
-      throw new DocumentApiError("auth_required", "Oturum doğrulanamadı. Lütfen tekrar giriş yapın.");
-    }
-    if (error instanceof Error && error.message === "supabase_configuration_missing") {
-      throw new DocumentApiError("configuration_error", "Supabase auth yapılandırması eksik.");
-    }
-    throw new DocumentApiError("backend_unavailable", "The parsing backend could not be reached.");
-  }
-
-  if (!response.ok) {
-    const payload = await readErrorPayload(response);
-    throw new DocumentApiError(payload.code, payload.message, response.status);
-  }
-
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new DocumentApiError("invalid_response", "The parsing backend returned invalid JSON.", response.status);
-  }
-
-  if (!isDocumentParseResponse(payload) && !isParseJobAcceptedResponse(payload) && !isParseJobFailedResponse(payload)) {
-    throw new DocumentApiError("invalid_response", "The parsing backend returned an invalid parse contract.", response.status);
-  }
-
-  return payload;
 }

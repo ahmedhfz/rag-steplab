@@ -618,29 +618,43 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
       embeddingAvailable = true;
       return json(route, embedding);
     }
+    // Run tracking polls the lightweight /status endpoint and reads the detail only on progress changes.
+    if (pathname === `/experiments/${experimentId}/status`) return json(route, { id: experimentId, status: seededExperiment.status, stageStatuses: {} });
     if (pathname === `/experiments/${experimentId}`) return json(route, seededExperiment);
     if (pathname === "/experiments" && method === "POST") {
       experimentPoll = 0;
       return json(route, { ...experimentFor("complete"), id: "e2e-seeded-new-experiment", status: "queued", stageResults: {}, reusedExperiment: false });
     }
-    if (pathname === "/experiments/e2e-seeded-new-experiment") {
+    if (pathname === "/experiments/e2e-seeded-new-experiment/status") {
       experimentPoll += 1;
       return json(route, experimentPoll === 1
+        ? { id: "e2e-seeded-new-experiment", status: "running", stageStatuses: { retrieval: "completed" } }
+        : { id: "e2e-seeded-new-experiment", status: "completed", stageStatuses: { retrieval: "completed", reranking: "completed", context: "completed", generation: "completed" } });
+    }
+    if (pathname === "/experiments/e2e-seeded-new-experiment") {
+      return json(route, experimentPoll <= 1
         ? { ...experimentFor("complete"), id: "e2e-seeded-new-experiment", status: "running", stageResults: { retrieval: fullStageResults.retrieval }, reusedExperiment: false }
         : { ...experimentFor("complete"), id: "e2e-seeded-new-experiment", reusedExperiment: false });
     }
     if (pathname === "/evaluation/datasets" && method === "POST") return json(route, { ...dataset, id: "e2e-seeded-created-dataset" }, 201);
     if (pathname === `/evaluation/datasets/${datasetId}`) return json(route, dataset);
     if (pathname === "/evaluation/runs" && method === "GET") return json(route, { items: current.evaluations });
+    if (pathname === `/evaluation/runs/${evaluationRunId}/status`) return json(route, { id: evaluationRunId, status: evaluation.status, completedCases: evaluation.results.caseResults.length });
+    if (pathname === `/evaluation/runs/${evaluationRunIdB}/status`) return json(route, { id: evaluationRunIdB, status: evaluationB.status, completedCases: evaluationB.results.caseResults.length });
     if (pathname === `/evaluation/runs/${evaluationRunId}`) return json(route, evaluation);
     if (pathname === `/evaluation/runs/${evaluationRunIdB}`) return json(route, evaluationB);
     if (pathname === "/evaluation/runs" && method === "POST") {
       evaluationPoll = 0;
       return json(route, { ...evaluation, id: "e2e-seeded-evaluation-new", status: "queued", results: { aggregate: { caseCount: 1 }, caseResults: [] } });
     }
-    if (pathname === "/evaluation/runs/e2e-seeded-evaluation-new") {
+    if (pathname === "/evaluation/runs/e2e-seeded-evaluation-new/status") {
       evaluationPoll += 1;
       return json(route, evaluationPoll === 1
+        ? { id: "e2e-seeded-evaluation-new", status: "running", completedCases: 0 }
+        : { id: "e2e-seeded-evaluation-new", status: evaluation.status, completedCases: evaluation.results.caseResults.length });
+    }
+    if (pathname === "/evaluation/runs/e2e-seeded-evaluation-new") {
+      return json(route, evaluationPoll <= 1
         ? { ...evaluation, id: "e2e-seeded-evaluation-new", status: "running", results: { aggregate: { caseCount: 1 }, caseResults: [] } }
         : { ...evaluation, id: "e2e-seeded-evaluation-new" });
     }

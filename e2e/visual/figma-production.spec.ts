@@ -327,7 +327,8 @@ async function prepareState(page: Page, state: VisualState) {
   }
 
   if (stateKey === "playground-empty") {
-    await expect(page.getByTestId("playground-blocker")).toBeVisible();
+    // Full lineage with an empty question is the ready state, not a blocker.
+    await expect(page.getByTestId("playground-blocker")).toHaveCount(0);
     await expect(page.getByTestId("experiment-stage-trace")).toHaveCount(0);
   } else if (stateKey === "playground-retrieval") {
     await expect(page.getByTestId("experiment-stage-trace")).toBeVisible();

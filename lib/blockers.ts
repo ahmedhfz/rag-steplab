@@ -2,6 +2,7 @@ import type { AppLocale } from "@/lib/copy";
 import type { DocumentLineageSelection, DocumentPipeline, RetrievalMode, RunSummary } from "@/lib/rag-api-types";
 
 export type BlockerCode =
+  | "loading"
   | "processing"
   | "missing_document"
   | "missing_pipeline"
@@ -11,6 +12,7 @@ export type BlockerCode =
   | "missing_experiment"
   | "missing_question"
   | "missing_dataset"
+  | "missing_dataset_name"
   | "missing_sources"
   | "invalid_config"
   | "backend_unavailable"
@@ -33,6 +35,8 @@ export type PipelineAvailabilityInput = {
   hasSources?: boolean;
   retrievalMode?: RetrievalMode;
   persistenceStatus?: "checking" | "available" | "unavailable";
+  /** Provider workspace status; blockers are not evaluated while it is "loading". */
+  workspaceStatus?: "loading" | "ready" | "unavailable";
   processing?: boolean;
 };
 
@@ -46,6 +50,7 @@ export type PipelineAvailability = {
 
 const copy = {
   en: {
+    loading: "Loading the workspace…",
     processing: "This operation is already running. Its real status will appear here when it completes.",
     missingDocument: "Select a document to continue.",
     missingPipeline: "Select an indexing pipeline to continue.",
@@ -55,12 +60,14 @@ const copy = {
     missingExperiment: "Run a retrieval experiment first to inspect its results.",
     missingQuestion: "Enter a question to run retrieval.",
     missingDataset: "Create or select an evaluation dataset before running evaluation.",
+    missingDatasetName: "Enter a dataset name.",
     missingSources: "Select at least one parsed source for the evaluation question.",
     invalidConfig: "Check the configuration values and try again.",
     backendUnavailable: "The RAG service is temporarily unavailable. Retry shortly.",
     incompatibleLineage: "This result does not match the current pipeline. Select a compatible result from its history.",
   },
   tr: {
+    loading: "Çalışma alanı yükleniyor…",
     processing: "Bu işlem zaten çalışıyor. Tamamlandığında gerçek durum burada görünecek.",
     missingDocument: "Devam etmek için bir doküman seçin.",
     missingPipeline: "Devam etmek için bir indexing pipeline seçin.",
@@ -70,6 +77,7 @@ const copy = {
     missingExperiment: "Sonuçları incelemek için önce bir retrieval deneyi çalıştırın.",
     missingQuestion: "Retrieval çalıştırmak için bir soru girin.",
     missingDataset: "Evaluation çalıştırmadan önce bir dataset oluşturun veya seçin.",
+    missingDatasetName: "Bir dataset adı girin.",
     missingSources: "Evaluation sorusu için en az bir ayrıştırılmış kaynak seçin.",
     invalidConfig: "Ayar değerlerini kontrol edip tekrar deneyin.",
     backendUnavailable: "RAG servisi geçici olarak kullanılamıyor. Kısa süre sonra tekrar deneyin.",
@@ -79,6 +87,7 @@ const copy = {
 
 const actionCopy = {
   en: {
+    loading: "Wait for the workspace to load.",
     processing: "Wait for the current operation to finish.",
     missingDocument: "Select a document.",
     missingPipeline: "Select or create a pipeline.",
@@ -88,12 +97,14 @@ const actionCopy = {
     missingExperiment: "Run a retrieval experiment.",
     missingQuestion: "Enter a question.",
     missingDataset: "Create or select an evaluation dataset.",
+    missingDatasetName: "Name the dataset.",
     missingSources: "Add a parsed source element.",
     invalidConfig: "Correct the configuration.",
     backendUnavailable: "Try again when the RAG service is available.",
     incompatibleLineage: "Select a compatible result from the current pipeline.",
   },
   tr: {
+    loading: "Çalışma alanının yüklenmesini bekleyin.",
     processing: "Mevcut işlemin tamamlanmasını bekleyin.",
     missingDocument: "Bir doküman seçin.",
     missingPipeline: "Bir pipeline seçin veya oluşturun.",
@@ -103,6 +114,7 @@ const actionCopy = {
     missingExperiment: "Bir retrieval deneyi çalıştırın.",
     missingQuestion: "Bir soru girin.",
     missingDataset: "Bir evaluation dataset'i oluşturun veya seçin.",
+    missingDatasetName: "Dataset'e bir ad verin.",
     missingSources: "Parse edilmiş bir kaynak elementi ekleyin.",
     invalidConfig: "Ayarları düzeltin.",
     backendUnavailable: "RAG servisi kullanılabilir olduğunda tekrar deneyin.",
@@ -111,15 +123,17 @@ const actionCopy = {
 } as const;
 
 const blockerHref: Record<BlockerCode, string | null> = {
+  loading: null,
   processing: null,
   missing_document: "/documents",
   missing_pipeline: "/",
   missing_parse: "/parse",
   missing_chunk: "/chunking",
   missing_embedding: "/embeddings",
-  missing_experiment: "/retrieval",
-  missing_question: "/retrieval",
+  missing_experiment: "/playground",
+  missing_question: "/playground",
   missing_dataset: "/evaluation",
+  missing_dataset_name: null,
   missing_sources: "/evaluation",
   invalid_config: null,
   backend_unavailable: null,
@@ -152,8 +166,9 @@ export function getPipelineAvailability(
   input: PipelineAvailabilityInput,
 ): PipelineAvailability {
   const selection = input.selection ?? {};
-  if (input.processing || input.persistenceStatus === "checking") return availabilityBlocker(locale, "processing");
-  if (input.persistenceStatus === "unavailable") return availabilityBlocker(locale, "backend_unavailable");
+  if (input.workspaceStatus === "unavailable" || input.persistenceStatus === "unavailable") return availabilityBlocker(locale, "backend_unavailable");
+  if (input.workspaceStatus === "loading" || input.persistenceStatus === "checking") return availabilityBlocker(locale, "loading");
+  if (input.processing) return availabilityBlocker(locale, "processing");
   if (!input.document?.id) return availabilityBlocker(locale, "missing_document");
   if (stage === "pipeline" && !input.pipeline) return availabilityBlocker(locale, "missing_pipeline");
 
@@ -191,10 +206,8 @@ export function getPipelineAvailability(
 }
 
 export function blocker(locale: AppLocale, code: BlockerCode): Blocker {
-  const labels = copy[locale];
-  const key = code.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
-  const messageKey = key === "missingDocument" ? "missingDocument" : key === "missingPipeline" ? "missingPipeline" : key === "missingParse" ? "missingParse" : key === "missingChunk" ? "missingChunk" : key === "missingEmbedding" ? "missingEmbedding" : key === "missingExperiment" ? "missingExperiment" : key === "missingQuestion" ? "missingQuestion" : key === "missingDataset" ? "missingDataset" : key === "missingSources" ? "missingSources" : key === "invalidConfig" ? "invalidConfig" : key === "backendUnavailable" ? "backendUnavailable" : key === "incompatibleLineage" ? "incompatibleLineage" : "processing";
-  return { code, message: labels[messageKey as keyof typeof labels] };
+  const key = code.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase()) as keyof typeof copy.en;
+  return { code, message: copy[locale][key] };
 }
 
 export function firstBlocker(locale: AppLocale, checks: Array<[boolean, BlockerCode]>): Blocker | null {
