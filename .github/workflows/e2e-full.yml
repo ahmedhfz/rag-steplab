@@ -7,52 +7,177 @@ on:
         description: Heavy suite to run against the selected Git ref
         required: true
         type: choice
-        default: critical-smoke
+        default: seeded-smoke
         options:
-          - critical-smoke
+          - seeded-smoke
           - auth
           - production-visual
+          - production-visual-update
           - full-rag
 
 permissions:
   contents: read
   deployments: read
 
-concurrency:
-  group: heavy-validation-${{ github.ref }}-${{ inputs.suite }}
-  cancel-in-progress: false
-
 jobs:
-  validate:
+  browser:
+    # Seeded/visual/auth profilleri yalnız düşük yetkili E2E secret'larını kullanır
+    # (PR CI ile aynı küme); service-role key bu job'a hiç verilmez.
     name: ${{ inputs.suite }}
+    if: inputs.suite != 'full-rag'
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    env:
-      E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
-      E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
-      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-      E2E_SUPABASE_SECRET_KEY: ${{ secrets.E2E_SUPABASE_SECRET_KEY }}
-      SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_REF }}.supabase.co
-      E2E_API_BASE_URL: https://ahmedhfz-dev--rag-steplab-api-api-eu.eu-west.modal.run
-      E2E_TARGET: production
-      E2E_ALLOW_PRODUCTION_CLEANUP: "true"
-      E2E_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+    concurrency:
+      group: heavy-validation-${{ github.ref }}-${{ inputs.suite }}
+      cancel-in-progress: false
     steps:
       - name: Checkout selected ref
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Restore Playwright Chromium
         id: playwright-cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Install Chromium and system dependencies
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Find exact Vercel deployment
+        id: deployment
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEPLOYMENT_SHA: ${{ github.sha }}
+          DEPLOYMENT_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Preview' }}
+        run: node scripts/e2e.mjs wait-deployment
+
+      - name: Run seeded smoke suite
+        if: inputs.suite == 'seeded-smoke'
+        env:
+          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: npm run e2e:smoke
+
+      - name: Run real auth E2E
+        if: inputs.suite == 'auth'
+        env:
+          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: npm run e2e:auth
+
+      - name: Run production React visual suite
+        if: inputs.suite == 'production-visual'
+        env:
+          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: npm run e2e:visual:production
+
+      - name: Regenerate production visual references on Linux
+        if: inputs.suite == 'production-visual-update'
+        env:
+          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          UPDATE_PRODUCTION_VISUAL_REFERENCES: "1"
+        # Referanslar CI ile aynı Linux/Chromium ortamında üretilir; Windows/macOS font farkı taşınmaz.
+        run: |
+          touch "$RUNNER_TEMP/visual-update-start"
+          npm run e2e:visual:production
+
+      - name: Report regenerated, new and orphan references
+        if: inputs.suite == 'production-visual-update'
+        shell: bash
+        run: |
+          set -euo pipefail
+          reference_dir=e2e/visual/reference/production
+          {
+            echo "## Production visual references"
+            echo
+            echo "Changed or new (commit these after review):"
+            git status --porcelain -- "$reference_dir" | sed 's/^/- /' || true
+            echo
+            echo "Orphans (not written by any visual state; delete them):"
+            find "$reference_dir" -name '*.png' ! -newer "$RUNNER_TEMP/visual-update-start" | sort | sed 's/^/- /'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload regenerated visual references
+        if: inputs.suite == 'production-visual-update'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: production-visual-references-${{ github.run_id }}-${{ github.run_attempt }}
+          path: e2e/visual/reference/production
+          retention-days: 7
+
+      - name: Upload Playwright failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-heavy-${{ inputs.suite }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            output/playwright
+            !output/playwright/.auth/**
+          if-no-files-found: ignore
+          retention-days: 3
+
+  full-rag:
+    # Gerçek provider + production verisi. Service-role key yalnız bu environment'ta
+    # (deployment branch policy = main) ve yalnız kullanıcı/cleanup adımlarında.
+    name: full-rag
+    if: inputs.suite == 'full-rag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: production-e2e
+    # Tek dedicated hesap: ref'ten bağımsız tek koşu; cleanup'lar birbirinin verisini silmez.
+    concurrency:
+      group: heavy-validation-full-rag
+      cancel-in-progress: false
+    env:
+      SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_REF }}.supabase.co
+      E2E_API_BASE_URL: https://ahmedhfz-dev--rag-steplab-api-api-eu.eu-west.modal.run
+      E2E_BASE_URL: https://rag-steplab.vercel.app
+      E2E_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Restore Playwright Chromium
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -66,54 +191,45 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Ensure dedicated E2E user
+        env:
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          E2E_SUPABASE_SECRET_KEY: ${{ secrets.E2E_SUPABASE_SECRET_KEY }}
         run: npm run e2e:user
 
       - name: Clean stale namespaced full-RAG data
-        if: inputs.suite == 'full-rag'
-        run: npm run e2e:cleanup
-
-      - name: Find exact Vercel deployment
-        if: inputs.suite != 'full-rag'
-        id: deployment
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-          DEPLOYMENT_SHA: ${{ github.sha }}
-          DEPLOYMENT_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Preview' }}
-        run: node scripts/e2e.mjs wait-deployment
-
-      - name: Run critical smoke suite
-        if: inputs.suite == 'critical-smoke'
-        env:
-          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
-        run: npm run e2e:critical
-
-      - name: Run real auth E2E
-        if: inputs.suite == 'auth'
-        env:
-          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
-        run: npm run e2e:auth
-
-      - name: Run production React visual suite
-        if: inputs.suite == 'production-visual'
-        env:
-          E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
-        run: npm run e2e:visual:production
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          E2E_SUPABASE_SECRET_KEY: ${{ secrets.E2E_SUPABASE_SECRET_KEY }}
+          E2E_TARGET: production
+          E2E_ALLOW_PRODUCTION_CLEANUP: "true"
+        # Yalnız 6 saatten eski `e2e-` kayıtları: yarım kalmış eski koşuların artığı.
+        run: npm run e2e:cleanup -- --stale-hours 6
 
       - name: Run real provider full-RAG E2E
-        if: inputs.suite == 'full-rag'
         env:
-          E2E_BASE_URL: https://rag-steplab.vercel.app
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: npm run e2e:full
 
-      - name: Cleanup namespaced full-RAG data
-        if: always() && inputs.suite == 'full-rag'
+      - name: Cleanup this run's namespaced data
+        if: always()
+        env:
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          E2E_SUPABASE_SECRET_KEY: ${{ secrets.E2E_SUPABASE_SECRET_KEY }}
+          E2E_TARGET: production
+          E2E_ALLOW_PRODUCTION_CLEANUP: "true"
+        # Yalnız `e2e-${E2E_RUN_ID}-` önekli dokümanlar silinir.
         run: npm run e2e:cleanup
 
       - name: Upload Playwright failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: playwright-heavy-${{ inputs.suite }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: playwright-heavy-full-rag-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             output/playwright
             !output/playwright/.auth/**

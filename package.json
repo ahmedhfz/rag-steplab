@@ -2,11 +2,13 @@
   "name": "rag-steplab",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:frontend": "next dev",
     "build": "next build",
-    "e2e": "playwright test --project=chromium-seeded",
     "e2e:smoke": "playwright test --project=chromium-seeded",
     "e2e:critical": "playwright test --project=chromium-seeded --grep \"@critical|resets its lineage and Journey state\"",
     "e2e:auth": "playwright test --project=auth",
@@ -19,8 +21,9 @@
     "e2e:user": "node scripts/e2e.mjs ensure-user",
     "e2e:cleanup": "node scripts/e2e.mjs cleanup",
     "lint": "eslint .",
-    "perf:phase6a": "node scripts/measure-phase6a.mjs",
-    "perf:phase6a:fixture": "python scripts/measure-phase6a-fixture.py",
+    "python:lock": "node .github/scripts/python-locks.mjs",
+    "perf:summary": "node scripts/measure-phase6a.mjs",
+    "perf:summary:fixture": "python scripts/measure-phase6a-fixture.py",
     "test": "vitest run",
     "typecheck": "tsc --noEmit --incremental false"
   },

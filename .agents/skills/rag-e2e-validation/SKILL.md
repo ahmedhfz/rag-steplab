@@ -29,7 +29,8 @@ bilinçli tasarım değişikliği kapsamında yapılır; başarısız testi geç
    hedeflerini `E2E_BASE_URL`, `E2E_API_BASE_URL`, Supabase hedefi ve test hesabıyla
    birlikte değerlendirin; localhost frontend hosted API/auth kullanabilir.
 2. `e2e:bootstrap`/`e2e:user` dış kullanıcı state'ini değiştirebilir; hedef ve
-   yetkiyi önceden doğrulayın. E2E credential isimleri
+   yetkiyi önceden doğrulayın. Bootstrap `SUPABASE_PROJECT_REF` ve `E2E_USER_EMAIL`'i
+   açıkça ister; `e2e:user` marker'sız mevcut hesabı değiştirmeyi reddeder. E2E credential isimleri
    `E2E_USER_EMAIL`, `E2E_USER_PASSWORD`, `E2E_SUPABASE_SECRET_KEY`;
    protected Preview bypass secret'ı `VERCEL_AUTOMATION_BYPASS_SECRET`'tır.
    Değerleri loglamayın; bypass secret'ını URL veya trace'e koymayın. Bootstrap
@@ -45,8 +46,10 @@ bilinçli tasarım değişikliği kapsamında yapılır; başarısız testi geç
 
 Yalnız mevcut hedef/işlem yetkisiyle ilerleyin. `scripts/e2e.mjs` cleanup guard'ı
 production target beyanı, `E2E_ALLOW_PRODUCTION_CLEANUP=true`, dedicated
-`test_account` marker'ı ve authenticated owner API'sini birlikte kullanır.
-Yalnız `e2e-` filename namespace'i silinir. Guard'ı aşmayın veya service-role
+`test_account` marker'ı ve authenticated owner API'sini birlikte kullanır;
+`E2E_TARGET=test` yalnız loopback veya `E2E_TEST_HOSTS` host'larını kabul eder.
+`e2e:cleanup` yalnız `e2e-<E2E_RUN_ID>-` önekli dokümanları, `-- --stale-hours N`
+yalnız N saatten eski `e2e-` dokümanlarını siler. Guard'ı aşmayın veya service-role
 ile genel silme eklemeyin.
 
 Runbook'taki sırayı kullanın: yetkili namespaced cleanup → tek-worker full-RAG

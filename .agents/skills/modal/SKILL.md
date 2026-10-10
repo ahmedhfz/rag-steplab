@@ -9,7 +9,7 @@ metadata:
 
 Modal CLI skill kökeninden repository'ye uyarlanmıştır; bakım sahibi repository
 maintainer'larıdır. `modal skills update` ile yerel prosedürü körlemesine ezmeyin.
-SDK sürümünün kaynağı `backend/requirements-ci.txt`; gerektiğinde kurulu CLI'nin
+SDK sürümünün tek kaynağı `backend/requirements.in` (hash'li lock'lar ondan üretilir); gerektiğinde kurulu CLI'nin
 `--version`/`--help` çıktısı ve [resmi doküman indeksi](https://modal.com/llms.txt)
 ile ilgili API'yi doğrulayın. Genel dokümanların tamamını yüklemek gerekmez.
 
@@ -19,8 +19,9 @@ ile ilgili API'yi doğrulayın. Genel dokümanların tamamını yüklemek gerekm
   kimlikleri, model Volume ve remote smoke tanımı.
 - `backend/app/`: parser, dispatch ve pipeline uygulaması; `backend/AGENTS.md`
   owner isolation/lifecycle/fencing sınırını taşır.
-- `backend/requirements.txt`: hafif API runtime; `backend/requirements-worker.txt`:
-  ağır Docling/ML; `backend/requirements-ci.txt`: hafif test bağımlılıkları.
+- `backend/requirements*.in` girdileri ve üretilmiş hash'li `requirements*.txt`
+  lock'ları: `requirements` hafif API runtime, `requirements-worker` ağır Docling/ML,
+  `requirements-ci` hafif test/lint; lock'lar elle düzenlenmez (`npm run python:lock`).
 - [Deployment runbook](../../../docs/deployment.md) ve `.github/workflows/release.yml`:
   otomatik gate'ler, manuel işlemler ve rollback'in kanonik kaynağı.
 

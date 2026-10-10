@@ -1,14 +1,25 @@
 name: Production release
 
+# Her main push'unda çalışır ve kararlarını diff'ten değil production durumundan verir:
+# bekleyen migration `supabase db push --dry-run`, Modal deploy ihtiyacı ise canlı Modal
+# tag'i ile hedef SHA arasındaki farktan çıkarılır. Böylece iptal edilen/başarısız bir
+# run'ın migration veya backend değişikliği sonraki run'da kaybolmaz. Vercel production
+# promotion'ı bu job'un check'ine bağlanır (Vercel Deployment Checks; docs/deployment.md).
 on:
   push:
     branches: [main]
-    paths:
-      - "backend/app/**"
-      - "backend/modal_app.py"
-      - "backend/requirements.txt"
-      - "backend/requirements-worker.txt"
-      - "supabase/migrations/**"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Rollback/redeploy için main geçmişindeki commit SHA'sı (boş = main HEAD)
+        required: false
+        type: string
+        default: ""
+      force_modal_deploy:
+        description: Canlı Modal tag'i hedefle aynı olsa bile yeniden deploy et
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -20,67 +31,138 @@ concurrency:
 jobs:
   release:
     name: Production release
+    # workflow_dispatch başka bir branch'ten seçilirse GITHUB_SHA o branch'tir ve `ref` ancestry
+    # kontrolü main'e değil ona göre yapılır; environment branch policy'sine ek olarak burada da durdurulur.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
+    # Production secret'ları yalnız bu environment'ta; deployment branch policy = main.
+    environment: production-release
     env:
+      MODAL_APP: rag-steplab-api
       MODAL_ENVIRONMENT: main
-      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
       MODAL_API_URL: https://ahmedhfz-dev--rag-steplab-api-api-eu.eu-west.modal.run
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
     steps:
       - name: Checkout full history
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Classify production changes
+      - name: Resolve release target
+        id: target
+        shell: bash
+        env:
+          INPUT_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || '' }}
+        run: |
+          set -euo pipefail
+          target_sha="$GITHUB_SHA"
+          if [ -n "$INPUT_REF" ]; then
+            target_sha="$(git rev-parse --verify "${INPUT_REF}^{commit}")"
+            # Yalnız main'e merge edilmiş (gözden geçirilmiş) kod production'a gider.
+            git merge-base --is-ancestor "$target_sha" "$GITHUB_SHA"
+          fi
+          mode=release
+          target_dir="$GITHUB_WORKSPACE"
+          if [ "$target_sha" != "$GITHUB_SHA" ]; then
+            # Workflow araçları main HEAD'den gelir; deploy edilen backend hedef SHA'nın ayrı checkout'udur.
+            mode=rollback
+            target_dir="$RUNNER_TEMP/release-target"
+            git worktree add --quiet --detach "$target_dir" "$target_sha"
+          fi
+          {
+            echo "sha=$target_sha"
+            echo "mode=$mode"
+            echo "dir=$target_dir"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release target: \`$target_sha\` ($mode)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Reject secret-shaped tracked values
+        run: bash .github/scripts/scan-secrets.sh
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: backend/requirements-ci.txt
+
+      - name: Install locked backend CI dependencies
+        # Hedef SHA'nın lock'u: deploy eden Modal client'ı ve test edilen paketler deploy edilenle aynı.
+        working-directory: ${{ steps.target.outputs.dir }}
+        run: python -m pip install --disable-pip-version-check -r backend/requirements-ci.txt
+
+      - name: Read deployed Modal tag
+        id: deployed
+        shell: bash
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$MODAL_TOKEN_ID"
+          test -n "$MODAL_TOKEN_SECRET"
+          deployed="$(modal app history "$MODAL_APP" --env "$MODAL_ENVIRONMENT" --json | python -c 'import json, sys; history = json.load(sys.stdin); print((history[0].get("tag") or "") if history else "")')"
+          echo "tag=$deployed" >> "$GITHUB_OUTPUT"
+          echo "Deployed Modal tag: \`${deployed:-none}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Classify changes since the deployed Modal revision
         id: classify
         shell: bash
         env:
-          BEFORE_SHA: ${{ github.event.before }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+          MODE: ${{ steps.target.outputs.mode }}
+          DEPLOYED_TAG: ${{ steps.deployed.outputs.tag }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_modal_deploy || false }}
         run: |
           set -euo pipefail
-          base_sha="$BEFORE_SHA"
-          if [[ -z "$base_sha" || "$base_sha" =~ ^0+$ ]]; then
-            base_sha="$(git rev-parse "$GITHUB_SHA^")"
+          if [ "$MODE" = "release" ] && [ "$FORCE" != "true" ] && [[ "$DEPLOYED_TAG" =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "${DEPLOYED_TAG}^{commit}" 2>/dev/null; then
+            git diff --name-only "$DEPLOYED_TAG" "$TARGET_SHA" | node .github/scripts/classify-changes.mjs | tee classification.txt
+            grep -E '^(modal_deploy|worker_provider)=' classification.txt >> "$GITHUB_OUTPUT"
+          else
+            # Bilinmeyen/elle konmuş tag, rollback veya zorla redeploy: güvenli taraf tam deploy.
+            echo "modal_deploy=true" >> "$GITHUB_OUTPUT"
+            echo "worker_provider=true" >> "$GITHUB_OUTPUT"
           fi
-          git diff --name-only "$base_sha" "$GITHUB_SHA" | node .github/scripts/classify-changes.mjs | tee classification.txt
-          cat classification.txt >> "$GITHUB_OUTPUT"
-
-      - name: Reject secret-shaped tracked values
-        shell: bash
-        run: |
-          set -euo pipefail
-          if secret_files="$(git grep -lE 'AIza[0-9A-Za-z_-]{20,}|(ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{10,}|postgres(ql)?://[^[:space:]]+:[^@[:space:]]+@' -- .)"; then
-            echo "::error::A secret-shaped value was found in tracked files (content is intentionally not printed)."
-            printf '%s\n' "$secret_files"
-            exit 1
-          fi
-
-      - name: Set up Python
-        if: steps.classify.outputs.modal_deploy == 'true'
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.13"
-
-      - name: Install lightweight backend dependencies
-        if: steps.classify.outputs.modal_deploy == 'true'
-        run: python -m pip install --disable-pip-version-check -r backend/requirements-ci.txt
 
       - name: Verify backend contracts
         if: steps.classify.outputs.modal_deploy == 'true'
+        working-directory: ${{ steps.target.outputs.dir }}
         run: python -m pytest backend/tests
 
       - name: Install Supabase CLI
-        if: steps.classify.outputs.migration == 'true'
-        uses: supabase/setup-cli@v3
+        if: steps.target.outputs.mode == 'release'
+        uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
         with:
           version: 2.116.0
 
-      - name: Validate migration locally
-        if: steps.classify.outputs.migration == 'true'
+      - name: Check pending production migrations
+        if: steps.target.outputs.mode == 'release'
+        id: migrations
+        shell: bash
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_ACCESS_TOKEN"
+          test -n "$SUPABASE_PROJECT_REF"
+          supabase link --project-ref "$SUPABASE_PROJECT_REF"
+          status="$(supabase db push --linked --dry-run --yes --skip-vault --output-format json)"
+          printf '%s\n' "$status"
+          if jq -e '.upToDate == true' <<<"$status" >/dev/null; then
+            echo "pending=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "pending=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate pending migrations locally
+        if: steps.migrations.outputs.pending == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -91,24 +173,21 @@ jobs:
           supabase db lint --local --schema rag_lab --fail-on error
 
       - name: Stop local Supabase
-        if: always() && steps.classify.outputs.migration == 'true'
+        if: always() && steps.migrations.outputs.pending == 'true'
         continue-on-error: true
         run: supabase stop --project-id rag-steplab --no-backup
 
-      - name: Dry-run and apply production migration
-        if: steps.classify.outputs.migration == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$SUPABASE_ACCESS_TOKEN"
-          test -n "$SUPABASE_PROJECT_REF"
-          supabase link --project-ref "$SUPABASE_PROJECT_REF"
-          supabase db push --linked --dry-run --yes --skip-vault
-          supabase db push --linked --yes --skip-vault
+      - name: Apply production migrations
+        if: steps.migrations.outputs.pending == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase db push --linked --yes --skip-vault
 
       - name: Verify production migration alignment
-        if: steps.classify.outputs.migration == 'true'
+        if: steps.target.outputs.mode == 'release'
         shell: bash
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
           supabase migration list --linked
@@ -116,32 +195,51 @@ jobs:
           printf '%s\n' "$status"
           jq -e '.upToDate == true' <<<"$status" >/dev/null
 
-      - name: Verify Modal credentials
-        if: steps.classify.outputs.modal_deploy == 'true'
+      - name: Check production schema drift (read-only)
+        if: steps.target.outputs.mode == 'release'
         shell: bash
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
-          test -n "$MODAL_TOKEN_ID"
-          test -n "$MODAL_TOKEN_SECRET"
-          modal token info
+          # Migration'larla kurulan şema ile canlı `rag_lab` şeması aynı olmalı; dashboard'dan
+          # elle yapılmış değişiklik yeni kodun yanlış şemaya deploy edilmesini engeller.
+          supabase db diff --linked --schema rag_lab > schema-drift.sql
+          if grep -qE '[^[:space:]]' schema-drift.sql; then
+            echo "::error::Production rag_lab schema differs from supabase/migrations. Capture the change as a migration before releasing."
+            cat schema-drift.sql
+            exit 1
+          fi
+          echo "No rag_lab schema drift."
 
-      - name: Deploy tested Git SHA to Modal
+      - name: Deploy target SHA to Modal
         if: steps.classify.outputs.modal_deploy == 'true'
-        run: modal deploy --env "$MODAL_ENVIRONMENT" --tag "$GITHUB_SHA" --strategy rolling backend/modal_app.py
+        working-directory: ${{ steps.target.outputs.dir }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: modal deploy --env "$MODAL_ENVIRONMENT" --tag "$TARGET_SHA" --strategy rolling backend/modal_app.py
 
       - name: Verify Modal deployment tag
         if: steps.classify.outputs.modal_deploy == 'true'
         shell: bash
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
         run: |
           set -euo pipefail
-          modal app history rag-steplab-api --env "$MODAL_ENVIRONMENT" --json | python -c 'import json, os, sys; history=json.load(sys.stdin); actual=history[0].get("tag") if history else None; expected=os.environ["GITHUB_SHA"]; assert actual == expected, f"Expected Modal tag {expected}, got {actual}"'
+          modal app history "$MODAL_APP" --env "$MODAL_ENVIRONMENT" --json | python -c 'import json, os, sys; history=json.load(sys.stdin); actual=history[0].get("tag") if history else None; expected=os.environ["TARGET_SHA"]; assert actual == expected, f"Expected Modal tag {expected}, got {actual}"'
 
       - name: Verify deployed worker imports
         if: steps.classify.outputs.worker_provider == 'true'
-        run: python -c "import modal; result=modal.Function.from_name('rag-steplab-api', 'remote_import_smoke', environment_name='main').remote(); assert result['appImported'] and result['parserImported'] and result['doclingVersion']"
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: python -c "import os, modal; result=modal.Function.from_name(os.environ['MODAL_APP'], 'remote_import_smoke', environment_name=os.environ['MODAL_ENVIRONMENT']).remote(); assert result['appImported'] and result['parserImported'] and result['doclingVersion']"
 
       - name: Verify deployed API health and protection
-        if: steps.classify.outputs.modal_deploy == 'true'
         shell: bash
         run: |
           set -euo pipefail

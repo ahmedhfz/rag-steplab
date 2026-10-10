@@ -11,22 +11,35 @@ updates:
           - minor
           - patch
 
-  - package-ecosystem: pip
+  # backend/requirements*.in → requirements*.txt hash'li uv lock'ları. Dependabot `uv pip compile`
+  # başlığındaki seçeneklerle (--universal --generate-hashes --python-version) lock'ları yeniden üretir.
+  - package-ecosystem: uv
     directory: /backend
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
-      pip-minor-patch:
+      python-minor-patch:
         update-types:
           - minor
           - patch
+    ignore:
+      # Docling yığını bilinçli olarak 2.117.0'da: düzeltilmiş sürümler örnek TR PDF'inde içerik
+      # düşürüyor (docs/deployment.md). Semantic regression ile doğrulanmadan yükseltilmez;
+      # muafiyet kalkınca bu kuralları silin.
+      - dependency-name: "docling*"
+      - dependency-name: "rapidocr"
+      - dependency-name: "onnxruntime"
+      # CPU-only wheel'ler URL + hash ile sabit; Dependabot URL pin'ini güncelleyemez.
+      - dependency-name: "torch"
+      - dependency-name: "torchvision"
 
+  # Action'lar commit SHA + sürüm yorumu ile pinli; Dependabot ikisini birlikte günceller.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     groups:
       actions-minor-patch:
         update-types:
