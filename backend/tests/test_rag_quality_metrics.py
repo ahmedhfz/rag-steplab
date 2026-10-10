@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.config import Settings
+from app.errors import ApiProblem
 from app.keyword_search import keyword_terms, ts_rank_score
 from app.pipeline import (
     _case_retrieval_metrics,
@@ -256,6 +257,97 @@ def test_evaluation_identity_includes_models_and_rejects_mutable_reuse(monkeypat
     monkeypatch.setattr("app.pipeline.get_settings", lambda: mutable)
     third = _queue_and_complete(request)
     assert _queue_and_complete(request)["id"] != third["id"]
+
+
+def test_queued_evaluation_refuses_lineage_that_changed_before_execution(monkeypatch):
+    document_id, first_chunk_run_id = _scenario_document(monkeypatch)
+    dataset_id = _dataset(document_id, [ANSWER_CASE])
+    repository = get_repository()
+    repository.documents[document_id]["active_chunk_run_id"] = first_chunk_run_id
+    # No chunk/embedding IDs: the identity is resolved from the active state.
+    request = EvaluationRunRequest(
+        dataset_id=dataset_id,
+        retrieval={"mode": "keyword", "topK": 1},
+        reranking={"enabled": False, "candidateCount": 1},
+    )
+    queued = queue_evaluation(request, repository=repository)
+    assert queued["status"] == "queued"
+
+    second_chunk_run_id = client.post(
+        f"/documents/{document_id}/chunks",
+        json={"strategy": "structure_aware", "config": {"chunkSizeTokens": 64, "overlapTokens": 8}},
+    ).json()["id"]
+    assert second_chunk_run_id != first_chunk_run_id
+    repository.documents[document_id]["active_chunk_run_id"] = second_chunk_run_id
+    for pipeline in repository.document_pipelines.values():
+        if pipeline["document_id"] == document_id:
+            pipeline["chunk_run_id"] = second_chunk_run_id
+
+    run_queued_evaluation(request, queued["id"], repository=repository)
+
+    row = repository.get_evaluation_row(queued["id"])
+    assert row["status"] == "failed"
+    assert row["error_code"] == "lineage_incompatible"
+    assert row["identity_claimed"] is None
+    assert row["results"]["caseResults"] == []
+    assert ScenarioGemini.calls["generate"] == 0
+
+
+def test_failed_case_experiment_is_part_of_the_evaluation_lineage(monkeypatch):
+    document_id, chunk_run_id = _scenario_document(monkeypatch)
+    dataset_id = _dataset(document_id, [ANSWER_CASE, {"question": "retrieval badcite", "relevantElementIds": ["element-2"]}])
+
+    response = _run(dataset_id, chunk_run_id)
+
+    assert response.status_code == 200
+    body = response.json()
+    completed, failed = body["results"]["caseResults"]
+    assert failed["status"] == "failed" and failed["experimentId"]
+    assert body["childExperimentIds"] == [completed["experimentId"], failed["experimentId"]]
+    assert get_repository().get_experiment_row(failed["experimentId"])["status"] == "failed"
+
+
+class InvalidQueryEmbeddingGemini(ScenarioGemini):
+    def _embedding_metadata(self):
+        return type("Metadata", (), {
+            "configured_model": self.settings.gemini_embedding_model,
+            "effective_model": "gemini-embedding-2-001",
+        })()
+
+    def embed_documents(self, texts):
+        dimensions = self.settings.gemini_embedding_dimensions
+        return [[1.0] + [0.0] * (dimensions - 1) for _ in texts], self._embedding_metadata()
+
+    def embed_query(self, query):
+        type(self).calls["embed_query"] += 1
+        if "badvector" in query:
+            raise ApiProblem(503, "gemini_embedding_invalid", "Wrong embedding dimension.")
+        dimensions = self.settings.gemini_embedding_dimensions
+        return [1.0] + [0.0] * (dimensions - 1), self._embedding_metadata()
+
+
+def test_invalid_query_embedding_is_a_failed_case_not_a_failed_evaluation(monkeypatch):
+    document_id, chunk_run_id = _scenario_document(monkeypatch)
+    monkeypatch.setattr("app.pipeline.GeminiService", InvalidQueryEmbeddingGemini)
+    embedding = client.post(f"/documents/{document_id}/embeddings", json={"chunkRunId": chunk_run_id})
+    assert embedding.status_code == 200
+    dataset_id = _dataset(document_id, [ANSWER_CASE, {"question": "retrieval badvector", "relevantElementIds": ["element-2"]}])
+
+    response = client.post("/evaluation/runs", json={
+        "datasetId": dataset_id,
+        "chunkRunId": chunk_run_id,
+        "embeddingRunId": embedding.json()["id"],
+        "retrieval": {"mode": "dense", "topK": 1},
+        "reranking": {"enabled": False, "candidateCount": 1},
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    completed, failed = body["results"]["caseResults"]
+    assert completed["status"] == "completed"
+    assert failed["status"] == "failed" and failed["errorCode"] == "gemini_embedding_invalid"
+    assert body["results"]["aggregate"]["failedCaseCodes"] == [{"code": "gemini_embedding_invalid", "count": 1}]
 
 
 def test_generation_prompt_cannot_be_closed_or_given_fake_citations_by_document_text():

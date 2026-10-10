@@ -99,6 +99,7 @@ CASE_LEVEL_FAILURE_CODES = frozenset({
     "gemini_rerank_failed",
     "gemini_judge_failed",
     "gemini_embedding_failed",
+    "gemini_embedding_invalid",
 })
 
 
@@ -2638,6 +2639,29 @@ def _evaluation_lineage_ids(
     }
 
 
+def _evaluation_fingerprint(
+    request: EvaluationRunRequest,
+    dataset: dict[str, Any],
+    document: dict[str, Any],
+    repository: Repository,
+    provenance: dict[str, Any],
+) -> str:
+    """Identity of an evaluation: config, resolved lineage, models and versions.
+
+    The queued config may leave chunk/embedding IDs to the saved pipeline or
+    active state, so the worker recomputes this before running and refuses to
+    store results from a different lineage under the queued identity.
+    """
+
+    return _fingerprint({
+        "schema": EVALUATION_FINGERPRINT_SCHEMA_VERSION,
+        "datasetId": request.dataset_id,
+        "config": _safe_model_dump(request),
+        "lineage": _evaluation_lineage_ids(request, dataset, document, repository),
+        "provenance": provenance,
+    })
+
+
 def _evaluation_provenance(request: EvaluationRunRequest, settings: Settings) -> dict[str, Any]:
     dense = request.retrieval.mode in {"dense", "hybrid"}
     return {
@@ -2685,15 +2709,7 @@ def queue_evaluation(request: EvaluationRunRequest, *, repository: Repository | 
         raise ApiProblem(404, "dataset_not_found", "The evaluation dataset was not found.")
     document = _document_or_404(repository, dataset["document_id"])
     provenance = _evaluation_provenance(request, get_settings())
-    # The identity covers resolved lineage plus every model and prompt/algorithm
-    # version, so a deploy that changes them cannot return a stale result.
-    evaluation_fingerprint = _fingerprint({
-        "schema": EVALUATION_FINGERPRINT_SCHEMA_VERSION,
-        "datasetId": request.dataset_id,
-        "config": _safe_model_dump(request),
-        "lineage": _evaluation_lineage_ids(request, dataset, document, repository),
-        "provenance": provenance,
-    })
+    evaluation_fingerprint = _evaluation_fingerprint(request, dataset, document, repository, provenance)
     existing = repository.get_evaluation_by_fingerprint(request.dataset_id, evaluation_fingerprint)
     # Completed artifacts are reusable immediately. Active rows must still go
     # through the atomic claim path so an expired lease can be reclaimed and a
@@ -2793,6 +2809,19 @@ def create_evaluation(
         )
     document = _document_or_404(repository, dataset["document_id"])
     _require_compatible_parse(repository, dataset["document_id"], dataset["parse_run_id"])
+    if evaluation_id is not None:
+        # The saved pipeline, active runs or model settings may have changed
+        # while this evaluation was queued. Results must never be stored under
+        # an identity whose lineage they were not produced from.
+        persisted = repository.get_evaluation_row(evaluation_id)
+        claimed_fingerprint = (persisted or {}).get("evaluation_fingerprint")
+        current_fingerprint = _evaluation_fingerprint(
+            request, dataset, document, repository, _evaluation_provenance(request, get_settings())
+        )
+        if claimed_fingerprint and claimed_fingerprint != current_fingerprint:
+            raise _lineage_problem(
+                "The evaluation lineage or model configuration changed after it was queued; queue it again."
+            )
     pipelines = repository.list_document_pipeline_rows(dataset["document_id"]) or []
     pipeline = next((item for item in pipelines if item.get("id") == request.pipeline_id), None) if request.pipeline_id else None
     if request.pipeline_id and pipeline is None:
@@ -3041,7 +3070,11 @@ def create_evaluation(
             if exc.code not in CASE_LEVEL_FAILURE_CODES:
                 fail_evaluation(exc.code, exc.message)
                 raise
-            case_results.append(failed_case(case, expected, expected_outcome, exc, getattr(exc, "experiment_id", None)))
+            failed_experiment_id = getattr(exc, "experiment_id", None)
+            if failed_experiment_id:
+                # The failed child is persisted; keep it in the evaluation lineage.
+                child_ids.append(failed_experiment_id)
+            case_results.append(failed_case(case, expected, expected_outcome, exc, failed_experiment_id))
         except Exception as exc:
             fail_evaluation("evaluation_failed", "The evaluation failed before completing all cases.")
             raise exc
