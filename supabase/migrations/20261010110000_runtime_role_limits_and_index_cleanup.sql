@@ -28,14 +28,39 @@ drop index if exists rag_lab.ix_embedding_runs_document_id;         -- uq_embedd
 
 -- 4. Missing indexes: RESTRICT/CASCADE foreign keys of saved pipelines and the
 --    per-user admission scan over active runs.
-create index if not exists ix_document_pipelines_parse_run_id
-  on rag_lab.document_pipelines (parse_run_id) where parse_run_id is not null;
-create index if not exists ix_document_pipelines_chunk_run_id
-  on rag_lab.document_pipelines (chunk_run_id) where chunk_run_id is not null;
-create index if not exists ix_document_pipelines_embedding_run_id
-  on rag_lab.document_pipelines (embedding_run_id) where embedding_run_id is not null;
-create index if not exists ix_document_pipelines_owner_user_id
-  on rag_lab.document_pipelines (owner_user_id);
+--    Hosted and fresh schemas name document_pipelines objects differently
+--    (e.g. production already has ix_document_pipelines_owner_document on
+--    (owner_user_id, document_id)), so an index is only added when no existing
+--    index already leads with that column; names are never assumed.
+do $$
+declare
+  spec record;
+begin
+  for spec in
+    select * from (values
+      ('parse_run_id', 'ix_document_pipelines_parse_run_id', 'parse_run_id is not null'),
+      ('chunk_run_id', 'ix_document_pipelines_chunk_run_id', 'chunk_run_id is not null'),
+      ('embedding_run_id', 'ix_document_pipelines_embedding_run_id', 'embedding_run_id is not null'),
+      ('owner_user_id', 'ix_document_pipelines_owner_user_id', null)
+    ) as wanted(column_name, index_name, predicate)
+  loop
+    if not exists (
+      select 1
+      from pg_index i
+      join pg_attribute a on a.attrelid = i.indrelid and a.attnum = i.indkey[0]
+      where i.indrelid = 'rag_lab.document_pipelines'::regclass
+        and a.attname = spec.column_name
+    ) then
+      execute format(
+        'create index %I on rag_lab.document_pipelines (%I)%s',
+        spec.index_name,
+        spec.column_name,
+        case when spec.predicate is null then '' else ' where ' || spec.predicate end
+      );
+    end if;
+  end loop;
+end
+$$;
 
 create index if not exists ix_parse_runs_active
   on rag_lab.parse_runs (document_id) where status in ('queued', 'running');
