@@ -7,6 +7,10 @@ import { expect, type Page } from "@playwright/test";
  * reach (`hidden`/`clip`). Local scrollers (`auto`/`scroll`), text truncated
  * with an ellipsis, visually-hidden (sr-only) text and form controls, which
  * scroll their own value, are intentional and skipped.
+ *
+ * A component whose children overlap their own boxes on purpose (the desktop
+ * journey's node labels and badges) marks itself `data-overflow-intentional`:
+ * its descendants are skipped, the marked element itself is still checked.
  */
 export async function findHorizontalOverflow(page: Page): Promise<string[]> {
   return page.evaluate(() => {
@@ -14,6 +18,7 @@ export async function findHorizontalOverflow(page: Page): Promise<string[]> {
     const offenders: string[] = [];
     for (const element of Array.from(document.body.querySelectorAll("*"))) {
       if (!(element instanceof HTMLElement) || skippedTags.has(element.tagName)) continue;
+      if (element.parentElement?.closest("[data-overflow-intentional]")) continue;
       if (element.scrollWidth <= element.clientWidth + 1 || element.clientWidth <= 1) continue;
       const style = getComputedStyle(element);
       if (style.display === "inline" || style.display === "contents" || style.visibility === "hidden") continue;

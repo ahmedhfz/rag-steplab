@@ -479,7 +479,8 @@ export function OverviewScreen() {
         <section className="mt-6 rounded-lg border border-border bg-card px-5 pb-4 pt-5" data-testid="overview-pipeline">
           <h2 className="m-0 text-base font-semibold text-foreground">{copy.overview.journey.title}</h2>
           <div className="relative mt-2 w-full overflow-hidden" data-testid="overview-journey">
-            <div className="relative hidden h-54 w-full pt-3 min-[1440px]:block" data-testid="overview-journey-desktop">
+            {/* Node labels and check badges sit outside their 40px node boxes by design, inside this canvas. */}
+            <div className="relative hidden h-54 w-full pt-3 min-[1440px]:block" data-overflow-intentional="" data-testid="overview-journey-desktop">
               <div className="relative h-50 w-full">
                 <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="overview-group-prepare" style={journeyGroupPosition("prepare")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.prepare}</span></div>
                 <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="overview-group-test" style={journeyGroupPosition("test")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.test}</span></div>

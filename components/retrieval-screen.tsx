@@ -245,8 +245,10 @@ function RetrievalStageView({ copy, locale, run, source }: { copy: RetrievalCopy
                   <span className="grid size-7 shrink-0 place-items-center rounded-md bg-secondary text-xs font-medium text-foreground tabular-nums">{candidate.rank}</span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                      <p className="min-w-0 text-sm font-medium text-foreground">{heading}</p>
-                      <p className="shrink-0 text-xs text-muted-foreground tabular-nums"><span data-testid="candidate-score" title={copy.scoreHint}>{scoreLabel} {formatScore(candidate.score)}</span>{pages ? ` · ${pages}` : null}</p>
+                      <p className="min-w-0 break-words text-sm font-medium text-foreground">{heading}</p>
+                      {/* max-w-full: the labelled score ("Fusion score (relative, diagnostic) 0.82 · p. 1") wraps
+                          on its own line at 320px instead of forcing the row past the column (WCAG 1.4.10). */}
+                      <p className="max-w-full shrink-0 text-xs text-muted-foreground tabular-nums"><span data-testid="candidate-score" title={copy.scoreHint}>{scoreLabel} {formatScore(candidate.score)}</span>{pages ? ` · ${pages}` : null}</p>
                     </div>
                     {/* Retrieved document text is untrusted data: rendered as plain text only. */}
                     <p className="mt-2 line-clamp-3 break-words text-sm text-muted-foreground">{candidate.text}</p>

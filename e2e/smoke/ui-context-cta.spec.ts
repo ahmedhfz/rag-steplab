@@ -160,7 +160,10 @@ test("@critical dense context controls remain usable at narrow desktop web width
     await page.goto("/settings", { waitUntil: "domcontentloaded" });
     const themeGroup = page.getByRole("radiogroup", { name: "Theme" });
     await expect(themeGroup).toBeVisible();
-    await expect(themeGroup).toHaveJSProperty("scrollWidth", await themeGroup.evaluate((element) => element.clientWidth));
+    // The sliding pill is placed with a fractional translate; its transformed box is rounded
+    // outward into scrollWidth, so a 1px excess is subpixel rounding, not overflow.
+    const themeWidths = await themeGroup.evaluate((element) => ({ scroll: element.scrollWidth, client: element.clientWidth }));
+    expect(themeWidths.scroll - themeWidths.client, "theme group overflow").toBeLessThanOrEqual(1);
 
     await page.goto("/evaluation", { waitUntil: "domcontentloaded" });
     await selectSeededDocument(page);
