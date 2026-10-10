@@ -24,6 +24,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from .chunking import TOKENIZER_VERSION, chunker_version_for_strategy, config_hash
+from .keyword_search import keyword_terms, ts_rank_score
 from .config import (
     PARSE_RUN_TIMEOUT_SECONDS,
     chunk_lease_duration_seconds,
@@ -226,7 +227,7 @@ def _violated_constraint(exc: IntegrityError) -> str | None:
 def simple_fts_terms(query: str) -> list[str]:
     """Build the terms passed to PostgreSQL's intentionally unstemmed `simple` FTS config."""
 
-    return [term.lower() for term in re.findall(r"[\wÀ-ÿ]+", query) if len(term) > 1]
+    return keyword_terms(query)
 
 
 def _dump(value: Any) -> Any:
@@ -1846,7 +1847,7 @@ class InMemoryRepository(Repository):
         chunks = self.get_chunks_for_embedding(chunk_run_id, embedding_run_id)
         dense: list[dict[str, Any]] = []
         keyword: list[dict[str, Any]] = []
-        terms = [term.lower() for term in re.findall(r"[\wÀ-ÿ]+", query) if len(term) > 1]
+        terms = simple_fts_terms(query)
         for chunk in chunks:
             if mode in {"dense", "hybrid"} and query_vector is not None:
                 vector = chunk.get("embedding") or []
@@ -1854,8 +1855,8 @@ class InMemoryRepository(Repository):
                 score = sum(a * b for a, b in zip(query_vector, vector)) / denominator if denominator and len(vector) == len(query_vector) else 0.0
                 dense.append({**chunk, "denseScore": score})
             if mode in {"keyword", "hybrid"}:
-                text_value = chunk["text"].lower()
-                score = sum(text_value.count(term) for term in terms) / len(terms) if terms else 0.0
+                # Same ts_rank formula as the PostgreSQL keyword branch.
+                score = ts_rank_score(terms, chunk["text"])
                 if score > 0:
                     keyword.append({**chunk, "keywordScore": score})
         dense.sort(key=lambda item: (-item["denseScore"], item["ordinal"], item["id"]))

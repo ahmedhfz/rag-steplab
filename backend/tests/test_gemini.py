@@ -102,3 +102,102 @@ def test_current_google_genai_sdk_accepts_all_adapter_schemas():
             response_json_schema=schema,
         )
         assert config.response_json_schema == schema
+
+
+def _service(responses, *, max_retries=2, sleeps=None, monkeypatch=None):
+    if monkeypatch is not None:
+        monkeypatch.setattr("app.gemini.time.sleep", lambda seconds: sleeps.append(seconds))
+        monkeypatch.setattr("app.gemini.random.uniform", lambda _low, _high: 0.0)
+    calls = []
+
+    class Models:
+        def generate_content(self, **kwargs):
+            calls.append(kwargs)
+            value = next(responses)
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+    return GeminiService(Settings(gemini_max_retries=max_retries), client=SimpleNamespace(models=Models())), calls
+
+
+def test_timeout_is_retried_once_not_until_retry_budget(monkeypatch):
+    import httpx
+    import pytest
+
+    from app.errors import ApiProblem
+
+    sleeps = []
+    ok = SimpleNamespace(text='{"orderedCandidateIds":["a"]}', model_version="m")
+    service, calls = _service(iter([httpx.ReadTimeout("slow"), ok]), sleeps=sleeps, monkeypatch=monkeypatch)
+    assert service.rerank("prompt")[0] == ["a"]
+    assert len(calls) == 2
+
+    service, calls = _service(
+        iter([httpx.ReadTimeout("slow"), httpx.ReadTimeout("slow"), ok]), sleeps=sleeps, monkeypatch=monkeypatch
+    )
+    with pytest.raises(ApiProblem) as error:
+        service.rerank("prompt")
+    assert error.value.code == "gemini_rerank_failed"
+    assert len(calls) == 2
+
+
+def test_quota_error_honours_retry_after(monkeypatch):
+    class QuotaError(Exception):
+        code = 429
+        response = SimpleNamespace(headers={"retry-after": "7"})
+
+    sleeps = []
+    ok = SimpleNamespace(text='{"orderedCandidateIds":[]}', model_version="m")
+    service, calls = _service(iter([QuotaError(), ok]), sleeps=sleeps, monkeypatch=monkeypatch)
+
+    service.rerank("prompt")
+
+    assert len(calls) == 2
+    assert sleeps == [7.0]
+
+
+def test_invalid_json_and_transport_retries_do_not_multiply_beyond_budget(monkeypatch):
+    import pytest
+
+    from app.errors import ApiProblem
+
+    sleeps = []
+    bad = SimpleNamespace(text="not-json", model_version="m")
+    service, calls = _service(iter([bad] * 10), sleeps=sleeps, monkeypatch=monkeypatch)
+
+    with pytest.raises(ApiProblem) as error:
+        service.generate_json("prompt")
+
+    assert error.value.code == "gemini_invalid_json"
+    assert len(calls) == 2
+
+
+def test_output_token_limit_is_reported_without_retrying(monkeypatch):
+    import pytest
+
+    from app.errors import ApiProblem
+
+    truncated = SimpleNamespace(
+        text='{"insufficientContext":false,"segm',
+        model_version="m",
+        candidates=[SimpleNamespace(finish_reason=SimpleNamespace(name="MAX_TOKENS"))],
+    )
+    service, calls = _service(iter([truncated] * 3), sleeps=[], monkeypatch=monkeypatch)
+
+    with pytest.raises(ApiProblem) as error:
+        service.generate_json("prompt")
+
+    assert error.value.code == "gemini_output_truncated"
+    assert len(calls) == 1
+
+
+def test_judge_uses_zero_temperature_and_defaults_are_pinned_models():
+    service, calls = _service(iter([SimpleNamespace(text='{"faithfulness":1,"answerRelevance":1}', model_version="m")]))
+
+    service.judge("prompt")
+
+    assert calls[0]["config"]["temperature"] == 0.0
+    defaults = Settings()
+    for model in (defaults.gemini_generation_model, defaults.gemini_rerank_model, defaults.gemini_judge_model):
+        assert not model.endswith("-latest")
