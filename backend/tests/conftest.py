@@ -4,6 +4,8 @@ import pytest
 
 from app.auth import CurrentUser, get_current_user
 from app.main import app
+# Shared PostgreSQL fixtures (registered here so test modules only import helpers).
+from tests.postgres_support import admin_engine, app_database_url, pg  # noqa: F401
 
 
 TEST_USER_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
