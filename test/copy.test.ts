@@ -14,8 +14,14 @@ describe("UI copy", () => {
     expect(UI_COPY.tr.retrieval.stagesTitle).toBe("Aşamalar");
     expect(UI_COPY.tr.retrieval.history).toBe("Çalıştırma geçmişi");
     expect(UI_COPY.tr.retrieval.citations).toBe("Atıflar");
-    expect(UI_COPY.tr.retrieval.experimentName).toBe("Deney #{number}");
-    expect(UI_COPY.tr.evaluation.evaluationName).toBe("Değerlendirme #{number}");
+    expect(runName(UI_COPY.tr, "experiment", 1)).toBe("Deney #1");
+    expect(runName(UI_COPY.tr, "evaluation", 2)).toBe("Değerlendirme #2");
+    expect(runName(UI_COPY.en, "experiment", 1)).toBe("Experiment #1");
+    // Page titles, run names and the bridge CTA share the sidebar names.
+    expect(UI_COPY.tr.retrieval.title).toBe(UI_COPY.tr.nav.playground);
+    expect(UI_COPY.tr.evaluation.title).toBe(UI_COPY.tr.nav.evaluation);
+    expect(UI_COPY.tr.runs.names.evaluation).toBe(UI_COPY.tr.nav.evaluation);
+    expect(UI_COPY.en.retrieval.title).toBe(UI_COPY.en.nav.playground);
     expect(UI_COPY.tr.evaluation.tabs).toEqual({ dataset: "Veri seti", results: "Sonuçlar", compare: "Karşılaştır" });
     expect(UI_COPY.tr.evaluation.judge).toBe("Değerlendirici model");
     expect(UI_COPY.tr.evaluation.metrics.faithfulness).toBe("Kaynağa sadakat");

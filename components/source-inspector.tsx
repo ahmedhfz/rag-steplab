@@ -11,7 +11,7 @@ import { OcrSourceDetails } from "@/components/ocr-source-details";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
 import { TechnicalDetails } from "@/components/ui/disclosure";
-import { UI_COPY } from "@/lib/copy";
+import { interpolate, UI_COPY } from "@/lib/copy";
 import type { DocumentParseResponse, SourceRegion } from "@/lib/document-parse-types";
 import { getDocumentSourcePreviewUrl } from "@/lib/rag-api";
 
@@ -26,10 +26,6 @@ type SourceInspectorProps = {
   /** `chip`: a compact inline `[C1]` marker for citations inside answer text. */
   variant?: "button" | "chip";
 };
-
-function fill(template: string, values: Record<string, string | number>) {
-  return template.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ""));
-}
 
 export function SourceInspector({ documentId, parseResult, pageNumbers = [], sourceElementIds = [], headingPath = [], triggerLabel, triggerAriaLabel, variant = "button" }: SourceInspectorProps) {
   const { preferences } = usePreferences();
@@ -107,11 +103,11 @@ export function SourceInspector({ documentId, parseResult, pageNumbers = [], sou
             </div>
             <TransitionPanel as="aside" transitionKey={selectedRegion?.pageNumber ?? selectedPage} className="order-first max-h-[40vh] overflow-y-auto border-b border-border p-4 lg:order-last lg:max-h-none lg:min-h-0 lg:border-b-0 lg:border-l sm:p-5" data-testid="source-inspector-evidence">
               <h3 className="text-xs font-semibold text-muted-foreground">{labels.evidence}</h3>
-              <p className="mt-2 inline-flex rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-foreground tabular-nums">{selectedPage ? fill(labels.page, { page: selectedPage }) : labels.pageLabel}</p>
+              <p className="mt-2 inline-flex rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-foreground tabular-nums">{selectedPage ? interpolate(labels.page, { page: selectedPage }) : labels.pageLabel}</p>
               {headingPath.length ? <p className="mt-3 text-xs text-muted-foreground">{headingPath.join(" › ")}</p> : null}
               <h3 className="mt-5 text-xs font-semibold text-muted-foreground">{labels.elements}</h3>
               {/* Extracted document text is untrusted data: rendered as plain text only. */}
-              <div className="mt-2 space-y-2">{matchingElements.length ? matchingElements.map((element) => <article className="rounded-md border border-border bg-card p-3" key={element.id}><div className="flex items-center justify-between gap-2 text-xs text-muted-foreground tabular-nums"><span>{copy.documents.elementTypes[element.type]}</span><span>{element.pageNumbers.map((page) => fill(labels.page, { page })).join(", ")}</span></div><p className="mt-2 break-words text-xs leading-5 text-foreground">{element.text}</p><OcrSourceDetails element={element} locale={preferences.locale} onInspectRegion={(region) => { setRegionPage(region.pageNumber); setSelectedRegion(region); }} /><TechnicalDetails className="mt-2" title={labels.technicalId}><p className="break-all font-mono text-xs text-muted-foreground">{element.id}</p></TechnicalDetails></article>) : <p className="text-xs text-muted-foreground">{labels.noElements}</p>}</div>
+              <div className="mt-2 space-y-2">{matchingElements.length ? matchingElements.map((element) => <article className="rounded-md border border-border bg-card p-3" key={element.id}><div className="flex items-center justify-between gap-2 text-xs text-muted-foreground tabular-nums"><span>{copy.documents.elementTypes[element.type]}</span><span>{element.pageNumbers.map((page) => interpolate(labels.page, { page })).join(", ")}</span></div><p className="mt-2 break-words text-xs leading-5 text-foreground">{element.text}</p><OcrSourceDetails element={element} locale={preferences.locale} onInspectRegion={(region) => { setRegionPage(region.pageNumber); setSelectedRegion(region); }} /><TechnicalDetails className="mt-2" title={labels.technicalId}><p className="break-all font-mono text-xs text-muted-foreground">{element.id}</p></TechnicalDetails></article>) : <p className="text-xs text-muted-foreground">{labels.noElements}</p>}</div>
               {sourceUrl ? <a className="mt-5 inline-flex items-center gap-2 text-xs font-medium text-foreground underline-offset-4 hover:underline" href={`${sourceUrl}${sourceFragment}`} rel="noreferrer" target="_blank">{labels.openPdf}<AppIcon name="externalLink" className="size-3.5" /></a> : null}
             </TransitionPanel>
           </div>

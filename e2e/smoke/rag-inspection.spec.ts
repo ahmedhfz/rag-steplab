@@ -208,7 +208,7 @@ test("Embedding yokken Keyword çalışabilir, Dense ve Hybrid remediation göst
 
   const blocker = page.getByTestId("playground-blocker");
   await expect(blocker).toContainText("Dense and hybrid retrieval require embeddings");
-  await expect(blocker.getByRole("link", { name: /compatible embeddings/ })).toHaveAttribute("href", "/embeddings");
+  await expect(blocker.getByRole("link", { name: "Go to Embeddings" })).toHaveAttribute("href", "/embeddings");
   await expect(blocker).not.toContainText("Action blocked");
   await expect(page.getByRole("button", { name: "Run experiment" })).toBeDisabled();
 

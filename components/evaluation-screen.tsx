@@ -19,7 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { SlidingTabs, TransitionCheckbox, TransitionPanel } from "@/components/ui/transitions";
 import { blocker, getPipelineAvailability } from "@/lib/blockers";
-import { type AppCopy, type AppLocale, UI_COPY } from "@/lib/copy";
+import { type AppCopy, type AppLocale, interpolate, runName, UI_COPY } from "@/lib/copy";
 import type { ParsedElement } from "@/lib/document-parse-types";
 import { formatCount, formatMs, formatNumber, formatScore } from "@/lib/format";
 import type { EvaluationCaseResult, EvaluationRun, GenerationMetricMethod, RetrievalMode, StageRetrievalMetricsByStage } from "@/lib/rag-api-types";
@@ -39,10 +39,6 @@ type DraftEvaluationCase = {
   reference: string;
   expectedOutcome: EvaluationOutcome;
 };
-
-function fill(template: string, values: Record<string, string | number>) {
-  return template.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ""));
-}
 
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -119,12 +115,13 @@ type PickerElement = { element: ParsedElement; section: string | null; summary: 
 
 /** One-line, plain-text summary; table pipes become "Table · 4 rows · first cells…". */
 function elementSummary(element: ParsedElement, copy: EvaluationCopy, locale: AppLocale) {
+  const units = UI_COPY[locale].units;
   if (element.type === "table") {
     const rows = element.table?.rows?.length
       ? element.table.rows
       : element.text.split("\n").filter((line) => line.includes("|") && !/^[\s|:-]+$/.test(line)).map((line) => line.split("|").map((cell) => cell.trim()).filter(Boolean));
     if (rows.length) {
-      return fill(copy.tableSummary, { rows: formatCount(locale, rows.length, copy.rowForms), cells: truncate(rows[0].join(", "), 60) });
+      return interpolate(copy.tableSummary, { rows: formatCount(locale, rows.length, units.row), cells: truncate(rows[0].join(", "), 60) });
     }
   }
   return truncate(element.text || element.id, 160);
@@ -166,7 +163,7 @@ function SourcePicker({ copy, elementTypes, elements, inputId, locale, onChange,
     && (section === "all" || item.section === section)
     && (!needle || item.element.text.toLocaleLowerCase(locale).includes(needle) || item.summary.toLocaleLowerCase(locale).includes(needle)));
   const toggle = (id: string) => onChange(selectedIds.includes(id) ? selectedIds.filter((item) => item !== id).join(", ") : [...selectedIds, id].join(", "));
-  const pageLabel = (item: PickerElement) => item.element.pageNumbers[0] ? fill(copy.pageShort, { page: item.element.pageNumbers[0] }) : null;
+  const pageLabel = (item: PickerElement) => item.element.pageNumbers[0] ? `${UI_COPY[locale].units.pageShort} ${item.element.pageNumbers[0]}` : null;
 
   return (
     <div className="min-w-0 sm:col-span-2" data-testid={`source-picker-${inputId}`}>
@@ -180,7 +177,7 @@ function SourcePicker({ copy, elementTypes, elements, inputId, locale, onChange,
             return (
               <li className="inline-flex min-w-0 max-w-full items-center gap-0.5 rounded-sm bg-secondary py-0.5 pl-2 pr-0.5 text-xs text-foreground" key={id}>
                 <span className={cn("truncate", !item && "font-mono")}>{label}</span>
-                <button aria-label={fill(copy.removeSource, { label })} className="grid size-5 shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-surface-subtle hover:text-foreground" onClick={() => toggle(id)} type="button"><AppIcon name="close" className="size-3" /></button>
+                <button aria-label={interpolate(copy.removeSource, { label })} className="grid size-5 shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-surface-subtle hover:text-foreground" onClick={() => toggle(id)} type="button"><AppIcon name="close" className="size-3" /></button>
               </li>
             );
           })}
@@ -198,7 +195,7 @@ function SourcePicker({ copy, elementTypes, elements, inputId, locale, onChange,
             {pages.length > 1 ? (
               <Select onValueChange={setPage} value={page}>
                 <SelectTrigger aria-label={copy.pageFilter} className="h-8 w-auto min-w-[8rem]"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="all">{copy.allPages}</SelectItem>{pages.map((number) => <SelectItem key={number} value={String(number)}>{fill(copy.pageOption, { page: number })}</SelectItem>)}</SelectContent>
+                <SelectContent><SelectItem value="all">{copy.allPages}</SelectItem>{pages.map((number) => <SelectItem key={number} value={String(number)}>{interpolate(copy.pageOption, { page: number })}</SelectItem>)}</SelectContent>
               </Select>
             ) : null}
             {sections.length > 1 ? (
@@ -208,7 +205,7 @@ function SourcePicker({ copy, elementTypes, elements, inputId, locale, onChange,
               </Select>
             ) : null}
           </div>
-          <p aria-live="polite" className="px-3 pt-2 text-xs text-muted-foreground tabular-nums">{fill(copy.matchCount, { shown: formatNumber(locale, filtered.length), total: formatNumber(locale, elements.length) })}</p>
+          <p aria-live="polite" className="px-3 pt-2 text-xs text-muted-foreground tabular-nums">{interpolate(copy.matchCount, { shown: formatNumber(locale, filtered.length), total: formatNumber(locale, elements.length) })}</p>
           {filtered.length ? (
             // One bounded scroll area; default overscroll lets the page keep scrolling at its ends.
             <ul aria-label={copy.sourceList} className="max-h-72 overflow-y-auto p-1">
@@ -262,11 +259,12 @@ function MetricValue({ copy, value, className }: { copy: EvaluationCopy; value: 
 type MetricRow = { key: string; label: string; value: number | null | undefined; hint?: string; sampleSize?: number | null };
 
 function MetricGroup({ children, copy, locale, note, rows, sampleSize, testId, title }: { children?: ReactNode; copy: EvaluationCopy; locale: AppLocale; note?: string | null; rows: MetricRow[]; sampleSize: number | null | undefined; testId: string; title: string }) {
+  const units = UI_COPY[locale].units;
   return (
     <section className="min-w-0">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-        {typeof sampleSize === "number" ? <span className="text-xs text-muted-foreground tabular-nums">{fill(copy.sampleSize, { count: formatCount(locale, sampleSize, copy.questionForms) })}</span> : null}
+        {typeof sampleSize === "number" ? <span className="text-xs text-muted-foreground tabular-nums">{interpolate(copy.sampleSize, { count: formatCount(locale, sampleSize, units.question) })}</span> : null}
       </div>
       {note ? <p className="mt-1 text-xs text-muted-foreground">{note}</p> : null}
       <dl className="mt-2 divide-y divide-border rounded-lg border border-border bg-card px-4" data-testid={testId}>
@@ -278,7 +276,7 @@ function MetricGroup({ children, copy, locale, note, rows, sampleSize, testId, t
             </dt>
             <dd className="flex items-baseline gap-2 sm:justify-end">
               <MetricValue className="text-lg font-semibold" copy={copy} value={row.value} />
-              {typeof row.sampleSize === "number" && row.sampleSize !== sampleSize ? <span className="text-xs text-subtle-foreground tabular-nums">{fill(copy.sampleSize, { count: formatNumber(locale, row.sampleSize) })}</span> : null}
+              {typeof row.sampleSize === "number" && row.sampleSize !== sampleSize ? <span className="text-xs text-subtle-foreground tabular-nums">{interpolate(copy.sampleSize, { count: formatNumber(locale, row.sampleSize) })}</span> : null}
             </dd>
           </div>
         ))}
@@ -394,6 +392,7 @@ function EvaluationWorkspace() {
   const allCopy = UI_COPY[locale];
   const copy = allCopy.evaluation;
   const retrievalCopy = allCopy.retrieval;
+  const units = allCopy.units;
   const {
     activeDocument,
     activePipeline,
@@ -485,7 +484,7 @@ function EvaluationWorkspace() {
   const parseElements = useMemo(() => buildPickerElements(parseResult?.structured.pages.flatMap((page) => page.elements) ?? [], copy, locale), [copy, locale, parseResult]);
   const configSummary = (config: { retrievalMode: string | null; topK: number | string | null; rerankerEnabled: boolean | null; judge: boolean | null }) => [
     config.retrievalMode && config.retrievalMode in retrievalCopy.modes ? retrievalCopy.modes[config.retrievalMode as RetrievalMode] : config.retrievalMode ?? "—",
-    fill(copy.configTopK, { k: config.topK ?? "—" }),
+    interpolate(copy.configTopK, { k: config.topK ?? "—" }),
     config.rerankerEnabled ? copy.rerankerOn : copy.rerankerOff,
     config.judge ? copy.judgeOn : copy.judgeOff,
   ].join(" · ");
@@ -494,7 +493,7 @@ function EvaluationWorkspace() {
     const index = evaluationHistory.findIndex((run) => run.id === runId);
     return index < 0 ? 1 : evaluationHistory.length - index;
   };
-  const evaluationName = (run: EvaluationRun) => fill(copy.evaluationName, { number: run.runNumber ?? historyPosition(run.id) });
+  const evaluationName = (run: EvaluationRun) => runName(allCopy, "evaluation", run.runNumber ?? historyPosition(run.id));
   const methodLabel = (method: GenerationMetricMethod | null | undefined) => method ? copy.methods[method] : copy.unknown;
 
   useEffect(() => {
@@ -588,7 +587,7 @@ function EvaluationWorkspace() {
           <div className="flex flex-col gap-1 md:flex-row md:items-center md:gap-3">
             <p className="min-w-0 truncate text-sm font-medium text-foreground">
               {selectedDataset ? selectedDataset.name : copy.noDataset}
-              {selectedDataset ? <span className="font-normal text-muted-foreground tabular-nums"> {fill(copy.datasetVersion, { version: selectedDataset.version })} · {formatCount(locale, selectedDataset.caseCount, copy.questionForms)}</span> : null}
+              {selectedDataset ? <span className="font-normal text-muted-foreground tabular-nums"> {interpolate(copy.datasetVersion, { version: selectedDataset.version })} · {formatCount(locale, selectedDataset.caseCount, units.question)}</span> : null}
             </p>
             <span aria-hidden="true" className="hidden text-subtle-foreground md:inline">—</span>
             <p className="min-w-0 break-words text-sm text-muted-foreground" data-testid="evaluation-config-summary">{activeConfigSummary}</p>
@@ -635,7 +634,7 @@ function EvaluationWorkspace() {
                 </div>
                 {additionalCases.map((item, index) => (
                   <fieldset className="mt-5 grid min-w-0 gap-4 border-t border-border pt-4 sm:grid-cols-2" key={`case-${index}`}>
-                    <legend className="float-left text-xs font-semibold text-muted-foreground sm:col-span-2">{fill(copy.questionNumber, { number: index + 2 })}</legend>
+                    <legend className="float-left text-xs font-semibold text-muted-foreground sm:col-span-2">{interpolate(copy.questionNumber, { number: index + 2 })}</legend>
                     <label className="clear-left text-sm font-medium text-foreground" htmlFor={`case-question-${index}`}>{copy.question}<Input className="mt-1.5" id={`case-question-${index}`} onChange={(event) => updateCase(index, { question: event.target.value })} value={item.question} /></label>
                     <OutcomeSelect copy={copy} id={`case-outcome-${index}`} onChange={(value) => updateCase(index, { expectedOutcome: value })} value={item.expectedOutcome} />
                     {item.expectedOutcome === "answer"
@@ -659,8 +658,8 @@ function EvaluationWorkspace() {
                     {evaluationDatasets.map((dataset) => (
                       <li key={dataset.id}>
                         <button aria-pressed={dataset.id === selectedDatasetId} className={dataset.id === selectedDatasetId ? "block w-full rounded-md border border-hover-border bg-secondary px-3 py-2 text-left" : "block w-full rounded-md border border-border bg-card px-3 py-2 text-left hover:bg-surface-subtle"} onClick={() => { setDatasetId(dataset.id); setBaseDatasetId(dataset.id); }} type="button">
-                          <span className="block truncate text-sm font-medium text-foreground">{dataset.name} · {fill(copy.datasetVersion, { version: dataset.version })}</span>
-                          <span className="mt-0.5 block text-xs text-muted-foreground tabular-nums">{formatCount(locale, dataset.caseCount, copy.questionForms)}</span>
+                          <span className="block truncate text-sm font-medium text-foreground">{dataset.name} · {interpolate(copy.datasetVersion, { version: dataset.version })}</span>
+                          <span className="mt-0.5 block text-xs text-muted-foreground tabular-nums">{formatCount(locale, dataset.caseCount, units.question)}</span>
                         </button>
                       </li>
                     ))}
@@ -680,7 +679,7 @@ function EvaluationWorkspace() {
           <TransitionPanel aria-labelledby="evaluation-tab-results" as="section" className={panelClass} data-testid="evaluation-panel-results" id="evaluation-panel-results" role="tabpanel" transitionKey={activeTab}>
             <div className="rounded-lg border border-border bg-card p-4">
               <div className="flex flex-wrap items-end gap-x-6 gap-y-4">
-                <label className="min-w-[180px] text-xs font-medium text-muted-foreground" htmlFor="evaluation-dataset">{copy.selectDataset}<Select onValueChange={(value) => { setDatasetId(value); setBaseDatasetId(value); }} value={selectedDatasetId}><SelectTrigger className="mt-1.5" id="evaluation-dataset"><SelectValue placeholder={copy.noDataset} /></SelectTrigger><SelectContent>{evaluationDatasets.map((dataset) => <SelectItem key={dataset.id} value={dataset.id}>{dataset.name} · {fill(copy.datasetVersion, { version: dataset.version })}</SelectItem>)}</SelectContent></Select></label>
+                <label className="min-w-[180px] text-xs font-medium text-muted-foreground" htmlFor="evaluation-dataset">{copy.selectDataset}<Select onValueChange={(value) => { setDatasetId(value); setBaseDatasetId(value); }} value={selectedDatasetId}><SelectTrigger className="mt-1.5" id="evaluation-dataset"><SelectValue placeholder={copy.noDataset} /></SelectTrigger><SelectContent>{evaluationDatasets.map((dataset) => <SelectItem key={dataset.id} value={dataset.id}>{dataset.name} · {interpolate(copy.datasetVersion, { version: dataset.version })}</SelectItem>)}</SelectContent></Select></label>
                 <fieldset><legend className="text-xs font-medium text-muted-foreground">{retrievalCopy.retrieval}</legend><div aria-label={retrievalCopy.mode} className="mt-1.5 flex h-9 items-center rounded-md border border-border bg-secondary p-1" role="group">{(["dense", "hybrid", "keyword"] as const).map((value) => <button aria-pressed={mode === value} className={mode === value ? "h-full rounded-sm bg-card px-3 text-xs font-medium text-foreground shadow-sm" : "h-full rounded-sm px-3 text-xs text-muted-foreground hover:bg-card/70"} key={value} onClick={() => setMode(value)} type="button">{retrievalCopy.modes[value]}</button>)}</div></fieldset>
                 <label className="text-xs font-medium text-muted-foreground" htmlFor="evaluation-top-k">{retrievalCopy.topK}<Select onValueChange={setTopK} value={topK}><SelectTrigger className="mt-1.5 w-[76px] tabular-nums" id="evaluation-top-k"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="3">3</SelectItem><SelectItem value="5">5</SelectItem><SelectItem value="10">10</SelectItem></SelectContent></Select></label>
                 <div>
@@ -694,7 +693,7 @@ function EvaluationWorkspace() {
               </div>
               <Disclosure className="mt-3" title={copy.advanced} variant="inline">
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="flex items-center justify-between gap-3 text-xs font-medium text-foreground" htmlFor="evaluation-judge"><span>{copy.judge}<span className="mt-1 block font-normal text-muted-foreground">{capabilities?.judgeModel ? fill(copy.judgeHint, { model: capabilities.judgeModel }) : copy.judgeHintGeneric}</span></span><Switch checked={judge} id="evaluation-judge" onCheckedChange={setJudge} /></label>
+                  <label className="flex items-center justify-between gap-3 text-xs font-medium text-foreground" htmlFor="evaluation-judge"><span>{copy.judge}<span className="mt-1 block font-normal text-muted-foreground">{capabilities?.judgeModel ? interpolate(copy.judgeHint, { model: capabilities.judgeModel }) : copy.judgeHintGeneric}</span></span><Switch checked={judge} id="evaluation-judge" onCheckedChange={setJudge} /></label>
                   <p className="text-xs text-muted-foreground">{copy.separateMetrics}</p>
                 </div>
               </Disclosure>
@@ -734,9 +733,9 @@ function EvaluationWorkspace() {
                 <>
                   <p className="mt-6 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground tabular-nums" data-testid="evaluation-run-summary">
                     <span className="font-medium text-foreground">{evaluationName(evaluationRun)}</span>
-                    <span>· {fill(copy.sampleSize, { count: formatCount(locale, caseCount, copy.questionForms) })}</span>
-                    {typeof results.retrievalEligibleCaseCount === "number" ? <span>· {fill(copy.retrievalEligible, { count: formatNumber(locale, results.retrievalEligibleCaseCount) })}</span> : null}
-                    {results.failedCaseCount ? <span className="text-destructive">· {fill(copy.failedSummary, { count: formatNumber(locale, results.failedCaseCount) })}</span> : null}
+                    <span>· {interpolate(copy.sampleSize, { count: formatCount(locale, caseCount, units.question) })}</span>
+                    {typeof results.retrievalEligibleCaseCount === "number" ? <span>· {interpolate(copy.retrievalEligible, { count: formatNumber(locale, results.retrievalEligibleCaseCount) })}</span> : null}
+                    {results.failedCaseCount ? <span className="text-destructive">· {interpolate(copy.failedSummary, { count: formatNumber(locale, results.failedCaseCount) })}</span> : null}
                   </p>
                   <div className="mt-4 grid gap-6 lg:grid-cols-2">
                     <MetricGroup copy={copy} locale={locale} note={results.stageRetrievalMetrics ? copy.retrievalStageNote : null} rows={[
@@ -753,7 +752,7 @@ function EvaluationWorkspace() {
                   {measuredCases.length ? (
                     <section aria-labelledby="evaluation-cases-title" className="mt-8">
                       <h2 className="text-sm font-semibold text-foreground" id="evaluation-cases-title">{copy.cases}</h2>
-                      <p className="mt-1 text-xs text-muted-foreground" data-testid="evaluation-case-threshold">{fill(copy.threshold, { grounding: groundingLabel })}</p>
+                      <p className="mt-1 text-xs text-muted-foreground" data-testid="evaluation-case-threshold">{interpolate(copy.threshold, { grounding: groundingLabel })}</p>
                       <div className="mt-3 space-y-2">
                         {measuredCases.map((item, index) => {
                           const noAnswerCase = item.expectedOutcome === "insufficient_context";
@@ -764,12 +763,12 @@ function EvaluationWorkspace() {
                               <div>
                                 <p className="text-xs text-muted-foreground">{copy.expectedSources}</p>
                                 <p className="mt-1 text-sm text-foreground tabular-nums">{noAnswerCase ? copy.noAnswerExpected : item.expectedElementIds.length || "—"}</p>
-                                {item.expectedElementIds.length ? <div className="mt-2"><SourceInspector documentId={activeDocument?.id ?? null} parseResult={parseResult} sourceElementIds={item.expectedElementIds} triggerAriaLabel={fill(retrievalCopy.inspectSource, { label: copy.expectedSources })} triggerLabel={copy.expectedSources} /></div> : null}
+                                {item.expectedElementIds.length ? <div className="mt-2"><SourceInspector documentId={activeDocument?.id ?? null} parseResult={parseResult} sourceElementIds={item.expectedElementIds} triggerAriaLabel={interpolate(retrievalCopy.inspectSource, { label: copy.expectedSources })} triggerLabel={copy.expectedSources} /></div> : null}
                               </div>
                               <div>
                                 <p className="text-xs text-muted-foreground">{copy.retrievedSources}</p>
                                 <p className="mt-1 text-sm text-foreground tabular-nums">{item.retrievedElementIds.length || "—"}</p>
-                                {item.retrievedElementIds.length ? <div className="mt-2"><SourceInspector documentId={activeDocument?.id ?? null} parseResult={parseResult} sourceElementIds={item.retrievedElementIds} triggerAriaLabel={fill(retrievalCopy.inspectSource, { label: copy.retrievedSources })} triggerLabel={copy.retrievedSources} /></div> : null}
+                                {item.retrievedElementIds.length ? <div className="mt-2"><SourceInspector documentId={activeDocument?.id ?? null} parseResult={parseResult} sourceElementIds={item.retrievedElementIds} triggerAriaLabel={interpolate(retrievalCopy.inspectSource, { label: copy.retrievedSources })} triggerLabel={copy.retrievedSources} /></div> : null}
                               </div>
                               {noAnswerCase ? <p className="text-xs text-muted-foreground md:col-span-2">{copy.abstentionCorrectness}: <span className="text-foreground">{item.abstentionCorrect === null || item.abstentionCorrect === undefined ? copy.notMeasured : item.abstentionCorrect ? copy.correct : copy.incorrect}</span></p> : null}
                               <div className="md:col-span-2">
@@ -800,7 +799,7 @@ function EvaluationWorkspace() {
                   <Disclosure className="mt-6" contentClassName="grid gap-4 p-4 text-xs sm:grid-cols-2" data-testid="evaluation-run-details" title={copy.details}>
                     <div><p className="text-muted-foreground">{copy.configuration}</p><p className="mt-1 text-sm text-foreground">{configSummary(evaluationConfig(evaluationRun))}</p></div>
                     <div><p className="text-muted-foreground">{copy.provenance}</p><p className="mt-1 text-sm text-foreground">{activeDocument?.fileName ?? "—"} · {activePipeline?.name ?? "—"}</p></div>
-                    <div><p className="text-muted-foreground">{copy.output}</p><p className="mt-1 text-sm text-foreground tabular-nums">{formatCount(locale, caseCount, copy.questionForms)} · {copy.judge}: {results.judgeModel ?? (judgeUsed ? capabilities?.judgeModel : null) ?? "—"} · {copy.metricMethod}: {methodLabel(generationMetrics?.method)}</p></div>
+                    <div><p className="text-muted-foreground">{copy.output}</p><p className="mt-1 text-sm text-foreground tabular-nums">{formatCount(locale, caseCount, units.question)} · {copy.judge}: {results.judgeModel ?? (judgeUsed ? capabilities?.judgeModel : null) ?? "—"} · {copy.metricMethod}: {methodLabel(generationMetrics?.method)}</p></div>
                     <TechnicalDetails title={copy.identifiers}><p className="break-all font-mono text-xs text-muted-foreground">Run: {evaluationRun.id}</p><p className="mt-1 break-all font-mono text-xs text-muted-foreground">Dataset: {evaluationRun.datasetId}</p>{generationMetrics?.metricVersion ? <p className="mt-1 break-all font-mono text-xs text-muted-foreground">Metric: {generationMetrics.metricVersion}</p> : null}</TechnicalDetails>
                   </Disclosure>
                 </>
@@ -809,7 +808,7 @@ function EvaluationWorkspace() {
               <EmptyState
                 action={!selectedDataset ? <Button onClick={() => selectTab("dataset")} size="sm" variant="outline">{copy.goToDataset}</Button> : null}
                 className="mt-6 min-h-[210px] rounded-lg border border-border bg-card"
-                description={selectedDataset ? fill(copy.noRunsDescription, { dataset: selectedDataset.name }) : copy.noDatasetDescription}
+                description={selectedDataset ? interpolate(copy.noRunsDescription, { dataset: selectedDataset.name }) : copy.noDatasetDescription}
                 icon="evaluate"
                 title={copy.noDataTitle}
                 titleAs="h2"
@@ -840,7 +839,7 @@ function EvaluationWorkspace() {
                             <span className="text-xs text-muted-foreground tabular-nums">{runDate(run, locale) ?? "—"}</span>
                           </div>
                           <h2 className="mt-1.5 truncate text-base font-medium text-foreground"><span className="sr-only">{letter}: </span>{evaluationName(run)}</h2>
-                          <p className="mt-1 text-xs text-muted-foreground tabular-nums">{formatMs(locale, run.timing.durationMs)} · {formatCount(locale, run.results.caseCount ?? 0, copy.questionForms)}</p>
+                          <p className="mt-1 text-xs text-muted-foreground tabular-nums">{formatMs(locale, run.timing.durationMs)} · {formatCount(locale, run.results.caseCount ?? 0, units.question)}</p>
                         </article>
                       );
                     })}
@@ -879,7 +878,7 @@ function EvaluationWorkspace() {
                       <h2 className="text-sm font-semibold text-foreground" id="evaluation-metric-comparison-title">{copy.metricComparison}</h2>
                       <span className="text-xs text-muted-foreground">{copy.deltaNote}</span>
                     </div>
-                    {!methodsMatch ? <p className="mt-1 text-xs text-muted-foreground" data-testid="evaluation-method-mismatch">{fill(copy.methodMismatch, { a: methodLabel(methodA), b: methodLabel(methodB) })}</p> : null}
+                    {!methodsMatch ? <p className="mt-1 text-xs text-muted-foreground" data-testid="evaluation-method-mismatch">{interpolate(copy.methodMismatch, { a: methodLabel(methodA), b: methodLabel(methodB) })}</p> : null}
                     <div className="mt-3">
                       <ComparisonMetricTable copy={copy} groups={[
                         { key: "retrieval", label: copy.retrievalQuality, metrics: [
@@ -915,7 +914,7 @@ function EvaluationWorkspace() {
                       const name = evaluationName(run);
                       return (
                         <TableRow key={run.id}>
-                          <TableCell className="pl-4"><TransitionCheckbox aria-label={fill(copy.compareRun, { name })} checked={compareIds.includes(run.id)} disabled={!compareIds.includes(run.id) && compareIds.length >= 2} onChange={() => toggleCompare(run.id)} /></TableCell>
+                          <TableCell className="pl-4"><TransitionCheckbox aria-label={interpolate(copy.compareRun, { name })} checked={compareIds.includes(run.id)} disabled={!compareIds.includes(run.id) && compareIds.length >= 2} onChange={() => toggleCompare(run.id)} /></TableCell>
                           <TableCell className="text-xs"><span className="block font-medium">{name}</span><span className="block text-muted-foreground">{runDate(run, locale) ?? "—"}</span></TableCell>
                           <TableCell className="text-right"><MetricValue copy={copy} value={run.results.hitAtK} /></TableCell>
                           <TableCell className="text-right"><MetricValue copy={copy} value={run.results.mrr} /></TableCell>

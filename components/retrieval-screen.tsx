@@ -19,7 +19,7 @@ import { StatusIcon } from "@/components/ui/status-pill";
 import { Switch } from "@/components/ui/switch";
 import { ThinkingText, TransitionCheckbox, TransitionPanel, TransitionText } from "@/components/ui/transitions";
 import { getPipelineAvailability } from "@/lib/blockers";
-import { type AppCopy, type AppLocale, UI_COPY } from "@/lib/copy";
+import { type AppCopy, type AppLocale, interpolate, runName, UI_COPY } from "@/lib/copy";
 import type { DocumentParseResponse } from "@/lib/document-parse-types";
 import { formatCount, formatMs, formatNumber, formatScore } from "@/lib/format";
 import type {
@@ -47,10 +47,6 @@ const DEFAULT_MODE: RetrievalMode = "hybrid";
 const DEFAULT_CANDIDATE_COUNT = 10;
 const DEFAULT_TOKEN_BUDGET = 3000;
 const DEFAULT_TEMPERATURE = 0.1;
-
-function fill(template: string, values: Record<string, string | number>) {
-  return template.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ""));
-}
 
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -121,8 +117,8 @@ function chunkTitle(chunkId: string, results: StageResults) {
   return contextMatch?.text.trim() ? excerpt(contextMatch.text) : null;
 }
 
-function pageRef(pageNumbers: number[], copy: RetrievalCopy) {
-  return pageNumbers.length ? fill(copy.pageRef, { pages: pageNumbers.join(", ") }) : null;
+function pageRef(pageNumbers: number[], units: AppCopy["units"]) {
+  return pageNumbers.length ? `${units.pageShort} ${pageNumbers.join(", ")}` : null;
 }
 
 type DraftSettings = { question: string; topK: string; mode: RetrievalMode; rerankerEnabled: boolean; candidateCount: number; tokenBudget: number; temperature: number; targetStage: ExperimentTargetStage };
@@ -218,10 +214,11 @@ function StageHeading({ title, description, meta }: { title: string; description
 }
 
 function CitationChip({ citation, copy, source }: { citation: ValidatedCitation; copy: RetrievalCopy; source: SourceContext }) {
-  return <SourceInspector documentId={source.documentId} pageNumbers={citation.pageNumbers} parseResult={source.parseResult} sourceElementIds={citation.sourceElementIds} triggerAriaLabel={fill(copy.inspectSource, { label: citation.citationId })} triggerLabel={citation.citationId} variant="chip" />;
+  return <SourceInspector documentId={source.documentId} pageNumbers={citation.pageNumbers} parseResult={source.parseResult} sourceElementIds={citation.sourceElementIds} triggerAriaLabel={interpolate(copy.inspectSource, { label: citation.citationId })} triggerLabel={citation.citationId} variant="chip" />;
 }
 
 function RetrievalStageView({ copy, locale, run, source }: { copy: RetrievalCopy; locale: AppLocale; run: ExperimentRun; source: SourceContext }) {
+  const units = UI_COPY[locale].units;
   const stage = run.stageResults.retrieval;
   // The top-K list is what reached the next stage; older payloads only carry `candidates`.
   const items = stage?.results ?? stage?.candidates ?? [];
@@ -232,7 +229,7 @@ function RetrievalStageView({ copy, locale, run, source }: { copy: RetrievalCopy
     <>
       <StageHeading
         description={copy.retrievedDescription}
-        meta={rerankerInput !== null ? <span className="text-xs text-muted-foreground tabular-nums" data-testid="playground-reranker-input">{fill(copy.rerankerInput, { count: formatCount(locale, rerankerInput, copy.candidateForms) })}</span> : null}
+        meta={rerankerInput !== null ? <span className="text-xs text-muted-foreground tabular-nums" data-testid="playground-reranker-input">{interpolate(copy.rerankerInput, { count: formatCount(locale, rerankerInput, units.candidate) })}</span> : null}
         title={copy.retrievedTitle}
       />
       <StageReuseNote copy={copy} reuse={stage?.reuse} stage="retrieval" />
@@ -242,7 +239,7 @@ function RetrievalStageView({ copy, locale, run, source }: { copy: RetrievalCopy
           <ol aria-label={copy.retrievedTitle} className="mt-4 divide-y divide-border rounded-lg border border-border bg-card">
             {items.map((candidate) => {
               const heading = candidate.headingPath.join(" › ") || copy.sourceDocument;
-              const pages = pageRef(candidate.pageNumbers, copy);
+              const pages = pageRef(candidate.pageNumbers, units);
               return (
                 <li className="flex min-w-0 items-start gap-3 p-4 sm:p-5" key={candidate.chunkId}>
                   <span className="grid size-7 shrink-0 place-items-center rounded-md bg-secondary text-xs font-medium text-foreground tabular-nums">{candidate.rank}</span>
@@ -253,7 +250,7 @@ function RetrievalStageView({ copy, locale, run, source }: { copy: RetrievalCopy
                     </div>
                     {/* Retrieved document text is untrusted data: rendered as plain text only. */}
                     <p className="mt-2 line-clamp-3 break-words text-sm text-muted-foreground">{candidate.text}</p>
-                    <div className="mt-3"><SourceInspector documentId={source.documentId} headingPath={candidate.headingPath} pageNumbers={candidate.pageNumbers} parseResult={source.parseResult} sourceElementIds={candidate.sourceElementIds} triggerAriaLabel={fill(copy.inspectSource, { label: heading })} triggerLabel={copy.viewSource} /></div>
+                    <div className="mt-3"><SourceInspector documentId={source.documentId} headingPath={candidate.headingPath} pageNumbers={candidate.pageNumbers} parseResult={source.parseResult} sourceElementIds={candidate.sourceElementIds} triggerAriaLabel={interpolate(copy.inspectSource, { label: heading })} triggerLabel={copy.viewSource} /></div>
                     <TechnicalDetails className="mt-3">
                       <dl className="grid gap-1 text-xs text-muted-foreground">
                         <div><dt className="inline font-medium">{copy.scoreBreakdown}: </dt><dd className="inline tabular-nums">Dense {formatScore(candidate.denseScore, 4)} (#{candidate.denseRank ?? "—"}) · Keyword {formatScore(candidate.keywordScore, 4)} (#{candidate.keywordRank ?? "—"}) · Fusion {formatScore(candidate.fusionScore, 4)}</dd></div>
@@ -272,13 +269,14 @@ function RetrievalStageView({ copy, locale, run, source }: { copy: RetrievalCopy
 }
 
 function RerankingStageView({ copy, locale, run, source }: { copy: RetrievalCopy; locale: AppLocale; run: ExperimentRun; source: SourceContext }) {
+  const units = UI_COPY[locale].units;
   const stage = run.stageResults.reranking;
   const executed = Boolean(stage?.executed);
   const inputCount = stage?.inputCandidates?.length ?? stage?.candidates.length ?? 0;
   const rerankerEnabled = Boolean(objectValue(run.config.reranking).enabled);
   return (
     <>
-      <StageHeading description={executed ? fill(copy.rerankingDescription, { count: formatCount(locale, inputCount, copy.candidateForms) }) : null} title={copy.stages.reranking} />
+      <StageHeading description={executed ? interpolate(copy.rerankingDescription, { count: formatCount(locale, inputCount, units.candidate) }) : null} title={copy.stages.reranking} />
       <StageReuseNote copy={copy} reuse={stage?.reuse} stage="reranking" />
       {executed && stage?.candidates.length ? (
         <ol aria-label={copy.stages.reranking} className="mt-4 divide-y divide-border rounded-lg border border-border bg-card">
@@ -294,7 +292,7 @@ function RerankingStageView({ copy, locale, run, source }: { copy: RetrievalCopy
                   <p className="mt-2 text-xs text-warning">{[candidate.rankedBy === "retrieval_fallback" ? copy.rankedByFallback : null, candidate.rerankInputTruncated ? copy.inputTruncated : null].filter(Boolean).join(" ")}</p>
                 ) : null}
                 <p className="mt-2 line-clamp-3 break-words text-sm text-muted-foreground">{candidate.text}</p>
-                <div className="mt-3"><SourceInspector documentId={source.documentId} headingPath={candidate.headingPath} pageNumbers={candidate.pageNumbers} parseResult={source.parseResult} sourceElementIds={candidate.sourceElementIds} triggerAriaLabel={fill(copy.inspectSource, { label: candidate.headingPath.join(" › ") || copy.sourceDocument })} triggerLabel={copy.viewSource} /></div>
+                <div className="mt-3"><SourceInspector documentId={source.documentId} headingPath={candidate.headingPath} pageNumbers={candidate.pageNumbers} parseResult={source.parseResult} sourceElementIds={candidate.sourceElementIds} triggerAriaLabel={interpolate(copy.inspectSource, { label: candidate.headingPath.join(" › ") || copy.sourceDocument })} triggerLabel={copy.viewSource} /></div>
               </li>
             );
           })}
@@ -305,6 +303,7 @@ function RerankingStageView({ copy, locale, run, source }: { copy: RetrievalCopy
 }
 
 function ContextStageView({ copy, locale, run }: { copy: RetrievalCopy; locale: AppLocale; run: ExperimentRun }) {
+  const units = UI_COPY[locale].units;
   const stage = run.stageResults.context;
   const reasonLabel = (reason: string) => reason in copy.reasons ? copy.reasons[reason as keyof RetrievalCopy["reasons"]] : null;
   return (
@@ -325,7 +324,7 @@ function ContextStageView({ copy, locale, run }: { copy: RetrievalCopy; locale: 
                         <span className={candidate.selected ? "inline-flex items-center gap-1.5 text-sm font-medium text-foreground" : "inline-flex items-center gap-1.5 text-sm font-medium text-subtle-foreground"}>
                           <AppIcon name={candidate.selected ? "check" : "minus"} className="size-3.5" />{candidate.selected ? copy.selected : copy.excluded}{reason ? <span className="font-normal text-muted-foreground"> · {reason}</span> : null}
                         </span>
-                        <span className="text-xs text-muted-foreground tabular-nums">{formatCount(locale, candidate.tokenCount, copy.tokenForms)}</span>
+                        <span className="text-xs text-muted-foreground tabular-nums">{formatCount(locale, candidate.tokenCount, units.token)}</span>
                       </div>
                       <p className="mt-2 line-clamp-2 break-words text-sm text-muted-foreground">{candidate.text}</p>
                       <TechnicalDetails className="mt-3">
@@ -343,7 +342,7 @@ function ContextStageView({ copy, locale, run }: { copy: RetrievalCopy; locale: 
           <section aria-label={copy.finalContext} className="mt-5 rounded-lg border border-border bg-card p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h3 className="text-sm font-semibold text-foreground">{copy.finalContext}</h3>
-              <span className="text-xs text-muted-foreground tabular-nums">{fill(copy.tokenUsage, { used: formatNumber(locale, stage.tokenCount), budget: formatNumber(locale, stage.tokenBudget) })}</span>
+              <span className="text-xs text-muted-foreground tabular-nums">{interpolate(copy.tokenUsage, { used: formatNumber(locale, stage.tokenCount), budget: formatNumber(locale, stage.tokenBudget) })}</span>
             </div>
             <div aria-hidden="true" className="mt-3 h-2 overflow-hidden rounded-full bg-secondary"><div className="t-resize h-full rounded-full bg-muted-foreground" style={{ width: `${Math.min(100, (stage.tokenCount / Math.max(1, stage.tokenBudget)) * 100)}%` }} /></div>
             <Disclosure className="mt-3" title={copy.showContext} variant="inline">
@@ -356,7 +355,8 @@ function ContextStageView({ copy, locale, run }: { copy: RetrievalCopy; locale: 
   );
 }
 
-function AnswerStageView({ copy, run, source }: { copy: RetrievalCopy; run: ExperimentRun; source: SourceContext }) {
+function AnswerStageView({ copy, locale, run, source }: { copy: RetrievalCopy; locale: AppLocale; run: ExperimentRun; source: SourceContext }) {
+  const units = UI_COPY[locale].units;
   const generation = run.stageResults.generation;
   if (!generation) {
     return (
@@ -377,7 +377,7 @@ function AnswerStageView({ copy, run, source }: { copy: RetrievalCopy; run: Expe
       <div className="mt-4" data-testid="playground-answer">
         {outcome === "grounding_rejected" ? (
           <div className="rounded-lg border border-warning-border bg-warning-subtle p-4" data-testid="playground-grounding-rejected" role="status">
-            <p className="text-sm font-medium text-warning">{rejectedToken ? fill(copy.groundingRejected, { token: rejectedToken }) : copy.groundingRejectedGeneric}</p>
+            <p className="text-sm font-medium text-warning">{rejectedToken ? interpolate(copy.groundingRejected, { token: rejectedToken }) : copy.groundingRejectedGeneric}</p>
             <p className="mt-1 text-xs text-warning">{copy.groundingRejectedHint}</p>
           </div>
         ) : outcome === "insufficient_context" ? (
@@ -406,7 +406,7 @@ function AnswerStageView({ copy, run, source }: { copy: RetrievalCopy; run: Expe
           <p className="mt-1 text-xs text-muted-foreground">{copy.citationCaveat}</p>
           <ul className="mt-3 divide-y divide-border rounded-lg border border-border bg-card">
             {generation.citations.map((citation) => {
-              const pages = pageRef(citation.pageNumbers, copy);
+              const pages = pageRef(citation.pageNumbers, units);
               return (
                 <li className="flex min-w-0 items-center gap-3 px-3 py-2.5" key={citation.citationId}>
                   <CitationChip citation={citation} copy={copy} source={source} />
@@ -491,7 +491,7 @@ function ExperimentDetails({ copy, locale, run }: { copy: RetrievalCopy; locale:
         <h3 className="font-semibold text-foreground">{copy.output}</h3>
         <dl className="mt-2 grid gap-1.5 text-muted-foreground sm:grid-cols-3 sm:gap-5">
           <DetailRow label={copy.result}>{outputResult}</DetailRow>
-          <DetailRow label={copy.contextUsage}>{results.context ? fill(copy.tokenUsage, { used: formatNumber(locale, results.context.tokenCount), budget: formatNumber(locale, results.context.tokenBudget) }) : "—"}</DetailRow>
+          <DetailRow label={copy.contextUsage}>{results.context ? interpolate(copy.tokenUsage, { used: formatNumber(locale, results.context.tokenCount), budget: formatNumber(locale, results.context.tokenBudget) }) : "—"}</DetailRow>
           <DetailRow label={copy.citations}>{results.generation ? formatNumber(locale, results.generation.citations.length) : "—"}</DetailRow>
         </dl>
       </section>
@@ -520,7 +520,8 @@ function TopKControl({ copy, onChange, value }: { copy: RetrievalCopy; onChange:
 export function RetrievalScreen() {
   const { preferences } = usePreferences();
   const locale = preferences.locale;
-  const copy = UI_COPY[locale].retrieval;
+  const allCopy = UI_COPY[locale];
+  const copy = allCopy.retrieval;
   const {
     activeDocument,
     activePipeline,
@@ -628,7 +629,7 @@ export function RetrievalScreen() {
     const index = experimentHistory.findIndex((run) => run.id === runId);
     return index < 0 ? 1 : experimentHistory.length - index;
   };
-  const experimentName = (run: { id: string; runNumber?: number | null }) => fill(copy.experimentName, { number: run.runNumber ?? historyPosition(run.id) });
+  const experimentName = (run: { id: string; runNumber?: number | null }) => runName(allCopy, "experiment", run.runNumber ?? historyPosition(run.id));
   const source: SourceContext = { documentId: activeDocument?.id ?? null, parseResult };
 
   function reset() {
@@ -774,7 +775,7 @@ export function RetrievalScreen() {
               {activeStage === "retrieval" ? <RetrievalStageView copy={copy} locale={locale} run={experimentRun} source={source} /> : null}
               {activeStage === "reranking" ? <RerankingStageView copy={copy} locale={locale} run={experimentRun} source={source} /> : null}
               {activeStage === "context" ? <ContextStageView copy={copy} locale={locale} run={experimentRun} /> : null}
-              {activeStage === "generation" ? <AnswerStageView copy={copy} run={experimentRun} source={source} /> : null}
+              {activeStage === "generation" ? <AnswerStageView copy={copy} locale={locale} run={experimentRun} source={source} /> : null}
             </TransitionPanel>
           </div>
 
@@ -784,7 +785,7 @@ export function RetrievalScreen() {
             {results?.generation ? <Button disabled={!canRerunGeneration} onClick={() => void rerunGeneration()} size="sm" variant="outline">{copy.regenerate}</Button> : null}
             <Button onClick={() => void copyTrace()} size="sm" variant="outline"><AppIcon name="copy" className="size-4" />{copy.copyTrace}</Button>
             {copyStatus !== "idle" ? <span className="text-xs text-muted-foreground" role="status"><TransitionText>{copyStatus === "copied" ? copy.traceCopied : copy.copyFailed}</TransitionText></span> : null}
-            {answered ? <Link className="ml-auto inline-flex items-center gap-1 text-sm font-medium text-foreground underline-offset-4 hover:underline max-sm:ml-0" data-testid="playground-continue-evaluation" href="/evaluation">{copy.continueToEvaluation}<AppIcon name="arrowRight" className="size-3.5" /></Link> : null}
+            {answered ? <Link className="ml-auto inline-flex items-center gap-1 text-sm font-medium text-foreground underline-offset-4 hover:underline max-sm:ml-0" data-testid="playground-continue-evaluation" href="/evaluation">{allCopy.overview.continuation.evaluation}<AppIcon name="arrowRight" className="size-3.5" /></Link> : null}
           </div>
 
           {experimentRun.status === "completed" || experimentRun.status === "failed" ? <ExperimentDetails copy={copy} locale={locale} run={experimentRun} /> : null}
@@ -795,22 +796,22 @@ export function RetrievalScreen() {
             <ul className="divide-y divide-border">
               {experimentHistory.map((run) => {
                 const name = experimentName(run);
-                const meta = [modeLabel(experimentRetrievalMode(run.config), copy), fill(copy.topKValue, { k: String(objectValue(run.config.retrieval).topK ?? "—") }), runDate(run, locale, "short")].filter(Boolean).join(" · ");
+                const meta = [modeLabel(experimentRetrievalMode(run.config), copy), interpolate(copy.topKValue, { k: String(objectValue(run.config.retrieval).topK ?? "—") }), runDate(run, locale, "short")].filter(Boolean).join(" · ");
                 return (
                   <li className="flex min-w-0 items-center gap-3 px-4 py-2.5" key={run.id}>
-                    <TransitionCheckbox aria-label={fill(copy.compareRun, { name })} checked={compareIds.includes(run.id)} disabled={!compareIds.includes(run.id) && compareIds.length >= 2} onChange={() => toggleCompare(run.id)} />
+                    <TransitionCheckbox aria-label={interpolate(copy.compareRun, { name })} checked={compareIds.includes(run.id)} disabled={!compareIds.includes(run.id) && compareIds.length >= 2} onChange={() => toggleCompare(run.id)} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm text-foreground">{run.query || name}</p>
                       <p className="mt-0.5 truncate text-xs text-muted-foreground tabular-nums">{meta}</p>
                     </div>
-                    <Button aria-label={fill(copy.loadRun, { name })} onClick={() => loadHistoryRun(run)} size="sm" variant="ghost">{copy.load}</Button>
+                    <Button aria-label={interpolate(copy.loadRun, { name })} onClick={() => loadHistoryRun(run)} size="sm" variant="ghost">{copy.load}</Button>
                   </li>
                 );
               })}
             </ul>
             {selectedComparisonRuns.length ? (
               <div className="grid gap-3 border-t border-border p-4 md:grid-cols-2" data-testid="playground-history-compare">
-                <p className="sr-only">{fill(copy.selectedRuns, { count: compareIds.length })}</p>
+                <p className="sr-only">{interpolate(copy.selectedRuns, { count: compareIds.length })}</p>
                 {selectedComparisonRuns.map((run) => (
                   <div className="min-w-0" key={run.id}>
                     <p className="text-xs font-semibold text-foreground">{experimentName(run)}</p>
