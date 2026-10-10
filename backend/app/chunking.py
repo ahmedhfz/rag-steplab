@@ -401,6 +401,9 @@ def _pack_pieces(
 
     drafts: list[ChunkDraft] = []
     current: list[_Piece] = []
+    # Leading pieces of ``current`` that are overlap copied from the previous
+    # chunk. A chunk made only of them would duplicate already-emitted text.
+    carried = 0
 
     def emit(values: list[_Piece]) -> None:
         draft = _draft_from_pieces(values, ordinal_start + len(drafts))
@@ -417,15 +420,20 @@ def _pack_pieces(
         while len(current) - moved > 1 and current[-1 - moved].record.type == "heading":
             moved += 1
         if moved and TOKENIZER.count(_join_pieces(current[-moved:] + [piece])) <= size:
-            emit(current[:-moved])
+            if len(current) - moved > carried:
+                emit(current[:-moved])
             current = current[-moved:] + [piece]
+            carried = 0
             continue
         emit(current)
         # Shrink (not drop) the overlap when the next piece leaves less room.
         budget = min(overlap, size - TOKENIZER.count(_join_pieces([piece])) - 2)
-        current = _overlap_tail(current, budget) + [piece]
+        tail = _overlap_tail(current, budget)
+        current = tail + [piece]
+        carried = len(tail)
         while len(current) > 1 and TOKENIZER.count(_join_pieces(current)) > size:
             current.pop(0)
+            carried = max(0, carried - 1)
     if current:
         emit(current)
     return drafts

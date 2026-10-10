@@ -100,3 +100,27 @@ def test_oversized_single_word_falls_back_to_utf8_safe_windows():
 
     assert "".join(draft.text for draft in drafts) == word
     assert all(draft.token_count <= 32 and "�" not in draft.text for draft in drafts)
+
+
+@pytest.mark.parametrize("strategy", ["recursive_token", "structure_aware"])
+def test_heading_move_never_emits_an_overlap_only_chunk(strategy):
+    # The heading does not fit after p1, so it opens the next chunk with an
+    # overlap tail. When p2 then fits only with the heading, the tail alone
+    # must not become a chunk that merely repeats the end of p1.
+    heading = "Ölçüm Sonuçları ve Değerlendirme"
+    p2 = SENTENCES.strip()
+    p1 = f"{p2} Ek."
+    size = TOKENIZER.count(f"{heading}\n\n{p2}")
+    assert TOKENIZER.count(p1) <= size < TOKENIZER.count(f"{p1}\n\n{heading}")
+    structured = {
+        "elements": [
+            {"id": "p1", "type": "paragraph", "text": p1, "page_numbers": [1]},
+            {"id": "h3", "type": "heading", "level": 3, "text": heading, "page_numbers": [2]},
+            {"id": "p2", "type": "paragraph", "text": p2, "page_numbers": [2]},
+        ]
+    }
+
+    drafts = chunk_structured(structured, strategy, {"chunk_size_tokens": size, "overlap_tokens": size // 4})
+
+    assert [draft.text for draft in drafts] == [p1, f"{heading}\n\n{p2}"]
+    assert [draft.source_element_ids for draft in drafts] == [["p1"], ["h3", "p2"]]
