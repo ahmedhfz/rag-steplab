@@ -23,10 +23,18 @@ type SourceInspectorProps = {
   headingPath?: string[];
   triggerLabel?: string;
   triggerAriaLabel?: string;
+  /** `chip`: a compact inline `[C1]` marker for citations inside answer text. */
+  variant?: "button" | "chip";
 };
 
-export function SourceInspector({ documentId, parseResult, pageNumbers = [], sourceElementIds = [], headingPath = [], triggerLabel, triggerAriaLabel }: SourceInspectorProps) {
+function fill(template: string, values: Record<string, string | number>) {
+  return template.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ""));
+}
+
+export function SourceInspector({ documentId, parseResult, pageNumbers = [], sourceElementIds = [], headingPath = [], triggerLabel, triggerAriaLabel, variant = "button" }: SourceInspectorProps) {
   const { preferences } = usePreferences();
+  const copy = UI_COPY[preferences.locale];
+  const labels = copy.retrieval.inspector;
   const [open, setOpen] = useState(false);
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
   const [previewReady, setPreviewReady] = useState(false);
@@ -46,9 +54,6 @@ export function SourceInspector({ documentId, parseResult, pageNumbers = [], sou
     if (selectedPage !== null) return all.filter((element) => element.pageNumbers.includes(selectedPage));
     return [];
   }, [parseResult, selectedPage, sourceElementIds]);
-  const labels = preferences.locale === "tr"
-    ? { title: "Kaynak denetleyicisi", open: "Kaynağı incele", close: "Kapat", loading: "Kaynak PDF yükleniyor…", evidence: "Kaynak kanıtı", page: "Sayfa", elements: "Çıkarılan metin", noElements: "Bu sayfa için çıkarılmış metin bulunamadı.", description: "Orijinal PDF sayfasını çıkarılan metinle karşılaştırın.", unavailable: "Kaynak PDF yalnız doküman sahibi tarafından açılabilir.", loadFailed: "Kaynak PDF açılamadı.", retry: "Tekrar dene" }
-    : { title: "Source inspector", open: "Inspect source", close: "Close", loading: "Loading source PDF…", evidence: "Source evidence", page: "Page", elements: "Extracted text", noElements: "No extracted text was found for this page.", description: "Compare the original PDF page with the extracted text.", unavailable: "The source PDF can only be opened by the document owner.", loadFailed: "The source PDF could not be opened.", retry: "Try again" };
 
   useEffect(() => () => revokeRef.current?.(), []);
 
@@ -69,9 +74,23 @@ export function SourceInspector({ documentId, parseResult, pageNumbers = [], sou
     }
   }
 
+  const trigger = variant === "chip"
+    ? (
+      <button
+        aria-label={triggerAriaLabel}
+        className="mx-0.5 inline-flex h-5 items-center rounded-sm bg-secondary px-1 align-baseline font-mono text-xs font-medium text-foreground transition-colors hover:bg-surface-subtle hover:text-foreground disabled:cursor-not-allowed disabled:text-subtle-foreground"
+        data-testid="citation-chip"
+        disabled={!documentId}
+        type="button"
+      >
+        [{triggerLabel}]
+      </button>
+    )
+    : <Button aria-label={triggerAriaLabel} disabled={!documentId} size="sm" type="button" variant="outline"><AppIcon name="fileSearch" className="size-4" />{triggerLabel ?? labels.open}</Button>;
+
   return (
     <DialogPrimitive.Root onOpenChange={(next) => { setOpen(next); if (next) void loadSource(); else { setError(null); setRegionPage(null); setSelectedRegion(null); } }} open={open}>
-      <DialogPrimitive.Trigger asChild><Button aria-label={triggerAriaLabel} disabled={!documentId} size="sm" type="button" variant="outline"><AppIcon name="fileSearch" className="size-4" />{triggerLabel ?? labels.open}</Button></DialogPrimitive.Trigger>
+      <DialogPrimitive.Trigger asChild>{trigger}</DialogPrimitive.Trigger>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="steplab-overlay fixed inset-0 z-50 bg-overlay/35 dark:bg-overlay/65" data-testid="source-inspector-overlay" />
         <TransitionDialogContent className="fixed inset-0 z-50 ml-0 flex max-w-none flex-col overflow-hidden border-0 bg-card shadow-2xl focus:outline-none sm:inset-x-6 sm:bottom-6 sm:top-6 sm:ml-auto sm:max-w-5xl sm:rounded-xl sm:border sm:border-border" data-testid="source-inspector-content">
@@ -88,11 +107,12 @@ export function SourceInspector({ documentId, parseResult, pageNumbers = [], sou
             </div>
             <TransitionPanel as="aside" transitionKey={selectedRegion?.pageNumber ?? selectedPage} className="order-first max-h-[40vh] overflow-y-auto border-b border-border p-4 lg:order-last lg:max-h-none lg:min-h-0 lg:border-b-0 lg:border-l sm:p-5" data-testid="source-inspector-evidence">
               <h3 className="text-xs font-semibold text-muted-foreground">{labels.evidence}</h3>
-              <p className="mt-2 inline-flex rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-foreground tabular-nums">{selectedPage ? `${labels.page} ${selectedPage}` : labels.page}</p>
+              <p className="mt-2 inline-flex rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-foreground tabular-nums">{selectedPage ? fill(labels.page, { page: selectedPage }) : labels.pageLabel}</p>
               {headingPath.length ? <p className="mt-3 text-xs text-muted-foreground">{headingPath.join(" › ")}</p> : null}
               <h3 className="mt-5 text-xs font-semibold text-muted-foreground">{labels.elements}</h3>
-              <div className="mt-2 space-y-2">{matchingElements.length ? matchingElements.map((element) => <article className="rounded-md border border-border bg-card p-3" key={element.id}><div className="flex items-center justify-between gap-2 text-xs text-muted-foreground tabular-nums"><span>{UI_COPY[preferences.locale].documents.elementTypes[element.type]}</span><span>{element.pageNumbers.map((page) => `${labels.page} ${page}`).join(", ")}</span></div><p className="mt-2 break-words text-xs leading-5 text-foreground">{element.text}</p><OcrSourceDetails element={element} locale={preferences.locale} onInspectRegion={(region) => { setRegionPage(region.pageNumber); setSelectedRegion(region); }} /><TechnicalDetails className="mt-2" title={preferences.locale === "tr" ? "Teknik kaynak kimliği" : "Technical source ID"}><p className="break-all font-mono text-xs text-muted-foreground">{element.id}</p></TechnicalDetails></article>) : <p className="text-xs text-muted-foreground">{labels.noElements}</p>}</div>
-              {sourceUrl ? <a className="mt-5 inline-flex items-center gap-2 text-xs font-medium text-foreground underline-offset-4 hover:underline" href={`${sourceUrl}${sourceFragment}`} rel="noreferrer" target="_blank">{labels.open}<AppIcon name="externalLink" className="size-3.5" /></a> : null}
+              {/* Extracted document text is untrusted data: rendered as plain text only. */}
+              <div className="mt-2 space-y-2">{matchingElements.length ? matchingElements.map((element) => <article className="rounded-md border border-border bg-card p-3" key={element.id}><div className="flex items-center justify-between gap-2 text-xs text-muted-foreground tabular-nums"><span>{copy.documents.elementTypes[element.type]}</span><span>{element.pageNumbers.map((page) => fill(labels.page, { page })).join(", ")}</span></div><p className="mt-2 break-words text-xs leading-5 text-foreground">{element.text}</p><OcrSourceDetails element={element} locale={preferences.locale} onInspectRegion={(region) => { setRegionPage(region.pageNumber); setSelectedRegion(region); }} /><TechnicalDetails className="mt-2" title={labels.technicalId}><p className="break-all font-mono text-xs text-muted-foreground">{element.id}</p></TechnicalDetails></article>) : <p className="text-xs text-muted-foreground">{labels.noElements}</p>}</div>
+              {sourceUrl ? <a className="mt-5 inline-flex items-center gap-2 text-xs font-medium text-foreground underline-offset-4 hover:underline" href={`${sourceUrl}${sourceFragment}`} rel="noreferrer" target="_blank">{labels.openPdf}<AppIcon name="externalLink" className="size-3.5" /></a> : null}
             </TransitionPanel>
           </div>
         </TransitionDialogContent>
@@ -100,4 +120,3 @@ export function SourceInspector({ documentId, parseResult, pageNumbers = [], sou
     </DialogPrimitive.Root>
   );
 }
-

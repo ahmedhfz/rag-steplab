@@ -1,19 +1,33 @@
 import { act, cleanup, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pipeline = vi.hoisted(() => ({ value: null as unknown }));
+const preview = vi.hoisted(() => ({ get: vi.fn() }));
 
 vi.mock("@/components/document-pipeline-provider", () => ({
   useDocumentPipeline: () => pipeline.value,
 }));
+vi.mock("@/lib/rag-api", () => ({ getDocumentSourcePreviewUrl: preview.get }));
 
 import { PreferencesProvider } from "@/components/preferences-provider";
 import { RetrievalScreen } from "@/components/retrieval-screen";
-import type { ExperimentRun } from "@/lib/rag-api-types";
+import type { ExperimentRun, RetrievedCandidate, ValidatedCitation } from "@/lib/rag-api-types";
 
-function buildRun(generation: { answer: string; insufficientContext: boolean }): ExperimentRun {
+type Generation = NonNullable<ExperimentRun["stageResults"]["generation"]>;
+
+function candidate(chunkId: string, rank: number, overrides: Partial<RetrievedCandidate> = {}): RetrievedCandidate {
+  return { chunkId, rank, score: 0.8234, denseScore: 0.62, denseRank: rank, keywordScore: 0.1, keywordRank: rank, rrfScore: null, fusionScore: 0.8234, text: `Chunk ${chunkId} text`, documentId: "document-1", pageNumbers: [rank + 2], sourceElementIds: [`element-${chunkId}`], headingPath: [], ...overrides };
+}
+
+function citation(citationId: string, chunkId: string, valid = true): ValidatedCitation {
+  return { citationId, documentId: "document-1", chunkId, pageNumbers: [3], quote: null, valid, sourceElementIds: [`element-${chunkId}`] };
+}
+
+function buildRun(generation: Partial<Generation> & { answer: string; insufficientContext: boolean }, overrides: Partial<ExperimentRun> = {}): ExperimentRun {
   return {
     id: "experiment-1",
+    runNumber: 4,
     status: "completed",
     progress: null,
     isStale: false,
@@ -42,19 +56,35 @@ function buildRun(generation: { answer: string; insufficientContext: boolean }):
       retrieval: { candidates: [], durationMs: 1 },
       reranking: { candidates: [], durationMs: 1, method: null, executed: false },
       context: { candidates: [], finalContext: "", tokenBudget: 3000, tokenCount: 0, durationMs: 1 },
-      generation: { ...generation, citations: [], model: "gemini-generation-v1", inputTokens: null, outputTokens: null, durationMs: 10 },
+      generation: { citations: [], model: "gemini-generation-v1", inputTokens: null, outputTokens: null, durationMs: 10, ...generation },
     },
+    ...overrides,
   };
 }
+
+const run = (id: string, upstream: Record<string, string> = {}) => ({ id, status: "completed", isCompatible: true, upstream });
 
 function renderRetrieval() {
   return render(<PreferencesProvider><RetrievalScreen /></PreferencesProvider>);
 }
 
+function state() {
+  return pipeline.value as { experimentRun: ExperimentRun | null; experimentStatus: string; experimentError: { code: string; message: string } | null; runExperiment: ReturnType<typeof vi.fn> };
+}
+
+function openAnswer() {
+  fireEvent.click(within(screen.getByTestId("experiment-stage-trace")).getByRole("button", { name: /^Answer/ }));
+}
+
 beforeEach(() => {
+  preview.get.mockRejectedValue(new Error("not needed"));
   pipeline.value = {
-    activeDocument: { id: "document-1" },
-    parseResult: null,
+    activeDocument: { id: "document-1", parseRuns: [run("parse-1")], chunkRuns: [run("chunk-1", { parseRunId: "parse-1" })], embeddingRuns: [run("embedding-1", { chunkRunId: "chunk-1" })] },
+    activePipeline: null,
+    selectedParseResult: null,
+    persistenceStatus: "available",
+    workspaceStatus: "ready",
+    selectedParseRunId: "parse-1",
     selectedChunkRunId: "chunk-1",
     selectedEmbeddingRunId: "embedding-1",
     experimentStatus: "completed",
@@ -63,6 +93,7 @@ beforeEach(() => {
     experimentRun: buildRun({ answer: "", insufficientContext: true }),
     runExperiment: vi.fn(),
     loadExperiment: vi.fn(),
+    resumeRunTracking: vi.fn(),
     continueExperiment: vi.fn(),
     rerunGeneration: vi.fn(),
   };
@@ -76,17 +107,29 @@ afterEach(() => {
 });
 
 describe("Playground presentation states", () => {
-  it("restores saved settings once and preserves edits across polling updates", () => {
+  it("restores saved settings once and flags only a real draft difference", () => {
     const view = renderRetrieval();
     const question = screen.getByRole("textbox", { name: "Question" });
     expect(question).toHaveValue("What is the laboratory beacon code?");
-    expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+    // Matching settings need no band (no "Unsaved changes" mental model).
+    expect(screen.queryByTestId("playground-run-state")).not.toBeInTheDocument();
     fireEvent.change(question, { target: { value: "My draft" } });
-    const state = pipeline.value as { experimentRun: ExperimentRun };
-    state.experimentRun = { ...state.experimentRun };
+    state().experimentRun = { ...state().experimentRun! };
     view.rerender(<PreferencesProvider><RetrievalScreen /></PreferencesProvider>);
     expect(question).toHaveValue("My draft");
-    expect(screen.getByText("Unsaved changes")).toBeVisible();
+    expect(screen.getByTestId("playground-run-state")).toHaveTextContent("Settings changed — the result shown belongs to the previous run.");
+    expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+  });
+
+  it("runs the experiment with Ctrl+Enter and Cmd+Enter", () => {
+    renderRetrieval();
+    const question = screen.getByRole("textbox", { name: "Question" });
+    fireEvent.keyDown(question, { key: "Enter" });
+    expect(state().runExperiment).not.toHaveBeenCalled();
+    fireEvent.keyDown(question, { key: "Enter", ctrlKey: true });
+    fireEvent.keyDown(question, { key: "Enter", metaKey: true });
+    expect(state().runExperiment).toHaveBeenCalledTimes(2);
+    expect(state().runExperiment).toHaveBeenCalledWith(expect.objectContaining({ query: "What is the laboratory beacon code?", targetStage: "generation" }));
   });
 
   it.each([false, true])("reports clipboard success/failure (failure=%s)", async (fails) => {
@@ -95,6 +138,7 @@ describe("Playground presentation states", () => {
     fireEvent.click(screen.getByRole("button", { name: "Copy trace" }));
     await waitFor(() => expect(screen.getByText(fails ? "Copy failed. Try again." : "Trace copied.")).toBeVisible());
   });
+
   it("clears clipboard feedback after two seconds", async () => {
     vi.useFakeTimers();
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } });
@@ -110,19 +154,97 @@ describe("Playground presentation states", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(screen.queryByText("Trace copied.")).not.toBeInTheDocument();
   });
-  it("shows a simple insufficient-context state instead of a blank answer", async () => {
+
+  it("shows a simple insufficient-context state instead of a blank answer", () => {
     renderRetrieval();
-
-    await within(screen.getByTestId("experiment-stage-trace")).getByRole("button", { name: /^Answer/ }).click();
-
-    expect(screen.getByTestId("playground-insufficient-context")).toBeVisible();
+    openAnswer();
     expect(screen.getByTestId("playground-insufficient-context")).toHaveTextContent("Not enough context to answer");
     expect(screen.getByTestId("playground-answer").querySelector("p.text-base")).toBeNull();
+    expect(screen.queryByTestId("playground-continue-evaluation")).not.toBeInTheDocument();
+  });
+
+  it("explains a grounding rejection with the rejected value, not as missing context", () => {
+    state().experimentRun = buildRun({ answer: "", insufficientContext: false, outcome: "grounding_rejected", segments: [], groundingFailureDetail: { code: "unsupported_factual_token", token: "2027", attempts: 2 } });
+    renderRetrieval();
+    openAnswer();
+    expect(screen.getByTestId("playground-grounding-rejected")).toHaveTextContent("An answer was generated but contained a value that could not be verified: 2027");
+    expect(screen.queryByTestId("playground-insufficient-context")).not.toBeInTheDocument();
+    expect(screen.getByTestId("playground-details")).toHaveTextContent("Answer withheld (unverified value)");
+  });
+
+  it("renders answer segments as one paragraph with inline citation chips and titled citation rows", async () => {
+    const user = userEvent.setup();
+    const answered = buildRun({
+      answer: "The beacon code is ORBIT-731.\n\nIt is on page three.",
+      insufficientContext: false,
+      outcome: "answered",
+      segments: [{ text: "The beacon code is ORBIT-731.", citationIds: ["C1"] }, { text: "It is on page three.", citationIds: ["C1", "C2"] }],
+      citations: [citation("C1", "chunk-a"), citation("C2", "chunk-b", false)],
+      reuse: { reused: false, executed: true, sourceExperimentId: null, sourceDurationMs: null },
+    });
+    answered.stageResults.retrieval = { candidates: [candidate("chunk-a", 1, { headingPath: ["Safety", "Beacons"] }), candidate("chunk-b", 2, { text: "Second chunk first line\nmore" })], durationMs: 1 };
+    state().experimentRun = answered;
+    renderRetrieval();
+    openAnswer();
+
+    const paragraph = screen.getByTestId("playground-answer").querySelector("p.text-base");
+    expect(paragraph).toHaveTextContent("The beacon code is ORBIT-731.[C1] It is on page three.[C1][C2]");
+    expect(within(paragraph as HTMLElement).getAllByRole("button", { name: "Inspect source: C1" })).toHaveLength(2);
+    // Default states stay quiet: no "Complete" pill and no "Executed" label.
+    expect(screen.queryByText("Complete")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("stage-reuse-generation")).not.toBeInTheDocument();
+
+    const citations = screen.getByTestId("playground-citations");
+    expect(citations).toHaveTextContent("A citation confirms the source is in the context, not that it supports the claim.");
+    const rows = within(citations).getAllByRole("listitem");
+    expect(rows[0]).toHaveTextContent("[C1]Safety › Beaconsp. 3Citation valid");
+    expect(rows[1]).toHaveTextContent("Second chunk first line");
+    expect(within(rows[1]).getByTitle("Check citation")).toBeInTheDocument();
+    expect(screen.getByTestId("playground-continue-evaluation")).toHaveAttribute("href", "/evaluation");
+    expect(screen.getByRole("button", { name: "Regenerate answer" })).toBeEnabled();
+
+    await user.click(within(rows[0]).getByRole("button", { name: "Inspect source: C1" }));
+    expect(await screen.findByRole("dialog", { name: "Source inspector" })).toBeInTheDocument();
+  });
+
+  it("labels retrieval scores by their semantics and lists the top-K results, not the whole pool", () => {
+    const pooled = buildRun({ answer: "", insufficientContext: true });
+    pooled.stageResults.retrieval = {
+      candidates: [candidate("chunk-a", 1), candidate("chunk-b", 2), candidate("chunk-c", 3)],
+      results: [candidate("chunk-a", 1)],
+      scoreSemantics: "relative_min_max_fusion_within_candidate_pool",
+      durationMs: 3,
+    };
+    state().experimentRun = pooled;
+    const view = renderRetrieval();
+    const content = screen.getByTestId("playground-stage-content");
+    expect(within(content).getAllByTestId("candidate-score")).toHaveLength(1);
+    const score = within(content).getByTestId("candidate-score");
+    expect(score).toHaveTextContent("Fusion score (relative, diagnostic) 0.82");
+    expect(score).toHaveAttribute("title", "Ranking score; not an indicator of correctness.");
+    expect(within(content).queryByTestId("playground-reranker-input")).not.toBeInTheDocument();
+    expect(content).not.toHaveTextContent(/\d+ candidates/);
+    expect(within(content).getByRole("button", { name: "Inspect source: Source document" })).toBeInTheDocument();
+
+    // Without declared semantics the label follows the retrieval mode.
+    const dense = buildRun({ answer: "", insufficientContext: true }, { id: "experiment-2", config: { retrieval: { mode: "dense", topK: 5 }, reranking: { enabled: false } } });
+    dense.stageResults.retrieval = { candidates: [candidate("chunk-a", 1)], durationMs: 1 };
+    state().experimentRun = dense;
+    view.rerender(<PreferencesProvider><RetrievalScreen /></PreferencesProvider>);
+    expect(screen.getByTestId("candidate-score")).toHaveTextContent("Cosine similarity 0.82");
+  });
+
+  it("shows a queue/startup row only when the backend reports it", () => {
+    state().experimentRun = buildRun({ answer: "", insufficientContext: true }, { queueDurationMs: 9_500 });
+    const view = renderRetrieval();
+    expect(screen.getByTestId("experiment-stage-queue")).toHaveTextContent("Queue / startup9.5 s");
+    state().experimentRun = buildRun({ answer: "", insufficientContext: true }, { id: "experiment-3", queueDurationMs: null });
+    view.rerender(<PreferencesProvider><RetrievalScreen /></PreferencesProvider>);
+    expect(screen.queryByTestId("experiment-stage-queue")).not.toBeInTheDocument();
   });
 
   it("shows only one persistent run state while a previous result is still visible", () => {
-    const state = pipeline.value as { experimentStatus: string };
-    state.experimentStatus = "processing";
+    state().experimentStatus = "processing";
     renderRetrieval();
 
     expect(screen.getAllByTestId("playground-run-state")).toHaveLength(1);
@@ -130,9 +252,8 @@ describe("Playground presentation states", () => {
   });
 
   it("keeps backend error details behind a plain-language primary state", () => {
-    const state = pipeline.value as { experimentRun: ExperimentRun | null; experimentError: { code: string; message: string } | null };
-    state.experimentRun = null;
-    state.experimentError = { code: "MODAL_TIMEOUT", message: "worker diagnostic detail" };
+    state().experimentRun = null;
+    state().experimentError = { code: "MODAL_TIMEOUT", message: "worker diagnostic detail" };
     renderRetrieval();
 
     const error = screen.getByTestId("playground-error");
@@ -140,5 +261,24 @@ describe("Playground presentation states", () => {
     expect(error.querySelector("p")).toHaveTextContent("We couldn’t complete this experiment.");
     expect(error.querySelector("p")).not.toHaveTextContent("MODAL_TIMEOUT");
     expect(error.querySelector("p")).not.toHaveTextContent("worker diagnostic detail");
+  });
+
+  it("uses the Turkish glossary for stages, history and citations", () => {
+    const answered = buildRun({ answer: "Kod ORBIT-731.", insufficientContext: false, outcome: "answered", segments: [{ text: "Kod ORBIT-731.", citationIds: ["C1"] }], citations: [citation("C1", "chunk-a")] });
+    state().experimentRun = answered;
+    (pipeline.value as { experimentHistory: ExperimentRun[] }).experimentHistory = [answered];
+    // Outside the app shell the preferences fallback is Turkish.
+    render(<RetrievalScreen />);
+    fireEvent.click(within(screen.getByTestId("experiment-stage-trace")).getByRole("button", { name: /^Cevap/ }));
+
+    expect(screen.getByRole("heading", { name: "Aşamalar" })).toBeInTheDocument();
+    expect(screen.getByTestId("playground-result-meta")).toHaveTextContent("Deney #4");
+    expect(screen.getByRole("heading", { name: "Atıflar" })).toBeInTheDocument();
+    expect(screen.getByTestId("playground-citations")).toHaveTextContent("Atıf, kaynağın context'te olduğunu doğrular; iddiayı desteklediğini değil.");
+    expect(screen.getByText("Çalıştırma geçmişi")).toBeInTheDocument();
+    expect(screen.getByTestId("playground-history")).toHaveTextContent("Hybrid · Top 5");
+    expect(screen.getByRole("button", { name: "Cevabı yeniden üret" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Değerlendirmeye devam et/ })).toHaveAttribute("href", "/evaluation");
+    expect(screen.queryByText(/STAGE TRACE|Run history|Citations/)).not.toBeInTheDocument();
   });
 });
