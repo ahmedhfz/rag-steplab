@@ -4,7 +4,6 @@ import { TransitionPanel, TransitionSurface } from "@/components/ui/transitions"
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { MotionConfig } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuthBootstrap } from "@/components/auth-provider";
@@ -341,15 +340,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   if (pathname === "/login" || pathname === "/auth/reset-password") {
-    return (
-      <MotionConfig reducedMotion="user">
-        <PageTransition>{children}</PageTransition>
-      </MotionConfig>
-    );
+    return <PageTransition>{children}</PageTransition>;
   }
 
   return (
-    <MotionConfig reducedMotion="user">
       <div className="min-h-screen w-full min-w-0 bg-background text-foreground">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] border-r border-border xl:block" data-testid="app-shell-sidebar">
         <Sidebar copy={copy} onSignOut={signOut} pathname={pathname} user={authUser} />
@@ -385,7 +379,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       </div>
-    </MotionConfig>
   );
 }
 
