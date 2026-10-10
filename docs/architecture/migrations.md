@@ -60,3 +60,19 @@ run'larında da token/expiry çifti bulunur. Eski satırlar backfill edilmez;
 `NULL` lease çiftleri tarihsel kayıtları korur. `lease_token` ile
 `lease_expires_at` birlikte dolu ya da birlikte boş olmak zorundadır; worker
 stage yazıları mevcut token ile fence edilir.
+
+## Production schema drift reconciliation
+
+`20261009120000_reconcile_production_schema_drift.sql`, release'teki read-only
+`supabase db diff --linked --schema rag_lab` adımının bulduğu farkı fresh
+migration zinciri tarafında kapatır; hedef production'daki mevcut şemadır ve
+migration production'da no-op'tur (yalnız katalog okur, tablo kilidi almaz).
+`document_pipelines` production'a 20260823121229'un erken taslağıyla kurulduğu
+için FK adları (`document_pipelines_*_fkey`), uzunluksuz `varchar` id kolonları,
+CHECK yazımı ve `ix_document_pipelines_owner_document` index'i production'a
+eşitlenir. Baseline'daki IN-listesi CHECK'leri ve
+`uq_parse_runs_document_inflight` ise pg_dump metni yeniden parse edildiğinde
+farklı katalog gösterimi ürettiği için IN-listesi kaynağıyla yeniden kurulur.
+`supabase/tests/database/02_production_schema_parity.sql` bu gösterimleri korur.
+Sonraki migration'lar bu nesnelerin `fk_document_pipelines_{document,parse,chunk,embedding}`
+adlarını veya `varchar(36)` tipini varsaymamalıdır.
