@@ -105,7 +105,7 @@ describe("Parse ownership and lifecycle", () => {
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.endsWith("/capabilities")) return jsonResponse(capabilities);
       if (url.endsWith("/documents") && init?.method !== "POST") return jsonResponse({ items: [documentItem] });
-      if (url.endsWith("/documents/document-1/summary")) {
+      if (url.split("?")[0].endsWith("/documents/document-1/summary")) {
         summaryCalls += 1;
         return jsonResponse(summary(summaryCalls > 1 ? [runSummary("completed")] : [], summaryCalls > 1 ? "parse-1" : null));
       }
@@ -138,7 +138,7 @@ describe("Parse ownership and lifecycle", () => {
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.endsWith("/capabilities")) return jsonResponse(capabilities);
       if (url.endsWith("/documents") && init?.method !== "POST") return jsonResponse({ items: [documentItem] });
-      if (url.endsWith("/documents/document-1/summary")) {
+      if (url.split("?")[0].endsWith("/documents/document-1/summary")) {
         summaryCalls += 1;
         return jsonResponse(summary(summaryCalls > 1 ? [runSummary("completed")] : [], summaryCalls > 1 ? "parse-1" : null));
       }
@@ -173,7 +173,7 @@ describe("Parse ownership and lifecycle", () => {
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.endsWith("/capabilities")) return jsonResponse(capabilities);
       if (url.endsWith("/documents") && init?.method !== "POST") return jsonResponse({ items: [documentItem] });
-      if (url.endsWith("/documents/document-1/summary")) return jsonResponse(summary());
+      if (url.split("?")[0].endsWith("/documents/document-1/summary")) return jsonResponse(summary());
       if (url.endsWith("/documents/document-1/parse") && init?.method === "POST") return jsonResponse({ documentId: "document-1", parseRunId: "parse-1", status: "failed", error: { code: "modal_dispatch_failed", message: "The parse worker could not be started." } }, 202);
       throw new Error(`unexpected request: ${url}`);
     });
@@ -194,7 +194,7 @@ describe("Parse ownership and lifecycle", () => {
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.endsWith("/capabilities")) return jsonResponse(capabilities);
       if (url.endsWith("/documents") && init?.method !== "POST") return jsonResponse({ items: [documentItem] });
-      if (url.endsWith("/documents/document-1/summary")) {
+      if (url.split("?")[0].endsWith("/documents/document-1/summary")) {
         summaryCalls += 1;
         return jsonResponse(summary(summaryCalls > 1 ? [runSummary("completed")] : [], summaryCalls > 1 ? "parse-1" : null));
       }
@@ -224,7 +224,7 @@ describe("Parse ownership and lifecycle", () => {
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.endsWith("/capabilities")) return jsonResponse(capabilities);
       if (url.endsWith("/documents") && init?.method !== "POST") return jsonResponse({ items: [documentItem] });
-      if (url.endsWith("/documents/document-1/summary")) {
+      if (url.split("?")[0].endsWith("/documents/document-1/summary")) {
         summaryCalls += 1;
         return jsonResponse(summary(summaryCalls > 1 ? [runSummary("failed", { code: "parse_interrupted", message: "The parse stopped before completion." })] : [], null));
       }
@@ -247,7 +247,7 @@ describe("Parse ownership and lifecycle", () => {
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.endsWith("/capabilities")) return jsonResponse(capabilities);
       if (url.endsWith("/documents") && init?.method !== "POST") return jsonResponse({ items: [documentItem] });
-      if (url.endsWith("/documents/document-1/summary")) {
+      if (url.split("?")[0].endsWith("/documents/document-1/summary")) {
         summaryCalls += 1;
         return jsonResponse(summary(summaryCalls === 1 ? [runSummary("queued")] : [runSummary("completed")], summaryCalls > 1 ? "parse-1" : null));
       }

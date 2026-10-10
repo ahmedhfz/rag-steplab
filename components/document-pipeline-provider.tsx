@@ -578,8 +578,14 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     signal: AbortSignal,
     selectionOverride?: DocumentLineageSelection,
     strictSelection = false,
+    pipelineId?: string | null,
   ): Promise<DocumentSnapshot> => {
-    const detail = await getDocumentSummary(documentId, signal);
+    // historicalLineage is computed by the backend relative to this pipeline.
+    const active = activePipelineRef.current;
+    const referencePipelineId = pipelineId !== undefined
+      ? pipelineId
+      : active?.documentId === documentId ? active.id : null;
+    const detail = await getDocumentSummary(documentId, signal, referencePipelineId);
     return {
       ...buildDocumentSnapshot(detail, selectionOverride, strictSelection),
       summaryFetchedAt: Date.now(),
@@ -793,10 +799,14 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     }
   }, [applyParseRunStatus, commitCompletedParse, commitDocumentSnapshot, replaceController]);
 
-  const fetchDocumentWorkspace = useCallback(async (documentId: string, signal: AbortSignal): Promise<LoadedDocumentWorkspace> => {
+  const fetchDocumentWorkspace = useCallback(async (
+    documentId: string,
+    signal: AbortSignal,
+    pipelineId?: string | null,
+  ): Promise<LoadedDocumentWorkspace> => {
     const [nextPipelines, summary] = await Promise.all([
       listDocumentPipelines(documentId, signal),
-      getDocumentSummary(documentId, signal),
+      getDocumentSummary(documentId, signal, pipelineId),
     ]);
     return { pipelines: nextPipelines, summary, fetchedAt: Date.now() };
   }, []);
@@ -808,7 +818,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     prefetched?: Promise<LoadedDocumentWorkspace>,
   ) => {
     const requestId = ++documentLoadRequestRef.current;
-    const loaded = await (prefetched ?? fetchDocumentWorkspace(documentId, signal));
+    const loaded = await (prefetched ?? fetchDocumentWorkspace(documentId, signal, pipelineId));
     const scopedPipelines = loaded.pipelines.filter((item) => item.documentId === documentId);
     const pipeline = pipelineId === null
       ? null
@@ -843,8 +853,12 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
    * workspace is fetched in parallel; it is committed only if the document is
    * still in the authoritative list.
    */
-  const fetchBootstrap = useCallback(async (controller: AbortController, documentId: string | null) => {
-    const prefetched = documentId ? fetchDocumentWorkspace(documentId, controller.signal) : undefined;
+  const fetchBootstrap = useCallback(async (
+    controller: AbortController,
+    documentId: string | null,
+    pipelineId?: string | null,
+  ) => {
+    const prefetched = documentId ? fetchDocumentWorkspace(documentId, controller.signal, pipelineId) : undefined;
     // A discarded prefetch (e.g. a deleted document) must not surface as an unhandled rejection.
     prefetched?.catch(() => undefined);
     const [nextCapabilities, nextDocuments] = await Promise.all([
@@ -884,7 +898,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     try {
       const documentId = activeDocumentRef.current?.id ?? null;
       const pipelineId = documentId ? activePipelineRef.current?.id ?? readActivePipeline(documentId, authUserId) : undefined;
-      await applyBootstrap(controller, documentId, pipelineId, await fetchBootstrap(controller, documentId));
+      await applyBootstrap(controller, documentId, pipelineId, await fetchBootstrap(controller, documentId, pipelineId));
     } catch (error) {
       if (isAbortError(error)) return;
       setCapabilities(null);
@@ -1047,7 +1061,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     lineageSelectionsRef.current = readLineageSelections(authUserId);
     const documentId = readActiveDocument(authUserId);
     const pipelineId = documentId ? readActivePipeline(documentId, authUserId) : undefined;
-    void fetchBootstrap(controller, documentId)
+    void fetchBootstrap(controller, documentId, pipelineId)
       .then((loaded) => applyBootstrap(controller, documentId, pipelineId, loaded))
       .catch((error: unknown) => {
         if (isAbortError(error)) return;
@@ -1261,16 +1275,28 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     const requestId = ++selectionRequestRef.current;
     try {
       const selection = pipeline ? pipelineSelection(pipeline) : lineageSelectionsRef.current[document.id] ?? emptyLineageSelection();
+      const pipelineChanged = (activePipelineRef.current?.id ?? null) !== (pipeline?.id ?? null);
       const summaryIsFresh = Date.now() - activeDocumentSummaryLoadedAtRef.current <= SUMMARY_CACHE_MAX_AGE_MS;
       const snapshot = summaryIsFresh
         ? buildDocumentSnapshot(document, selection, Boolean(pipeline))
-        : await loadDocumentSnapshot(document.id, controller.signal, selection, Boolean(pipeline));
+        : await loadDocumentSnapshot(document.id, controller.signal, selection, Boolean(pipeline), pipeline?.id ?? null);
       if (selectionRequestRef.current !== requestId || activeDocumentRef.current?.id !== document.id) return;
       activePipelineRef.current = pipeline;
       if (pipeline) pipelineRevisionRef.current.set(pipeline.id, pipeline.revision);
       setActivePipelineId(pipeline?.id ?? null);
       rememberActivePipeline(pipeline?.id ?? null, authUserId, document.id);
       commitDocumentSnapshot(snapshot, !pipeline);
+      if (summaryIsFresh && pipelineChanged) {
+        // The switch is applied immediately from the cached summary, but its
+        // historicalLineage flags are relative to the previous pipeline;
+        // refresh them for the new one without blocking the switch.
+        void loadDocumentSnapshot(document.id, controller.signal, selection, Boolean(pipeline), pipeline?.id ?? null)
+          .then((refreshed) => {
+            if (selectionRequestRef.current !== requestId || activeDocumentRef.current?.id !== document.id) return;
+            commitDocumentSnapshot(refreshed, !pipeline);
+          })
+          .catch(() => undefined);
+      }
     } catch (error) {
       if (!isAbortError(error)) {
         setPersistenceError(asApiError(error, "Pipeline could not be selected."));

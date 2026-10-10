@@ -1550,7 +1550,15 @@ def _prepare_experiment_lineage(
     request: ExperimentCreateRequest,
     repository: Repository,
     settings: Settings,
+    *,
+    pinned_lineage: bool = False,
 ) -> tuple[dict[str, Any], str, str | None, dict[str, Any] | None, dict[str, Any]]:
+    """Resolve the experiment's chunk/embedding lineage.
+
+    ``pinned_lineage`` (evaluation children) uses the request ids verbatim: the
+    parent already resolved them, so ``embedding_run_id=None`` stays None even
+    if an embedding for the chunks was created in the meantime.
+    """
     document = _document_or_404(repository, request.document_id)
     pipeline = _selected_pipeline(repository, request.document_id, request.pipeline_id)
     if pipeline is None:
@@ -1562,9 +1570,12 @@ def _prepare_experiment_lineage(
             "chunk_run_id": None,
             "embedding_run_id": None,
         })
-    chunk_run_id, embedding_run_id = _resolve_run_selection(
-        repository, document, pipeline, request.chunk_run_id, request.embedding_run_id
-    )
+    if pinned_lineage:
+        chunk_run_id, embedding_run_id = request.chunk_run_id, request.embedding_run_id
+    else:
+        chunk_run_id, embedding_run_id = _resolve_run_selection(
+            repository, document, pipeline, request.chunk_run_id, request.embedding_run_id
+        )
     if not chunk_run_id:
         raise ApiProblem(409, "chunks_required", "Create chunks before running an experiment.")
     _require_compatible_chunk(repository, request.document_id, chunk_run_id)
@@ -2094,10 +2105,13 @@ def _create_experiment(
     allow_exact_reuse: bool = True,
     lease_token: str | None = None,
     bypass_user_admission: bool = False,
+    pinned_lineage: bool = False,
 ) -> dict[str, Any]:
     settings = get_settings()
     _require_write(repository, settings)
-    _document, chunk_run_id, embedding_run_id, embedding, pipeline_context = _prepare_experiment_lineage(request, repository, settings)
+    _document, chunk_run_id, embedding_run_id, embedding, pipeline_context = _prepare_experiment_lineage(
+        request, repository, settings, pinned_lineage=pinned_lineage
+    )
     experiment_fingerprint = _experiment_fingerprint(request, chunk_run_id, embedding_run_id, embedding, settings)
     if allow_exact_reuse:
         existing = repository.get_completed_experiment_by_fingerprint(request.document_id, experiment_fingerprint)
@@ -3253,6 +3267,9 @@ def create_evaluation(
                 repository=repository,
                 lease_token=child_lease_token,
                 bypass_user_admission=True,
+                # The evaluation already resolved (or snapshotted) its lineage;
+                # a null embedding means "none", not "resolve a default now".
+                pinned_lineage=True,
             )
         except ApiProblem as exc:
             if exc.code not in CASE_LEVEL_FAILURE_CODES:
