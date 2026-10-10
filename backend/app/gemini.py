@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import time
 from dataclasses import dataclass
 from typing import Any, Sequence
@@ -12,6 +13,14 @@ from .errors import ApiProblem
 
 
 EMBEDDING_FORMAT_VERSION = "gemini-embedding-2-qa-prefix-v1"
+
+RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+# A timeout already consumed the full request budget; retry it at most once.
+MAX_TIMEOUT_RETRIES = 1
+# Invalid structured JSON is retried once. Together with the transport retry
+# this bounds one structured call to (gemini_max_retries + 1) * 2 requests.
+STRUCTURED_OUTPUT_ATTEMPTS = 2
+MAX_RETRY_DELAY_SECONDS = 20.0
 
 # The SDK/provider constrain the JSON shape, while pipeline code below still
 # performs parsing and semantic validation for IDs, citations, and scores.
@@ -98,19 +107,82 @@ class GeminiService:
                 raise ApiProblem(503, "gemini_unavailable", "Gemini could not be initialised.") from exc
         return self._client
 
+    @staticmethod
+    def _status(exc: Exception) -> int | None:
+        value = getattr(exc, "status_code", getattr(exc, "code", None))
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _is_timeout(exc: Exception) -> bool:
+        try:
+            import httpx
+
+            if isinstance(exc, httpx.TimeoutException):
+                return True
+        except ImportError:  # pragma: no cover - httpx ships with google-genai
+            pass
+        return isinstance(exc, TimeoutError)
+
+    @staticmethod
+    def _is_connection_error(exc: Exception) -> bool:
+        try:
+            import httpx
+
+            if isinstance(exc, (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError)):
+                return True
+        except ImportError:  # pragma: no cover - httpx ships with google-genai
+            pass
+        return isinstance(exc, ConnectionError)
+
+    @staticmethod
+    def _retry_after_seconds(exc: Exception) -> float | None:
+        headers = getattr(getattr(exc, "response", None), "headers", None)
+        if not headers:
+            return None
+        try:
+            value = float(headers.get("retry-after") or headers.get("Retry-After"))
+        except (TypeError, ValueError, AttributeError):
+            return None
+        return value if value >= 0 else None
+
+    def _retry_delay(self, exc: Exception, attempt: int) -> float:
+        status = self._status(exc)
+        if status == 429:
+            # Quota errors need real backoff; honour the provider hint first.
+            hinted = self._retry_after_seconds(exc)
+            base = hinted if hinted is not None else 1.0 * (2**attempt)
+        else:
+            base = 0.5 * (2**attempt)
+        return min(MAX_RETRY_DELAY_SECONDS, base + random.uniform(0, base * 0.25))
+
     def _with_retry(self, function, *, action: str):
+        """The only transport retry layer for provider calls.
+
+        Retries retryable HTTP statuses, connection errors and (once) timeouts,
+        with exponential backoff, jitter and ``Retry-After`` for quota errors.
+        """
+
         attempts = max(0, self.settings.gemini_max_retries) + 1
+        timeouts = 0
         for attempt in range(attempts):
             try:
                 return function()
             except ApiProblem:
                 raise
             except Exception as exc:
-                status = getattr(exc, "status_code", getattr(exc, "code", None))
-                retryable = status in {408, 429, 500, 502, 503, 504, "429", "500", "502", "503", "504"}
+                timed_out = self._is_timeout(exc)
+                timeouts += int(timed_out)
+                retryable = (
+                    self._status(exc) in RETRYABLE_STATUS_CODES
+                    or self._is_connection_error(exc)
+                    or (timed_out and timeouts <= MAX_TIMEOUT_RETRIES)
+                )
                 if not retryable or attempt + 1 >= attempts:
                     raise ApiProblem(503, f"gemini_{action}_failed", f"Gemini {action} failed.") from exc
-                time.sleep(min(2.0, 0.2 * (2**attempt)))
+                time.sleep(self._retry_delay(exc, attempt))
         raise ApiProblem(503, f"gemini_{action}_failed", f"Gemini {action} failed.")
 
     @staticmethod
@@ -193,6 +265,14 @@ class GeminiService:
         value = getattr(response, "text", response)
         return str(value or "").strip()
 
+    @staticmethod
+    def _hit_output_limit(response: Any) -> bool:
+        for candidate in getattr(response, "candidates", None) or []:
+            reason = getattr(candidate, "finish_reason", None)
+            if str(getattr(reason, "name", reason) or "").upper().endswith("MAX_TOKENS"):
+                return True
+        return False
+
     def _structured_json(
         self,
         function,
@@ -201,15 +281,20 @@ class GeminiService:
         error_code: str,
         error_message: str,
     ) -> tuple[Any, Any]:
-        attempts = max(0, self.settings.gemini_max_retries) + 1
-        for attempt in range(attempts):
+        for attempt in range(STRUCTURED_OUTPUT_ATTEMPTS):
             response = self._with_retry(function, action=action)
             try:
                 return json.loads(self._response_text(response)), response
             except (TypeError, ValueError) as exc:
-                if attempt + 1 >= attempts:
+                if self._hit_output_limit(response):
+                    # The same token limit would truncate the JSON again.
+                    raise ApiProblem(
+                        503,
+                        "gemini_output_truncated",
+                        "Gemini stopped at the output token limit before completing structured output.",
+                    ) from exc
+                if attempt + 1 >= STRUCTURED_OUTPUT_ATTEMPTS:
                     raise ApiProblem(503, error_code, error_message) from exc
-                time.sleep(min(2.0, 0.2 * (2**attempt)))
         raise ApiProblem(503, error_code, error_message)
 
     def generate_json(self, prompt: str, config: dict[str, Any] | None = None) -> tuple[dict[str, Any], GeminiCallMetadata]:
@@ -263,6 +348,8 @@ class GeminiService:
         request_config = {
             "response_mime_type": "application/json",
             "response_json_schema": JUDGE_RESPONSE_SCHEMA,
+            # Scores should vary with the answer, not with sampling.
+            "temperature": 0.0,
         }
 
         def call():
