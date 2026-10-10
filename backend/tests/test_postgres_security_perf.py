@@ -10,17 +10,15 @@ from sqlalchemy import text
 
 from app.db import session_scope
 from app.errors import ApiProblem
-from tests.postgres_support import (  # noqa: F401 - pytest fixtures
+# The admin_engine/pg fixtures are registered in conftest.py.
+from tests.postgres_support import (
     OWNER_A,
     OWNER_B,
-    admin_engine,
     admin_execute,
-    app_database_url,
     completed_chunk,
     completed_embedding,
     completed_parse,
     new_document,
-    pg,
     requires_postgres,
 )
 
