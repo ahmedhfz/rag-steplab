@@ -58,7 +58,6 @@ function chunkRun(documentId: string, parseRunId: string, runId: string) {
 }
 
 function documentDetail() {
-  const activeParse = parseResult("document-old", "parse-new", "lesson.pdf", "Current parse");
   return {
     id: "document-old",
     fileName: "lesson.pdf",
@@ -78,7 +77,8 @@ function documentDetail() {
     ],
     embeddingRuns: [],
     experiments: [],
-    activeParseRun: activeParse,
+    evaluationDatasets: [],
+    evaluationRuns: [],
   };
 }
 
@@ -151,7 +151,6 @@ function Probe() {
   const {
     activeDocument,
     activeDocumentId,
-    pendingUpload,
     persistenceError,
     selectedParseRunId,
     selectedChunkRunId,
@@ -162,7 +161,6 @@ function Probe() {
     activePipelineId,
     evaluationDatasets,
     evaluationRun,
-    selectFile,
     selectParseRun,
     selectChunkRun,
     selectEmbeddingRun,
@@ -171,12 +169,22 @@ function Probe() {
     setPipelineEmbeddingRun,
     selectPipeline,
     createPipeline,
+    renamePipeline,
+    pipelines,
     selectPersistedDocument,
     refreshEvaluationRuns,
     experimentRun,
     experimentStatus,
     loadExperiment,
     resumeRunTracking,
+    reparseActiveDocument,
+    parseResult: viewedParseResult,
+    selectedParseResult,
+    workspaceStatus,
+    reparseImpact,
+    runEmbedding,
+    embeddingStatus,
+    embeddingError,
   } = useDocumentPipeline();
 
   return (
@@ -186,7 +194,6 @@ function Probe() {
       <button onClick={() => void resumeRunTracking("experiment")}>Resume tracked</button>
       <output data-testid="active-document">{activeDocument?.id ?? "none"}</output>
       <output data-testid="active-document-id">{activeDocumentId ?? "none"}</output>
-      <output data-testid="pending-upload">{pendingUpload?.name ?? "none"}</output>
       <output data-testid="selected-parse">{selectedParseRunId ?? "none"}</output>
       <output data-testid="selected-chunk">{selectedChunkRunId ?? "none"}</output>
       <output data-testid="selected-embedding">{selectedEmbeddingRunId ?? "none"}</output>
@@ -199,7 +206,13 @@ function Probe() {
       <output data-testid="evaluation-case-count">{evaluationRun?.caseResults?.length ?? 0}</output>
       <output data-testid="artifact-count">{activeDocument?.chunkRuns.length ?? 0}</output>
       <output data-testid="persistence-error">{persistenceError?.code ?? "none"}</output>
-      <button onClick={() => selectFile(new File(["%PDF-1.4"], "pending.pdf", { type: "application/pdf" }))} type="button">Select pending upload</button>
+      <output data-testid="viewed-parse-result">{viewedParseResult?.parseRunId ?? "none"}</output>
+      <output data-testid="selected-parse-result">{selectedParseResult?.parseRunId ?? "none"}</output>
+      <output data-testid="workspace-status">{workspaceStatus ?? "unknown"}</output>
+      <output data-testid="reparse-impact">{reparseImpact ? `${reparseImpact.target}:${reparseImpact.requiresConfirmation}` : "unknown"}</output>
+      <button onClick={() => void reparseActiveDocument()} type="button">Reparse document</button>
+      <button onClick={() => void runEmbedding()} type="button">Run embedding</button>
+      <output data-testid="embedding-status">{embeddingStatus}:{embeddingError?.code ?? "none"}</output>
       <button onClick={() => void selectPersistedDocument("document-new")} type="button">Switch to new</button>
       <button onClick={() => void selectPersistedDocument("document-old")} type="button">Switch to old</button>
       <button onClick={() => void selectParseRun("parse-old")} type="button">Select historical parse</button>
@@ -211,6 +224,8 @@ function Probe() {
       <button onClick={() => void selectPipeline("pipeline-1")} type="button">Select pipeline one</button>
       <button onClick={() => void selectPipeline("pipeline-2")} type="button">Select pipeline two</button>
       <button onClick={() => void createPipeline("Blank pipeline")} type="button">Create blank pipeline</button>
+      <button onClick={() => void renamePipeline("pipeline-1", "Renamed")} type="button">Rename pipeline one</button>
+      <output data-testid="pipeline-names">{pipelines.map((item) => `${item.documentId}/${item.name}`).join(",") || "none"}</output>
       <button onClick={() => void refreshEvaluationRuns("dataset-1")} type="button">Refresh evaluation runs</button>
     </div>
   );
@@ -246,8 +261,8 @@ function setupFetch({ newDocumentMode = "error" as "error" | "delayed" } = {}) {
     if (url.endsWith("/capabilities")) return respond(capabilities);
     if (url.endsWith("/documents")) return respond({ items: [persistedDocument(), { ...persistedDocument(), id: "document-new", fileName: "new.pdf" }] });
     if (url.endsWith("/pipelines")) return respond([]);
-    if (url.endsWith("/documents/document-old")) return respond(detail);
-    if (url.endsWith("/documents/document-new")) {
+    if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+    if (url.endsWith("/documents/document-new/summary")) {
       if (newDocumentMode === "delayed") return new Promise((resolve) => setTimeout(() => resolve(respond({ error: { code: "late_document", message: "Late document response" } }, 500)), 50));
       return respond({ error: { code: "document_unavailable", message: "The document could not be loaded." } }, 500);
     }
@@ -274,7 +289,9 @@ describe("Document pipeline committed state", () => {
     const status = "completed";
     fetch.mockImplementation((url: string) => url.endsWith("/experiments/tracked-run")
       ? Promise.resolve(new Response(JSON.stringify({ id: "tracked-run", status, documentId: "document-old", chunkRunId: "chunk-new", query: "q", targetStage: "retrieval", stageResults: { retrieval: { candidates: [], durationMs: 1 } } })))
-      : fallback(url));
+      : url.endsWith("/experiments/tracked-run/status")
+        ? Promise.resolve(new Response(JSON.stringify({ id: "tracked-run", status, stageStatuses: { retrieval: "completed" } })))
+        : fallback(url));
     renderProbe();
     await waitFor(() => expect(screen.getByTestId("active-document")).toHaveTextContent("document-old"));
     fireEvent.click(screen.getByText("Load tracked"));
@@ -297,9 +314,13 @@ describe("Document pipeline committed state", () => {
     let finish: ((response: Response) => void) | undefined;
     let reads = 0;
     fetch.mockImplementation((url: string) => {
+      if (url.endsWith("/experiments/tracked-run/status")) {
+        reads += 1;
+        return new Promise<Response>((resolve) => { finish = resolve; });
+      }
       if (!url.endsWith("/experiments/tracked-run")) return fallback(url);
-      if (++reads === 1) return Promise.resolve(new Response(JSON.stringify(run)));
-      return new Promise<Response>((resolve) => { finish = resolve; });
+      reads += 1;
+      return Promise.resolve(new Response(JSON.stringify(run)));
     });
     renderProbe();
     await waitFor(() => expect(screen.getByTestId("active-document")).toHaveTextContent("document-old"));
@@ -309,13 +330,11 @@ describe("Document pipeline committed state", () => {
     await waitFor(() => expect(reads).toBe(2));
     fireEvent.click(screen.getByText("Switch to new"));
     await waitFor(() => expect(screen.getByTestId("active-document")).toHaveTextContent("document-new"));
-    finish!(new Response(JSON.stringify({ ...run, status: "failed" })));
+    finish!(new Response(JSON.stringify({ id: "tracked-run", status: "failed", stageStatuses: {} })));
     await waitFor(() => expect(screen.getByTestId("experiment-state")).not.toHaveTextContent("tracked-run"));
   });
-  it("hydrates persisted evaluation datasets when the summary falls back to the legacy document response", async () => {
+  it("surfaces a summary contract error instead of falling back to legacy endpoints", async () => {
     localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
-    const detail = documentDetail();
-    const dataset = { id: "dataset-1", documentId: "document-old", parseRunId: "parse-new", name: "Smoke", version: 1, caseCount: 1, createdAt: null };
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
       if (url.endsWith("/capabilities")) return respond(capabilities);
@@ -325,15 +344,15 @@ describe("Document pipeline committed state", () => {
         ...summaryDocument("document-old", "lesson.pdf"),
         evaluationRuns: [{ id: "evaluation-1", status: "invalid" }],
       });
-      if (url.endsWith("/documents/document-old")) return respond(detail);
-      if (url.includes("/evaluation/datasets?documentId=document-old")) return respond({ items: [dataset] });
       throw new Error(`unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
     renderProbe();
 
-    await waitFor(() => expect(screen.getByTestId("evaluation-dataset-count")).toHaveTextContent("1"));
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/evaluation/datasets?documentId=document-old"))).toBe(true);
+    await waitFor(() => expect(screen.getByTestId("persistence-error")).toHaveTextContent("invalid_response"));
+    expect(screen.getByTestId("workspace-status")).toHaveTextContent("unavailable");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/documents/document-old"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/evaluation/datasets"))).toBe(false);
   });
 
   it("inspects a historical parse without changing the saved pipeline lineage", async () => {
@@ -679,17 +698,6 @@ describe("Document pipeline committed state", () => {
     expect(listCalls).toBe(1);
   });
 
-  it("keeps the committed document while a different file is only pending", async () => {
-    setupFetch();
-    renderProbe();
-
-    await waitFor(() => expect(screen.getByTestId("active-document")).toHaveTextContent("document-old"));
-    fireEvent.click(screen.getByRole("button", { name: "Select pending upload" }));
-
-    expect(screen.getByTestId("active-document")).toHaveTextContent("document-old");
-    expect(screen.getByTestId("pending-upload")).toHaveTextContent("pending.pdf");
-  });
-
   it("switches metadata immediately and uses one summary request without global refetch", async () => {
     const fetchMock = setupSummaryFetch();
     renderProbe();
@@ -970,5 +978,235 @@ describe("Document pipeline committed state", () => {
     renderProbe();
     await waitFor(() => expect(screen.getByTestId("selected-parse")).toHaveTextContent("parse-old"));
     expect(screen.getByTestId("selected-chunk")).toHaveTextContent("none");
+  });
+});
+
+describe("Document pipeline lineage regressions", () => {
+  function jsonResponse(payload: unknown, status = 200) {
+    return new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } });
+  }
+
+  it("does not PATCH a different saved pipeline when it becomes active during a reparse", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:document:test-user:document-old", "pipeline-1");
+    const detail = selectableLineageSummary();
+    const pipelineOne = namedPipeline("pipeline-1");
+    const pipelineTwo = namedPipeline("pipeline-2", { chunkRunId: "chunk-alt", embeddingRunId: "embedding-alt" });
+    let finishReparse!: (response: Response) => void;
+    const patchedUrls: string[] = [];
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/capabilities")) return Promise.resolve(jsonResponse(capabilities));
+      if (url.endsWith("/documents")) return Promise.resolve(jsonResponse({ items: [persistedDocument()] }));
+      if (url.endsWith("/documents/document-old/summary")) return Promise.resolve(jsonResponse(detail));
+      if (url.endsWith("/documents/document-old/pipelines")) return Promise.resolve(jsonResponse([pipelineOne, pipelineTwo]));
+      if (url.endsWith("/documents/document-old/parse") && init?.method === "POST") {
+        return new Promise<Response>((resolve) => { finishReparse = resolve; });
+      }
+      if (init?.method === "PATCH") {
+        patchedUrls.push(url);
+        return Promise.resolve(jsonResponse({ ...pipelineTwo, revision: 2, parseRunId: "parse-reparsed", chunkRunId: null, embeddingRunId: null }));
+      }
+      if (url.includes("/parse-runs/") || url.includes("/chunk-runs/") || url.includes("/embedding-runs/")) return new Promise<Response>(() => undefined);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
+    fireEvent.click(screen.getByRole("button", { name: "Reparse document" }));
+    await waitFor(() => expect(finishReparse).toBeTypeOf("function"));
+    fireEvent.click(screen.getByRole("button", { name: "Select pipeline two" }));
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2"));
+
+    finishReparse(jsonResponse({ ...parseResult("document-old", "parse-reparsed", "lesson.pdf", "Reparsed"), id: "parse-reparsed" }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(patchedUrls).toEqual([]);
+    expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2");
+    expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-alt");
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("embedding-alt");
+  });
+
+  it("keeps use screens on the selected parse after a historical parse was inspected", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:document:test-user:document-old", "pipeline-1");
+    navigationState.pathname = "/parse";
+    const detail = selectableLineageSummary();
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith("/capabilities")) return Promise.resolve(jsonResponse(capabilities));
+      if (url.endsWith("/documents")) return Promise.resolve(jsonResponse({ items: [persistedDocument()] }));
+      if (url.endsWith("/documents/document-old/summary")) return Promise.resolve(jsonResponse(detail));
+      if (url.endsWith("/documents/document-old/pipelines")) return Promise.resolve(jsonResponse([namedPipeline("pipeline-1")]));
+      if (url.endsWith("/parse-runs/document-old-parse")) return Promise.resolve(jsonResponse(parseResult("document-old", "document-old-parse", "lesson.pdf", "Current parse")));
+      if (url.endsWith("/parse-runs/parse-old")) return Promise.resolve(jsonResponse(parseResult("document-old", "parse-old", "lesson.pdf", "Historical parse")));
+      if (url.includes("/evaluation/datasets") || url.includes("/experiments")) return Promise.resolve(jsonResponse({ items: [] }));
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const view = renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("selected-parse-result")).toHaveTextContent("document-old-parse"));
+    fireEvent.click(screen.getByRole("button", { name: "Select historical parse" }));
+    await waitFor(() => expect(screen.getByTestId("viewed-parse-result")).toHaveTextContent("parse-old"));
+    expect(screen.getByTestId("selected-parse-result")).toHaveTextContent("document-old-parse");
+
+    navigationState.pathname = "/evaluation";
+    view.rerender(<DocumentPipelineProvider><Probe /></DocumentPipelineProvider>);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByTestId("selected-parse")).toHaveTextContent("document-old-parse");
+    expect(screen.getByTestId("selected-parse-result")).toHaveTextContent("document-old-parse");
+  });
+
+  it("reports a neutral loading workspace until the active document lineage is resolved", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    let finishSummary!: (response: Response) => void;
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith("/capabilities")) return Promise.resolve(jsonResponse(capabilities));
+      if (url.endsWith("/documents")) return Promise.resolve(jsonResponse({ items: [persistedDocument()] }));
+      if (url.endsWith("/documents/document-old/pipelines")) return Promise.resolve(jsonResponse([]));
+      if (url.endsWith("/documents/document-old/summary")) return new Promise<Response>((resolve) => { finishSummary = resolve; });
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    expect(screen.getByTestId("workspace-status")).toHaveTextContent("loading");
+    await waitFor(() => expect(finishSummary).toBeTypeOf("function"));
+    expect(screen.getByTestId("workspace-status")).toHaveTextContent("loading");
+    finishSummary(jsonResponse(summaryDocument("document-old", "lesson.pdf")));
+    await waitFor(() => expect(screen.getByTestId("workspace-status")).toHaveTextContent("ready"));
+  });
+
+  it("describes when a reparse would clear the selected downstream lineage", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:document:test-user:document-old", "pipeline-1");
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith("/capabilities")) return Promise.resolve(jsonResponse(capabilities));
+      if (url.endsWith("/documents")) return Promise.resolve(jsonResponse({ items: [persistedDocument()] }));
+      if (url.endsWith("/documents/document-old/summary")) return Promise.resolve(jsonResponse(selectableLineageSummary()));
+      if (url.endsWith("/documents/document-old/pipelines")) return Promise.resolve(jsonResponse([namedPipeline("pipeline-1")]));
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("reparse-impact")).toHaveTextContent("pipeline:true"));
+  });
+
+  it("drops a late rename conflict reload after the document changed", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:document:test-user:document-old", "pipeline-1");
+    const oldPipeline = namedPipeline("pipeline-1");
+    const newPipeline = { ...namedPipeline("pipeline-new"), documentId: "document-new", name: "New doc pipeline", parseRunId: "document-new-parse", chunkRunId: null, embeddingRunId: null };
+    let oldListCalls = 0;
+    let finishConflictList!: (response: Response) => void;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/capabilities")) return Promise.resolve(jsonResponse(capabilities));
+      if (url.endsWith("/documents")) return Promise.resolve(jsonResponse({ items: [persistedDocument(), { ...persistedDocument(), id: "document-new", fileName: "new.pdf" }] }));
+      if (url.endsWith("/documents/document-old/summary")) return Promise.resolve(jsonResponse(selectableLineageSummary()));
+      if (url.endsWith("/documents/document-new/summary")) return Promise.resolve(jsonResponse(summaryDocument("document-new", "new.pdf")));
+      if (url.endsWith("/documents/document-new/pipelines")) return Promise.resolve(jsonResponse([newPipeline]));
+      if (url.endsWith("/documents/document-old/pipelines")) {
+        oldListCalls += 1;
+        if (oldListCalls === 1) return Promise.resolve(jsonResponse([oldPipeline]));
+        return new Promise<Response>((resolve) => { finishConflictList = resolve; });
+      }
+      if (url.endsWith("/document-pipelines/pipeline-1") && init?.method === "PATCH") {
+        return Promise.resolve(jsonResponse({ error: { code: "pipeline_conflict", message: "Stale revision" } }, 409));
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
+    fireEvent.click(screen.getByRole("button", { name: "Rename pipeline one" }));
+    await waitFor(() => expect(finishConflictList).toBeTypeOf("function"));
+    fireEvent.click(screen.getByRole("button", { name: "Switch to new" }));
+    await waitFor(() => expect(screen.getByTestId("pipeline-names")).toHaveTextContent("document-new/New doc pipeline"));
+
+    finishConflictList(jsonResponse([{ ...oldPipeline, revision: 2 }]));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(screen.getByTestId("pipeline-names")).toHaveTextContent("document-new/New doc pipeline");
+    expect(screen.getByTestId("pipeline-names")).not.toHaveTextContent("document-old");
+    expect(screen.getByTestId("persistence-error")).toHaveTextContent("none");
+  });
+});
+
+describe("Accepted (202) embedding runs", () => {
+  function setupAcceptedEmbedding() {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
+    const pipeline = namedPipeline("pipeline-1", { embeddingRunId: null });
+    const accepted = {
+      id: "embedding-accepted",
+      status: "queued",
+      documentId: "document-old",
+      chunkRunId: "chunk-new",
+      model: "gemini",
+      dimensions: 768,
+      embeddingFormatVersion: "v1",
+      embeddingCount: 0,
+      upstream: { chunkRunId: "chunk-new" },
+    };
+    const state = { completed: false };
+    let resolvePoll!: (payload: unknown) => void;
+    const poll = new Promise<unknown>((resolve) => { resolvePoll = resolve; });
+    const patchBodies: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/summary")) {
+        const summary = selectableLineageSummary();
+        return respond(state.completed
+          ? { ...summary, embeddingRuns: [...summary.embeddingRuns, { id: "embedding-accepted", status: "completed", isCompatible: true, upstream: { chunkRunId: "chunk-new" } }] }
+          : summary);
+      }
+      if (url.endsWith("/documents/document-old/pipelines")) return respond([pipeline]);
+      if (url.endsWith("/documents/document-old/embeddings") && init?.method === "POST") return respond(accepted, 202);
+      if (url.endsWith("/embedding-runs/embedding-accepted")) return poll.then((payload) => new Response(JSON.stringify(payload), { status: 200 }));
+      if (url.endsWith("/document-pipelines/pipeline-1") && init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        patchBodies.push(body);
+        return respond({ ...pipeline, revision: 2, embeddingRunId: body.embeddingRunId });
+      }
+      if (url.includes("/chunk-runs/")) return new Promise<Response>(() => undefined);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return { accepted, fetchMock, patchBodies, resolvePoll, state };
+  }
+
+  it("polls an accepted embedding run and records it in the pipeline only after it completes", async () => {
+    const { accepted, fetchMock, patchBodies, resolvePoll, state } = setupAcceptedEmbedding();
+    renderProbe();
+    await waitFor(() => expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-new"));
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("none");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run embedding" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/embedding-runs/embedding-accepted"))).toBe(true), { timeout: 3_000 });
+    expect(patchBodies).toHaveLength(0);
+    expect(screen.getByTestId("embedding-status")).toHaveTextContent("processing:none");
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("none");
+
+    state.completed = true;
+    resolvePoll({ ...accepted, status: "completed", embeddingCount: 1 });
+    await waitFor(() => expect(patchBodies).toHaveLength(1));
+    expect(patchBodies[0]).toMatchObject({ embeddingRunId: "embedding-accepted" });
+    await waitFor(() => expect(screen.getByTestId("selected-embedding")).toHaveTextContent("embedding-accepted"));
+    expect(screen.getByTestId("embedding-status")).toHaveTextContent("completed:none");
+  });
+
+  it("surfaces a failed accepted embedding run without recording it", async () => {
+    const { accepted, patchBodies, resolvePoll } = setupAcceptedEmbedding();
+    renderProbe();
+    await waitFor(() => expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-new"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Run embedding" }));
+    resolvePoll({ ...accepted, status: "failed", errorCode: "worker_terminated", errorMessage: "The worker stopped." });
+    await waitFor(() => expect(screen.getByTestId("embedding-status")).toHaveTextContent("error:worker_terminated"), { timeout: 3_000 });
+    expect(patchBodies).toHaveLength(0);
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("none");
   });
 });

@@ -9,8 +9,6 @@ export const JOURNEY_CANVAS = {
 } as const;
 
 export const JOURNEY_NODE_SIZE = 40;
-export const JOURNEY_GROUP_HEIGHT = 192;
-export const JOURNEY_DESKTOP_HEIGHT = 216;
 
 export const JOURNEY_STAGE_KEYS = [
   "document",

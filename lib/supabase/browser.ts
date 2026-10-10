@@ -21,7 +21,6 @@ export function getSupabaseBrowserClient() {
 }
 
 export async function getSupabaseAccessToken(): Promise<string | null> {
-  if (process.env.NODE_ENV === "test") return null;
   const { data, error } = await getSupabaseBrowserClient().auth.getSession();
   if (error) throw new Error("supabase_session_unavailable");
   return data.session?.access_token ?? null;

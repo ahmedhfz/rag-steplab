@@ -60,6 +60,53 @@ describe("LoginScreen Supabase auth flows", () => {
     expect(mocks.refresh).toHaveBeenCalledOnce();
   });
 
+  it("returns to a same-origin deep link after sign-in and ignores hostile next values", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/login?next=%2Fevaluation%3Ftab%3Dresults");
+    const view = render(<LoginScreen />);
+
+    expect(screen.getByRole("link", { name: "Google ile devam et" })).toHaveAttribute("href", "/auth/google?next=%2Fevaluation%3Ftab%3Dresults");
+    await user.type(screen.getByLabelText("E-posta"), "user@example.com");
+    await user.type(screen.getByLabelText("Şifre"), "password1234");
+    await user.click(screen.getByRole("button", { name: "Giriş yap" }));
+    expect(mocks.replace).toHaveBeenCalledWith("/evaluation?tab=results");
+
+    view.unmount();
+    mocks.replace.mockClear();
+    window.history.replaceState({}, "", "/login?next=%2F%2Fevil.example");
+    render(<LoginScreen />);
+    expect(screen.getByRole("link", { name: "Google ile devam et" })).toHaveAttribute("href", "/auth/google");
+    await user.type(screen.getByLabelText("E-posta"), "user@example.com");
+    await user.type(screen.getByLabelText("Şifre"), "password1234");
+    await user.click(screen.getByRole("button", { name: "Giriş yap" }));
+    expect(mocks.replace).toHaveBeenCalledWith("/");
+  });
+
+  it("carries only a safe deep link through the signup confirmation email", async () => {
+    const user = userEvent.setup();
+    const signUp = async () => {
+      await user.click(screen.getByRole("button", { name: "Kayıt ol" }));
+      await user.type(screen.getByLabelText("E-posta"), "new@example.com");
+      await user.type(screen.getByLabelText("Şifre"), "password1234");
+      await user.type(screen.getByLabelText("Şifre tekrarı"), "password1234");
+      await user.click(screen.getByRole("button", { name: "Kayıt ol" }));
+    };
+    window.history.replaceState({}, "", "/login?next=%2Fevaluation%3Ftab%3Dresults");
+    const view = render(<LoginScreen />);
+    await signUp();
+    expect(mocks.signUp).toHaveBeenLastCalledWith(expect.objectContaining({
+      options: { emailRedirectTo: `${window.location.origin}/auth/confirm?next=%2Fevaluation%3Ftab%3Dresults` },
+    }));
+
+    view.unmount();
+    window.history.replaceState({}, "", "/login?next=%2F%2Fevil.example");
+    render(<LoginScreen />);
+    await signUp();
+    expect(mocks.signUp).toHaveBeenLastCalledWith(expect.objectContaining({
+      options: { emailRedirectTo: `${window.location.origin}/auth/confirm` },
+    }));
+  });
+
   it("starts signup with an email confirmation redirect", async () => {
     const user = userEvent.setup();
     render(<LoginScreen />);

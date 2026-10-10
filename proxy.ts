@@ -1,19 +1,20 @@
 import type { NextRequest } from "next/server";
 
+import { loginPathWithNext, safeNextPath } from "@/lib/auth-redirect";
 import { redirectWithSessionCookies, updateSupabaseSession } from "@/lib/supabase/proxy";
 
 const publicRoutes = new Set(["/login", "/auth/google", "/auth/callback", "/auth/confirm"]);
 
 export async function proxy(request: NextRequest) {
-  const { response, authenticated } = await updateSupabaseSession(request);
   const pathname = request.nextUrl.pathname;
+  const { response, authenticated } = await updateSupabaseSession(request);
   if (pathname.startsWith("/_next/") || pathname === "/favicon.ico") return response;
   if (publicRoutes.has(pathname)) {
     return pathname === "/login" && authenticated
-      ? redirectWithSessionCookies(response, request, "/")
+      ? redirectWithSessionCookies(response, request, safeNextPath(request.nextUrl.searchParams.get("next")))
       : response;
   }
-  if (!authenticated) return redirectWithSessionCookies(response, request, "/login");
+  if (!authenticated) return redirectWithSessionCookies(response, request, loginPathWithNext(`${pathname}${request.nextUrl.search}`));
   return response;
 }
 

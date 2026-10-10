@@ -338,7 +338,8 @@ export function RetrievalScreen() {
   const copy = UI_COPY[preferences.locale];
   const {
     activeDocument,
-    parseResult,
+    selectedParseResult: parseResult,
+    workspaceStatus,
     selectedChunkRunId,
     selectedEmbeddingRunId,
     experimentStatus,
@@ -407,14 +408,18 @@ export function RetrievalScreen() {
   }
   const hasChanges = question.length > 0 || topK !== DEFAULT_TOP_K || mode !== DEFAULT_MODE || rerankerEnabled || candidateCount !== 10 || tokenBudget !== 3000 || temperature !== 0.1 || targetStage !== "generation";
   const needsEmbedding = mode !== "keyword";
+  // Lineage blockers are evaluated only after the workspace has loaded; an
+  // empty question is the normal starting state, not a blocker.
   const askBlocker = firstBlocker(preferences.locale, [
+    [workspaceStatus === "loading", "loading"],
+    [workspaceStatus === "unavailable", "backend_unavailable"],
     [experimentStatus === "processing", "processing"],
     [!activeDocument?.id, "missing_document"],
     [!selectedChunkRunId, "missing_chunk"],
-    [!question.trim(), "missing_question"],
     [needsEmbedding && !selectedEmbeddingRunId, "missing_embedding"],
   ]);
-  const canAsk = !askBlocker;
+  const showBlocker = Boolean(askBlocker && askBlocker.code !== "loading");
+  const canAsk = !askBlocker && question.trim().length > 0;
   const labels = preferences.locale === "tr" ? {
     target: "Hedef aşama", retrieval: "Retrieval", retrievalControl: "Retrieval", reranking: "Reranking", context: "Context construction", generation: "Generation", runExperiment: "Deneyi çalıştır", advanced: "Gelişmiş ayarlar",
     candidateCount: "Rerank aday sayısı", tokenBudget: "Context token bütçesi", temperature: "Temperature", originalRank: "İlk sıra", rerankedPosition: "Reranked pozisyon", selected: "Seçildi", excluded: "Elendi", reason: "Karar", tokens: "Token",
@@ -436,15 +441,18 @@ export function RetrievalScreen() {
   const selectedComparisonRuns = useMemo(() => experimentHistory.filter((run): run is ExperimentRun => compareIds.includes(run.id) && isExperimentDetail(run)), [compareIds, experimentHistory]);
   const results = experimentRun?.stageResults;
   const resultMode = experimentRun ? experimentRetrievalMode(experimentRun.config) : mode;
+  // The disabled-run reason also covers the empty question, which is not shown as a blocker.
+  const disabledReasonCode = askBlocker?.code ?? (question.trim() ? null : "missing_question");
   const blockerMessage = (() => {
-    if (!askBlocker) return "";
-    if (askBlocker.code === "processing") return preferences.locale === "tr" ? "Mevcut deney tamamlanana kadar bekleyin." : "Wait for the current experiment to finish.";
-    if (askBlocker.code === "missing_document") return preferences.locale === "tr" ? "Bir doküman seçin ve indexing kurulumunu tamamlayın." : "Select a document and complete indexing setup first.";
-    if (askBlocker.code === "missing_parse") return preferences.locale === "tr" ? "Devam etmeden önce dokümanı ayrıştırın." : "Parse the document before continuing.";
-    if (askBlocker.code === "missing_chunk") return preferences.locale === "tr" ? "Deney çalıştırmadan önce chunking'i tamamlayın." : "Complete chunking before running an experiment.";
-    if (askBlocker.code === "missing_embedding") return preferences.locale === "tr" ? "Dense ve hybrid retrieval için embedding oluşturun veya Keyword seçin." : "Dense and hybrid retrieval require embeddings. Create embeddings first, or switch to Keyword.";
-    if (askBlocker.code === "missing_question") return preferences.locale === "tr" ? "Deneyi çalıştırmak için bir soru girin." : "Enter a question to run an experiment.";
-    if (askBlocker.code === "missing_pipeline") return preferences.locale === "tr" ? "Devam etmek için bir indexing pipeline seçin." : "Select an indexing pipeline to continue.";
+    if (!disabledReasonCode) return "";
+    if (askBlocker && (askBlocker.code === "loading" || askBlocker.code === "backend_unavailable")) return askBlocker.message;
+    if (disabledReasonCode === "processing") return preferences.locale === "tr" ? "Mevcut deney tamamlanana kadar bekleyin." : "Wait for the current experiment to finish.";
+    if (disabledReasonCode === "missing_document") return preferences.locale === "tr" ? "Bir doküman seçin ve indexing kurulumunu tamamlayın." : "Select a document and complete indexing setup first.";
+    if (disabledReasonCode === "missing_parse") return preferences.locale === "tr" ? "Devam etmeden önce dokümanı ayrıştırın." : "Parse the document before continuing.";
+    if (disabledReasonCode === "missing_chunk") return preferences.locale === "tr" ? "Deney çalıştırmadan önce chunking'i tamamlayın." : "Complete chunking before running an experiment.";
+    if (disabledReasonCode === "missing_embedding") return preferences.locale === "tr" ? "Dense ve hybrid retrieval için embedding oluşturun veya Keyword seçin." : "Dense and hybrid retrieval require embeddings. Create embeddings first, or switch to Keyword.";
+    if (disabledReasonCode === "missing_question") return preferences.locale === "tr" ? "Deneyi çalıştırmak için bir soru girin." : "Enter a question to run an experiment.";
+    if (disabledReasonCode === "missing_pipeline") return preferences.locale === "tr" ? "Devam etmek için bir indexing pipeline seçin." : "Select an indexing pipeline to continue.";
     return preferences.locale === "tr" ? "Devam etmeden önce gerekli ayarı tamamlayın." : "Complete the required setup before continuing.";
   })();
   const blockerHref = askBlocker?.code === "missing_embedding"
@@ -571,7 +579,7 @@ export function RetrievalScreen() {
         </section>
 
         {hasRunError ? <ExperimentErrorSurface error={experimentError} locale={preferences.locale} /> : null}
-        {!experimentRun && !hasRunError && askBlocker ? <BlockerState href={blockerHref} locale={preferences.locale} message={blockerMessage} /> : null}
+        {!experimentRun && !hasRunError && askBlocker && showBlocker ? <BlockerState href={blockerHref} locale={preferences.locale} message={blockerMessage} /> : null}
         {!experimentRun && !hasRunError && !askBlocker ? <section className="mt-5 flex min-h-[210px] items-center justify-center rounded-[16px] border border-border bg-card px-5 text-center"><div className="max-w-[360px]"><span aria-hidden="true" className="mx-auto grid size-12 place-items-center rounded-[14px] bg-accent text-brand"><AppIcon name="retrieve" className="size-5" /></span><h2 className="mt-4 text-[17px] font-semibold text-foreground">{workspaceCopy.readyTitle}</h2><p className="mt-2 text-sm leading-5 text-muted-foreground">{workspaceCopy.readyDescription}</p></div></section> : null}
 
         {experimentRun ? <>

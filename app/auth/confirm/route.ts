@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { safeNextPath } from "@/lib/auth-redirect";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const allowedTypes = new Set(["email", "recovery"]);
@@ -28,7 +29,8 @@ export async function GET(request: Request) {
         })
       : await supabase.auth.exchangeCodeForSession(code as string, flowId ? { flowId } : undefined);
     if (error) throw error;
-    response.headers.set("Location", new URL(recoveryFlow ? "/auth/reset-password" : "/", request.url).toString());
+    // Only a same-origin relative path is honored; anything else falls back to "/".
+    response.headers.set("Location", new URL(recoveryFlow ? "/auth/reset-password" : safeNextPath(next), request.url).toString());
     return response;
   } catch {
     const errorCode = recoveryFlow ? "recovery_invalid_or_expired" : "confirmation_invalid_or_expired";

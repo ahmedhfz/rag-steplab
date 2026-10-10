@@ -77,13 +77,6 @@ export type DocumentUploadResponse = {
   reusedDocument: boolean;
 };
 
-export type DocumentDetail = PersistedDocument & {
-  parseRuns: RunSummary[];
-  chunkRuns: RunSummary[];
-  embeddingRuns: RunSummary[];
-  experiments: RunSummary[];
-  activeParseRun: PersistedParseResponse | null;
-};
 
 export type ExperimentSummary = RunSummary & {
   documentId: string;
@@ -161,8 +154,6 @@ export type DocumentSummary = PersistedDocument & {
   experiments: ExperimentSummary[];
   evaluationDatasets: EvaluationDatasetSummary[];
   evaluationRuns: EvaluationRunSummary[];
-  /** Only populated by the legacy compatibility fallback; summary responses omit it. */
-  activeParseRun?: PersistedParseResponse | null;
 };
 
 export type PersistedParseResponse = DocumentParseResponse & {
@@ -399,8 +390,8 @@ export type EvaluationCaseResult = {
   precisionAtK: number | null;
   recallAtK: number | null;
   mrr: number | null;
-  citationValidity: number;
-  groundedness: number;
+  citationValidity: number | null;
+  groundedness: number | null;
   groundednessDetail?: Record<string, unknown>;
   generationMetrics?: EvaluationGenerationMetrics | null;
   experimentId: string;

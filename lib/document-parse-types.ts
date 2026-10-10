@@ -66,22 +66,3 @@ export type DocumentParseResponse = {
  * are intentionally not part of the browser contract.
  */
 export type ParseRunStatus = "queued" | "running" | "completed" | "failed";
-
-export type ParseJobAcceptedResponse = {
-  documentId: string;
-  parseRunId: string;
-  status: Exclude<ParseRunStatus, "completed" | "failed">;
-  progress?: number;
-  runMetadata?: Record<string, unknown> | null;
-  reusedDocument?: boolean;
-};
-
-export type ParseJobFailedResponse = {
-  documentId: string;
-  parseRunId: string;
-  status: "failed";
-  progress?: number;
-  error: { code: string; message: string };
-  runMetadata?: Record<string, unknown> | null;
-  reusedDocument?: boolean;
-};

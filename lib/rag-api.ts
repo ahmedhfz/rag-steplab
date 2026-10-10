@@ -1,9 +1,4 @@
-import {
-  DocumentApiError,
-  isDocumentParseResponse,
-  isParseJobAcceptedResponse,
-  parseDocument,
-} from "@/lib/document-api";
+import { DocumentApiError, isDocumentParseResponse } from "@/lib/document-api";
 import type { DocumentParseResponse, ParseRunStatus } from "@/lib/document-parse-types";
 import type {
   ApiProblem,
@@ -13,7 +8,6 @@ import type {
   ChunkRun,
   ChunkStrategy,
   ContextCandidate,
-  DocumentDetail,
   DocumentPipeline,
   DocumentPipelineCreateInput,
   DocumentPipelineUpdateInput,
@@ -73,10 +67,6 @@ function requiredObject(value: unknown, label: string): JsonObject {
   return value as JsonObject;
 }
 
-function field(payload: JsonObject, camelCase: string, snakeCase: string) {
-  return payload[camelCase] ?? payload[snakeCase];
-}
-
 function string(value: unknown, fallback = "") {
   return typeof value === "string" ? value : fallback;
 }
@@ -110,15 +100,15 @@ function normalizeReuse(value: unknown): StageReuseMetadata | null {
   return {
     reused: boolean(payload.reused),
     executed: boolean(payload.executed),
-    sourceExperimentId: optionalString(field(payload, "sourceExperimentId", "source_experiment_id")),
-    sourceDurationMs: optionalNumber(field(payload, "sourceDurationMs", "source_duration_ms")),
+    sourceExperimentId: optionalString(payload.sourceExperimentId),
+    sourceDurationMs: optionalNumber(payload.sourceDurationMs),
   };
 }
 
 function normalizeStageIdentity(value: JsonObject) {
   return {
     fingerprint: optionalString(value.fingerprint),
-    resultHash: optionalString(field(value, "resultHash", "result_hash")),
+    resultHash: optionalString(value.resultHash),
     reuse: normalizeReuse(value.reuse),
     provenance: Object.keys(object(value.provenance)).length ? object(value.provenance) : null,
   };
@@ -174,39 +164,39 @@ function normalizeRun(value: unknown): RunSummary {
   const timing = object(payload.timing);
   const upstream = object(payload.upstream);
   const config = object(payload.config);
-  const runMetadata = object(payload.runMetadata ?? payload.run_metadata);
-  const errorCode = optionalString(field(payload, "errorCode", "error_code"));
-  const errorMessage = optionalString(field(payload, "errorMessage", "error_message"));
+  const runMetadata = object(payload.runMetadata);
+  const errorCode = optionalString(payload.errorCode);
+  const errorMessage = optionalString(payload.errorMessage);
   const status = normalizeStatus(payload.status);
   const progress = optionalNumber(payload.progress ?? runMetadata.progress);
   const normalizedError = normalizeProblem(payload.error) ?? (errorCode && errorMessage ? { code: errorCode, message: errorMessage } : null);
   return {
     id: requiredString(payload.id, "run id"),
-    runNumber: optionalNumber(field(payload, "runNumber", "run_number")),
-    phase: optionalString(field(payload, "phase", "phase")) ?? optionalString(runMetadata.phase),
-    createdAt: optionalString(field(payload, "createdAt", "created_at")),
+    runNumber: optionalNumber(payload.runNumber),
+    phase: optionalString(payload.phase) ?? optionalString(runMetadata.phase),
+    createdAt: optionalString(payload.createdAt),
     status,
     progress: progress ?? (status === "running" ? 8 : status === "queued" ? 0 : null),
-    isStale: boolean(field(payload, "isStale", "is_stale")),
-    isCompatible: boolean(field(payload, "isCompatible", "is_compatible"), !boolean(field(payload, "isStale", "is_stale"))),
-    compatibilityReason: optionalString(field(payload, "compatibilityReason", "compatibility_reason")),
-    historicalLineage: boolean(field(payload, "historicalLineage", "historical_lineage")),
+    isStale: boolean(payload.isStale),
+    isCompatible: boolean(payload.isCompatible, !boolean(payload.isStale)),
+    compatibilityReason: optionalString(payload.compatibilityReason),
+    historicalLineage: boolean(payload.historicalLineage),
     upstream: Object.fromEntries(Object.entries(upstream).map(([key, item]) => [key, optionalString(item)])),
     config,
     timing: {
-      startedAt: optionalString(timing.startedAt ?? field(payload, "startedAt", "started_at")),
-      completedAt: optionalString(timing.completedAt ?? field(payload, "completedAt", "completed_at")),
+      startedAt: optionalString(timing.startedAt ?? payload.startedAt),
+      completedAt: optionalString(timing.completedAt ?? payload.completedAt),
       // Detay ve özet endpoint'leri farklı isimlendirme kullanabilir; süreyi uydurmadan ikisini de kabul et.
-      durationMs: optionalNumber(timing.durationMs ?? field(payload, "durationMs", "duration_ms")),
+      durationMs: optionalNumber(timing.durationMs ?? payload.durationMs),
     },
     error: normalizedError ?? (payload.status === "interrupted" ? { code: "parse_interrupted", message: "The parse run was interrupted before completion." } : null),
     strategy: typeof payload.strategy === "string" ? normalizeChunkStrategy(payload.strategy) : null,
-    chunkCount: optionalNumber(field(payload, "chunkCount", "chunk_count")),
+    chunkCount: optionalNumber(payload.chunkCount),
     model: optionalString(payload.model),
     dimensions: optionalNumber(payload.dimensions),
-    embeddingFormatVersion: optionalString(field(payload, "embeddingFormatVersion", "embedding_format_version")),
-    embeddingCount: optionalNumber(field(payload, "embeddingCount", "embedding_count")),
-    effectiveModel: optionalString(field(payload, "effectiveModel", "effective_model")),
+    embeddingFormatVersion: optionalString(payload.embeddingFormatVersion),
+    embeddingCount: optionalNumber(payload.embeddingCount),
+    effectiveModel: optionalString(payload.effectiveModel),
   };
 }
 
@@ -214,21 +204,21 @@ function normalizeDocument(value: unknown): PersistedDocument {
   const payload = requiredObject(value, "document");
   return {
     id: requiredString(payload.id, "document id"),
-    fileName: requiredString(field(payload, "fileName", "file_name"), "document file name"),
-    mediaType: requiredString(field(payload, "mediaType", "media_type"), "document media type"),
-    sizeBytes: requiredNumber(field(payload, "sizeBytes", "size_bytes"), "document size"),
-    pageCount: requiredNumber(field(payload, "pageCount", "page_count"), "document page count"),
+    fileName: requiredString(payload.fileName, "document file name"),
+    mediaType: requiredString(payload.mediaType, "document media type"),
+    sizeBytes: requiredNumber(payload.sizeBytes, "document size"),
+    pageCount: requiredNumber(payload.pageCount, "document page count"),
     sha256: optionalString(payload.sha256),
-    activeParseRunId: optionalString(field(payload, "activeParseRunId", "active_parse_run_id")),
-    activeChunkRunId: optionalString(field(payload, "activeChunkRunId", "active_chunk_run_id")),
-    activeEmbeddingRunId: optionalString(field(payload, "activeEmbeddingRunId", "active_embedding_run_id")),
+    activeParseRunId: optionalString(payload.activeParseRunId),
+    activeChunkRunId: optionalString(payload.activeChunkRunId),
+    activeEmbeddingRunId: optionalString(payload.activeEmbeddingRunId),
     latestParseStatus: (() => {
-      const value = field(payload, "latestParseStatus", "latest_parse_status");
+      const value = payload.latestParseStatus;
       return value === "queued" || value === "running" || value === "completed" || value === "failed" ? value : null;
     })(),
-    latestParseError: normalizeProblem(field(payload, "latestParseError", "latest_parse_error")),
-    createdAt: optionalString(field(payload, "createdAt", "created_at")),
-    updatedAt: optionalString(field(payload, "updatedAt", "updated_at")),
+    latestParseError: normalizeProblem(payload.latestParseError),
+    createdAt: optionalString(payload.createdAt),
+    updatedAt: optionalString(payload.updatedAt),
   };
 }
 
@@ -238,36 +228,36 @@ function normalizeChunk(value: unknown): ChunkItem {
     id: requiredString(payload.id, "chunk id"),
     ordinal: requiredNumber(payload.ordinal, "chunk ordinal"),
     text: requiredString(payload.text, "chunk text"),
-    pageNumbers: numbers(field(payload, "pageNumbers", "page_numbers")),
-    sourceElementIds: strings(field(payload, "sourceElementIds", "source_element_ids")),
-    headingPath: strings(field(payload, "headingPath", "heading_path")),
-    tokenCount: requiredNumber(field(payload, "tokenCount", "token_count"), "chunk token count"),
-    characterCount: requiredNumber(field(payload, "characterCount", "character_count"), "chunk character count"),
+    pageNumbers: numbers(payload.pageNumbers),
+    sourceElementIds: strings(payload.sourceElementIds),
+    headingPath: strings(payload.headingPath),
+    tokenCount: requiredNumber(payload.tokenCount, "chunk token count"),
+    characterCount: requiredNumber(payload.characterCount, "chunk character count"),
   };
 }
 
 function normalizeRetrievedCandidate(value: unknown): RetrievedCandidate {
   const payload = requiredObject(value, "retrieval candidate");
-  const denseScore = optionalNumber(field(payload, "denseScore", "dense_score"));
-  const denseRank = optionalNumber(field(payload, "denseRank", "dense_rank"));
-  const keywordScore = optionalNumber(field(payload, "keywordScore", "keyword_score"));
-  const rrfScore = optionalNumber(field(payload, "rrfScore", "rrf_score"));
-  const fusionScore = optionalNumber(field(payload, "fusionScore", "fusion_score"));
+  const denseScore = optionalNumber(payload.denseScore);
+  const denseRank = optionalNumber(payload.denseRank);
+  const keywordScore = optionalNumber(payload.keywordScore);
+  const rrfScore = optionalNumber(payload.rrfScore);
+  const fusionScore = optionalNumber(payload.fusionScore);
   return {
-    chunkId: requiredString(field(payload, "chunkId", "chunk_id") ?? payload.id, "retrieval chunk id"),
+    chunkId: requiredString(payload.chunkId ?? payload.id, "retrieval chunk id"),
     rank: requiredNumber(payload.rank, "retrieval rank"),
     score: optionalNumber(payload.score) ?? fusionScore ?? rrfScore ?? denseScore ?? keywordScore,
     denseScore,
     denseRank,
     keywordScore,
-    keywordRank: optionalNumber(field(payload, "keywordRank", "keyword_rank")),
+    keywordRank: optionalNumber(payload.keywordRank),
     rrfScore,
     fusionScore,
     text: requiredString(payload.text ?? payload.preview, "retrieval candidate text"),
-    documentId: requiredString(field(payload, "documentId", "document_id"), "retrieval document id"),
-    pageNumbers: numbers(field(payload, "pageNumbers", "page_numbers") ?? payload.pages),
-    sourceElementIds: strings(field(payload, "sourceElementIds", "source_element_ids")),
-    headingPath: strings(field(payload, "headingPath", "heading_path")),
+    documentId: requiredString(payload.documentId, "retrieval document id"),
+    pageNumbers: numbers(payload.pageNumbers ?? payload.pages),
+    sourceElementIds: strings(payload.sourceElementIds),
+    headingPath: strings(payload.headingPath),
   };
 }
 
@@ -275,35 +265,35 @@ function normalizeRerankedCandidate(value: unknown): RerankedCandidate {
   const payload = object(value);
   return {
     ...normalizeRetrievedCandidate(value),
-    originalRank: requiredNumber(field(payload, "originalRank", "original_rank") ?? field(payload, "retrievalRank", "retrieval_rank") ?? payload.rank, "original retrieval rank"),
-    rerankRank: optionalNumber(field(payload, "rerankRank", "rerank_rank") ?? payload.rank),
-    rerankScore: optionalNumber(field(payload, "rerankScore", "rerank_score")),
+    originalRank: requiredNumber(payload.originalRank ?? payload.retrievalRank ?? payload.rank, "original retrieval rank"),
+    rerankRank: optionalNumber(payload.rerankRank ?? payload.rank),
+    rerankScore: optionalNumber(payload.rerankScore),
   };
 }
 
 function normalizeContextCandidate(value: unknown): ContextCandidate {
   const payload = requiredObject(value, "context candidate");
   return {
-    chunkId: requiredString(field(payload, "chunkId", "chunk_id") ?? payload.id, "context chunk id"),
+    chunkId: requiredString(payload.chunkId ?? payload.id, "context chunk id"),
     selected: boolean(payload.selected ?? payload.included),
     reason: string(payload.reason),
-    tokenCount: requiredNumber(field(payload, "tokenCount", "token_count"), "context token count"),
+    tokenCount: requiredNumber(payload.tokenCount, "context token count"),
     text: requiredString(payload.text ?? payload.preview, "context candidate text"),
-    pageNumbers: numbers(field(payload, "pageNumbers", "page_numbers") ?? payload.pages),
-    sourceElementIds: strings(field(payload, "sourceElementIds", "source_element_ids")),
+    pageNumbers: numbers(payload.pageNumbers ?? payload.pages),
+    sourceElementIds: strings(payload.sourceElementIds),
   };
 }
 
 function normalizeCitation(value: unknown, fallbackValid = false): ValidatedCitation {
   const payload = requiredObject(value, "citation");
   return {
-    citationId: requiredString(field(payload, "citationId", "citation_id") ?? payload.id, "citation id"),
-    documentId: requiredString(field(payload, "documentId", "document_id"), "citation document id"),
-    chunkId: requiredString(field(payload, "chunkId", "chunk_id"), "citation chunk id"),
-    pageNumbers: numbers(field(payload, "pageNumbers", "page_numbers") ?? payload.pages),
+    citationId: requiredString(payload.citationId ?? payload.id, "citation id"),
+    documentId: requiredString(payload.documentId, "citation document id"),
+    chunkId: requiredString(payload.chunkId, "citation chunk id"),
+    pageNumbers: numbers(payload.pageNumbers ?? payload.pages),
     quote: optionalString(payload.quote),
     valid: payload.valid === undefined && payload.isValid === undefined ? fallbackValid : boolean(payload.valid ?? payload.isValid),
-    sourceElementIds: strings(field(payload, "sourceElementIds", "source_element_ids")),
+    sourceElementIds: strings(payload.sourceElementIds),
   };
 }
 
@@ -322,7 +312,7 @@ function normalizeStageResults(value: unknown): ExperimentStageResults {
     retrieval: Object.keys(retrieval).length === 0 ? null : {
       ...normalizeStageIdentity(retrieval),
       candidates: requiredArray(retrieval.candidates ?? retrieval.results, normalizeRetrievedCandidate, "retrieval results"),
-      durationMs: optionalNumber(field(retrieval, "durationMs", "duration_ms")),
+      durationMs: optionalNumber(retrieval.durationMs),
     },
     reranking: Object.keys(reranking).length === 0 ? null : {
       ...normalizeStageIdentity(reranking),
@@ -330,7 +320,7 @@ function normalizeStageResults(value: unknown): ExperimentStageResults {
       // payloads without ``results`` fall back to their candidates field.
       candidates: requiredArray(rerankingOutput, normalizeRerankedCandidate, "reranking results"),
       inputCandidates: Array.isArray(rerankingInput) ? array(rerankingInput, normalizeRetrievedCandidate) : null,
-      durationMs: optionalNumber(field(reranking, "durationMs", "duration_ms")),
+      durationMs: optionalNumber(reranking.durationMs),
       method: optionalString(reranking.method ?? reranking.effectiveModel ?? reranking.model),
       rerankScoreSemantics: optionalString(reranking.rerankScoreSemantics),
       executed: reranking.status !== "skipped",
@@ -339,19 +329,19 @@ function normalizeStageResults(value: unknown): ExperimentStageResults {
       ...normalizeStageIdentity(context),
       candidates: array(context.candidates ?? context.selections ?? [...selectedContext, ...excludedContext], normalizeContextCandidate),
       finalContext: requiredText(context.finalContext ?? context.formattedContext ?? context.text, "final context"),
-      tokenBudget: requiredNumber(field(context, "tokenBudget", "token_budget"), "context token budget"),
+      tokenBudget: requiredNumber(context.tokenBudget, "context token budget"),
       tokenCount: requiredNumber(context.tokenCount ?? context.localTokenCount ?? context.usedTokens, "context token count"),
-      durationMs: optionalNumber(field(context, "durationMs", "duration_ms")),
+      durationMs: optionalNumber(context.durationMs),
     },
     generation: Object.keys(generation).length === 0 ? null : {
       ...normalizeStageIdentity(generation),
       answer: typeof generation.answer === "string" ? generation.answer : invalidResponse("The backend response is missing the generated answer."),
       citations: requiredArray(generation.citations, (item) => normalizeCitation(item, generationValidity), "generation citations"),
       model: optionalString(generation.effectiveModel ?? generation.configuredModel ?? generation.model),
-      inputTokens: optionalNumber(field(generation, "inputTokens", "input_tokens")),
-      outputTokens: optionalNumber(field(generation, "outputTokens", "output_tokens")),
-      durationMs: optionalNumber(field(generation, "durationMs", "duration_ms")),
-      insufficientContext: boolean(field(generation, "insufficientContext", "insufficient_context")),
+      inputTokens: optionalNumber(generation.inputTokens),
+      outputTokens: optionalNumber(generation.outputTokens),
+      durationMs: optionalNumber(generation.durationMs),
+      insufficientContext: boolean(generation.insufficientContext),
     },
   };
 }
@@ -359,7 +349,7 @@ function normalizeStageResults(value: unknown): ExperimentStageResults {
 function normalizeMetrics(value: unknown): EvaluationMetrics {
   const payload = object(value);
   const metrics = object(payload.aggregate ?? payload.metrics ?? payload);
-  const generationMetricsPayload = field(metrics, "generationMetrics", "generation_metrics") ?? field(payload, "generationMetrics", "generation_metrics");
+  const generationMetricsPayload = metrics.generationMetrics ?? payload.generationMetrics;
   const generationMetrics = normalizeGenerationMetrics(generationMetricsPayload);
   return {
     hitAtK: optionalNumber(metrics.hitAtK),
@@ -382,10 +372,10 @@ function normalizeGenerationMetrics(value: unknown): EvaluationGenerationMetrics
   if (Object.keys(metrics).length === 0) return null;
   return {
     faithfulness: optionalNumber(metrics.faithfulness),
-    answerRelevance: optionalNumber(field(metrics, "answerRelevance", "answer_relevance")),
-    answerCorrectness: optionalNumber(field(metrics, "answerCorrectness", "answer_correctness")),
-    eligibleCaseCount: optionalNumber(field(metrics, "eligibleCaseCount", "eligible_case_count")),
-    scoredCaseCount: optionalNumber(field(metrics, "scoredCaseCount", "scored_case_count")),
+    answerRelevance: optionalNumber(metrics.answerRelevance),
+    answerCorrectness: optionalNumber(metrics.answerCorrectness),
+    eligibleCaseCount: optionalNumber(metrics.eligibleCaseCount),
+    scoredCaseCount: optionalNumber(metrics.scoredCaseCount),
   };
 }
 
@@ -428,33 +418,33 @@ function normalizeParseRun(value: unknown, fallbackDocumentId: string | null = n
   const payload = requiredObject(value, "parse run");
   const result = parseResultCandidate(value);
   const document = result ? object((result as DocumentParseResponse).document) : object(payload.document);
-  const documentId = optionalString(field(payload, "documentId", "document_id"))
+  const documentId = optionalString(payload.documentId)
     ?? optionalString(document.id)
     ?? fallbackDocumentId;
-  const parseRunId = optionalString(field(payload, "parseRunId", "parse_run_id"))
+  const parseRunId = optionalString(payload.parseRunId)
     ?? optionalString(payload.id)
     ?? fallbackParseRunId;
   if (!parseRunId) invalidResponse("The parse response is missing the parse run id.");
-  const rawStatus = payload.status ?? (result ? "completed" : isParseJobAcceptedResponse(value) ? value.status : null);
+  const rawStatus = payload.status ?? (result ? "completed" : null);
   const status = normalizeParseStatus(rawStatus);
-  const runMetadata = object(payload.runMetadata ?? payload.run_metadata);
-  const reusedDocument = boolean(payload.reusedDocument ?? payload.reused_document);
+  const runMetadata = object(payload.runMetadata);
+  const reusedDocument = boolean(payload.reusedDocument);
   const progress = normalizeProgress(payload.progress ?? runMetadata.progress, status);
   const problem = normalizeProblem(payload.error)
-    ?? ((status === "failed" || payload.status === "interrupted") && optionalString(field(payload, "errorCode", "error_code"))
+    ?? ((status === "failed" || payload.status === "interrupted") && optionalString(payload.errorCode)
       ? {
-        code: optionalString(field(payload, "errorCode", "error_code")) ?? "parse_failed",
-        message: optionalString(field(payload, "errorMessage", "error_message")) ?? "The parse run failed.",
+        code: optionalString(payload.errorCode) ?? "parse_failed",
+        message: optionalString(payload.errorMessage) ?? "The parse run failed.",
       }
       : null)
     ?? (payload.status === "interrupted" ? { code: "parse_interrupted", message: "The parse run was interrupted before completion." } : null);
   const normalizedResult = result
     ? normalizePersistedParseResponse({
       ...result,
-      documentId: field(payload, "documentId", "document_id") ?? (result as DocumentParseResponse & { documentId?: string | null }).documentId ?? documentId,
-      parseRunId: field(payload, "parseRunId", "parse_run_id") ?? parseRunId,
+      documentId: payload.documentId ?? (result as DocumentParseResponse & { documentId?: string | null }).documentId ?? documentId,
+      parseRunId: payload.parseRunId ?? parseRunId,
       status: "completed",
-      runMetadata: payload.runMetadata ?? payload.run_metadata ?? null,
+      runMetadata: payload.runMetadata ?? null,
       reusedDocument,
     }, true)
     : null;
@@ -473,26 +463,26 @@ function normalizeParseRun(value: unknown, fallbackDocumentId: string | null = n
 
 export type ParseStatusListener = (run: ParseRun) => void;
 
-export const PARSE_POLL_INTERVAL_MS = process.env.NODE_ENV === "test" ? 250 : 2_000;
-export const PARSE_POLL_TIMEOUT_MS = 15 * 60 * 1_000;
+export const RUN_POLL_TIMEOUT_MS = 15 * 60 * 1_000;
+/** Status polls back off from 1 s to 5 s; a run that changes resets to the fast interval. */
+export const RUN_POLL_INTERVALS_MS = [1_000, 1_000, 2_000, 2_000, 5_000] as const;
+/** Upper bound for one non-polling request; long synchronous POSTs (chunk/embedding, and continue/rerun-generation, which run inline outside hosted environments) get more time. */
+export const REQUEST_TIMEOUT_MS = 30_000;
+export const LONG_REQUEST_TIMEOUT_MS = 5 * 60 * 1_000;
 
-function parsePollTimedOut(deadline: number) {
-  if (Date.now() < deadline) return;
-  throw new DocumentApiError(
-    "parse_poll_timeout",
-    "The parse is still running, but browser polling stopped after 15 minutes. Refresh to resume status checks.",
-  );
+export function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 export function waitForPoll(delayMs: number, signal?: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
-      reject(new DOMException("The parse poll was aborted.", "AbortError"));
+      reject(new DOMException("The run poll was aborted.", "AbortError"));
       return;
     }
     const onAbort = () => {
       clearTimeout(timeout);
-      reject(new DOMException("The parse poll was aborted.", "AbortError"));
+      reject(new DOMException("The run poll was aborted.", "AbortError"));
     };
     const timeout = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
@@ -502,81 +492,122 @@ export function waitForPoll(delayMs: number, signal?: AbortSignal) {
   });
 }
 
-function waitForParsePoll(signal?: AbortSignal) {
-  return waitForPoll(PARSE_POLL_INTERVAL_MS, signal);
-}
-
-async function pollRun<T extends { status: string }>(
-  read: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal, onProgress?: (run: T) => void, initialRun?: T,
-): Promise<T> {
-  const deadline = Date.now() + PARSE_POLL_TIMEOUT_MS;
-  const timeoutController = new AbortController();
-  const activeSignal = signal ? AbortSignal.any([signal, timeoutController.signal]) : timeoutController.signal;
-  const timeoutError = () => new DocumentApiError("run_poll_timeout", "Browser tracking paused after 15 minutes. Resume tracking to check this run; its backend status is unchanged.");
-  const timeout = setTimeout(() => timeoutController.abort(), PARSE_POLL_TIMEOUT_MS);
-  let run = initialRun;
-  let failures = 0;
-  try {
-    while (true) {
-      activeSignal.throwIfAborted();
-      if (Date.now() >= deadline) throw timeoutError();
-      if (run && run.status !== "queued" && run.status !== "running") return run;
-      const delay = failures ? Math.min(2_000 * 2 ** Math.min(failures - 1, 3), 10_000) : run ? 650 : 0;
-      if (delay) await waitForPoll(Math.min(delay, deadline - Date.now()), activeSignal);
-      if (Date.now() >= deadline) continue;
-      try {
-        run = await read(activeSignal);
-        activeSignal.throwIfAborted();
-        failures = 0;
-        onProgress?.(run);
-      } catch (error) {
-        if (!isTransientParsePollError(error)) throw error;
-        failures++;
-      }
-    }
-  } catch (error) {
-    if (timeoutController.signal.aborted && !signal?.aborted) throw timeoutError();
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function isTransientParsePollError(error: unknown) {
+function isTransientPollError(error: unknown) {
   if (!(error instanceof DocumentApiError)) return false;
-  return error.code === "backend_unavailable" || error.status === null || error.status === 408 || error.status === 429 || (error.status !== null && error.status >= 500);
+  // Only network/timeout failures and retryable HTTP statuses are transient; an
+  // invalid payload (no HTTP status) must fail instead of being polled forever.
+  return error.code === "backend_unavailable" || error.code === "request_timeout" || error.status === 408 || error.status === 429 || (error.status !== null && error.status >= 500);
 }
 
-async function pollParseRun(
-  initial: ParseRun,
-  signal?: AbortSignal,
-  onStatus?: ParseStatusListener,
-  timeoutMs = PARSE_POLL_TIMEOUT_MS,
-  startedAt = Date.now(),
-): Promise<PersistedParseResponse> {
-  let current = initial;
-  const deadline = startedAt + timeoutMs;
-  while (current.status === "queued" || current.status === "running") {
-    parsePollTimedOut(deadline);
-    await waitForParsePoll(signal);
-    parsePollTimedOut(deadline);
+type RunPollOptions<TStatus extends { status: string }, TDetail extends { status: string }> = {
+  /** Lightweight status read; may be the detail read itself when no status endpoint exists. */
+  readStatus: (signal: AbortSignal) => Promise<TStatus>;
+  /** Full detail read. Called only when the status changed or the run is terminal. */
+  readDetail: (signal: AbortSignal) => Promise<TDetail>;
+  /** Fingerprint of the status payload; a change triggers a detail read and resets the backoff. */
+  progressKey: (status: TStatus) => string;
+  initialDetail?: TDetail;
+  signal?: AbortSignal;
+  onProgress?: (detail: TDetail) => void;
+  timeoutMs?: number;
+  timeoutError: () => DocumentApiError;
+};
+
+/**
+ * Single polling loop for parse, experiment and evaluation runs. It polls the
+ * lightweight status with an increasing interval, fetches the detail only
+ * when progress changes, tolerates transient failures (a temporary outage
+ * must not turn a running job into a false failure) and stops after a
+ * deadline without changing the durable backend status.
+ */
+async function pollRun<TStatus extends { status: string }, TDetail extends { status: string }>(
+  options: RunPollOptions<TStatus, TDetail>,
+): Promise<TDetail> {
+  const { readStatus, readDetail, progressKey, signal, onProgress } = options;
+  const timeoutMs = options.timeoutMs ?? RUN_POLL_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+  let detail = options.initialDetail;
+  if (detail && !isRunInFlight(detail.status)) return detail;
+  let lastKey: string | null = null;
+  let quietPolls = detail ? 0 : -1;
+  let failures = 0;
+  const pollSignal = signal ?? new AbortController().signal;
+  const statusIsDetail = (readStatus as unknown) === (readDetail as unknown);
+  while (true) {
+    signal?.throwIfAborted();
+    if (Date.now() >= deadline) throw options.timeoutError();
+    const delay = failures
+      ? Math.min(2_000 * 2 ** Math.min(failures - 1, 3), 10_000)
+      : quietPolls < 0 ? 0 : RUN_POLL_INTERVALS_MS[Math.min(quietPolls, RUN_POLL_INTERVALS_MS.length - 1)];
+    if (delay) await waitForPoll(Math.min(delay, Math.max(0, deadline - Date.now())), signal);
+    if (Date.now() >= deadline) throw options.timeoutError();
     try {
-      current = await getParseRun(current.id, signal, current.documentId || null);
-      onStatus?.(current);
+      const status = await readStatus(pollSignal);
+      signal?.throwIfAborted();
+      failures = 0;
+      const key = progressKey(status);
+      const terminal = !isRunInFlight(status.status);
+      if (terminal || key !== lastKey) {
+        detail = statusIsDetail ? status as unknown as TDetail : await readDetail(pollSignal);
+        signal?.throwIfAborted();
+        onProgress?.(detail);
+        quietPolls = 0;
+        lastKey = key;
+        if (!isRunInFlight(detail.status)) return detail;
+      } else {
+        quietPolls += 1;
+      }
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
-      // A temporary network outage must not turn a valid queued/running run into
-      // a false failure. The next poll re-reads the durable run state.
-      if (isTransientParsePollError(error)) continue;
-      throw error;
+      if (!isTransientPollError(error)) throw error;
+      failures += 1;
     }
   }
-  if (current.status === "failed") {
-    const problem = current.error ?? { code: "parse_failed", message: "The parse run failed." };
+}
+
+function isRunInFlight(status: string) {
+  return status === "queued" || status === "running";
+}
+
+function parsePollTimeoutError() {
+  return new DocumentApiError(
+    "parse_poll_timeout",
+    "The parse is still running, but browser polling stopped after 15 minutes. Refresh to resume status checks.",
+  );
+}
+
+function runPollTimeoutError() {
+  return new DocumentApiError("run_poll_timeout", "Browser tracking paused after 15 minutes. Resume tracking to check this run; its backend status is unchanged.");
+}
+
+function completedParseResult(run: ParseRun): PersistedParseResponse {
+  if (run.status === "failed") {
+    const problem = run.error ?? { code: "parse_failed", message: "The parse run failed." };
     throw new DocumentApiError(problem.code, problem.message);
   }
-  if (!current.result) throw new DocumentApiError("invalid_response", "The completed parse run returned no normalized content.");
-  return current.result;
+  if (!run.result) throw new DocumentApiError("invalid_response", "The completed parse run returned no normalized content.");
+  return run.result;
+}
+
+/** Parse runs have no separate status endpoint; an in-flight run payload is already small. */
+function pollParseRun(
+  parseRunId: string,
+  documentId: string | null,
+  signal?: AbortSignal,
+  onStatus?: ParseStatusListener,
+  initial?: ParseRun,
+  timeoutMs = RUN_POLL_TIMEOUT_MS,
+) {
+  const read = (pollSignal: AbortSignal) => getParseRun(parseRunId, pollSignal, documentId);
+  return pollRun<ParseRun, ParseRun>({
+    readStatus: read,
+    readDetail: read,
+    progressKey: (run) => `${run.status}:${run.progress}:${typeof run.runMetadata?.phase === "string" ? run.runMetadata.phase : ""}`,
+    initialDetail: initial,
+    signal,
+    onProgress: onStatus,
+    timeoutMs,
+    timeoutError: parsePollTimeoutError,
+  });
 }
 
 export async function waitForParseRun(
@@ -584,67 +615,50 @@ export async function waitForParseRun(
   signal?: AbortSignal,
   documentId?: string | null,
   onStatus?: ParseStatusListener,
-  timeoutMs = PARSE_POLL_TIMEOUT_MS,
+  timeoutMs = RUN_POLL_TIMEOUT_MS,
 ): Promise<PersistedParseResponse> {
-  const startedAt = Date.now();
-  const deadline = startedAt + timeoutMs;
-  let initial: ParseRun;
-  while (true) {
-    parsePollTimedOut(deadline);
-    try {
-      initial = await getParseRun(parseRunId, signal, documentId);
-      break;
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
-      if (!isTransientParsePollError(error)) throw error;
-      await waitForParsePoll(signal);
-    }
-  }
-  onStatus?.(initial);
-  if (initial.status === "completed") {
-    if (!initial.result) throw new DocumentApiError("invalid_response", "The completed parse response returned no normalized content.");
-    return initial.result;
-  }
-  return pollParseRun(initial, signal, onStatus, timeoutMs, startedAt);
+  return completedParseResult(await pollParseRun(parseRunId, documentId ?? null, signal, onStatus, undefined, timeoutMs));
 }
 
 function normalizeChunkRun(value: unknown): ChunkRun {
   const payload = requiredObject(value, "chunk run");
   const run = normalizeRun(payload);
   const chunks = requiredArray(payload.chunks, normalizeChunk, "chunk results");
-  const chunkCount = requiredNumber(field(payload, "chunkCount", "chunk_count"), "chunk count");
+  const chunkCount = requiredNumber(payload.chunkCount, "chunk count");
   if (run.status === "completed" && chunkCount !== chunks.length) invalidResponse("The completed chunk run count does not match its chunk results.");
   return {
     ...run,
-    documentId: requiredString(field(payload, "documentId", "document_id"), "chunk document id"),
-    parseRunId: requiredString(field(payload, "parseRunId", "parse_run_id"), "chunk parse run id"),
+    documentId: requiredString(payload.documentId, "chunk document id"),
+    parseRunId: requiredString(payload.parseRunId, "chunk parse run id"),
     strategy: normalizeChunkStrategy(payload.strategy),
     chunkCount,
     chunks,
-    reusedArtifact: boolean(field(payload, "reusedArtifact", "reused_artifact")),
+    reusedArtifact: boolean(payload.reusedArtifact),
   };
 }
 
 function normalizeEmbeddingRun(value: unknown): EmbeddingRun {
   const payload = requiredObject(value, "embedding run");
+  const run = normalizeRun(payload);
   return {
-    ...normalizeRun(payload),
-    documentId: requiredString(field(payload, "documentId", "document_id"), "embedding document id"),
-    chunkRunId: requiredString(field(payload, "chunkRunId", "chunk_run_id"), "embedding chunk run id"),
+    ...run,
+    documentId: requiredString(payload.documentId, "embedding document id"),
+    chunkRunId: requiredString(payload.chunkRunId, "embedding chunk run id"),
     model: requiredString(payload.model, "embedding model"),
     dimensions: requiredNumber(payload.dimensions, "embedding dimensions"),
-    embeddingFormatVersion: requiredString(field(payload, "embeddingFormatVersion", "embedding_format_version"), "embedding format version"),
-    embeddingCount: requiredNumber(field(payload, "embeddingCount", "embedding_count"), "embedding count"),
-    effectiveModel: optionalString(field(payload, "effectiveModel", "effective_model")),
-    reusedArtifact: boolean(field(payload, "reusedArtifact", "reused_artifact")),
+    embeddingFormatVersion: requiredString(payload.embeddingFormatVersion, "embedding format version"),
+    // Only a completed run must carry its final vector count; an accepted (queued/running) run has none yet.
+    embeddingCount: run.status === "completed" ? requiredNumber(payload.embeddingCount, "embedding count") : optionalNumber(payload.embeddingCount) ?? 0,
+    effectiveModel: optionalString(payload.effectiveModel),
+    reusedArtifact: boolean(payload.reusedArtifact),
   };
 }
 
 function normalizeExperiment(value: unknown): ExperimentRun {
   const payload = requiredObject(value, "experiment run");
   const run = normalizeRun(payload);
-  const targetStage = normalizeTargetStage(field(payload, "targetStage", "target_stage"));
-  const stageResults = normalizeStageResults(field(payload, "stageResults", "stage_results"));
+  const targetStage = normalizeTargetStage(payload.targetStage);
+  const stageResults = normalizeStageResults(payload.stageResults);
   if (run.status === "completed") {
     if (!stageResults.retrieval) invalidResponse("The completed experiment is missing retrieval results.");
     if ((targetStage === "reranking" || targetStage === "context" || targetStage === "generation") && !stageResults.reranking) invalidResponse("The completed experiment is missing reranking results.");
@@ -653,23 +667,23 @@ function normalizeExperiment(value: unknown): ExperimentRun {
   }
   return {
     ...run,
-    documentId: requiredString(field(payload, "documentId", "document_id"), "experiment document id"),
-    chunkRunId: requiredString(field(payload, "chunkRunId", "chunk_run_id"), "experiment chunk run id"),
-    embeddingRunId: optionalString(field(payload, "embeddingRunId", "embedding_run_id")),
+    documentId: requiredString(payload.documentId, "experiment document id"),
+    chunkRunId: requiredString(payload.chunkRunId, "experiment chunk run id"),
+    embeddingRunId: optionalString(payload.embeddingRunId),
     query: requiredString(payload.query, "experiment query"),
     targetStage,
     stageResults,
-    experimentFingerprint: optionalString(field(payload, "experimentFingerprint", "experiment_fingerprint")),
-    reusedExperiment: boolean(field(payload, "reusedExperiment", "reused_experiment")),
-    continuedFromExperimentId: optionalString(field(payload, "continuedFromExperimentId", "continued_from_experiment_id")),
-    generationRerun: boolean(field(payload, "generationRerun", "generation_rerun")),
+    experimentFingerprint: optionalString(payload.experimentFingerprint),
+    reusedExperiment: boolean(payload.reusedExperiment),
+    continuedFromExperimentId: optionalString(payload.continuedFromExperimentId),
+    generationRerun: boolean(payload.generationRerun),
   };
 }
 
 function normalizeExperimentSummary(value: unknown): ExperimentSummary {
   const payload = requiredObject(value, "experiment summary");
   const run = normalizeRun(payload);
-  const rawStageStatuses = object(field(payload, "stageStatuses", "stage_statuses"));
+  const rawStageStatuses = object(payload.stageStatuses);
   const stageStatuses: ExperimentSummary["stageStatuses"] = {};
   for (const stage of ["retrieval", "reranking", "context", "generation"] as const) {
     const status = rawStageStatuses[stage];
@@ -677,13 +691,13 @@ function normalizeExperimentSummary(value: unknown): ExperimentSummary {
   }
   return {
     ...run,
-    documentId: requiredString(field(payload, "documentId", "document_id"), "experiment document id"),
-    chunkRunId: requiredString(field(payload, "chunkRunId", "chunk_run_id"), "experiment chunk run id"),
-    embeddingRunId: optionalString(field(payload, "embeddingRunId", "embedding_run_id")),
+    documentId: requiredString(payload.documentId, "experiment document id"),
+    chunkRunId: requiredString(payload.chunkRunId, "experiment chunk run id"),
+    embeddingRunId: optionalString(payload.embeddingRunId),
     query: string(payload.query),
-    targetStage: normalizeTargetStage(field(payload, "targetStage", "target_stage")),
-    candidateCount: optionalNumber(field(payload, "candidateCount", "candidate_count")),
-    experimentFingerprint: optionalString(field(payload, "experimentFingerprint", "experiment_fingerprint")),
+    targetStage: normalizeTargetStage(payload.targetStage),
+    candidateCount: optionalNumber(payload.candidateCount),
+    experimentFingerprint: optionalString(payload.experimentFingerprint),
     stageStatuses,
   };
 }
@@ -693,16 +707,16 @@ function normalizeEvaluationRunSummary(value: unknown): EvaluationRunSummary {
   const timing = object(payload.timing);
   return {
     id: requiredString(payload.id, "evaluation run id"),
-    createdAt: optionalString(field(payload, "createdAt", "created_at")),
-    datasetId: requiredString(field(payload, "datasetId", "dataset_id"), "evaluation dataset id"),
-    parseRunId: requiredString(field(payload, "parseRunId", "parse_run_id"), "evaluation parse run id"),
-    chunkRunId: optionalString(field(payload, "chunkRunId", "chunk_run_id")),
-    embeddingRunId: optionalString(field(payload, "embeddingRunId", "embedding_run_id")),
+    createdAt: optionalString(payload.createdAt),
+    datasetId: requiredString(payload.datasetId, "evaluation dataset id"),
+    parseRunId: requiredString(payload.parseRunId, "evaluation parse run id"),
+    chunkRunId: optionalString(payload.chunkRunId),
+    embeddingRunId: optionalString(payload.embeddingRunId),
     status: normalizeStatus(payload.status),
     timing: {
-      startedAt: optionalString(field(timing, "startedAt", "started_at")),
-      completedAt: optionalString(field(timing, "completedAt", "completed_at")),
-      durationMs: optionalNumber(field(timing, "durationMs", "duration_ms")),
+      startedAt: optionalString(timing.startedAt),
+      completedAt: optionalString(timing.completedAt),
+      durationMs: optionalNumber(timing.durationMs),
     },
     error: normalizeProblem(payload.error),
   };
@@ -712,15 +726,15 @@ function normalizeDocumentPipeline(value: unknown): DocumentPipeline {
   const payload = requiredObject(value, "document pipeline");
   return {
     id: requiredString(payload.id, "document pipeline id"),
-    documentId: requiredString(field(payload, "documentId", "document_id"), "pipeline document id"),
+    documentId: requiredString(payload.documentId, "pipeline document id"),
     name: requiredString(payload.name, "pipeline name"),
-    parseRunId: optionalString(field(payload, "parseRunId", "parse_run_id")),
-    chunkRunId: optionalString(field(payload, "chunkRunId", "chunk_run_id")),
-    embeddingRunId: optionalString(field(payload, "embeddingRunId", "embedding_run_id")),
+    parseRunId: optionalString(payload.parseRunId),
+    chunkRunId: optionalString(payload.chunkRunId),
+    embeddingRunId: optionalString(payload.embeddingRunId),
     revision: requiredNumber(payload.revision, "pipeline revision"),
-    isDefault: Boolean(field(payload, "isDefault", "is_default")),
-    createdAt: optionalString(field(payload, "createdAt", "created_at")),
-    updatedAt: optionalString(field(payload, "updatedAt", "updated_at")),
+    isDefault: Boolean(payload.isDefault),
+    createdAt: optionalString(payload.createdAt),
+    updatedAt: optionalString(payload.updatedAt),
   };
 }
 
@@ -728,13 +742,13 @@ function normalizeDatasetSummary(value: unknown): EvaluationDatasetSummary {
   const payload = requiredObject(value, "evaluation dataset summary");
   return {
     id: requiredString(payload.id, "evaluation dataset id"),
-    documentId: requiredString(field(payload, "documentId", "document_id"), "evaluation document id"),
-    parseRunId: requiredString(field(payload, "parseRunId", "parse_run_id"), "evaluation parse run id"),
+    documentId: requiredString(payload.documentId, "evaluation document id"),
+    parseRunId: requiredString(payload.parseRunId, "evaluation parse run id"),
     name: requiredString(payload.name, "evaluation dataset name"),
     version: requiredNumber(payload.version, "evaluation dataset version"),
-    seriesId: optionalString(field(payload, "seriesId", "series_id")),
-    caseCount: requiredNumber(field(payload, "caseCount", "case_count"), "evaluation dataset case count"),
-    createdAt: optionalString(field(payload, "createdAt", "created_at")),
+    seriesId: optionalString(payload.seriesId),
+    caseCount: requiredNumber(payload.caseCount, "evaluation dataset case count"),
+    createdAt: optionalString(payload.createdAt),
   };
 }
 
@@ -746,71 +760,87 @@ function listPayload(value: unknown, key: string): unknown[] {
   return items;
 }
 
-async function request(path: string, init: RequestInit = {}): Promise<unknown> {
-  let response: Response;
-  try {
-    const accessToken = await getSupabaseAccessToken();
-    if (!accessToken && process.env.NODE_ENV !== "test") {
-      throw new DocumentApiError("auth_required", "Oturum açmanız gerekiyor.");
-    }
-    const headers = new Headers(init.headers);
-    if (!(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
-    if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
-    response = await fetch(`${getApiBaseUrl()}${path}`, {
-      ...init,
-      headers,
-    });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
-    if (error instanceof DocumentApiError) throw error;
-    if (error instanceof Error && error.message === "supabase_session_unavailable") {
-      throw new DocumentApiError("auth_required", "Oturum doğrulanamadı. Lütfen tekrar giriş yapın.");
-    }
-    if (error instanceof Error && error.message === "supabase_configuration_missing") {
-      throw new DocumentApiError("configuration_error", "Supabase auth yapılandırması eksik.");
-    }
-    throw new DocumentApiError("backend_unavailable", "The RAG backend could not be reached.");
-  }
+type RequestOptions = RequestInit & { timeoutMs?: number };
 
-  if (response.status === 204) return null;
-  let payload: unknown = null;
-  try {
-    payload = await response.json();
-  } catch {
-    if (response.ok) throw new DocumentApiError("invalid_response", "The backend returned invalid JSON.", response.status);
-  }
-
-  if (!response.ok) {
-    const problem = normalizeProblem(object(payload).error);
-    throw new DocumentApiError(problem?.code ?? "unknown", problem?.message ?? "The RAG backend returned an error.", response.status);
-  }
-  return payload;
+/**
+ * Aborts when any source aborts; avoids AbortSignal.any for older Safari.
+ * `dispose` detaches the listeners so a long-lived caller signal (run polling)
+ * does not accumulate one listener per finished request.
+ */
+function anySignal(signals: AbortSignal[]) {
+  const controller = new AbortController();
+  const dispose = () => signals.forEach((item) => item.removeEventListener("abort", abort));
+  const abort = () => {
+    controller.abort();
+    dispose();
+  };
+  if (signals.some((item) => item.aborted)) controller.abort();
+  else signals.forEach((item) => item.addEventListener("abort", abort, { once: true }));
+  return { signal: controller.signal, dispose };
 }
 
-export async function parseAndPersistDocument(
-  file: File,
-  signal?: AbortSignal,
-  onStatus?: ParseStatusListener,
-): Promise<PersistedParseResponse> {
-  const initial = normalizeParseRun(await parseDocument(file, signal));
-  onStatus?.(initial);
-  if (initial.status === "completed") {
-    if (!initial.result) throw new DocumentApiError("invalid_response", "The completed parse response returned no normalized content.");
-    return initial.result;
+/**
+ * The single authenticated JSON client for the RAG API. Every request has a
+ * deadline so a hung connection cannot leave a stage "processing" forever.
+ */
+async function request(path: string, init: RequestOptions = {}): Promise<unknown> {
+  const { timeoutMs = REQUEST_TIMEOUT_MS, signal, ...fetchInit } = init;
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), timeoutMs);
+  const combined = signal ? anySignal([signal, deadline.signal]) : null;
+  const requestSignal = combined?.signal ?? deadline.signal;
+  const timedOut = () => deadline.signal.aborted && !signal?.aborted;
+  const timeoutError = () => new DocumentApiError("request_timeout", "The RAG backend did not respond in time.");
+  try {
+    let response: Response;
+    try {
+      const accessToken = await getSupabaseAccessToken();
+      if (!accessToken) throw new DocumentApiError("auth_required", "Oturum açmanız gerekiyor.");
+      const headers = new Headers(fetchInit.headers);
+      if (!(fetchInit.body instanceof FormData)) headers.set("Content-Type", "application/json");
+      headers.set("Authorization", `Bearer ${accessToken}`);
+      response = await fetch(`${getApiBaseUrl()}${path}`, { ...fetchInit, headers, signal: requestSignal });
+    } catch (error) {
+      if (isAbortError(error)) throw timedOut() ? timeoutError() : error;
+      if (error instanceof DocumentApiError) throw error;
+      if (error instanceof Error && error.message === "supabase_session_unavailable") {
+        throw new DocumentApiError("auth_required", "Oturum doğrulanamadı. Lütfen tekrar giriş yapın.");
+      }
+      if (error instanceof Error && error.message === "supabase_configuration_missing") {
+        throw new DocumentApiError("configuration_error", "Supabase auth yapılandırması eksik.");
+      }
+      throw new DocumentApiError("backend_unavailable", "The RAG backend could not be reached.");
+    }
+
+    if (response.status === 204) return null;
+    let payload: unknown = null;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      if (isAbortError(error)) throw timedOut() ? timeoutError() : error;
+      if (response.ok) throw new DocumentApiError("invalid_response", "The backend returned invalid JSON.", response.status);
+    }
+
+    if (!response.ok) {
+      const problem = normalizeProblem(object(payload).error);
+      throw new DocumentApiError(problem?.code ?? "unknown", problem?.message ?? "The RAG backend returned an error.", response.status);
+    }
+    return payload;
+  } finally {
+    clearTimeout(timer);
+    combined?.dispose();
   }
-  const result = await pollParseRun(initial, signal, onStatus);
-  return { ...result, reusedDocument: initial.reusedDocument || result.reusedDocument };
 }
 
 export async function getCapabilities(signal?: AbortSignal): Promise<Capabilities> {
   const payload = requiredObject(await request("/capabilities", { signal }), "capabilities");
   return {
-    embeddingModel: requiredString(field(payload, "embeddingModel", "embedding_model"), "embedding model capability"),
-    embeddingDimensions: requiredNumber(field(payload, "embeddingDimensions", "embedding_dimensions"), "embedding dimension capability"),
-    generationModel: requiredString(field(payload, "generationModel", "generation_model"), "generation model capability"),
-    rerankModel: requiredString(field(payload, "rerankModel", "rerank_model"), "rerank model capability"),
-    judgeModel: requiredString(field(payload, "judgeModel", "judge_model"), "judge model capability"),
-    embeddingFormatVersion: requiredString(field(payload, "embeddingFormatVersion", "embedding_format_version"), "embedding format capability"),
+    embeddingModel: requiredString(payload.embeddingModel, "embedding model capability"),
+    embeddingDimensions: requiredNumber(payload.embeddingDimensions, "embedding dimension capability"),
+    generationModel: requiredString(payload.generationModel, "generation model capability"),
+    rerankModel: requiredString(payload.rerankModel, "rerank model capability"),
+    judgeModel: requiredString(payload.judgeModel, "judge model capability"),
+    embeddingFormatVersion: requiredString(payload.embeddingFormatVersion, "embedding format capability"),
     limits: Object.fromEntries(Object.entries(requiredObject(payload.limits, "capability limits")).map(([key, item]) => [key, requiredNumber(item, `capability limit ${key}`)])),
   };
 }
@@ -823,10 +853,10 @@ export async function listDocuments(signal?: AbortSignal): Promise<PersistedDocu
 export async function uploadDocument(file: File, signal?: AbortSignal): Promise<DocumentUploadResponse> {
   const formData = new FormData();
   formData.append("file", file, file.name);
-  const payload = requiredObject(await request("/documents", { method: "POST", body: formData, signal }), "document upload response");
+  const payload = requiredObject(await request("/documents", { method: "POST", body: formData, signal, timeoutMs: LONG_REQUEST_TIMEOUT_MS }), "document upload response");
   return {
     document: normalizeDocument(payload.document),
-    reusedDocument: payload.reusedDocument === true || payload.reused_document === true,
+    reusedDocument: payload.reusedDocument === true,
   };
 }
 
@@ -834,67 +864,22 @@ export async function deleteDocument(documentId: string, signal?: AbortSignal): 
   await request(`/documents/${encodeURIComponent(documentId)}`, { method: "DELETE", signal });
 }
 
-export async function getDocument(documentId: string, signal?: AbortSignal): Promise<DocumentDetail> {
-  const payload = object(await request(`/documents/${encodeURIComponent(documentId)}`, { signal }));
-  const activeParsePayload = payload.activeParseRun;
-  const activeParse = activeParsePayload === null || activeParsePayload === undefined
-    ? null
-    : normalizeParseRun(activeParsePayload, documentId, optionalString(field(object(activeParsePayload), "parseRunId", "parse_run_id")))
-      .result;
+/**
+ * The summary endpoint is the only document workspace contract. A normalizer
+ * failure or a missing document surfaces as an error instead of silently
+ * falling back to another endpoint with synthesized values.
+ */
+export async function getDocumentSummary(documentId: string, signal?: AbortSignal): Promise<DocumentSummary> {
+  const payload = requiredObject(await request(`/documents/${encodeURIComponent(documentId)}/summary`, { signal }), "document summary");
   return {
     ...normalizeDocument(payload),
     parseRuns: requiredArray(payload.parseRuns, normalizeRun, "parse run history"),
     chunkRuns: requiredArray(payload.chunkRuns, normalizeRun, "chunk run history"),
     embeddingRuns: requiredArray(payload.embeddingRuns, normalizeRun, "embedding run history"),
-    experiments: requiredArray(payload.experiments, normalizeRun, "experiment history"),
-    activeParseRun: activeParse,
+    experiments: requiredArray(payload.experiments, normalizeExperimentSummary, "experiment history"),
+    evaluationDatasets: requiredArray(payload.evaluationDatasets, normalizeDatasetSummary, "evaluation dataset history"),
+    evaluationRuns: requiredArray(payload.evaluationRuns ?? [], normalizeEvaluationRunSummary, "evaluation run history"),
   };
-}
-
-export async function getDocumentSummary(documentId: string, signal?: AbortSignal): Promise<DocumentSummary> {
-  try {
-    const payload = object(await request(`/documents/${encodeURIComponent(documentId)}/summary`, { signal }));
-    return {
-      ...normalizeDocument(payload),
-      parseRuns: requiredArray(payload.parseRuns, normalizeRun, "parse run history"),
-      chunkRuns: requiredArray(payload.chunkRuns, normalizeRun, "chunk run history"),
-      embeddingRuns: requiredArray(payload.embeddingRuns, normalizeRun, "embedding run history"),
-      experiments: requiredArray(payload.experiments, normalizeExperimentSummary, "experiment history"),
-      evaluationDatasets: requiredArray(payload.evaluationDatasets ?? payload.datasets, normalizeDatasetSummary, "evaluation dataset history"),
-      evaluationRuns: requiredArray(payload.evaluationRuns ?? [], normalizeEvaluationRunSummary, "evaluation run history"),
-    };
-  } catch (error) {
-    // Older previews may not expose the additive endpoint yet. Keep the
-    // legacy contract as a temporary compatibility path; production hot paths
-    // use the summary endpoint above and never request this fallback.
-    if (!(error instanceof DocumentApiError) || (error.status !== 404 && error.code !== "invalid_response")) throw error;
-    const legacy = await getDocument(documentId, signal);
-    let evaluationDatasets: EvaluationDatasetSummary[] = [];
-    try {
-      // Summary response'u evaluation run normalizasyonu gibi additive alanlar
-      // yüzünden legacy fallback'e düşse bile dataset listesi kalıcı kalmalıdır.
-      evaluationDatasets = await listEvaluationDatasets(documentId, signal);
-    } catch (datasetError) {
-      if (!(datasetError instanceof DocumentApiError) || (datasetError.status !== 404 && datasetError.code !== "invalid_response")) throw datasetError;
-    }
-    return {
-      ...legacy,
-      experiments: legacy.experiments.map((run) => ({
-        ...run,
-        documentId,
-        chunkRunId: run.upstream.chunkRunId ?? "",
-        embeddingRunId: run.upstream.embeddingRunId ?? null,
-        query: "",
-        targetStage: "generation" as const,
-        candidateCount: null,
-        experimentFingerprint: null,
-        stageStatuses: {},
-      })),
-      evaluationDatasets,
-      evaluationRuns: [],
-      activeParseRun: legacy.activeParseRun,
-    };
-  }
 }
 
 export async function getDocumentSourceUrl(
@@ -961,20 +946,11 @@ export async function deleteDocumentPipeline(pipelineId: string, signal?: AbortS
 }
 
 export async function getParseRun(runId: string, signal?: AbortSignal, documentId?: string | null): Promise<ParseRun> {
-  try {
-    return normalizeParseRun(
-      await request(`/parse-runs/${encodeURIComponent(runId)}`, { signal }),
-      documentId ?? null,
-      runId,
-    );
-  } catch (error) {
-    if (!(error instanceof DocumentApiError) || error.status !== 404 || !documentId) throw error;
-    return normalizeParseRun(
-      await request(`/documents/${encodeURIComponent(documentId)}/parse-runs/${encodeURIComponent(runId)}`, { signal }),
-      documentId,
-      runId,
-    );
-  }
+  return normalizeParseRun(
+    await request(`/parse-runs/${encodeURIComponent(runId)}`, { signal }),
+    documentId ?? null,
+    runId,
+  );
 }
 
 export async function createChunkRun(documentId: string, strategy: ChunkStrategy, config: ChunkConfig, parseRunId: string, signal?: AbortSignal): Promise<ChunkRun> {
@@ -982,21 +958,54 @@ export async function createChunkRun(documentId: string, strategy: ChunkStrategy
     method: "POST",
     body: JSON.stringify({ parseRunId, strategy, config }),
     signal,
+    timeoutMs: LONG_REQUEST_TIMEOUT_MS,
   });
   return normalizeChunkRun(payload);
 }
 
-export async function createEmbeddingRun(documentId: string, chunkRunId: string, signal?: AbortSignal): Promise<EmbeddingRun> {
+/**
+ * Creates (or reuses) an embedding run and resolves only with a completed run.
+ * A synchronous 200 returns the completed run as-is; an accepted 202 run
+ * (durable worker still computing) is polled via `GET /embedding-runs/{id}`
+ * until it is terminal. A failed run rejects, so callers never record a
+ * non-completed embedding in the lineage.
+ */
+export async function createEmbeddingRun(
+  documentId: string,
+  chunkRunId: string,
+  signal?: AbortSignal,
+  onProgress?: (run: EmbeddingRun) => void,
+): Promise<EmbeddingRun> {
   const payload = await request(`/documents/${encodeURIComponent(documentId)}/embeddings`, {
     method: "POST",
     body: JSON.stringify({ chunkRunId }),
     signal,
+    timeoutMs: LONG_REQUEST_TIMEOUT_MS,
   });
-  return normalizeEmbeddingRun(payload);
+  const initial = normalizeEmbeddingRun(payload);
+  const run = isRunInFlight(initial.status) ? await waitForEmbeddingRun(initial.id, signal, onProgress, initial) : initial;
+  if (run.status === "completed") return run;
+  const problem = run.error ?? { code: "embedding_run_failed", message: "The embedding run failed." };
+  throw new DocumentApiError(problem.code, problem.message);
 }
 
-export async function createExperiment(input: ExperimentRequest, signal?: AbortSignal): Promise<ExperimentRun> {
-  return normalizeExperiment(await request("/experiments", { method: "POST", body: JSON.stringify(input), signal }));
+/** Embedding runs have no separate status endpoint; the run payload carries no vectors. */
+export function waitForEmbeddingRun(
+  runId: string,
+  signal?: AbortSignal,
+  onProgress?: (run: EmbeddingRun) => void,
+  initialRun?: EmbeddingRun,
+): Promise<EmbeddingRun> {
+  const read = (pollSignal: AbortSignal) => getEmbeddingRun(runId, pollSignal);
+  return pollRun<EmbeddingRun, EmbeddingRun>({
+    readStatus: read,
+    readDetail: read,
+    progressKey: (run) => `${run.status}:${run.progress ?? ""}`,
+    initialDetail: initialRun,
+    signal,
+    onProgress,
+    timeoutError: runPollTimeoutError,
+  });
 }
 
 export async function createExperimentAsync(
@@ -1009,54 +1018,46 @@ export async function createExperimentAsync(
   return waitForExperimentRun(run.id, signal, onProgress, run);
 }
 
+type ExperimentStatus = { id: string; status: RunStatus; stageStatuses: Record<string, string> };
+
+async function getExperimentStatus(experimentId: string, signal?: AbortSignal): Promise<ExperimentStatus> {
+  const payload = requiredObject(await request(`/experiments/${encodeURIComponent(experimentId)}/status`, { signal }), "experiment status");
+  return {
+    id: requiredString(payload.id, "experiment status id"),
+    status: normalizeStatus(payload.status),
+    stageStatuses: Object.fromEntries(Object.entries(object(payload.stageStatuses)).filter(([, value]) => typeof value === "string")) as Record<string, string>,
+  };
+}
+
 export async function waitForExperimentRun(
   experimentId: string,
   signal?: AbortSignal,
   onProgress?: (run: ExperimentRun) => void,
   initialRun?: ExperimentRun,
 ): Promise<ExperimentRun> {
-  return pollRun((pollSignal) => getExperiment(experimentId, pollSignal), signal, onProgress, initialRun);
+  return pollRun<ExperimentStatus, ExperimentRun>({
+    readStatus: (pollSignal) => getExperimentStatus(experimentId, pollSignal),
+    readDetail: (pollSignal) => getExperiment(experimentId, pollSignal),
+    progressKey: (status) => `${status.status}:${Object.entries(status.stageStatuses).map(([stage, value]) => `${stage}=${value}`).sort().join(",")}`,
+    initialDetail: initialRun,
+    signal,
+    onProgress,
+    timeoutError: runPollTimeoutError,
+  });
 }
 
 export async function getExperiment(experimentId: string, signal?: AbortSignal): Promise<ExperimentRun> {
   return normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}`, { signal }));
 }
 
-export async function getExperimentStatus(experimentId: string, signal?: AbortSignal): Promise<{
-  id: string;
-  status: RunStatus;
-  stageStatuses: Record<string, string>;
-  timing: { startedAt: string | null; completedAt: string | null; durationMs: number | null };
-  error: ApiProblem | null;
-}> {
-  const payload = requiredObject(await request(`/experiments/${encodeURIComponent(experimentId)}/status`, { signal }), "experiment status");
-  const timing = object(payload.timing);
-  return {
-    id: requiredString(payload.id, "experiment status id"),
-    status: normalizeStatus(payload.status),
-    stageStatuses: Object.fromEntries(Object.entries(object(payload.stageStatuses ?? payload.stage_statuses)).filter(([, value]) => typeof value === "string")) as Record<string, string>,
-    timing: {
-      startedAt: optionalString(field(timing, "startedAt", "started_at")),
-      completedAt: optionalString(field(timing, "completedAt", "completed_at")),
-      durationMs: optionalNumber(field(timing, "durationMs", "duration_ms")),
-    },
-    error: normalizeProblem(payload.error),
-  };
-}
-
 export async function continueExperiment(experimentId: string, signal?: AbortSignal): Promise<ExperimentRun> {
-  const run = normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}/continue`, { method: "POST", signal }));
+  const run = normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}/continue`, { method: "POST", signal, timeoutMs: LONG_REQUEST_TIMEOUT_MS }));
   return waitForExperimentRun(run.id, signal, undefined, run);
 }
 
 export async function rerunGeneration(experimentId: string, signal?: AbortSignal): Promise<ExperimentRun> {
-  const run = normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}/rerun-generation`, { method: "POST", signal }));
+  const run = normalizeExperiment(await request(`/experiments/${encodeURIComponent(experimentId)}/rerun-generation`, { method: "POST", signal, timeoutMs: LONG_REQUEST_TIMEOUT_MS }));
   return waitForExperimentRun(run.id, signal, undefined, run);
-}
-
-export async function listExperiments(documentId: string, signal?: AbortSignal): Promise<ExperimentSummary[]> {
-  const payload = await request(`/experiments?documentId=${encodeURIComponent(documentId)}`, { signal });
-  return listPayload(payload, "experiments").map(normalizeExperimentSummary);
 }
 
 export async function createEvaluationDataset(input: { documentId: string; parseRunId: string; name: string; cases: EvaluationCase[]; baseDatasetId?: string | null; evaluationMode?: "interactive" | "benchmark" }, signal?: AbortSignal): Promise<EvaluationDataset> {
@@ -1068,21 +1069,21 @@ function normalizeDataset(value: unknown): EvaluationDataset {
   const payload = requiredObject(value, "evaluation dataset");
   return {
     id: requiredString(payload.id, "evaluation dataset id"),
-    documentId: requiredString(field(payload, "documentId", "document_id"), "evaluation document id"),
-    parseRunId: requiredString(field(payload, "parseRunId", "parse_run_id"), "evaluation parse run id"),
+    documentId: requiredString(payload.documentId, "evaluation document id"),
+    parseRunId: requiredString(payload.parseRunId, "evaluation parse run id"),
     name: requiredString(payload.name, "evaluation dataset name"),
     version: requiredNumber(payload.version, "evaluation dataset version"),
-    seriesId: optionalString(field(payload, "seriesId", "series_id")),
+    seriesId: optionalString(payload.seriesId),
     cases: requiredArray(payload.cases, (item) => {
       const evaluationCase = requiredObject(item, "evaluation case");
       return {
         question: requiredString(evaluationCase.question, "evaluation question"),
-        relevantElementIds: strings(field(evaluationCase, "relevantElementIds", "relevant_element_ids")),
-        referenceAnswer: optionalString(field(evaluationCase, "referenceAnswer", "reference_answer")),
+        relevantElementIds: strings(evaluationCase.relevantElementIds),
+        referenceAnswer: optionalString(evaluationCase.referenceAnswer),
         expectedOutcome: evaluationCase.expectedOutcome === "insufficient_context" ? "insufficient_context" : "answer",
       };
     }, "evaluation cases"),
-    createdAt: optionalString(field(payload, "createdAt", "created_at")),
+    createdAt: optionalString(payload.createdAt),
   };
 }
 
@@ -1095,7 +1096,7 @@ export async function getEvaluationDataset(datasetId: string, signal?: AbortSign
   return normalizeDataset(await request(`/evaluation/datasets/${encodeURIComponent(datasetId)}`, { signal }));
 }
 
-export async function createEvaluationRun(input: {
+export type EvaluationRunRequest = {
   datasetId: string;
   pipelineId?: string | null;
   chunkRunId: string;
@@ -1105,12 +1106,10 @@ export async function createEvaluationRun(input: {
   context: ExperimentRequest["context"];
   generation: ExperimentRequest["generation"];
   judge: boolean;
-}, signal?: AbortSignal): Promise<EvaluationRun> {
-  return normalizeEvaluationRun(await request("/evaluation/runs", { method: "POST", body: JSON.stringify(input), signal }));
-}
+};
 
 export async function createEvaluationRunAsync(
-  input: Parameters<typeof createEvaluationRun>[0],
+  input: EvaluationRunRequest,
   signal?: AbortSignal,
   onProgress?: (run: EvaluationRun) => void,
 ): Promise<EvaluationRun> {
@@ -1119,13 +1118,32 @@ export async function createEvaluationRunAsync(
   return waitForEvaluationRun(run.id, signal, onProgress, run);
 }
 
+type EvaluationRunStatus = { id: string; status: RunStatus; completedCases: number | null };
+
+async function getEvaluationRunStatus(runId: string, signal?: AbortSignal): Promise<EvaluationRunStatus> {
+  const payload = requiredObject(await request(`/evaluation/runs/${encodeURIComponent(runId)}/status`, { signal }), "evaluation run status");
+  return {
+    id: requiredString(payload.id, "evaluation run status id"),
+    status: normalizeStatus(payload.status),
+    completedCases: optionalNumber(payload.completedCases),
+  };
+}
+
 export async function waitForEvaluationRun(
   runId: string,
   signal?: AbortSignal,
   onProgress?: (run: EvaluationRun) => void,
   initialRun?: EvaluationRun,
 ): Promise<EvaluationRun> {
-  return pollRun((pollSignal) => getEvaluationRun(runId, pollSignal), signal, onProgress, initialRun);
+  return pollRun<EvaluationRunStatus, EvaluationRun>({
+    readStatus: (pollSignal) => getEvaluationRunStatus(runId, pollSignal),
+    readDetail: (pollSignal) => getEvaluationRun(runId, pollSignal),
+    progressKey: (status) => `${status.status}:${status.completedCases ?? ""}`,
+    initialDetail: initialRun,
+    signal,
+    onProgress,
+    timeoutError: runPollTimeoutError,
+  });
 }
 
 function normalizeEvaluationRun(value: unknown): EvaluationRun {
@@ -1134,14 +1152,14 @@ function normalizeEvaluationRun(value: unknown): EvaluationRun {
   const rawCaseResults = resultsPayload.caseResults;
   return {
     ...normalizeRun(payload),
-    datasetId: requiredString(field(payload, "datasetId", "dataset_id"), "evaluation dataset id"),
+    datasetId: requiredString(payload.datasetId, "evaluation dataset id"),
     results: normalizeMetrics(resultsPayload),
     caseResults: Array.isArray(rawCaseResults)
       ? rawCaseResults.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))).map((item) => ({
         question: string(item.question),
-        expectedElementIds: strings(field(item, "expectedElementIds", "expected_element_ids")),
-        retrievedElementIds: strings(field(item, "retrievedElementIds", "retrieved_element_ids")),
-        referenceAnswer: optionalString(field(item, "referenceAnswer", "reference_answer")),
+        expectedElementIds: strings(item.expectedElementIds),
+        retrievedElementIds: strings(item.retrievedElementIds),
+        referenceAnswer: optionalString(item.referenceAnswer),
         answer: optionalString(item.answer),
         citations: array(item.citations, (citation) => normalizeCitation(citation)),
         expectedOutcome: item.expectedOutcome === "insufficient_context" ? "insufficient_context" : "answer",
@@ -1152,10 +1170,11 @@ function normalizeEvaluationRun(value: unknown): EvaluationRun {
         precisionAtK: optionalNumber(item.precisionAtK),
         recallAtK: optionalNumber(item.recallAtK),
         mrr: optionalNumber(item.mrr),
-        citationValidity: optionalNumber(item.citationValidity) ?? 0,
-        groundedness: optionalNumber(item.groundedness) ?? 0,
+        // A missing metric stays null: "not scored", never a measured 0.
+        citationValidity: optionalNumber(item.citationValidity),
+        groundedness: optionalNumber(item.groundedness),
         groundednessDetail: object(item.groundednessDetail),
-        generationMetrics: normalizeGenerationMetrics(field(item, "generationMetrics", "generation_metrics")),
+        generationMetrics: normalizeGenerationMetrics(item.generationMetrics),
         experimentId: string(item.experimentId),
       }))
       : [],
@@ -1189,11 +1208,7 @@ export async function parsePersistedDocument(
     documentId,
   );
   onStatus?.(initial);
-  if (initial.status === "completed") {
-    if (!initial.result) throw new DocumentApiError("invalid_response", "The completed parse response returned no normalized content.");
-    return initial.result;
-  }
-  return pollParseRun(initial, signal, onStatus);
+  return completedParseResult(await pollParseRun(initial.id, initial.documentId || documentId, signal, onStatus, initial));
 }
 
 export const reparsePersistedDocument = parsePersistedDocument;
