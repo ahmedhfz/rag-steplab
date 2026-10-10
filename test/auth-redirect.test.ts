@@ -95,6 +95,15 @@ describe("Google OAuth next path", () => {
     expect(finished.headers.get("location")).toBe("https://app.example/chunking");
   });
 
+  it("expires a next cookie left by an abandoned flow when a new flow targets the root", async () => {
+    oauth.signInWithOAuth.mockResolvedValue({ data: { url: "https://accounts.example/consent" }, error: null });
+    const restarted = await googleGet(new Request("https://app.example/auth/google", {
+      headers: { cookie: `${AUTH_NEXT_COOKIE}=%2Fchunking` },
+    }));
+    const cookie = restarted.cookies.get(AUTH_NEXT_COOKIE);
+    expect(cookie).toMatchObject({ value: "", path: "/auth", maxAge: 0 });
+  });
+
   it("ignores a hostile next path", async () => {
     oauth.signInWithOAuth.mockResolvedValue({ data: { url: "https://accounts.example/consent" }, error: null });
     const started = await googleGet(new Request("https://app.example/auth/google?next=%2F%2Fevil.example"));
