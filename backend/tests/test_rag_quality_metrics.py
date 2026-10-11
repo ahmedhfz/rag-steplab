@@ -259,12 +259,12 @@ def test_evaluation_identity_includes_models_and_rejects_mutable_reuse(monkeypat
     assert _queue_and_complete(request)["id"] != third["id"]
 
 
-def test_queued_evaluation_refuses_lineage_that_changed_before_execution(monkeypatch):
+def test_queued_evaluation_executes_its_queue_time_lineage_snapshot(monkeypatch):
     document_id, first_chunk_run_id = _scenario_document(monkeypatch)
     dataset_id = _dataset(document_id, [ANSWER_CASE])
     repository = get_repository()
     repository.documents[document_id]["active_chunk_run_id"] = first_chunk_run_id
-    # No chunk/embedding IDs: the identity is resolved from the active state.
+    # No chunk/embedding IDs: the lineage is resolved and snapshotted at queue time.
     request = EvaluationRunRequest(
         dataset_id=dataset_id,
         retrieval={"mode": "keyword", "topK": 1},
@@ -272,6 +272,8 @@ def test_queued_evaluation_refuses_lineage_that_changed_before_execution(monkeyp
     )
     queued = queue_evaluation(request, repository=repository)
     assert queued["status"] == "queued"
+    assert queued["config"]["chunk_run_id"] == first_chunk_run_id
+    queued_fingerprint = repository.get_evaluation_row(queued["id"])["evaluation_fingerprint"]
 
     second_chunk_run_id = client.post(
         f"/documents/{document_id}/chunks",
@@ -283,6 +285,35 @@ def test_queued_evaluation_refuses_lineage_that_changed_before_execution(monkeyp
         if pipeline["document_id"] == document_id:
             pipeline["chunk_run_id"] = second_chunk_run_id
 
+    run_queued_evaluation(request, queued["id"], repository=repository)
+
+    # A later pipeline/active change does not alter what the queued run
+    # executes: it runs on its snapshot, and its results stay stored under the
+    # fingerprint that names exactly that lineage.
+    row = repository.get_evaluation_row(queued["id"])
+    assert row["status"] == "completed"
+    assert row["evaluation_fingerprint"] == queued_fingerprint
+    children = [repository.get_experiment_row(child) for child in row["child_experiment_ids"]]
+    assert children and all(child["chunk_run_id"] == first_chunk_run_id for child in children)
+
+
+def test_queued_evaluation_refuses_identity_that_changed_before_execution(monkeypatch):
+    document_id, chunk_run_id = _scenario_document(monkeypatch)
+    dataset_id = _dataset(document_id, [ANSWER_CASE])
+    repository = get_repository()
+    request = EvaluationRunRequest(
+        dataset_id=dataset_id,
+        chunk_run_id=chunk_run_id,
+        retrieval={"mode": "keyword", "topK": 1},
+        reranking={"enabled": False, "candidateCount": 1},
+    )
+    queued = queue_evaluation(request, repository=repository)
+    assert queued["status"] == "queued"
+
+    # The model configuration changed while queued: results must never be
+    # stored under the queued identity.
+    upgraded = Settings(**{**_phase5_settings().__dict__, "gemini_generation_model": "gemini-generation-v2"})
+    monkeypatch.setattr("app.pipeline.get_settings", lambda: upgraded)
     run_queued_evaluation(request, queued["id"], repository=repository)
 
     row = repository.get_evaluation_row(queued["id"])

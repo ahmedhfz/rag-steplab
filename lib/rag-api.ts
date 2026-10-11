@@ -966,9 +966,25 @@ export async function deleteDocument(documentId: string, signal?: AbortSignal): 
  * The summary endpoint is the only document workspace contract. A normalizer
  * failure or a missing document surfaces as an error instead of silently
  * falling back to another endpoint with synthesized values.
+ *
+ * `historicalLineage` on each run is computed by the backend relative to the
+ * given saved pipeline (Default Pipeline when omitted). A pipeline deleted in
+ * the meantime falls back to the default instead of failing the whole load.
  */
-export async function getDocumentSummary(documentId: string, signal?: AbortSignal): Promise<DocumentSummary> {
-  const payload = requiredObject(await request(`/documents/${encodeURIComponent(documentId)}/summary`, { signal }), "document summary");
+export async function getDocumentSummary(
+  documentId: string,
+  signal?: AbortSignal,
+  pipelineId?: string | null,
+): Promise<DocumentSummary> {
+  const path = `/documents/${encodeURIComponent(documentId)}/summary`;
+  let raw: unknown;
+  try {
+    raw = await request(pipelineId ? `${path}?pipelineId=${encodeURIComponent(pipelineId)}` : path, { signal });
+  } catch (error) {
+    if (!pipelineId || !(error instanceof DocumentApiError) || error.code !== "document_pipeline_not_found") throw error;
+    raw = await request(path, { signal });
+  }
+  const payload = requiredObject(raw, "document summary");
   return {
     ...normalizeDocument(payload),
     parseRuns: requiredArray(payload.parseRuns, normalizeRun, "parse run history"),

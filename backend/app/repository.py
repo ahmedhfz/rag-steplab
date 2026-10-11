@@ -92,6 +92,48 @@ def _lease_expired(row: dict[str, Any], now: datetime | None = None) -> bool:
     return started + timedelta(seconds=pipeline_lease_duration_seconds(get_settings())) <= current
 
 
+def _artifact_fence_allows(row: dict[str, Any], lease_token: str | None, unfenced: bool) -> bool:
+    """Chunk/embedding writes need the live lease token unless explicitly unfenced.
+
+    ``unfenced`` is reserved for deliberate maintenance transitions (an
+    ``artifact_incomplete`` repair of a completed row); a missing token is
+    never an implicit bypass.
+    """
+
+    if unfenced:
+        return True
+    if lease_token is None or row.get("lease_token") is None:
+        return False
+    return str(row["lease_token"]) == str(lease_token) and not _lease_expired(row)
+
+
+def _completion_replay(status: str | None, lease_token: str | None) -> bool:
+    """A retried completion of an already completed artifact is a read, not a write.
+
+    A successful completion clears the lease, so a retry after a lost
+    acknowledgement would otherwise fail the fence and look like a persistence
+    failure. Returning the durable row is safe: nothing from the retrying
+    attempt is written, and the row is the run's single immutable artifact
+    (its identity fixes the inputs). Only ``completed`` qualifies; a failed or
+    interrupted row still goes through the fence and never reads as success.
+    """
+
+    return status == "completed" and lease_token is not None
+
+
+def _embedding_advances_default(
+    active_parse_id: str | None,
+    active_chunk_id: str | None,
+    chunk_parse_id: str | None,
+    chunk_id: str,
+) -> bool:
+    """A completed embedding becomes the document default only along that default."""
+
+    if active_chunk_id is not None:
+        return active_chunk_id == chunk_id
+    return chunk_parse_id is not None and active_parse_id in {None, chunk_parse_id}
+
+
 def _expired_run_update(row: dict[str, Any], *, parse: bool = False, now: datetime | None = None) -> dict[str, Any]:
     """Close abandoned runs without deleting history or inventing execution time."""
     if row.get("status") not in {"queued", "running"}:
@@ -281,7 +323,7 @@ def _summary_experiment_row(row: dict[str, Any]) -> dict[str, Any]:
         "query": row.get("query", ""),
         "target_stage": row.get("target_stage"),
         "experiment_fingerprint": row.get("experiment_fingerprint"),
-        "config": copy.deepcopy(row.get("config") or {}),
+        "config": _public_config(row.get("config")),
         "candidate_count": len(candidates) if isinstance(candidates, list) else row.get("candidate_count"),
         "stage_statuses": {stage: status for stage, status in stage_statuses.items() if status},
         "status": row.get("status", "completed"),
@@ -292,6 +334,30 @@ def _summary_experiment_row(row: dict[str, Any]) -> dict[str, Any]:
         "duration_ms": row.get("duration_ms"),
         "created_at": row.get("created_at"),
     }
+
+
+def _summary_pipeline_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "owner_user_id": row.get("owner_user_id"),
+        "document_id": row.get("document_id"),
+        "name": row.get("name"),
+        "parse_run_id": row.get("parse_run_id"),
+        "chunk_run_id": row.get("chunk_run_id"),
+        "embedding_run_id": row.get("embedding_run_id"),
+        "revision": row.get("revision"),
+        "is_default": row.get("name") == "Default Pipeline",
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def _public_config(config: Any) -> dict[str, Any]:
+    """Copy a run config without worker-only execution bookkeeping."""
+
+    value = copy.deepcopy(config) if isinstance(config, dict) else {}
+    value.pop("_execution", None)
+    return value
 
 
 def _summary_dataset_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -507,10 +573,14 @@ class Repository:
     ) -> tuple[dict[str, Any], bool]:
         raise NotImplementedError
 
-    def complete_chunk_run(self, run_id: str, drafts: list[Any], lease_token: str | None = None) -> dict[str, Any] | None:
+    def complete_chunk_run(
+        self, run_id: str, drafts: list[Any], lease_token: str | None = None, *, unfenced: bool = False
+    ) -> dict[str, Any] | None:
         raise NotImplementedError
 
-    def fail_chunk_run(self, run_id: str, code: str, message: str, lease_token: str | None = None) -> dict[str, Any] | None:
+    def fail_chunk_run(
+        self, run_id: str, code: str, message: str, lease_token: str | None = None, *, unfenced: bool = False
+    ) -> dict[str, Any] | None:
         raise NotImplementedError
 
     def get_chunk_row(
@@ -551,10 +621,14 @@ class Repository:
         input_hashes: dict[str, str] | None = None,
         effective_model: str | None = None,
         lease_token: str | None = None,
+        *,
+        unfenced: bool = False,
     ) -> dict[str, Any] | None:
         raise NotImplementedError
 
-    def fail_embedding_run(self, run_id: str, code: str, message: str, lease_token: str | None = None) -> dict[str, Any] | None:
+    def fail_embedding_run(
+        self, run_id: str, code: str, message: str, lease_token: str | None = None, *, unfenced: bool = False
+    ) -> dict[str, Any] | None:
         raise NotImplementedError
 
     def get_embedding_row(
@@ -1186,6 +1260,7 @@ class InMemoryRepository(Repository):
             return None
         return {
             "document": document,
+            "pipelines": self.list_document_pipeline_rows(document_id) or [],
             "parses": [_summary_parse_row(row) for row in self.list_parse_rows(document_id)],
             "chunks": [_summary_chunk_row(row) for row in self.list_chunk_rows(document_id)],
             "embeddings": [_summary_embedding_row(row) for row in self.list_embedding_rows(document_id)],
@@ -1276,15 +1351,15 @@ class InMemoryRepository(Repository):
             self.chunks[identifier] = []
             return copy.deepcopy(row | {"chunks": [], "lineage_fingerprint": chunk_lineage_fingerprint(row)}), True
 
-    def complete_chunk_run(self, run_id, drafts, lease_token=None):
+    def complete_chunk_run(self, run_id, drafts, lease_token=None, *, unfenced=False):
         with self._lock:
             row = self.chunk_runs.get(run_id)
             if row is None:
                 return None
-            if lease_token is not None and str(row.get("lease_token")) != str(lease_token):
-                return None
-            if row["status"] == "completed":
+            if _completion_replay(row.get("status"), lease_token):
                 return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, []), "lineage_fingerprint": chunk_lineage_fingerprint(row)})
+            if not _artifact_fence_allows(row, lease_token, unfenced):
+                return None
             if row["status"] != "running":
                 return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, []), "lineage_fingerprint": chunk_lineage_fingerprint(row)})
 
@@ -1319,23 +1394,26 @@ class InMemoryRepository(Repository):
             )
             self.chunks[run_id] = items
             document = self.documents[row["document_id"]]
-            document["active_parse_run_id"] = row["parse_run_id"]
-            document["active_chunk_run_id"] = run_id
-            document["active_embedding_run_id"] = None
-            document["updated_at"] = completed_at
+            if document.get("active_parse_run_id") in {None, row["parse_run_id"]}:
+                document["active_parse_run_id"] = row["parse_run_id"]
+                document["active_chunk_run_id"] = run_id
+                document["active_embedding_run_id"] = None
+                document["updated_at"] = completed_at
             return copy.deepcopy(row | {"chunks": items, "lineage_fingerprint": chunk_lineage_fingerprint(row)})
 
-    def fail_chunk_run(self, run_id, code, message, lease_token=None):
+    def fail_chunk_run(self, run_id, code, message, lease_token=None, *, unfenced=False):
         with self._lock:
             row = self.chunk_runs.get(run_id)
             if row is None:
                 return None
-            if lease_token is not None and str(row.get("lease_token")) != str(lease_token):
+            if not _artifact_fence_allows(row, lease_token, unfenced):
                 return None
             if row["status"] in {"failed", "interrupted"} or (
                 row["status"] == "completed" and code != "artifact_incomplete"
             ):
                 return copy.deepcopy(row | {"chunks": self.chunks.get(run_id, [])})
+            if row["status"] == "completed":
+                self._detach_failed_artifact(row["document_id"], "chunk", run_id)
             completed_at = now_utc()
             row.update(
                 {
@@ -1451,12 +1529,14 @@ class InMemoryRepository(Repository):
             self.embeddings[identifier] = []
             return copy.deepcopy(row), True
 
-    def complete_embedding_run(self, run_id, values, input_hashes=None, effective_model=None, lease_token=None):
+    def complete_embedding_run(self, run_id, values, input_hashes=None, effective_model=None, lease_token=None, *, unfenced=False):
         with self._lock:
             row = self.embedding_runs.get(run_id)
             if row is None:
                 return None
-            if lease_token is not None and str(row.get("lease_token")) != str(lease_token):
+            if _completion_replay(row.get("status"), lease_token):
+                return copy.deepcopy(row)
+            if not _artifact_fence_allows(row, lease_token, unfenced):
                 return None
             if row["status"] != "running":
                 return copy.deepcopy(row)
@@ -1485,23 +1565,47 @@ class InMemoryRepository(Repository):
                 }
             )
             document = self.documents[row["document_id"]]
-            document["active_parse_run_id"] = self.chunk_runs[row["chunk_run_id"]]["parse_run_id"]
-            document["active_chunk_run_id"] = row["chunk_run_id"]
-            document["active_embedding_run_id"] = run_id
-            document["updated_at"] = completed_at
+            chunk_parse_id = self.chunk_runs[row["chunk_run_id"]]["parse_run_id"]
+            if _embedding_advances_default(
+                document.get("active_parse_run_id"), document.get("active_chunk_run_id"), chunk_parse_id, row["chunk_run_id"]
+            ):
+                document["active_parse_run_id"] = chunk_parse_id
+                document["active_chunk_run_id"] = row["chunk_run_id"]
+                document["active_embedding_run_id"] = run_id
+                document["updated_at"] = completed_at
             return copy.deepcopy(row)
 
-    def fail_embedding_run(self, run_id, code, message, lease_token=None):
+    def _detach_failed_artifact(self, document_id: str, kind: str, run_id: str) -> None:
+        document = self.documents.get(document_id)
+        if kind == "chunk":
+            if document is not None and document.get("active_chunk_run_id") == run_id:
+                document["active_chunk_run_id"] = None
+                document["active_embedding_run_id"] = None
+            fields = ("chunk_run_id", "embedding_run_id")
+        else:
+            if document is not None and document.get("active_embedding_run_id") == run_id:
+                document["active_embedding_run_id"] = None
+            fields = ("embedding_run_id",)
+        for pipeline in self.document_pipelines.values():
+            if pipeline.get(fields[0]) == run_id:
+                for field in fields:
+                    pipeline[field] = None
+                pipeline["revision"] += 1
+                pipeline["updated_at"] = now_utc()
+
+    def fail_embedding_run(self, run_id, code, message, lease_token=None, *, unfenced=False):
         with self._lock:
             row = self.embedding_runs.get(run_id)
             if row is None:
                 return None
-            if lease_token is not None and str(row.get("lease_token")) != str(lease_token):
+            if not _artifact_fence_allows(row, lease_token, unfenced):
                 return None
             if row["status"] in {"failed", "interrupted"} or (
                 row["status"] == "completed" and code != "artifact_incomplete"
             ):
                 return copy.deepcopy(row)
+            if row["status"] == "completed":
+                self._detach_failed_artifact(row["document_id"], "embedding", run_id)
             completed_at = now_utc()
             row.update(
                 {
@@ -2196,17 +2300,61 @@ class SqlAlchemyRepository(Repository):
             session.flush()
             return self._parse_dict(row)
 
+    @staticmethod
+    def _lock_run_document(session, model, run_id):
+        """Lock the owning document before the run row.
+
+        Every pointer writer takes ``documents`` first and the run second, the
+        same order as document deletion, so concurrent completions serialize on
+        the document instead of interleaving stale pointer reads.
+
+        ``FOR NO KEY UPDATE`` (only pointer columns change) still conflicts with
+        other pointer writers and with deletion, but not with the ``KEY SHARE``
+        lock of child-row inserts (new runs, pipelines, experiments), so those
+        are not blocked for the duration of a large artifact write.
+        """
+
+        document_id = session.scalar(select(model.document_id).where(model.id == run_id))
+        if document_id is None:
+            return None, None
+        document = session.scalars(
+            select(Document).where(Document.id == document_id).with_for_update(key_share=True)
+        ).first()
+        run = session.scalars(select(model).where(model.id == run_id).with_for_update()).first()
+        return document, run
+
+    @staticmethod
+    def _detach_failed_artifact(session, document, kind: str, run_id: str) -> None:
+        """Remove a no-longer-completed artifact from defaults and saved pipelines."""
+
+        if kind == "chunk":
+            if document is not None and document.active_chunk_run_id == run_id:
+                document.active_chunk_run_id = None
+                document.active_embedding_run_id = None
+            target = DocumentPipeline.chunk_run_id == run_id
+            values = {"chunk_run_id": None, "embedding_run_id": None}
+        else:
+            if document is not None and document.active_embedding_run_id == run_id:
+                document.active_embedding_run_id = None
+            target = DocumentPipeline.embedding_run_id == run_id
+            values = {"embedding_run_id": None}
+        session.flush()
+        session.execute(
+            update(DocumentPipeline)
+            .where(target)
+            .values(**values, revision=DocumentPipeline.revision + 1, updated_at=now_utc())
+        )
+
     def complete_parse(self, run_id, parsed, *, parser_version="unknown", execution_metadata=None, duration_ms=None):
         payload = parsed.model_dump(mode="json", by_alias=False)
         if payload.get("structured") is None or payload.get("summary") is None:
             raise ValueError("completed parse payload is missing normalized content")
         with session_scope() as session:
-            row = session.get(ParseRun, run_id, with_for_update=True)
+            document, row = self._lock_run_document(session, ParseRun, run_id)
             if row is None:
                 return None
             if row.status == "completed" or row.status in {"failed", "interrupted"}:
                 return self._parse_dict(row)
-            document = session.get(Document, row.document_id)
             if document is None:
                 return None
             completed_at = now_utc()
@@ -2479,6 +2627,14 @@ class SqlAlchemyRepository(Repository):
             filters = [DocumentPipeline.id == pipeline_id]
             if owner_user_id is not None:
                 filters.append(DocumentPipeline.owner_user_id == self._owner_uuid(owner_user_id))
+            target_document_id = session.scalar(select(DocumentPipeline.document_id).where(*filters))
+            if target_document_id is None:
+                return False
+            # Serialize sibling deletes on the document so two concurrent
+            # deletes cannot both observe two pipelines and leave zero.
+            session.execute(
+                select(Document.id).where(Document.id == target_document_id).with_for_update(key_share=True)
+            )
             target = session.scalars(select(DocumentPipeline).where(*filters).with_for_update()).first()
             if target is None:
                 return False
@@ -2728,6 +2884,19 @@ class SqlAlchemyRepository(Repository):
 
                         UNION ALL
 
+                        SELECT 0, pl.created_at, pl.id, 'pipeline',
+                               jsonb_build_object(
+                                   'id', pl.id, 'owner_user_id', pl.owner_user_id,
+                                   'document_id', pl.document_id, 'name', pl.name,
+                                   'parse_run_id', pl.parse_run_id, 'chunk_run_id', pl.chunk_run_id,
+                                   'embedding_run_id', pl.embedding_run_id, 'revision', pl.revision,
+                                   'created_at', pl.created_at, 'updated_at', pl.updated_at
+                               )
+                        FROM rag_lab.document_pipelines AS pl
+                        WHERE pl.document_id = :document_id
+
+                        UNION ALL
+
                         SELECT 2, c.created_at, c.id, 'chunk',
                                jsonb_build_object(
                                    'id', c.id, 'run_number', c.run_number, 'document_id', c.document_id,
@@ -2767,7 +2936,7 @@ class SqlAlchemyRepository(Repository):
                                    'embedding_run_id', x.embedding_run_id,
                                    'query', x.query, 'target_stage', x.target_stage,
                                    'experiment_fingerprint', x.experiment_fingerprint,
-                                   'config', x.config,
+                                   'config', x.config - '_execution',
                                    'candidate_count', COALESCE(
                                        CASE WHEN jsonb_typeof(x.stage_results #> '{retrieval,results}') = 'array'
                                             THEN jsonb_array_length(x.stage_results #> '{retrieval,results}') END,
@@ -2823,10 +2992,11 @@ class SqlAlchemyRepository(Repository):
                 {"document_id": document_id},
             ).mappings().all()
             grouped: dict[str, list[dict[str, Any]]] = {
-                "parse": [], "chunk": [], "embedding": [],
+                "pipeline": [], "parse": [], "chunk": [], "embedding": [],
                 "experiment": [], "dataset": [], "evaluation": [],
             }
             normalizers = {
+                "pipeline": _summary_pipeline_row,
                 "parse": _summary_parse_row,
                 "chunk": _summary_chunk_row,
                 "embedding": _summary_embedding_row,
@@ -2842,6 +3012,9 @@ class SqlAlchemyRepository(Repository):
                 grouped[kind].append(normalizers[kind](dict(payload)))
             return {
                 "document": document,
+                "pipelines": sorted(
+                    grouped["pipeline"], key=lambda row: (str(row.get("created_at") or ""), row["id"])
+                ),
                 "parses": grouped["parse"],
                 "chunks": grouped["chunk"],
                 "embeddings": grouped["embedding"],
@@ -2929,14 +3102,16 @@ class SqlAlchemyRepository(Repository):
                 return self._chunk_dict(run, session), True
             return payload, False
 
-    def complete_chunk_run(self, run_id, drafts, lease_token=None):
+    def complete_chunk_run(self, run_id, drafts, lease_token=None, *, unfenced=False):
         with session_scope() as session:
-            run = session.scalars(
-                select(ChunkRun).where(ChunkRun.id == run_id).with_for_update()
-            ).first()
+            document, run = self._lock_run_document(session, ChunkRun, run_id)
             if run is None:
                 return None
-            if lease_token is not None and str(run.lease_token) != str(lease_token):
+            if _completion_replay(run.status, lease_token):
+                return self._chunk_dict(run, session)
+            if not _artifact_fence_allows(
+                {"lease_token": run.lease_token, "lease_expires_at": run.lease_expires_at}, lease_token, unfenced
+            ):
                 return None
             if run.status != "running":
                 return self._chunk_dict(run, session)
@@ -2964,27 +3139,30 @@ class SqlAlchemyRepository(Repository):
             run.error_message = None
             run.lease_token = None
             run.lease_expires_at = None
-            document = session.get(Document, run.document_id)
-            if document:
+            if document is not None and document.active_parse_run_id in {None, run.parse_run_id}:
+                # Advance the default only along its own parse; a late chunk
+                # of an older parse never rolls the default parse back.
                 document.active_parse_run_id = run.parse_run_id
                 document.active_chunk_run_id = run.id
                 document.active_embedding_run_id = None
             session.flush()
             return self._chunk_dict(run, session)
 
-    def fail_chunk_run(self, run_id, code, message, lease_token=None):
+    def fail_chunk_run(self, run_id, code, message, lease_token=None, *, unfenced=False):
         with session_scope() as session:
-            run = session.scalars(
-                select(ChunkRun).where(ChunkRun.id == run_id).with_for_update()
-            ).first()
+            document, run = self._lock_run_document(session, ChunkRun, run_id)
             if run is None:
                 return None
-            if lease_token is not None and str(run.lease_token) != str(lease_token):
+            if not _artifact_fence_allows(
+                {"lease_token": run.lease_token, "lease_expires_at": run.lease_expires_at}, lease_token, unfenced
+            ):
                 return None
             if run.status in {"failed", "interrupted"} or (
                 run.status == "completed" and code != "artifact_incomplete"
             ):
                 return self._chunk_dict(run, session)
+            if run.status == "completed":
+                self._detach_failed_artifact(session, document, "chunk", run.id)
             run.identity_claimed = None
             run.status = "failed"
             run.error_code = code
@@ -3195,14 +3373,16 @@ class SqlAlchemyRepository(Repository):
                 return self._embedding_dict(run), True
             return payload, False
 
-    def complete_embedding_run(self, run_id, values, input_hashes=None, effective_model=None, lease_token=None):
+    def complete_embedding_run(self, run_id, values, input_hashes=None, effective_model=None, lease_token=None, *, unfenced=False):
         with session_scope() as session:
-            run = session.scalars(
-                select(EmbeddingRun).where(EmbeddingRun.id == run_id).with_for_update()
-            ).first()
+            document, run = self._lock_run_document(session, EmbeddingRun, run_id)
             if run is None:
                 return None
-            if lease_token is not None and str(run.lease_token) != str(lease_token):
+            if _completion_replay(run.status, lease_token):
+                return self._embedding_dict(run)
+            if not _artifact_fence_allows(
+                {"lease_token": run.lease_token, "lease_expires_at": run.lease_expires_at}, lease_token, unfenced
+            ):
                 return None
             if run.status != "running":
                 return self._embedding_dict(run)
@@ -3226,29 +3406,32 @@ class SqlAlchemyRepository(Repository):
             run.error_message = None
             run.lease_token = None
             run.lease_expires_at = None
-            document = session.get(Document, run.document_id)
-            if document:
-                chunk = session.get(ChunkRun, run.chunk_run_id)
-                if chunk is not None:
-                    document.active_parse_run_id = chunk.parse_run_id
-                document.active_chunk_run_id = run.chunk_run_id
-                document.active_embedding_run_id = run.id
+            if document is not None:
+                chunk_parse_id = session.scalar(select(ChunkRun.parse_run_id).where(ChunkRun.id == run.chunk_run_id))
+                if _embedding_advances_default(
+                    document.active_parse_run_id, document.active_chunk_run_id, chunk_parse_id, run.chunk_run_id
+                ):
+                    document.active_parse_run_id = chunk_parse_id
+                    document.active_chunk_run_id = run.chunk_run_id
+                    document.active_embedding_run_id = run.id
             session.flush()
             return self._embedding_dict(run)
 
-    def fail_embedding_run(self, run_id, code, message, lease_token=None):
+    def fail_embedding_run(self, run_id, code, message, lease_token=None, *, unfenced=False):
         with session_scope() as session:
-            run = session.scalars(
-                select(EmbeddingRun).where(EmbeddingRun.id == run_id).with_for_update()
-            ).first()
+            document, run = self._lock_run_document(session, EmbeddingRun, run_id)
             if run is None:
                 return None
-            if lease_token is not None and str(run.lease_token) != str(lease_token):
+            if not _artifact_fence_allows(
+                {"lease_token": run.lease_token, "lease_expires_at": run.lease_expires_at}, lease_token, unfenced
+            ):
                 return None
             if run.status in {"failed", "interrupted"} or (
                 run.status == "completed" and code != "artifact_incomplete"
             ):
                 return self._embedding_dict(run)
+            if run.status == "completed":
+                self._detach_failed_artifact(session, document, "embedding", run.id)
             run.identity_claimed = None
             run.status = "failed"
             run.error_code = code
@@ -4166,15 +4349,15 @@ class ScopedRepository(Repository):
             chunker_version,
         )
 
-    def complete_chunk_run(self, run_id, drafts, lease_token=None):
+    def complete_chunk_run(self, run_id, drafts, lease_token=None, *, unfenced=False):
         if self.get_chunk_row(run_id) is None:
             return None
-        return self._repository.complete_chunk_run(run_id, drafts, lease_token)
+        return self._repository.complete_chunk_run(run_id, drafts, lease_token, unfenced=unfenced)
 
-    def fail_chunk_run(self, run_id, code, message, lease_token=None):
+    def fail_chunk_run(self, run_id, code, message, lease_token=None, *, unfenced=False):
         if self.get_chunk_row(run_id) is None:
             return None
-        return self._repository.fail_chunk_run(run_id, code, message, lease_token)
+        return self._repository.fail_chunk_run(run_id, code, message, lease_token, unfenced=unfenced)
 
     def get_chunk_row(self, run_id):
         return self._repository.get_chunk_row(run_id, owner_user_id=self.owner_user_id)
@@ -4201,15 +4384,15 @@ class ScopedRepository(Repository):
             admission_owner_user_id=self.owner_user_id,
         )
 
-    def complete_embedding_run(self, run_id, values, input_hashes=None, effective_model=None, lease_token=None):
+    def complete_embedding_run(self, run_id, values, input_hashes=None, effective_model=None, lease_token=None, *, unfenced=False):
         if self.get_embedding_row(run_id) is None:
             return None
-        return self._repository.complete_embedding_run(run_id, values, input_hashes, effective_model, lease_token)
+        return self._repository.complete_embedding_run(run_id, values, input_hashes, effective_model, lease_token, unfenced=unfenced)
 
-    def fail_embedding_run(self, run_id, code, message, lease_token=None):
+    def fail_embedding_run(self, run_id, code, message, lease_token=None, *, unfenced=False):
         if self.get_embedding_row(run_id) is None:
             return None
-        return self._repository.fail_embedding_run(run_id, code, message, lease_token)
+        return self._repository.fail_embedding_run(run_id, code, message, lease_token, unfenced=unfenced)
 
     def get_embedding_row(self, run_id):
         return self._repository.get_embedding_row(run_id, owner_user_id=self.owner_user_id)

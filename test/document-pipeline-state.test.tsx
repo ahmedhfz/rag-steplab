@@ -206,6 +206,7 @@ function Probe() {
       <output data-testid="evaluation-run-id">{evaluationRun?.id ?? "none"}</output>
       <output data-testid="evaluation-case-count">{evaluationRun?.caseResults?.length ?? 0}</output>
       <output data-testid="artifact-count">{activeDocument?.chunkRuns.length ?? 0}</output>
+      <output data-testid="historical-chunks">{activeDocument?.chunkRuns.filter((run) => run.historicalLineage).map((run) => run.id).join(",") || "none"}</output>
       <output data-testid="persistence-error">{persistenceError?.code ?? "none"}</output>
       <output data-testid="viewed-parse-result">{viewedParseResult?.parseRunId ?? "none"}</output>
       <output data-testid="selected-parse-result">{selectedParseResult?.parseRunId ?? "none"}</output>
@@ -246,8 +247,8 @@ function setupSummaryFetch() {
     if (url.endsWith("/capabilities")) return respond(capabilities);
     if (url.endsWith("/documents")) return respond({ items: [persistedDocument(), { ...persistedDocument(), id: "document-new", fileName: "new.pdf" }] });
     if (url.endsWith("/pipelines")) return respond([]);
-    if (url.endsWith("/documents/document-old/summary")) return respond(old);
-    if (url.endsWith("/documents/document-new/summary")) return respond(next);
+    if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(old);
+    if (url.split("?")[0].endsWith("/documents/document-new/summary")) return respond(next);
     throw new Error(`unexpected request: ${url}`);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -263,8 +264,8 @@ function setupFetch({ newDocumentMode = "error" as "error" | "delayed" } = {}) {
     if (url.endsWith("/capabilities")) return respond(capabilities);
     if (url.endsWith("/documents")) return respond({ items: [persistedDocument(), { ...persistedDocument(), id: "document-new", fileName: "new.pdf" }] });
     if (url.endsWith("/pipelines")) return respond([]);
-    if (url.endsWith("/documents/document-old/summary")) return respond(detail);
-    if (url.endsWith("/documents/document-new/summary")) {
+    if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
+    if (url.split("?")[0].endsWith("/documents/document-new/summary")) {
       if (newDocumentMode === "delayed") return new Promise((resolve) => setTimeout(() => resolve(respond({ error: { code: "late_document", message: "Late document response" } }, 500)), 50));
       return respond({ error: { code: "document_unavailable", message: "The document could not be loaded." } }, 500);
     }
@@ -342,7 +343,7 @@ describe("Document pipeline committed state", () => {
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
       if (url.endsWith("/pipelines")) return respond([]);
-      if (url.endsWith("/documents/document-old/summary")) return respond({
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond({
         ...summaryDocument("document-old", "lesson.pdf"),
         evaluationRuns: [{ id: "evaluation-1", status: "invalid" }],
       });
@@ -366,7 +367,7 @@ describe("Document pipeline committed state", () => {
       const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
-      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
       if (url.endsWith("/documents/document-old/pipelines")) return respond([pipeline]);
       if (url.endsWith("/parse-runs/parse-old")) return respond(parseResult("document-old", "parse-old", "lesson.pdf", "Historical parse"));
       throw new Error(`unexpected request: ${url}`);
@@ -392,7 +393,7 @@ describe("Document pipeline committed state", () => {
       const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
-      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
       if (url.endsWith("/documents/document-old/pipelines")) return respond([pipeline]);
       if (url.endsWith("/chunk-runs/chunk-alt")) return respond(chunkRun("document-old", "document-old-parse", "chunk-alt"));
       throw new Error(`unexpected request: ${url}`);
@@ -420,7 +421,7 @@ describe("Document pipeline committed state", () => {
       const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
-      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
       if (url.endsWith("/documents/document-old/pipelines")) return respond([pipeline]);
       if (url.endsWith("/document-pipelines/pipeline-1") && init?.method === "PATCH") {
         patchBody = JSON.parse(String(init.body)) as Record<string, unknown>;
@@ -450,7 +451,7 @@ describe("Document pipeline committed state", () => {
       const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
-      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
       if (url.endsWith("/documents/document-old/pipelines")) return respond([pipeline]);
       throw new Error(`unexpected request: ${url}`);
     });
@@ -488,7 +489,7 @@ describe("Document pipeline committed state", () => {
       const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
-      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
       if (url.endsWith("/documents/document-old/pipelines")) return respond([]);
       if (url.endsWith("/evaluation/datasets/dataset-1")) return respond({ id: "dataset-1", documentId: "document-old", parseRunId: "document-old-parse", name: "Smoke", version: 1, cases: [{ question: "What is RAG?", relevantElementIds: ["element-1"], referenceAnswer: null }], createdAt: null });
       if (url.endsWith("/evaluation/runs?datasetId=dataset-1")) return respond({ items: [{ ...detail.evaluationRuns[0], results: { hitAtK: 1, recallAtK: 1, precisionAtK: 1, mrr: 1, citationValidity: 1, groundedness: 1, caseCount: 1 } }] });
@@ -520,7 +521,7 @@ describe("Document pipeline committed state", () => {
       const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(status === 204 ? null : JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
-      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
       if (url.endsWith("/documents/document-old/pipelines")) {
         pipelineListCalls += 1;
         return respond([{ ...pipeline, revision: pipelineListCalls === 1 ? 1 : 2 }]);
@@ -558,7 +559,7 @@ describe("Document pipeline committed state", () => {
       const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
-      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
       if (url.endsWith("/documents/document-old/pipelines")) {
         pipelineListCalls += 1;
         return pipelineListCalls === 1 ? respond([pipelineOne, pipelineTwo]) : conflictList;
@@ -599,7 +600,7 @@ describe("Document pipeline committed state", () => {
       const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
-      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
       if (url.endsWith("/documents/document-old/pipelines")) return respond([pipeline]);
       if ((url.endsWith("/chunk-runs/chunk-alt") || url.endsWith("/embedding-runs/embedding-alt"))) return new Promise<Response>(() => undefined);
       if (url.endsWith("/document-pipelines/pipeline-1") && init?.method === "PATCH") {
@@ -639,7 +640,7 @@ describe("Document pipeline committed state", () => {
       const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
-      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
       if (url.endsWith("/documents/document-old/pipelines")) {
         listCalls += 1;
         return respond([pipeline]);
@@ -674,7 +675,7 @@ describe("Document pipeline committed state", () => {
       const respond = (payload: unknown) => Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
-      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
       if (url.endsWith("/documents/document-old/pipelines")) {
         listCalls += 1;
         return respond([pipelineOne, pipelineTwo]);
@@ -711,7 +712,7 @@ describe("Document pipeline committed state", () => {
     fireEvent.click(screen.getByRole("button", { name: "Switch to new" }));
     expect(screen.getByTestId("active-document-id")).toHaveTextContent("document-new");
     await waitFor(() => expect(screen.getByTestId("active-document")).toHaveTextContent("document-new"));
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents/document-new/summary"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).split("?")[0].endsWith("/documents/document-new/summary"))).toHaveLength(1);
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/documents/document-new"))).toBe(false);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/capabilities"))).toHaveLength(1);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents"))).toHaveLength(1);
@@ -740,8 +741,8 @@ describe("Document pipeline committed state", () => {
       const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument(), { ...persistedDocument(), id: "document-new", fileName: "new.pdf" }] });
-      if (url.endsWith("/documents/document-old/summary")) return respond(oldDetail);
-      if (url.endsWith("/documents/document-new/summary")) return respond(newDetail);
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(oldDetail);
+      if (url.split("?")[0].endsWith("/documents/document-new/summary")) return respond(newDetail);
       if (url.endsWith("/documents/document-old/pipelines")) return respond([oldPipeline]);
       if (url.endsWith("/documents/document-new/pipelines")) return respond([newPipeline]);
       throw new Error(`unexpected request: ${url}`);
@@ -775,7 +776,7 @@ describe("Document pipeline committed state", () => {
         started.push("pipelines");
         return deferredPipelines;
       }
-      if (url.endsWith("/documents/document-old/summary")) {
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) {
         started.push("summary");
         return deferredSummary;
       }
@@ -790,7 +791,7 @@ describe("Document pipeline committed state", () => {
     await waitFor(() => expect(screen.getByTestId("active-document")).toHaveTextContent("document-old"));
   });
 
-  it("reuses a fresh summary for a valid pipeline switch", async () => {
+  it("switches pipelines from a fresh summary and refreshes lineage flags for the new pipeline", async () => {
     localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
     localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
     const detail = summaryDocument("document-old", "lesson.pdf");
@@ -810,7 +811,7 @@ describe("Document pipeline committed state", () => {
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
       if (url.endsWith("/documents/document-old/pipelines")) return respond(pipelines);
-      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
       throw new Error(`unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -818,8 +819,13 @@ describe("Document pipeline committed state", () => {
 
     await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
     fireEvent.click(screen.getByRole("button", { name: "Select pipeline two" }));
-    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2"));
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents/document-old/summary"))).toHaveLength(1);
+    // The switch itself is served from the cached summary ...
+    expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2");
+    // ... and historicalLineage is then refetched relative to the new pipeline.
+    await waitFor(() => expect(fetchMock.mock.calls.map(([url]) => String(url))).toContain(
+      "http://127.0.0.1:8000/documents/document-old/summary?pipelineId=pipeline-2",
+    ));
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).split("?")[0].endsWith("/documents/document-old/summary"))).toHaveLength(2);
   });
 
   it("creates a new pipeline with empty lineage and resets the selected journey state", async () => {
@@ -842,7 +848,7 @@ describe("Document pipeline committed state", () => {
         return respond(blankPipeline);
       }
       if (url.endsWith("/documents/document-old/pipelines")) return respond([currentPipeline]);
-      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
       throw new Error(`unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -864,7 +870,73 @@ describe("Document pipeline committed state", () => {
     });
   });
 
-  it("does not extend summary freshness on cached switches and refetches after 60 seconds", async () => {
+  it("refreshes only lineage flags after a cached pipeline switch, keeping an inspection started meanwhile", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
+    const detail = selectableLineageSummary();
+    const pipelines = [namedPipeline("pipeline-1"), namedPipeline("pipeline-2", { chunkRunId: "chunk-alt", embeddingRunId: "embedding-alt" })];
+    let resolveRefresh!: (response: Response) => void;
+    const refresh = new Promise<Response>((resolve) => { resolveRefresh = resolve; });
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const respond = (payload: unknown) => Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/pipelines")) return respond(pipelines);
+      if (url.endsWith("/documents/document-old/summary?pipelineId=pipeline-2")) return refresh;
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.endsWith("/parse-runs/parse-old")) return respond(parseResult("document-old", "parse-old", "lesson.pdf", "Historical parse"));
+      if (url.includes("/chunk-runs/") || url.includes("/embedding-runs/")) return new Promise<Response>(() => undefined);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
+    fireEvent.click(screen.getByRole("button", { name: "Select pipeline two" }));
+    expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2");
+    fireEvent.click(screen.getByRole("button", { name: "Select historical parse" }));
+    await waitFor(() => expect(screen.getByTestId("inspected-parse")).toHaveTextContent("parse-old"));
+
+    resolveRefresh(new Response(JSON.stringify({
+      ...detail,
+      chunkRuns: [
+        { ...detail.chunkRuns[0], historicalLineage: true },
+        { ...detail.chunkRuns[1], historicalLineage: false },
+      ],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    await waitFor(() => expect(screen.getByTestId("historical-chunks")).toHaveTextContent("chunk-new"));
+    expect(screen.getByTestId("inspected-parse")).toHaveTextContent("parse-old");
+    expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2");
+  });
+
+  it("derives scratch historical flags from the scratch selection, not the default pipeline", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    // A remembered scratch selection that differs from the document defaults.
+    localStorage.setItem("rag-steplab-lineage-selections-v1:test-user", JSON.stringify({
+      "document-old": { selectedParseRunId: "document-old-parse", selectedChunkRunId: "chunk-alt", selectedEmbeddingRunId: null },
+    }));
+    // Server flags are relative to the Default Pipeline/defaults (chunk-alt historical).
+    const detail = selectableLineageSummary();
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const respond = (payload: unknown) => Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/pipelines")) return respond([]);
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.includes("/chunk-runs/") || url.includes("/embedding-runs/")) return new Promise<Response>(() => undefined);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-alt"));
+    expect(screen.getByTestId("active-pipeline")).toHaveTextContent("none");
+    expect(screen.getByTestId("historical-chunks")).toHaveTextContent("chunk-new");
+    expect(screen.getByTestId("historical-chunks")).not.toHaveTextContent("chunk-alt");
+  });
+
+  it("refetches a stale summary for the selected pipeline after 60 seconds", async () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(0);
     localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
     localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
@@ -879,21 +951,26 @@ describe("Document pipeline committed state", () => {
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
       if (url.endsWith("/documents/document-old/pipelines")) return respond(pipelines);
-      if (url.endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
       throw new Error(`unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
     renderProbe();
 
     await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
+    const summaryCalls = () => fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.split("?")[0].endsWith("/documents/document-old/summary"));
     now.mockReturnValue(50_000);
     fireEvent.click(screen.getByRole("button", { name: "Select pipeline two" }));
     await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2"));
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents/document-old/summary"))).toHaveLength(1);
-    now.mockReturnValue(61_000);
+    await waitFor(() => expect(summaryCalls()).toHaveLength(2));
+    now.mockReturnValue(120_000);
     fireEvent.click(screen.getByRole("button", { name: "Select pipeline one" }));
     await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents/document-old/summary"))).toHaveLength(2);
+    // A stale summary is refetched (awaited) for the newly selected pipeline only.
+    expect(summaryCalls()).toHaveLength(3);
+    expect(summaryCalls()[2]).toBe("http://127.0.0.1:8000/documents/document-old/summary?pipelineId=pipeline-1");
   });
 
   it("keeps the last pipeline in a rapid A to B to A selection race", async () => {
@@ -909,7 +986,7 @@ describe("Document pipeline committed state", () => {
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
       if (url.endsWith("/documents/document-old/pipelines")) return respond(pipelines);
-      if (url.endsWith("/documents/document-old/summary")) {
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) {
         summaryCalls += 1;
         if (summaryCalls === 1) return respond(detail);
         return new Promise<Response>((resolve) => { delayedSummaries.push(resolve); });
@@ -942,7 +1019,7 @@ describe("Document pipeline committed state", () => {
     expect(screen.getByTestId("active-document-id")).toHaveTextContent("document-old");
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/capabilities"))).toHaveLength(1);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents"))).toHaveLength(1);
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/documents/document-old/summary"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).split("?")[0].endsWith("/documents/document-old/summary"))).toHaveLength(1);
   });
 
   it("preserves the committed document when a switch request fails", async () => {
@@ -999,7 +1076,7 @@ describe("Document pipeline lineage regressions", () => {
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.endsWith("/capabilities")) return Promise.resolve(jsonResponse(capabilities));
       if (url.endsWith("/documents")) return Promise.resolve(jsonResponse({ items: [persistedDocument()] }));
-      if (url.endsWith("/documents/document-old/summary")) return Promise.resolve(jsonResponse(detail));
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return Promise.resolve(jsonResponse(detail));
       if (url.endsWith("/documents/document-old/pipelines")) return Promise.resolve(jsonResponse([pipelineOne, pipelineTwo]));
       if (url.endsWith("/documents/document-old/parse") && init?.method === "POST") {
         return new Promise<Response>((resolve) => { finishReparse = resolve; });
@@ -1040,7 +1117,7 @@ describe("Document pipeline lineage regressions", () => {
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.endsWith("/capabilities")) return Promise.resolve(jsonResponse(capabilities));
       if (url.endsWith("/documents")) return Promise.resolve(jsonResponse({ items: [persistedDocument()] }));
-      if (url.endsWith("/documents/document-old/summary")) return Promise.resolve(jsonResponse(detail));
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return Promise.resolve(jsonResponse(detail));
       if (url.endsWith("/documents/document-old/pipelines")) return Promise.resolve(jsonResponse([pipelineOne, pipelineTwo]));
       if (url.endsWith("/documents/document-old/parse") && init?.method === "POST") {
         return Promise.resolve(jsonResponse({ id: "parse-reparsed", documentId: "document-old", status: "queued", progress: 0 }, 202));
@@ -1093,7 +1170,7 @@ describe("Document pipeline lineage regressions", () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (url.endsWith("/capabilities")) return Promise.resolve(jsonResponse(capabilities));
       if (url.endsWith("/documents")) return Promise.resolve(jsonResponse({ items: [persistedDocument()] }));
-      if (url.endsWith("/documents/document-old/summary")) return Promise.resolve(jsonResponse(detail));
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return Promise.resolve(jsonResponse(detail));
       if (url.endsWith("/documents/document-old/pipelines")) return Promise.resolve(jsonResponse([namedPipeline("pipeline-1")]));
       if (url.endsWith("/parse-runs/document-old-parse")) return Promise.resolve(jsonResponse(parseResult("document-old", "document-old-parse", "lesson.pdf", "Current parse")));
       if (url.endsWith("/parse-runs/parse-old")) return Promise.resolve(jsonResponse(parseResult("document-old", "parse-old", "lesson.pdf", "Historical parse")));
@@ -1122,7 +1199,7 @@ describe("Document pipeline lineage regressions", () => {
       if (url.endsWith("/capabilities")) return Promise.resolve(jsonResponse(capabilities));
       if (url.endsWith("/documents")) return Promise.resolve(jsonResponse({ items: [persistedDocument()] }));
       if (url.endsWith("/documents/document-old/pipelines")) return Promise.resolve(jsonResponse([]));
-      if (url.endsWith("/documents/document-old/summary")) return new Promise<Response>((resolve) => { finishSummary = resolve; });
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return new Promise<Response>((resolve) => { finishSummary = resolve; });
       throw new Error(`unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -1141,7 +1218,7 @@ describe("Document pipeline lineage regressions", () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (url.endsWith("/capabilities")) return Promise.resolve(jsonResponse(capabilities));
       if (url.endsWith("/documents")) return Promise.resolve(jsonResponse({ items: [persistedDocument()] }));
-      if (url.endsWith("/documents/document-old/summary")) return Promise.resolve(jsonResponse(selectableLineageSummary()));
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return Promise.resolve(jsonResponse(selectableLineageSummary()));
       if (url.endsWith("/documents/document-old/pipelines")) return Promise.resolve(jsonResponse([namedPipeline("pipeline-1")]));
       throw new Error(`unexpected request: ${url}`);
     });
@@ -1161,8 +1238,8 @@ describe("Document pipeline lineage regressions", () => {
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.endsWith("/capabilities")) return Promise.resolve(jsonResponse(capabilities));
       if (url.endsWith("/documents")) return Promise.resolve(jsonResponse({ items: [persistedDocument(), { ...persistedDocument(), id: "document-new", fileName: "new.pdf" }] }));
-      if (url.endsWith("/documents/document-old/summary")) return Promise.resolve(jsonResponse(selectableLineageSummary()));
-      if (url.endsWith("/documents/document-new/summary")) return Promise.resolve(jsonResponse(summaryDocument("document-new", "new.pdf")));
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return Promise.resolve(jsonResponse(selectableLineageSummary()));
+      if (url.split("?")[0].endsWith("/documents/document-new/summary")) return Promise.resolve(jsonResponse(summaryDocument("document-new", "new.pdf")));
       if (url.endsWith("/documents/document-new/pipelines")) return Promise.resolve(jsonResponse([newPipeline]));
       if (url.endsWith("/documents/document-old/pipelines")) {
         oldListCalls += 1;
@@ -1215,7 +1292,7 @@ describe("Accepted (202) embedding runs", () => {
       const respond = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
-      if (url.endsWith("/documents/document-old/summary")) {
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) {
         const summary = selectableLineageSummary();
         return respond(state.completed
           ? { ...summary, embeddingRuns: [...summary.embeddingRuns, { id: "embedding-accepted", status: "completed", isCompatible: true, upstream: { chunkRunId: "chunk-new" } }] }

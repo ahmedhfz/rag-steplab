@@ -30,6 +30,23 @@ Parse tamamlanmadan chunking, embedding veya downstream deneyler başlatılamaz.
 Bu nedenle `queued`/`running`/`failed` run için sahte progress, score veya parse
 özeti üretmek yasaktır.
 
+Experiment ve evaluation run'ları da aynı public lifecycle'ı kullanır; iç
+`interrupted` durumu `failed` olarak döner ve run'ın kendi hata kodu
+(`worker_lease_expired` vb.) korunur. 404/405/422 dahil tüm hatalar
+`{"error": {"code", "message"}}` zarfındadır (422 için `request_invalid`).
+
+## Kanonik lineage
+
+"Kullanımda" (in use) lineage tek bir yerde tanımlıdır (`app/lineage.py`):
+kaydedilmiş document pipeline kanoniktir; `documents.active_*` yalnız pipeline'ın
+henüz seçmediği seviyeler için, çözülmüş parent'ın tamamlanmış çocuğuysa varsayılan
+olarak kullanılır. `GET /documents/{id}/summary?pipelineId=` (verilmezse Default
+Pipeline) `activeLineage`, `pipelines` ve buna göre hesaplanan `historicalLineage`
+döndürür. Experiment, evaluation ve dataset varsayılanları aynı çözümleyiciyi
+kullanır; evaluation lineage'ı kuyruğa alınırken config ve fingerprint'e sabitlenir.
+Varsayılan pointer'lar doküman satırı kilitlenerek yalnız kendi parent'ı boyunca
+ilerler; şema aynı-doküman zincirini composite FK'larla zorlar.
+
 ## Parse ve normalizasyon
 
 Production parsing tam Docling `DocumentConverter` ve semantic normalization
@@ -212,6 +229,18 @@ kullanıcısı silinse de object cleanup tamamlanana kadar korunur.
 
 ```powershell
 .venv\Scripts\python.exe -m pytest
+```
+
+`SqlAlchemyRepository` davranışı (lease/fencing, `ON CONFLICT`, advisory lock,
+cascade, owner isolation) yalnız migration'larla kurulmuş yerel Supabase DB'sine
+karşı `-m postgres` ile doğrulanır; testler runtime rolü `rag_steplab_app` ile
+bağlanır ve her testte `rag_lab`'ı boşaltır, bu yüzden yalnız yerel DB kabul edilir:
+
+```powershell
+supabase db start; supabase db reset --local --no-seed
+$env:RAG_TEST_DATABASE_URL = "postgresql://postgres@127.0.0.1:54322/postgres?sslmode=disable"
+$env:PGPASSWORD = "postgres"
+.venv\Scripts\python.exe -m pytest -m postgres
 ```
 
 CI ayrıca `python -m ruff check .` ve `python -m mypy` çalıştırır (backend dizininde;

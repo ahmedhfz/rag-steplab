@@ -1,6 +1,6 @@
 begin;
 
-select plan(56);
+select plan(60);
 
 select ok(to_regnamespace('rag_lab') is not null, 'rag_lab schema exists');
 
@@ -421,6 +421,35 @@ select ok(
       and pg_get_constraintdef(oid) like '%queued%'
   ),
   'evaluation runs allow durable queued lifecycle state'
+);
+
+select ok(
+  (select count(*) from pg_constraint
+    where conrelid = 'rag_lab.documents'::regclass
+      and conname in ('fk_documents_active_parse_lineage', 'fk_documents_active_chunk_lineage', 'fk_documents_active_embedding_lineage')
+      and contype = 'f') = 3,
+  'document default pointers form one same-document lineage chain'
+);
+
+select ok(
+  exists (
+    select 1 from pg_constraint
+    where conrelid = 'rag_lab.documents'::regclass
+      and conname = 'fk_documents_active_chunk_lineage'
+      and pg_get_constraintdef(oid) like '%SET NULL (active_chunk_run_id)%'
+  ),
+  'deleting a default artifact clears only its pointer column'
+);
+
+select ok(
+  (select count(*) from pg_constraint
+    where conname in ('fk_chunk_runs_document_parse', 'fk_embedding_runs_document_chunk') and contype = 'f') = 2,
+  'child artifacts must belong to their parent document'
+);
+
+select ok(
+  exists (select 1 from pg_constraint where conrelid = 'rag_lab.documents'::regclass and conname = 'ck_documents_active_lineage_shape'),
+  'a default descendant requires its default parent'
 );
 
 select * from finish();

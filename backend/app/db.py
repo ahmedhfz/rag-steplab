@@ -30,7 +30,9 @@ def build_engine(database_url: str | None = None):
     if not url:
         return None
     connect_args: dict[str, object] = {}
-    if url.startswith("postgresql+"):
+    if url.startswith("postgresql+") and "sslmode=" not in url:
+        # Hosted default; an explicit sslmode in the URL (e.g. the local
+        # Supabase test database) is respected.
         connect_args["sslmode"] = "require"
     return create_engine(
         url,

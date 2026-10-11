@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -292,13 +292,14 @@ class ExperimentResponse(RunSummary):
 
 class EvaluationCase(CamelCaseModel):
     question: str = Field(min_length=1, max_length=4000)
-    relevant_element_ids: list[str] = Field(default_factory=list)
-    reference_answer: str | None = None
+    relevant_element_ids: list[Annotated[str, Field(max_length=256)]] = Field(default_factory=list, max_length=500)
+    reference_answer: str | None = Field(default=None, max_length=20000)
     expected_outcome: EvaluationOutcome = "answer"
 
 
 class EvaluationDatasetRequest(CamelCaseModel):
     document_id: str
+    pipeline_id: str | None = None
     parse_run_id: str | None = None
     name: str = Field(min_length=1, max_length=200)
     cases: list[EvaluationCase] = Field(min_length=1, max_length=MAX_BENCHMARK_EVALUATION_CASES)

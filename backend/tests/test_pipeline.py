@@ -646,7 +646,7 @@ def test_artifact_claim_is_fail_closed_for_running_and_failed_rows(monkeypatch):
     assert in_progress.status_code == 409
     assert in_progress.json()["error"]["code"] == "artifact_in_progress"
 
-    repository.fail_chunk_run(claim["id"], "chunk_run_failed", "simulated")
+    repository.fail_chunk_run(claim["id"], "chunk_run_failed", "simulated", claim["lease_token"])
     retry = client.post(
         f"/documents/{document_id}/chunks",
         json={"parseRunId": parse_run_id, "strategy": "fixed_token", "config": config},
@@ -681,7 +681,7 @@ def test_chunk_claim_race_has_one_owner_and_completed_retry_reuses_it(monkeypatc
 
     owner_row = next(row for row, owner in claims if owner)
     parse = repository.get_parse_row(parse_run_id)
-    repository.complete_chunk_run(owner_row["id"], chunk_structured(parse["structured"], "fixed_token", config))
+    repository.complete_chunk_run(owner_row["id"], chunk_structured(parse["structured"], "fixed_token", config), owner_row["lease_token"])
     reused, owner = repository.claim_chunk_run(
         document_id,
         parse_run_id,

@@ -106,7 +106,7 @@ describe("RetrievalScreen", () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
       if (url.endsWith("/capabilities")) return json(capabilities);
       if (url.endsWith("/documents")) return json({ items: [{ ...summary(), parseRuns: undefined }] });
-      if (url.endsWith("/documents/document-1/summary")) return json(summary());
+      if (url.split("?")[0].endsWith("/documents/document-1/summary")) return json(summary());
       if (url.endsWith("/documents/document-1/pipelines")) return json([]);
       if (url.includes("/parse-runs/")) return new Promise<Response>(() => undefined);
       throw new Error(`unexpected request: ${url}`);

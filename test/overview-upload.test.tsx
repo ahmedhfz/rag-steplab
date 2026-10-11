@@ -52,7 +52,7 @@ describe("Overview document ownership", () => {
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url === "/samples/rag-steplab-sample-city-bikes.pdf") return Promise.resolve(new Response("%PDF-1.4 sample", { status: 200, headers: { "Content-Type": "application/pdf" } }));
       if (url.endsWith("/documents") && init?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ document: sample, reusedDocument: false }), { status: 201 }));
-      const payload = url.endsWith("/capabilities") ? capabilities : url.endsWith("/documents/sample-1/summary") ? { ...sample, parseRuns: [], chunkRuns: [], embeddingRuns: [], experiments: [], evaluationDatasets: [] } : { items: [] };
+      const payload = url.endsWith("/capabilities") ? capabilities : url.split("?")[0].endsWith("/documents/sample-1/summary") ? { ...sample, parseRuns: [], chunkRuns: [], embeddingRuns: [], experiments: [], evaluationDatasets: [] } : { items: [] };
       return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -72,7 +72,7 @@ describe("Overview document ownership", () => {
       if (url.endsWith("/documents") && init?.method === "POST") {
         payload = { document: documentItem, reusedDocument: false };
         status = 201;
-      } else if (url.endsWith("/documents/document-1/summary")) {
+      } else if (url.split("?")[0].endsWith("/documents/document-1/summary")) {
         payload = { ...documentItem, parseRuns: [], chunkRuns: [], embeddingRuns: [], experiments: [], evaluationDatasets: [] };
       }
       return Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
@@ -102,7 +102,7 @@ describe("Overview document ownership", () => {
         }
         return Promise.resolve(new Response(JSON.stringify({ document: documentItem, reusedDocument: false }), { status: 201, headers: { "Content-Type": "application/json" } }));
       }
-      const payload = url.endsWith("/capabilities") ? capabilities : url.endsWith("/documents/document-2/summary") ? { ...documentItem, parseRuns: [], chunkRuns: [], embeddingRuns: [], experiments: [], evaluationDatasets: [] } : { items: [] };
+      const payload = url.endsWith("/capabilities") ? capabilities : url.split("?")[0].endsWith("/documents/document-2/summary") ? { ...documentItem, parseRuns: [], chunkRuns: [], embeddingRuns: [], experiments: [], evaluationDatasets: [] } : { items: [] };
       return Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -124,7 +124,7 @@ describe("Overview document ownership", () => {
       if (url.endsWith("/documents") && init?.method === "POST") {
         return Promise.resolve(new Response(JSON.stringify({ document: { id: "document-drop", fileName: "drop.pdf", mediaType: "application/pdf", sizeBytes: 8, pageCount: 0, sha256: "drop", activeParseRunId: null, activeChunkRunId: null, activeEmbeddingRunId: null, createdAt: null, updatedAt: null }, reusedDocument: false }), { status: 201, headers: { "Content-Type": "application/json" } }));
       }
-      const payload = url.endsWith("/capabilities") ? capabilities : url.endsWith("/documents/document-drop/summary") ? { id: "document-drop", fileName: "drop.pdf", mediaType: "application/pdf", sizeBytes: 8, pageCount: 0, activeParseRunId: null, activeChunkRunId: null, activeEmbeddingRunId: null, parseRuns: [], chunkRuns: [], embeddingRuns: [], experiments: [], evaluationDatasets: [] } : { items: [] };
+      const payload = url.endsWith("/capabilities") ? capabilities : url.split("?")[0].endsWith("/documents/document-drop/summary") ? { id: "document-drop", fileName: "drop.pdf", mediaType: "application/pdf", sizeBytes: 8, pageCount: 0, activeParseRunId: null, activeChunkRunId: null, activeEmbeddingRunId: null, parseRuns: [], chunkRuns: [], embeddingRuns: [], experiments: [], evaluationDatasets: [] } : { items: [] };
       return Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -172,8 +172,8 @@ describe("Overview document ownership", () => {
       if (url.endsWith("/documents/document-active") && init?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
       if (url.endsWith("/capabilities")) return Promise.resolve(new Response(JSON.stringify(capabilities), { status: 200 }));
       if (url.endsWith("/documents") && !init?.method) return Promise.resolve(new Response(JSON.stringify({ items: [firstDocument, nextDocument] }), { status: 200 }));
-      if (url.endsWith("/documents/document-active/summary")) return Promise.resolve(new Response(JSON.stringify(summary(firstDocument)), { status: 200 }));
-      if (url.endsWith("/documents/document-next/summary")) return Promise.resolve(new Response(JSON.stringify(summary(nextDocument)), { status: 200 }));
+      if (url.split("?")[0].endsWith("/documents/document-active/summary")) return Promise.resolve(new Response(JSON.stringify(summary(firstDocument)), { status: 200 }));
+      if (url.split("?")[0].endsWith("/documents/document-next/summary")) return Promise.resolve(new Response(JSON.stringify(summary(nextDocument)), { status: 200 }));
       if (url.endsWith("/documents/document-active/pipelines") || url.endsWith("/documents/document-next/pipelines")) return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
       return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
     });
@@ -182,12 +182,12 @@ describe("Overview document ownership", () => {
 
     await waitFor(() => expect(screen.getAllByRole("button", { name: "Select document: active.pdf" }).length).toBeGreaterThan(0));
     await user.click(screen.getAllByRole("button", { name: "Select document: active.pdf" })[0]);
-    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/documents/document-active/summary"))).toBe(true));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).split("?")[0].endsWith("/documents/document-active/summary"))).toBe(true));
     await user.click(screen.getAllByRole("button", { name: "Delete: active.pdf" })[0]);
     await user.click(within(screen.getByTestId("delete-document-dialog")).getByRole("button", { name: "Delete" }));
 
     await waitFor(() => expect(screen.getAllByRole("button", { name: "Select document: next.pdf" }).length).toBeGreaterThan(0));
-    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/documents/document-next/summary"))).toBe(true));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).split("?")[0].endsWith("/documents/document-next/summary"))).toBe(true));
     expect(screen.queryByText("active.pdf", { exact: true })).not.toBeInTheDocument();
   });
 });
