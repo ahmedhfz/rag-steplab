@@ -763,9 +763,9 @@ google-auth==2.61.0 \
     --hash=sha256:37f0815967322e8c32b12bf422531e8b637cafdaae0acbb9141117cfe6a96f23 \
     --hash=sha256:ca60266a37475ae68b63bac007272f46094b3d571abe92aded329b6cfb568025
     # via google-genai
-google-genai==1.75.0 \
-    --hash=sha256:56bac3991b311c93f980c0a2abcd287b672146905df1fbd71c92ed633d5a07cf \
-    --hash=sha256:8dc4c096e7d6288c3087f6893f582fe52468932464781edb8193bd92b9fefb2c
+google-genai==2.29.0 \
+    --hash=sha256:124d3eef9ff6b9e4ea548f95ff5b7721683e7990c0a936b006d9e2ab61ea897d \
+    --hash=sha256:7adda55cb6746fb46d38ad3202c3372840b96eede964b5fb3df1469cd4998570
     # via -r requirements.in
 grpclib==0.4.9 \
     --hash=sha256:7762ec1c8ed94dfad597475152dd35cbd11aecaaca2f243e29702435ca24cf0e \
