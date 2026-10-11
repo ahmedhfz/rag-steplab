@@ -15,9 +15,9 @@ Source: [Jakubantalik/transitions.dev](https://github.com/Jakubantalik/transitio
 | 10-success-check | Completed pipeline indicators |
 | 12-error-state-shake | Invalid upload and password confirmation |
 | 13-input-clear-dissolve | Playground question clear mirror/glow |
-| 14-skeleton-reveal | PDF preview, driven by the iframe load event |
+| 14-skeleton-reveal | PDF preview, driven by the iframe load event; `components/ui/skeleton.tsx` loading rows (in-flow, repeating pulse via `.steplab-skeleton`) |
 | 16-tabs-sliding | Language/theme, parsed-view, chunk strategy and evaluation controls |
-| 21-accordion | Native details throughout document/run/config/history panels |
+| 21-accordion | Native details through `components/ui/disclosure.tsx` (`Disclosure`, `TechnicalDetails`, `HowItWorks`) |
 | 25-checkbox-check | Run/case comparison controls |
 | 27-toggle | Learning hints switch |
 | 28-thinking-states | Parse, embedding and experiment processing labels |

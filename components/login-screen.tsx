@@ -17,7 +17,7 @@ import type { AppLocale } from "@/lib/copy";
 
 function GoogleMark() {
   return (
-    <svg aria-hidden="true" className="size-[17px]" viewBox="0 0 24 24">
+    <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24">
       <path d="M21.35 12.23c0-.73-.06-1.43-.19-2.1H12v3.98h5.23a4.48 4.48 0 0 1-1.94 2.94v2.45h3.14c1.84-1.69 2.92-4.18 2.92-7.27Z" fill="#4285F4" />
       <path d="M12 21.6c2.63 0 4.83-.87 6.43-2.36l-3.14-2.45c-.87.58-1.98.92-3.29.92-2.53 0-4.68-1.71-5.45-4.01H3.3v2.53A9.71 9.71 0 0 0 12 21.6Z" fill="#34A853" />
       <path d="M6.55 13.7a5.84 5.84 0 0 1 0-3.4V7.77H3.3a9.71 9.71 0 0 0 0 8.46l3.25-2.53Z" fill="#FBBC05" />
@@ -160,48 +160,48 @@ export function LoginScreen() {
   return (
     <AuthShell>
       <section aria-label={labels.form} className="w-full max-w-[360px]">
-        <h1 className="text-[24px] font-semibold leading-[29px] tracking-[-0.48px] text-foreground">{title}<span className="sr-only">{titleAccessible}</span></h1>
-        <p className="mt-1.5 text-[13px] leading-5 text-muted-foreground">{subtitle}</p>
-        {mode !== "forgot" ? <p className="mt-3 text-[13px] leading-5 text-muted-foreground md:sr-only">{preferences.locale === "tr" ? "PDF'den cevaba: parse, chunk, retrieval ve kaynakları adım adım inceleyin." : "From PDF to answer: inspect parsing, chunks, retrieval, and sources step by step."}</p> : null}
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}<span className="sr-only">{titleAccessible}</span></h1>
+        <p className="mt-1.5 text-sm text-muted-foreground">{subtitle}</p>
+        {mode !== "forgot" ? <p className="mt-3 text-sm text-muted-foreground md:sr-only">{preferences.locale === "tr" ? "PDF'den cevaba: parse, chunk, retrieval ve kaynakları adım adım inceleyin." : "From PDF to answer: inspect parsing, chunks, retrieval, and sources step by step."}</p> : null}
 
         <TransitionForm aria-describedby="login-status" className="mt-7" onSubmit={submit}>
           <div className="space-y-2">
-            <label className="flex items-center justify-between text-[13px] font-medium leading-[19px] text-foreground" htmlFor="login-email">
+            <label className="flex items-center justify-between text-sm font-medium text-foreground" htmlFor="login-email">
               <span>{labels.email}</span>
             </label>
-            <Input autoComplete="email" className="h-[44px] rounded-[10px] border-[1.5px] border-input bg-card px-3 text-[13px] shadow-none placeholder:text-subtle-foreground focus-visible:border-brand focus-visible:ring-ring/15" id="login-email" onChange={(event) => setEmail(event.target.value)} placeholder={mode === "signup" || mode === "forgot" ? labels.emailPlaceholderSignup : labels.emailPlaceholder} required type="email" value={email} />
+            <Input autoComplete="email" className="h-10" id="login-email" onChange={(event) => setEmail(event.target.value)} placeholder={mode === "signup" || mode === "forgot" ? labels.emailPlaceholderSignup : labels.emailPlaceholder} required type="email" value={email} />
           </div>
 
           {mode !== "forgot" ? <div className="mt-4 space-y-2">
-            <div className="flex items-center justify-between text-[13px] font-medium leading-[19px] text-foreground"><label htmlFor="login-password">{labels.password}</label>{mode === "signin" ? <button className="font-medium text-brand outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/25" onClick={() => setAuthMode("forgot")} type="button">{labels.forgot}</button> : null}</div>
+            <div className="flex items-center justify-between text-sm font-medium text-foreground"><label htmlFor="login-password">{labels.password}</label>{mode === "signin" ? <button className="font-medium text-brand hover:underline" onClick={() => setAuthMode("forgot")} type="button">{labels.forgot}</button> : null}</div>
             <div className="relative">
-              <Input autoComplete={mode === "signup" ? "new-password" : "current-password"} className="h-[44px] rounded-[10px] border-[1.5px] border-input bg-card px-3 pr-10 text-[13px] shadow-none placeholder:text-subtle-foreground focus-visible:border-brand focus-visible:ring-ring/15" id="login-password" minLength={mode === "signup" ? 10 : undefined} onChange={(event) => setPassword(event.target.value)} placeholder={labels.passwordPlaceholder} required type={showPassword ? "text" : "password"} value={password} />
-              <button aria-label={showPassword ? labels.hidePassword : labels.showPassword} className="absolute right-2.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded text-subtle-foreground outline-none transition-colors hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/25" onClick={() => setShowPassword((current) => !current)} type="button"><IconSwap active={showPassword} first={<AppIcon name="eye" className="size-4" />} second={<AppIcon name="eyeOff" className="size-4" />} /></button>
+              <Input autoComplete={mode === "signup" ? "new-password" : "current-password"} className="h-10 pr-10" id="login-password" minLength={mode === "signup" ? 10 : undefined} onChange={(event) => setPassword(event.target.value)} placeholder={labels.passwordPlaceholder} required type={showPassword ? "text" : "password"} value={password} />
+              <button aria-label={showPassword ? labels.hidePassword : labels.showPassword} className="absolute right-2.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded-sm text-subtle-foreground transition-colors hover:text-foreground" onClick={() => setShowPassword((current) => !current)} type="button"><IconSwap active={showPassword} first={<AppIcon name="eye" className="size-4" />} second={<AppIcon name="eyeOff" className="size-4" />} /></button>
             </div>
           </div> : null}
 
           {mode === "signup" ? <div className="mt-4 space-y-2">
-            <label className="text-[13px] font-medium leading-[19px] text-foreground" htmlFor="login-password-confirm">{labels.confirm}</label>
-            <Input autoComplete="new-password" className="h-[44px] rounded-[10px] border-[1.5px] border-input bg-card px-3 text-[13px] shadow-none placeholder:text-subtle-foreground focus-visible:border-brand focus-visible:ring-ring/15" id="login-password-confirm" minLength={10} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.confirmPlaceholder} required type="password" value={confirmation} />
+            <label className="text-sm font-medium text-foreground" htmlFor="login-password-confirm">{labels.confirm}</label>
+            <Input autoComplete="new-password" className="h-10" id="login-password-confirm" minLength={10} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.confirmPlaceholder} required type="password" value={confirmation} />
           </div> : null}
 
-          <Button className="mt-6 h-[43px] w-full rounded-[10px] bg-foreground text-[13px] font-medium text-primary-foreground hover:bg-strong-hover" disabled={busy} type="submit"><TransitionText>{busy ? labels.wait : submitLabel}</TransitionText>{mode === "signin" && !busy ? <AppIcon name="arrowRight" className="size-4" /> : null}</Button>
+          <Button className="mt-6 w-full" size="lg" disabled={busy} type="submit"><TransitionText>{busy ? labels.wait : submitLabel}</TransitionText>{mode === "signin" && !busy ? <AppIcon name="arrowRight" className="size-4" /> : null}</Button>
         </TransitionForm>
 
         {mode === "signin" ? <>
-          <div className="my-6 flex items-center gap-3 text-[11px] text-subtle-foreground"><span aria-hidden="true" className="h-px flex-1 bg-border" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-border" /></div>
-          <Button asChild className="h-[42px] w-full rounded-[10px] border-[1.5px] border-input bg-card text-[13px] font-medium text-foreground shadow-none hover:bg-accent" variant="outline"><a href={googleHref}><GoogleMark />{labels.google}</a></Button>
+          <div className="my-6 flex items-center gap-3 text-xs text-subtle-foreground"><span aria-hidden="true" className="h-px flex-1 bg-border" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-border" /></div>
+          <Button asChild className="w-full" size="lg" variant="outline"><a href={googleHref}><GoogleMark />{labels.google}</a></Button>
         </> : null}
 
         {mode === "signup" ? <>
-          <div className="my-6 flex items-center gap-3 text-[11px] text-subtle-foreground"><span aria-hidden="true" className="h-px flex-1 bg-border" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-border" /></div>
-          <Button asChild className="h-[42px] w-full rounded-[10px] border-[1.5px] border-input bg-card text-[13px] font-medium text-foreground shadow-none hover:bg-accent" variant="outline"><a href={googleHref}><GoogleMark />{labels.google}</a></Button>
+          <div className="my-6 flex items-center gap-3 text-xs text-subtle-foreground"><span aria-hidden="true" className="h-px flex-1 bg-border" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-border" /></div>
+          <Button asChild className="w-full" size="lg" variant="outline"><a href={googleHref}><GoogleMark />{labels.google}</a></Button>
         </> : null}
 
-        {mode === "forgot" ? <div className="mt-6 text-center"><button className="text-[13px] font-medium text-brand underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25" onClick={() => setAuthMode("signin")} type="button">{labels.back}</button></div> : null}
+        {mode === "forgot" ? <div className="mt-6 text-center"><button className="text-sm font-medium text-brand underline-offset-4 hover:underline" onClick={() => setAuthMode("signin")} type="button">{labels.back}</button></div> : null}
         <p aria-live="polite" className={visibleStatus ? "mt-4 min-h-5 text-center text-xs leading-5 text-muted-foreground" : "sr-only"} id="login-status" role="status"><TransitionText>{visibleStatus}</TransitionText></p>
-        {mode === "signin" ? <div className="mt-6 text-center text-[13px] text-muted-foreground"><span>{labels.noAccount}</span>{" "}<button className="font-medium text-brand underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25" onClick={() => setAuthMode("signup")} type="button">{labels.submitSignUp}</button></div> : null}
-        {mode === "signup" ? <div className="mt-6 text-center text-[13px] text-muted-foreground"><span>{labels.alreadyAccount}</span>{" "}<button className="font-medium text-brand underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25" onClick={() => setAuthMode("signin")} type="button">{labels.submitSignIn}</button></div> : null}
+        {mode === "signin" ? <div className="mt-6 text-center text-sm text-muted-foreground"><span>{labels.noAccount}</span>{" "}<button className="font-medium text-brand underline-offset-4 hover:underline" onClick={() => setAuthMode("signup")} type="button">{labels.submitSignUp}</button></div> : null}
+        {mode === "signup" ? <div className="mt-6 text-center text-sm text-muted-foreground"><span>{labels.alreadyAccount}</span>{" "}<button className="font-medium text-brand underline-offset-4 hover:underline" onClick={() => setAuthMode("signin")} type="button">{labels.submitSignIn}</button></div> : null}
       </section>
     </AuthShell>
   );

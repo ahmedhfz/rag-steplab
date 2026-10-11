@@ -1,6 +1,6 @@
 "use client";
 
-import { SlidingTabs, TransitionDetails, TransitionPanel } from "@/components/ui/transitions";
+import { SlidingTabs, TransitionPanel } from "@/components/ui/transitions";
 
 import Link from "next/link";
 import { useState } from "react";
@@ -10,8 +10,9 @@ import { DocumentUploadPanel } from "@/components/document-upload-panel";
 import { DocumentLibrary } from "@/components/document-library";
 import { usePreferences } from "@/components/preferences-provider";
 import { OcrSourceDetails } from "@/components/ocr-source-details";
-import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
+import { Disclosure } from "@/components/ui/disclosure";
+import { PageHeader } from "@/components/ui/page-header";
 import { type AppCopy, UI_COPY } from "@/lib/copy";
 import type { DocumentParseResponse, ParsedElement } from "@/lib/document-parse-types";
 import { cn } from "@/lib/utils";
@@ -34,7 +35,7 @@ function TableElement({ element }: { element: ParsedElement }) {
 
   const [header, ...body] = rows;
   return (
-    <div className="overflow-x-auto rounded-[10px] border border-border">
+    <div className="overflow-x-auto rounded-md border border-border">
       <table className="min-w-full text-left text-sm">
         <thead className="bg-technical">
           <tr>{header.map((cell, index) => <th className="border-b px-3 py-2 font-medium" key={`${cell}-${index}`}>{cell}</th>)}</tr>
@@ -57,9 +58,9 @@ function StructuredElement({ copy, element }: { copy: AppCopy["documents"]; elem
     <TransitionPanel as="article" transitionKey={element.id}
       className="border-b border-border px-4 py-5 last:border-b-0 sm:px-6"
     >
-      <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-        <span className="rounded-md border border-border bg-technical px-2 py-1">{copy.elementTypes[element.type]}</span>
-        {element.pageNumbers.length > 0 && <span>{copy.page} {element.pageNumbers.join(", ")}</span>}
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span className="rounded-sm bg-secondary px-1.5 py-0.5 font-medium text-foreground">{copy.elementTypes[element.type]}</span>
+        {element.pageNumbers.length > 0 && <span className="tabular-nums">{copy.page} {element.pageNumbers.join(", ")}</span>}
       </div>
       {element.type === "table" ? <TableElement element={element} /> : element.type === "list" ? (
         <ul className="list-disc pl-5 text-sm leading-6 text-foreground"><li>{element.text}</li></ul>
@@ -125,9 +126,9 @@ function outlineSection(result: DocumentParseResponse, entry: OutlineEntry | und
 function ContentOutline({ copy, entries, selectedId, onSelect }: { copy: AppCopy["documents"]; entries: OutlineEntry[]; selectedId: string | null; onSelect: (id: string) => void }) {
   const hasHeadings = entries.some((entry) => entry.kind === "heading");
   return (
-    <aside className="min-h-0 overflow-hidden rounded-[12px] bg-technical" data-testid="parsed-content-outline">
+    <aside className="min-h-0 overflow-hidden rounded-lg bg-technical" data-testid="parsed-content-outline">
       <div className="border-b border-border-subtle px-4 py-4">
-        <h2 className="text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.66px] text-subtle-foreground">{copy.outline}</h2>
+        <h2 className="text-xs font-semibold text-muted-foreground">{copy.outline}</h2>
         <p className="mt-1 text-xs leading-5 text-subtle-foreground">{hasHeadings ? copy.parsedElements : copy.noOutline}</p>
       </div>
       {entries.length > 0 ? (
@@ -137,7 +138,7 @@ function ContentOutline({ copy, entries, selectedId, onSelect }: { copy: AppCopy
             return (
               <button
                 aria-current={selected ? "true" : undefined}
-                className={cn("relative block w-full rounded-[7px] px-3 py-2 text-left text-[13px] leading-[19.5px] text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/25", selected && "bg-accent font-medium text-accent-foreground")}
+                className={cn("relative block w-full rounded-md px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-secondary", selected && "bg-secondary font-medium text-foreground")}
                 key={entry.id}
                 onClick={() => onSelect(entry.id)}
                 style={{ paddingLeft: entry.level ? `${Math.min(entry.level, 4) * 0.75 + 0.75}rem` : undefined }}
@@ -145,7 +146,7 @@ function ContentOutline({ copy, entries, selectedId, onSelect }: { copy: AppCopy
               >
                 {selected ? <TransitionPanel as="span" aria-hidden="true" className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-brand" transitionKey={selectedId} /> : null}
                 <span className="block truncate">{entry.label}</span>
-                {entry.pageNumber !== null ? <span className="mt-1 block text-[10px] text-subtle-foreground">{copy.page} {entry.pageNumber}</span> : null}
+                {entry.pageNumber !== null ? <span className="mt-1 block text-xs text-subtle-foreground tabular-nums">{copy.page} {entry.pageNumber}</span> : null}
               </button>
             );
           })}
@@ -161,9 +162,9 @@ function StructuredSectionInspector({ copy, elements }: { copy: AppCopy["documen
   return (
     <div className="min-h-0 min-w-0 overflow-y-auto" data-testid="parsed-section-inspector">
       <div className="border-b border-border-subtle px-5 py-3">
-        <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-subtle-foreground">{copy.selectedSection}</p>
+        <p className="text-xs text-subtle-foreground">{copy.selectedSection}</p>
         <h3 className="mt-1 text-base font-semibold text-foreground">{copy.parsedElements}</h3>
-        <p className="mt-1 text-xs text-muted-foreground">{elements.length} {copy.pageElements}</p>
+        <p className="mt-1 text-xs text-muted-foreground tabular-nums">{elements.length} {copy.pageElements}</p>
       </div>
       <div>
         {elements.map((element) => <StructuredElement copy={copy} element={element} key={element.id} />)}
@@ -180,12 +181,8 @@ export function DeveloperOutput({ copy, result }: { copy: AppCopy["documents"]; 
   ];
 
   return (
-    <TransitionDetails className="rounded-[10px] border border-border bg-card">
-      <summary className="flex h-[46px] cursor-pointer list-none items-center justify-between px-4 text-[13px] font-medium text-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/25 sm:px-5">
-        <span>{copy.markdown === "Markdown" ? "Developer output — Markdown & JSON" : "Geliştirici çıktısı — Markdown ve JSON"}</span>
-        <AppIcon name="chevronDown" className="size-3.5 text-subtle-foreground" />
-      </summary>
-      <div className="border-t border-border">
+    <Disclosure contentClassName="p-0" title={copy.markdown === "Markdown" ? "Developer output — Markdown & JSON" : "Geliştirici çıktısı — Markdown ve JSON"}>
+      <div>
         {!result ? <p className="px-4 py-4 text-xs text-muted-foreground">{copy.parsedViewsUnavailable}</p> : (
           <>
             <SlidingTabs value={activeView} aria-label={copy.viewMode} className="flex gap-1 border-b bg-technical px-4 py-2" role="group">
@@ -196,7 +193,7 @@ export function DeveloperOutput({ copy, result }: { copy: AppCopy["documents"]; 
           </>
         )}
       </div>
-    </TransitionDetails>
+    </Disclosure>
   );
 }
 
@@ -222,18 +219,17 @@ export function ParsedContentTab({ copy, result, showDeveloperOutput = true }: {
   return (
     <div className="grid min-h-0 h-full gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
       <ContentOutline copy={copy} entries={outline} onSelect={setSelectedId} selectedId={effectiveSelectedId} />
-      <section className="min-h-0 min-w-0 overflow-hidden rounded-[10px] border border-border-subtle">
+      <section className="min-h-0 min-w-0 overflow-hidden rounded-md border border-border-subtle">
         <div className="border-b border-border-subtle px-5 py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div><h2 className="text-sm font-semibold">{copy.parsedElements}</h2><p className="mt-1 text-xs text-muted-foreground">{copy.structured}</p></div>
-            <span className="rounded-full border border-accent-border bg-accent px-2.5 py-1 text-[11px] font-medium text-brand">{result ? copy.source : copy.parsedViewsUnavailable}</span>
+            <span className="rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-muted-foreground">{result ? copy.source : copy.parsedViewsUnavailable}</span>
           </div>
         </div>
         {!result ? <p className="border-b border-border-subtle px-5 py-3 text-xs text-muted-foreground" id="parsed-view-disabled-reason">{copy.parsedViewsUnavailable}</p> : null}
         {activeView === "structured" ? <StructuredSectionInspector copy={copy} elements={selectedElements} /> : null}
-        {showDeveloperOutput ? <TransitionDetails className="border-t border-border" onToggle={(event) => setDeveloperOutputOpen(event.currentTarget.open)} open={developerOutputOpen}>
-          <summary className="cursor-pointer list-none px-4 py-4 text-sm font-semibold text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/25 sm:px-6">{copy.markdown === "Markdown" ? "Developer output" : "Geliştirici çıktısı"}</summary>
-          <div className="border-t border-border">
+        {showDeveloperOutput ? <Disclosure className="rounded-none border-0 border-t bg-transparent" contentClassName="p-0" onToggle={(event) => setDeveloperOutputOpen(event.currentTarget.open)} open={developerOutputOpen} title={copy.markdown === "Markdown" ? "Developer output" : "Geliştirici çıktısı"}>
+          <div>
             <SlidingTabs value={activeView} aria-describedby={!result ? "parsed-view-disabled-reason" : undefined} aria-label={copy.viewMode} className="flex flex-wrap gap-1 border-b bg-technical px-4 py-2 sm:px-6" role="group">
               {viewOptions.map((view) => <Button aria-pressed={activeView === view.key} disabled={!result} key={view.key} onClick={() => selectView(view.key)} size="sm" variant={activeView === view.key ? "secondary" : "ghost"}>{view.label}</Button>)}
             </SlidingTabs>
@@ -243,7 +239,7 @@ export function ParsedContentTab({ copy, result, showDeveloperOutput = true }: {
               <pre className="max-h-[min(70vh,800px)] overflow-auto whitespace-pre-wrap px-4 py-5 font-mono text-xs leading-6 text-muted-foreground sm:px-6" data-testid="parsed-json">{JSON.stringify(result.structured, null, 2)}</pre>
             ) : null}
           </div>
-        </TransitionDetails> : <SlidingTabs value={activeView} aria-label={copy.viewMode} className="sr-only" role="group">
+        </Disclosure> : <SlidingTabs value={activeView} aria-label={copy.viewMode} className="sr-only" role="group">
           {viewOptions.map((view) => <Button aria-pressed={activeView === view.key} disabled={!result} key={view.key} onClick={() => selectView(view.key)} size="sm" variant="ghost">{view.label}</Button>)}
         </SlidingTabs>}
       </section>
@@ -259,16 +255,10 @@ export function DocumentsScreen() {
   return (
     <div className="min-w-0 overflow-x-clip bg-background" data-testid="documents-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
-        <header className="flex items-start justify-between gap-6" data-testid="documents-page-header">
-          <div className="max-w-[640px]">
-            <p className="text-xs font-semibold uppercase leading-[18px] tracking-[0.96px] text-brand">{copy.nav.documents}</p>
-            <h1 className="mt-2 text-[30px] font-semibold leading-9 tracking-[-0.6px] text-foreground">{copy.documents.root}</h1>
-            <p className="mt-2 text-sm leading-[21px] text-muted-foreground">{preferences.locale === "tr" ? "RAG'ınızda kullanılan kaynak dokümanları ekleyin ve yönetin." : "Add and manage the source documents used by your RAG."}</p>
-          </div>
-        </header>
+        <PageHeader data-testid="documents-page-header" description={preferences.locale === "tr" ? "RAG'ınızda kullanılan kaynak dokümanları ekleyin ve yönetin." : "Add and manage the source documents used by your RAG."} title={copy.documents.root} />
 
         <DocumentUploadPanel />
-        {uploadNotice ? <p aria-live="polite" className={cn("mt-4 rounded-[10px] border px-4 py-3 text-sm", uploadNotice === "reused" ? "border-accent-border bg-accent text-accent-foreground" : "border-success-border bg-success-subtle text-success")} role="status">{uploadNotice === "reused" ? (preferences.locale === "tr" ? "Mevcut doküman yeniden kullanıldı; duplicate oluşturulmadı. Parse ekranından devam edebilirsiniz." : "Existing document reused; no duplicate was created. Continue from Parse.") : (preferences.locale === "tr" ? "Doküman eklendi; parse etmeye hazır." : "Document added; ready to parse.")} <Link className="ml-1 font-medium underline" href="/parse">{preferences.locale === "tr" ? "Parse'a devam et" : "Continue to Parse"}</Link></p> : null}
+        {uploadNotice ? <p aria-live="polite" className={cn("mt-4 rounded-md border px-4 py-3 text-sm", uploadNotice === "reused" ? "border-border bg-secondary text-foreground" : "border-success-border bg-success-subtle text-success")} role="status">{uploadNotice === "reused" ? (preferences.locale === "tr" ? "Mevcut doküman yeniden kullanıldı; duplicate oluşturulmadı. Parse ekranından devam edebilirsiniz." : "Existing document reused; no duplicate was created. Continue from Parse.") : (preferences.locale === "tr" ? "Doküman eklendi; parse etmeye hazır." : "Document added; ready to parse.")} <Link className="ml-1 font-medium underline" href="/parse">{preferences.locale === "tr" ? "Parse'a devam et" : "Continue to Parse"}</Link></p> : null}
         <DocumentLibrary locale={preferences.locale} />
       </div>
     </div>

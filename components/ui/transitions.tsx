@@ -89,10 +89,10 @@ export function TransitionSurface({ open, kind, children, className, as = "div",
 }
 
 /** Native summary keyboard behaviour is retained, including controlled open. */
-export function TransitionDetails({ children, className, open, onToggle, variant = "accordion", ...props }: ComponentProps<"details"> & { variant?: "accordion" | "dropdown" }) {
+export function TransitionDetails({ children, className, open, defaultOpen, onToggle, variant = "accordion", ...props }: ComponentProps<"details"> & { defaultOpen?: boolean; variant?: "accordion" | "dropdown" }) {
   const nodes = Children.toArray(children);
   const summary = nodes[0];
-  const [nativeOpen, setNativeOpen] = useState(Boolean(open));
+  const [nativeOpen, setNativeOpen] = useState(Boolean(open ?? defaultOpen));
   const [closing, setClosing] = useState(false);
   const expanded = open ?? nativeOpen;
   const panelRef = useRef<HTMLDivElement>(null);

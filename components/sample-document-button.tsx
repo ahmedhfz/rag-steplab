@@ -33,7 +33,7 @@ export function SampleDocumentButton({ primary = false }: { primary?: boolean })
 
   return (
     <div>
-      <Button aria-busy={busy} className="gap-2" data-testid="sample-document-button" disabled={busy} onClick={() => void addSample()} type="button" variant={primary ? "default" : "outline"}>
+      <Button aria-busy={busy} data-testid="sample-document-button" disabled={busy} onClick={() => void addSample()} type="button" variant={primary ? "default" : "outline"}>
         <AppIcon className="size-4" name={busy ? "loading" : "document"} />
         {busy ? (preferences.locale === "tr" ? "Örnek ekleniyor…" : "Adding sample…") : (preferences.locale === "tr" ? "Örnek PDF ile dene" : "Try a sample PDF")}
       </Button>

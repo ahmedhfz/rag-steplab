@@ -45,15 +45,40 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-overlay: var(--overlay);
-  --radius-sm: calc(var(--radius) - 2px);
-  --radius-md: var(--radius);
-  --radius-lg: calc(var(--radius) + 2px);
-  --radius-xl: calc(var(--radius) + 4px);
+
+  /* Typography: Geist is loaded by next/font onto <body>; `inline` resolves it there. */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Type scale (size / line-height). 2xs is only for table column headers and micro meta. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 2rem;
+  --text-2xl--letter-spacing: -0.02em;
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 2.25rem;
+
+  /* Radius: sm inner item/chip, md control, lg panel/card, xl outer shell/modal. */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
 }
 
 :root {
   color-scheme: light;
-  --radius: 0.625rem;
+  --radius: 0.5rem;
   --background: #f8f7f7;
   --foreground: #171416;
   --card: #ffffff;
@@ -65,8 +90,8 @@
   --secondary: #f2eff0;
   --secondary-foreground: #171416;
   --muted: #f7f5f6;
-  --muted-foreground: #6e676a;
-  --subtle-foreground: #766e72;
+  --muted-foreground: #5a5357;
+  --subtle-foreground: #6f676b;
   --accent: #fbf4f6;
   --accent-foreground: #501329;
   --accent-border: #d8b5c2;
@@ -88,9 +113,9 @@
   --destructive-panel: #fff8f8;
   --border: #e7e2e4;
   --border-subtle: #eee9eb;
-  --hover-border: #bcb5b9;
+  --hover-border: #6f676b;
   --strong-hover: #2b2729;
-  --input: #d8d2d5;
+  --input: #8a8286;
   --ring: #711f3a;
   --overlay: #171416;
 }
@@ -101,15 +126,15 @@
   --foreground: #f4f1f2;
   --card: #201b1e;
   --card-foreground: #f4f1f2;
-  --popover: #2a2227;
+  --popover: #2c252a;
   --popover-foreground: #f4f1f2;
   --primary: #f4f1f2;
   --primary-foreground: #1b1719;
   --secondary: #30272c;
   --secondary-foreground: #f4f1f2;
   --muted: #201b1d;
-  --muted-foreground: #b9b0b4;
-  --subtle-foreground: #aca0a6;
+  --muted-foreground: #b0a7ab;
+  --subtle-foreground: #9c9397;
   --accent: #34212a;
   --accent-foreground: #f0b6c9;
   --accent-border: #6b3f4e;
@@ -126,14 +151,14 @@
   --warning-subtle: #302515;
   --warning-border: #674d22;
   --warning-icon: #4a3818;
-  --technical: #100d0f;
-  --surface-subtle: #191517;
+  --technical: #262024;
+  --surface-subtle: #1a1619;
   --destructive-panel: #281719;
-  --border: #493c43;
-  --border-subtle: #382e33;
-  --hover-border: #8a7a81;
+  --border: #3a3035;
+  --border-subtle: #2f272b;
+  --hover-border: #a3969c;
   --strong-hover: #dfd8da;
-  --input: #76676d;
+  --input: #806f76;
   --ring: #de8eaa;
   --overlay: #000000;
 }
@@ -162,12 +187,16 @@
     background: var(--background);
   }
 
+  /* Scrollbar görünüp kaybolunca başlık kaymasın; dar ekranlarda scrollbar zaten overlay. */
+  @media (min-width: 768px) {
+    html {
+      scrollbar-gutter: stable;
+    }
+  }
+
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply bg-background font-sans text-sm text-foreground antialiased;
     min-height: 100vh;
-    font-family:
-      var(--font-geist-sans), Geist, ui-sans-serif, system-ui, -apple-system,
-      BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
 
   button,
@@ -180,7 +209,8 @@
 html,
 body,
 * {
-  scrollbar-color: var(--input) transparent;
+  /* --input is the form-control border (>=3:1); scrollbars stay quieter. */
+  scrollbar-color: color-mix(in oklab, var(--input) 55%, transparent) transparent;
   scrollbar-width: thin;
 }
 
@@ -196,7 +226,7 @@ body,
 ::-webkit-scrollbar-thumb {
   border: 1px solid transparent;
   border-radius: 9999px;
-  background: var(--input);
+  background: color-mix(in oklab, var(--input) 55%, transparent);
   background-clip: padding-box;
 }
 
@@ -215,7 +245,7 @@ body,
 }
 
 .technical-scrollbar {
-  scrollbar-color: var(--input) transparent;
+  scrollbar-color: color-mix(in oklab, var(--input) 55%, transparent) transparent;
   scrollbar-width: thin;
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { ThinkingText, TransitionDetails, TransitionNumber, TransitionText } from "@/components/ui/transitions";
+import { ThinkingText, TransitionNumber, TransitionText } from "@/components/ui/transitions";
 
 import { useEffect, useMemo, useState } from "react";
 
@@ -13,6 +13,9 @@ import { usePreferences } from "@/components/preferences-provider";
 import { SourceInspector } from "@/components/source-inspector";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
+import { Disclosure, TechnicalDetails } from "@/components/ui/disclosure";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusPill, type StatusTone } from "@/components/ui/status-pill";
 import { UI_COPY } from "@/lib/copy";
 import { cn } from "@/lib/utils";
 
@@ -62,56 +65,86 @@ export function ParseScreen() {
     report?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
   };
 
-  const statusTone = currentRun?.status === "failed" ? "border-destructive-border bg-destructive-subtle text-destructive" : currentRun?.status === "queued" || currentRun?.status === "running" ? "border-warning-border bg-warning-subtle text-warning" : currentRun?.status === "completed" ? "border-success-border bg-success-subtle text-success" : "border-border bg-secondary text-muted-foreground";
+  const statusTone: StatusTone = currentRun?.status === "failed" ? "error" : currentRun?.status === "queued" || currentRun?.status === "running" ? "running" : currentRun?.status === "completed" ? "neutral" : "idle";
+  const inspectedRunId = inspectedParseRunId ?? selectedParseRunId;
 
   return (
     <div className="min-w-0 overflow-x-clip bg-background" data-testid="parse-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
-        <header className="flex min-h-[92px] items-start justify-between gap-6 max-md:flex-col" data-testid="parse-page-header">
-          <div className="max-w-[720px]">
-            <p className="text-xs font-semibold uppercase leading-[18px] tracking-[0.96px] text-brand">{copy.nav.pipeline}</p>
-            <h1 className="mt-2 text-[30px] font-semibold leading-9 tracking-[-0.6px] text-foreground">{labels.title === "Parse" ? (preferences.locale === "tr" ? "Ayrıştırma" : "Parsing") : labels.title}</h1>
-            <p className="mt-2 text-sm leading-[21px] text-muted-foreground">{labels.description}</p>
-          </div>
-        </header>
+        <PageHeader data-testid="parse-page-header" description={labels.description} title={labels.title === "Parse" ? (preferences.locale === "tr" ? "Ayrıştırma" : "Parsing") : labels.title} />
 
-        <div className="mt-3 grid min-w-0 gap-3 lg:grid-cols-[max-content_minmax(0,1fr)]" data-testid="parse-workspace-controls">
-          <div className="min-w-0 overflow-hidden rounded-[14px] border border-border bg-card [&>[data-testid=pipeline-context-bar]]:border-b-0">
+        <div className="mt-6 grid min-w-0 gap-3 lg:grid-cols-[max-content_minmax(0,1fr)]" data-testid="parse-workspace-controls">
+          <div className="min-w-0 overflow-hidden rounded-lg border border-border bg-card [&>[data-testid=pipeline-context-bar]]:border-b-0">
             <PipelineContextBar showLineage={false} />
           </div>
 
-          <section aria-live="polite" className="flex min-h-[56px] min-w-0 flex-wrap items-center justify-between gap-2 rounded-[14px] border border-border bg-card px-4 py-2.5" data-testid="parse-document-status">
+          <section aria-live="polite" className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card px-4 py-2.5" data-testid="parse-document-status">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{labels.current}</span>
-              <span className={cn("rounded-full border px-2.5 py-1 text-[11px] font-medium", statusTone)}><span aria-hidden="true" className="mr-1.5 inline-block size-1.5 rounded-full bg-current" />{statusLabel || (parseResult ? (preferences.locale === "tr" ? "Ayrıştırıldı" : "Parsed") : labels.noRun)}</span>
+              <span className="text-xs text-muted-foreground">{labels.current}</span>
+              <StatusPill tone={statusTone}>{statusLabel || (parseResult ? (preferences.locale === "tr" ? "Ayrıştırıldı" : "Parsed") : labels.noRun)}</StatusPill>
             </div>
             <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-              <Button aria-label={labels.reports} className="h-9 gap-2 rounded-[10px] border-input bg-card px-3 text-xs text-foreground shadow-none hover:bg-accent" data-testid="parse-reports-action" disabled={!parseResult} onClick={openReport} type="button" variant="outline">
+              <Button aria-label={labels.reports} data-testid="parse-reports-action" disabled={!parseResult} onClick={openReport} size="sm" type="button" variant="outline">
                 <AppIcon name="document" className="size-3.5" />{labels.reports}
               </Button>
-              <Button aria-busy={isProcessing} aria-describedby={blocker ? "parse-action-disabled-reason" : undefined} className={cn("h-9 gap-2 rounded-[10px] px-3 text-xs shadow-none", activeDocument?.activeParseRunId && "border-input bg-card text-foreground hover:bg-accent")} data-testid="parse-run-action" disabled={!canParse} onClick={parseAction} variant={activeDocument?.activeParseRunId ? "outline" : "default"}>
+              <Button aria-busy={isProcessing} aria-describedby={blocker ? "parse-action-disabled-reason" : undefined} data-testid="parse-run-action" disabled={!canParse} onClick={parseAction} size="sm" variant={activeDocument?.activeParseRunId ? "outline" : "default"}>
                 {isProcessing ? <AppIcon name="loading" className="size-3.5 animate-spin" /> : <AppIcon name="refresh" className="size-3.5" />}{isProcessing ? labels.running : actionLabel}
               </Button>
             </div>
           </section>
         </div>
-        {blocker ? <p className="mt-3 rounded-[10px] border border-warning-border bg-warning-subtle px-3 py-2 text-xs leading-5 text-warning" id="parse-action-disabled-reason" role="status">{blocker}</p> : null}
+        {blocker ? <p className={cn("mt-3 text-sm", persistenceStatus === "unavailable" ? "text-destructive" : "text-muted-foreground")} id="parse-action-disabled-reason" role="status">{blocker}</p> : null}
 
-        {lifecycleVisible ? <section aria-live="polite" className="mt-6 grid gap-4 rounded-[12px] border border-border bg-card p-4 md:grid-cols-[minmax(0,1fr)_120px]"><div><div className="flex items-center justify-between gap-3 text-xs"><span className="font-medium text-foreground">{isProcessing ? <ThinkingText>{statusLabel}</ThinkingText> : <TransitionText>{statusLabel}</TransitionText>}</span><span className="text-muted-foreground"><TransitionNumber>{parseProgress}</TransitionNumber>% · {parseProgressEstimated ? labels.estimated : labels.authoritative}</span></div><div aria-label={`${labels.progress} ${parseProgress}%`} aria-valuemax={100} aria-valuemin={0} aria-valuenow={parseProgress} className="mt-3 h-2 overflow-hidden rounded-full bg-border" role="progressbar"><div className="h-full bg-brand transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${parseProgress}%` }} /></div><ol className="mt-4 grid grid-cols-4 gap-2 sm:grid-cols-8">{PHASE_ORDER.map((item, index) => <li className={index <= phaseIndex ? "text-xs text-brand" : "text-xs text-subtle-foreground"} key={item}><span aria-hidden="true" className={index <= phaseIndex ? "mb-1 block h-1 rounded-full bg-brand" : "mb-1 block h-1 rounded-full bg-border"} />{labels.phases[item]}</li>)}</ol></div><div className="border-l border-border pl-4"><p className="text-[11px] uppercase tracking-[0.12em] text-subtle-foreground">{labels.elapsed}</p><p className="mt-2 text-lg font-semibold text-foreground">{formatElapsed(currentRun?.timing.startedAt, now, currentRun?.status === "completed" ? currentRun.timing.durationMs : null)}</p></div></section> : null}
-        {parseError ? <p className="mt-4 rounded-[10px] border border-destructive-border bg-destructive-subtle px-3 py-2 text-xs text-destructive" role="alert">{parseError.message}</p> : null}
+        {lifecycleVisible ? <section aria-live="polite" className="mt-6 grid gap-4 rounded-lg border border-border bg-card p-4 md:grid-cols-[minmax(0,1fr)_120px]">
+          <div>
+            <div className="flex items-center justify-between gap-3 text-xs">
+              <span className="font-medium text-foreground">{isProcessing ? <ThinkingText>{statusLabel}</ThinkingText> : <TransitionText>{statusLabel}</TransitionText>}</span>
+              <span className="text-muted-foreground tabular-nums"><TransitionNumber>{parseProgress}</TransitionNumber>% · {parseProgressEstimated ? labels.estimated : labels.authoritative}</span>
+            </div>
+            <div aria-label={`${labels.progress} ${parseProgress}%`} aria-valuemax={100} aria-valuemin={0} aria-valuenow={parseProgress} className="mt-3 h-2 overflow-hidden rounded-full bg-secondary" role="progressbar"><div className="h-full bg-foreground transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${parseProgress}%` }} /></div>
+            <ol className="mt-4 grid grid-cols-4 gap-2 sm:grid-cols-8">{PHASE_ORDER.map((item, index) => <li className={index <= phaseIndex ? "text-xs text-foreground" : "text-xs text-subtle-foreground"} key={item}><span aria-hidden="true" className={index <= phaseIndex ? "mb-1 block h-1 rounded-full bg-muted-foreground" : "mb-1 block h-1 rounded-full bg-border"} />{labels.phases[item]}</li>)}</ol>
+          </div>
+          <div className="border-l border-border pl-4">
+            <p className="text-xs text-muted-foreground">{labels.elapsed}</p>
+            <p className="mt-1 text-lg font-semibold text-foreground tabular-nums">{formatElapsed(currentRun?.timing.startedAt, now, currentRun?.status === "completed" ? currentRun.timing.durationMs : null)}</p>
+          </div>
+        </section> : null}
+        {parseError ? <p className="mt-4 rounded-md border border-destructive-border bg-destructive-subtle px-3 py-2 text-xs text-destructive" role="alert">{parseError.message}</p> : null}
 
         {parseResult ? <>
-          <section className="mt-6" data-testid="parse-result-summary" id="parse-result-summary" tabIndex={-1}><p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{preferences.locale === "tr" ? "SONUÇ ÖZETİ" : "RESULT SUMMARY"}</p><dl className="mt-3 grid grid-cols-2 gap-4 border-y border-border py-3 sm:grid-cols-3 lg:grid-cols-6">{summaryFields.map(([label, value]) => <div key={label}><dt className="text-[11px] uppercase tracking-[0.04em] text-subtle-foreground">{label}</dt><dd className="mt-1 text-[22px] font-semibold leading-7 tracking-[-0.44px] text-foreground">{String(value)}</dd></div>)}</dl></section>
-          <section className="mt-8" aria-labelledby="parsed-content-title"><div className="flex items-center justify-between gap-3"><div><h2 className="text-base font-semibold leading-[22px]" id="parsed-content-title">{preferences.locale === "tr" ? "Yapılandırılmış içerik" : "Structured content"}</h2></div><SourceInspector documentId={activeDocument?.id ?? null} parseResult={parseResult} /></div><div className="mt-4 h-[451px] overflow-y-auto rounded-[16px] border-[1.712px] border-border bg-card p-4"><ParsedContentTab copy={copy.documents} result={parseResult} showDeveloperOutput={false} /></div></section>
+          <section className="mt-6" data-testid="parse-result-summary" id="parse-result-summary" tabIndex={-1}>
+            <p className="text-xs font-semibold text-muted-foreground">{preferences.locale === "tr" ? "SONUÇ ÖZETİ" : "RESULT SUMMARY"}</p>
+            <dl className="mt-3 grid grid-cols-2 gap-4 border-y border-border py-3 sm:grid-cols-3 lg:grid-cols-6">{summaryFields.map(([label, value]) => <div key={label}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 text-xl font-semibold text-foreground tabular-nums">{String(value)}</dd></div>)}</dl>
+          </section>
+          <section className="mt-8" aria-labelledby="parsed-content-title">
+            <div className="flex items-center justify-between gap-3"><h2 className="text-base font-semibold" id="parsed-content-title">{preferences.locale === "tr" ? "Yapılandırılmış içerik" : "Structured content"}</h2><SourceInspector documentId={activeDocument?.id ?? null} parseResult={parseResult} /></div>
+            <div className="mt-4 h-112 overflow-y-auto rounded-lg border border-border bg-card p-4"><ParsedContentTab copy={copy.documents} result={parseResult} showDeveloperOutput={false} /></div>
+          </section>
           <div className="mt-8"><DeveloperOutput copy={copy.documents} result={parseResult} /></div>
         </> : <>
-          <section className="mt-6 rounded-[16px] border border-border bg-card"><EmptyPipelineState>{labels.noOutput}</EmptyPipelineState></section>
+          <section className="mt-6 rounded-lg border border-border bg-card"><EmptyPipelineState>{labels.noOutput}</EmptyPipelineState></section>
           <div aria-label={copy.documents.viewMode} className="sr-only" role="group">
             {[copy.documents.structured, copy.documents.markdown, copy.documents.json].map((view) => <Button disabled key={view} size="sm" variant="ghost">{view}</Button>)}
           </div>
         </>}
 
-        <section className="mt-8" data-testid="parse-history"><TransitionDetails className="rounded-[12px] border border-border bg-card"><summary className="flex h-[46px] cursor-pointer list-none items-center justify-between px-4 text-[13px] font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/25 sm:px-5"><span>{labels.history} ({orderedRuns.length})</span><AppIcon name="chevronDown" className="size-3.5 text-subtle-foreground" /></summary>{orderedRuns.length ? <div className="space-y-2 border-t border-border p-4 sm:p-6">{orderedRuns.map((run) => <div className="flex flex-col gap-3 border border-border p-3 sm:flex-row sm:items-center sm:justify-between" data-testid="parse-history-row" key={run.id}><div className="min-w-0"><div className="flex flex-wrap items-center gap-2 text-xs"><span className="font-semibold">Parse {run.runNumber ?? "—"}</span><TransitionDetails><summary className="cursor-pointer text-[10px] text-muted-foreground">{preferences.locale === "tr" ? "Teknik kimlik" : "Technical ID"}</summary><span className="break-all font-mono text-[10px] text-muted-foreground">{run.id}</span></TransitionDetails>{run.id === (inspectedParseRunId ?? selectedParseRunId) ? <span className="rounded-full border border-accent-border bg-accent px-1.5 py-0.5 text-[10px] text-brand">{labels.selected}</span> : null}{run.id === activeDocument?.activeParseRunId ? <span className="rounded-full border border-success-border bg-success-subtle px-1.5 py-0.5 text-[10px] text-success">{labels.active}</span> : null}{run.historicalLineage ? <span className="rounded-full border border-warning-border bg-warning-subtle px-1.5 py-0.5 text-[10px] text-warning">{labels.historical}</span> : null}</div><p className="mt-1 text-xs text-muted-foreground">{run.status === "completed" ? run.isCompatible ? labels.compatible : labels.incompatible : run.status === "failed" ? labels.failed : labels.running}{run.timing.durationMs ? ` · ${run.timing.durationMs} ms` : ""}</p></div><div className="flex flex-wrap justify-end gap-2"><Button disabled={run.status !== "completed" || !run.isCompatible || run.id === (inspectedParseRunId ?? selectedParseRunId)} onClick={() => void selectParseRun(run.id)} size="sm" variant="outline">{run.id === (inspectedParseRunId ?? selectedParseRunId) ? labels.selected : preferences.locale === "tr" ? "İncele" : "Inspect"}</Button>{activePipeline && run.id === (inspectedParseRunId ?? selectedParseRunId) && run.id !== selectedParseRunId ? <Button onClick={() => void setPipelineParseRun(run.id)} size="sm" variant="outline">{preferences.locale === "tr" ? "Pipeline'da kullan" : "Use in pipeline"}</Button> : null}</div></div>)}</div> : <div className="border-t border-border"><EmptyPipelineState>{labels.noRun}</EmptyPipelineState></div>}</TransitionDetails></section>
+        <section className="mt-8" data-testid="parse-history">
+          <Disclosure contentClassName={orderedRuns.length ? "space-y-2 p-4" : "p-0"} title={`${labels.history} (${orderedRuns.length})`}>
+            {orderedRuns.length ? orderedRuns.map((run) => <div className="flex flex-col gap-3 rounded-md border border-border p-3 sm:flex-row sm:items-center sm:justify-between" data-testid="parse-history-row" key={run.id}>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                  <span className="font-semibold tabular-nums">Parse {run.runNumber ?? "—"}</span>
+                  {run.id === inspectedRunId ? <StatusPill tone="neutral">{labels.selected}</StatusPill> : null}
+                  {run.id === activeDocument?.activeParseRunId ? <StatusPill tone="neutral">{labels.active}</StatusPill> : null}
+                  {run.historicalLineage ? <StatusPill tone="warning">{labels.historical}</StatusPill> : null}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground tabular-nums">{run.status === "completed" ? run.isCompatible ? labels.compatible : labels.incompatible : run.status === "failed" ? labels.failed : labels.running}{run.timing.durationMs ? ` · ${run.timing.durationMs} ms` : ""}</p>
+                <TechnicalDetails className="mt-1" title={preferences.locale === "tr" ? "Teknik kimlik" : "Technical ID"}><span className="break-all font-mono text-xs text-muted-foreground">{run.id}</span></TechnicalDetails>
+              </div>
+              <div className="flex flex-wrap justify-end gap-2"><Button disabled={run.status !== "completed" || !run.isCompatible || run.id === inspectedRunId} onClick={() => void selectParseRun(run.id)} size="sm" variant="outline">{run.id === inspectedRunId ? labels.selected : preferences.locale === "tr" ? "İncele" : "Inspect"}</Button>{activePipeline && run.id === inspectedRunId && run.id !== selectedParseRunId ? <Button onClick={() => void setPipelineParseRun(run.id)} size="sm" variant="outline">{preferences.locale === "tr" ? "Pipeline'da kullan" : "Use in pipeline"}</Button> : null}</div>
+            </div>) : <EmptyPipelineState>{labels.noRun}</EmptyPipelineState>}
+          </Disclosure>
+        </section>
         <StageNextAction disabled={!selectedParseResult || isProcessing || selectedRun?.status !== "completed" || !selectedRun.isCompatible} href="/chunking" label={labels.continue} testId="parse-next-action" />
       </div>
     </div>

@@ -53,6 +53,18 @@ function isNavItemActive(key: AppNavKey, pathname: string) {
   return pathname === `/${key}`;
 }
 
+/** Active item: neutral surface + brand icon, so brand marks only "where you are". */
+function navItemClass(isActive: boolean) {
+  return cn(
+    "flex h-9 items-center gap-3 rounded-md px-3 text-sm text-muted-foreground transition-colors hover:bg-surface-subtle hover:text-foreground",
+    isActive && "bg-secondary font-medium text-foreground hover:bg-secondary",
+  );
+}
+
+function navIconClass(isActive: boolean) {
+  return cn("size-4.5 shrink-0", isActive && "text-brand");
+}
+
 type AuthUserSummary = {
   email: string | null;
   name: string | null;
@@ -87,7 +99,7 @@ type UserMenuItemProps = {
 };
 
 function UserMenuItem({ icon, label, onClick, href }: UserMenuItemProps) {
-  const className = "flex h-9 w-full items-center gap-2.5 rounded-[8px] px-2.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20";
+  const className = "flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground";
 
   if (href) {
     return <Link className={className} href={href} onClick={onClick}><AppIcon name={icon} className="size-4 text-subtle-foreground" />{label}</Link>;
@@ -154,21 +166,21 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
         aria-expanded={isOpen}
         aria-haspopup="dialog"
         aria-label={`${displayName} — ${copy.common.accountMenu}`}
-        className="flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/20"
+        className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-surface-subtle"
         onClick={() => { setIsOpen(!isOpen); setOpenView("menu"); }}
         ref={triggerRef}
         type="button"
       >
-        <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-full bg-brand-subtle text-[11px] font-semibold text-accent-foreground">{initials}</span>
+        <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-full bg-secondary text-2xs font-semibold text-foreground">{initials}</span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[12.5px] leading-[18.75px] text-muted-foreground">{displayName}</span>
+          <span className="block truncate text-xs text-muted-foreground">{displayName}</span>
           <span className="sr-only">{user.email ?? copy.common.frontendFoundation}</span>
         </span>
       </button>
 
       <TransitionSurface kind="dropdown" open={isOpen} data-origin="bottom-left"
             aria-label={copy.common.accountMenu}
-            className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-50 overflow-hidden rounded-[12px] border border-border bg-card p-1.5 shadow-lg shadow-foreground/8"
+            className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-50 overflow-hidden rounded-lg border border-border bg-card p-1.5 shadow-lg shadow-foreground/8"
             role="dialog"
           >
             <TransitionPanel transitionKey={openView}>
@@ -188,29 +200,29 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
 
             {openView === "guides" && (
               <div className="p-1">
-                <button className="mb-2 flex items-center gap-1.5 rounded px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground" onClick={() => setOpenView("menu")} type="button">
+                <button className="mb-2 flex items-center gap-1.5 rounded-sm px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-secondary hover:text-foreground" onClick={() => setOpenView("menu")} type="button">
                   <AppIcon name="arrowLeft" className="size-3.5" />
                   {copy.common.back}
                 </button>
                 <h2 className="px-1.5 text-sm font-semibold text-foreground">{copy.guidePanel.title}</h2>
                 <p className="px-1.5 pt-1.5 text-xs leading-5 text-muted-foreground">{copy.guidePanel.description}</p>
                 <nav aria-label={copy.guides} className="mt-3 grid gap-1 border-t pt-2 text-sm">
-                  <Link className="rounded px-2 py-1.5 hover:bg-accent hover:text-accent-foreground" href="/" onClick={closeAfterNavigation}>{copy.nav.overview}</Link>
-                  <Link className="rounded px-2 py-1.5 hover:bg-accent hover:text-accent-foreground" href="/documents" onClick={closeAfterNavigation}>{copy.nav.documents}</Link>
-                  <Link className="rounded px-2 py-1.5 hover:bg-accent hover:text-accent-foreground" href="/playground" onClick={closeAfterNavigation}>{copy.nav.playground}</Link>
+                  <Link className="rounded-md px-2 py-1.5 hover:bg-secondary" href="/" onClick={closeAfterNavigation}>{copy.nav.overview}</Link>
+                  <Link className="rounded-md px-2 py-1.5 hover:bg-secondary" href="/documents" onClick={closeAfterNavigation}>{copy.nav.documents}</Link>
+                  <Link className="rounded-md px-2 py-1.5 hover:bg-secondary" href="/playground" onClick={closeAfterNavigation}>{copy.nav.playground}</Link>
                 </nav>
               </div>
             )}
 
             {openView === "help" && (
               <div className="p-1">
-                <button className="mb-2 flex items-center gap-1.5 rounded px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground" onClick={() => setOpenView("menu")} type="button">
+                <button className="mb-2 flex items-center gap-1.5 rounded-sm px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-secondary hover:text-foreground" onClick={() => setOpenView("menu")} type="button">
                   <AppIcon name="arrowLeft" className="size-3.5" />
                   {copy.common.back}
                 </button>
                 <h2 className="px-1.5 text-sm font-semibold text-foreground">{copy.helpPanel.title}</h2>
                 <p className="px-1.5 pt-1.5 text-xs leading-5 text-muted-foreground">{copy.helpPanel.description}</p>
-                <Link className="mt-3 inline-flex border-t px-1.5 pt-2 text-sm font-medium text-foreground underline-offset-4 hover:text-accent-foreground hover:underline" href="/settings" onClick={closeAfterNavigation}>
+                <Link className="mt-3 inline-flex border-t px-1.5 pt-2 text-sm font-medium text-foreground underline-offset-4 hover:underline" href="/settings" onClick={closeAfterNavigation}>
                   {copy.helpPanel.settingsLink}
                 </Link>
               </div>
@@ -226,29 +238,26 @@ function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: st
     <div className="flex h-full flex-col bg-card">
       <div className="flex h-[72px] items-center gap-2.5 px-5 pb-5 pt-6">
         <Image alt="" className="theme-brand-mark" height={28} priority src={UI_ASSETS.brand.mark} width={28} />
-        <span className="text-[15px] font-semibold leading-[22.5px] tracking-[-0.15px] text-foreground">{copy.productName}</span>
+        <span className="text-base font-semibold tracking-tight text-foreground">{copy.productName}</span>
       </div>
 
       <nav aria-label={copy.common.primaryNavigation} className="flex flex-1 flex-col overflow-hidden px-3 pb-4 pt-0">
         {navGroups.map((group) => (
           <div className={cn("space-y-0", group.label && "pt-6")} key={group.label ?? group.items[0].key}>
-            {group.label ? <p className="px-3 text-[11px] font-semibold uppercase leading-[16.5px] tracking-[0.99px] text-subtle-foreground">{copy.nav[group.label]}</p> : null}
+            {group.label ? <p className="px-3 text-xs font-medium text-subtle-foreground">{copy.nav[group.label]}</p> : null}
             <div className={cn(group.label && "pt-1.5")}>
               {group.items.map((item) => {
                 const isActive = isNavItemActive(item.key, pathname);
                 return (
                   <Link
                     aria-current={isActive ? "page" : undefined}
-                    className={cn(
-                      "flex h-[36.967px] items-center gap-3 rounded-[10px] px-3 py-2 text-sm leading-[21px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground",
-                      isActive && "bg-accent font-medium text-accent-foreground",
-                    )}
+                    className={navItemClass(isActive)}
                     href={item.href}
                     key={item.key}
                     onClick={onNavigate}
                     prefetch={false}
                   >
-                    <AppIcon name={item.icon} className="size-[17.975px]" strokeWidth={1.65} />
+                    <AppIcon name={item.icon} className={navIconClass(isActive)} />
                     {copy.nav[item.key]}
                   </Link>
                 );
@@ -256,18 +265,15 @@ function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: st
             </div>
           </div>
         ))}
-        <div className="mt-auto -mx-3 border-t-[1.712px] border-border px-3 pb-1 pt-4">
+        <div className="mt-auto -mx-3 border-t border-border px-3 pb-1 pt-4">
           <Link
             aria-current={isNavItemActive(settingsNavItem.key, pathname) ? "page" : undefined}
-            className={cn(
-              "flex h-[36.967px] items-center gap-3 rounded-[10px] px-3 py-2 text-sm leading-[21px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground",
-              isNavItemActive(settingsNavItem.key, pathname) && "bg-accent font-medium text-accent-foreground",
-            )}
+            className={navItemClass(isNavItemActive(settingsNavItem.key, pathname))}
             href={settingsNavItem.href}
             onClick={onNavigate}
             prefetch={false}
           >
-            <AppIcon name={settingsNavItem.icon} className="size-[17.975px]" strokeWidth={1.65} />
+            <AppIcon name={settingsNavItem.icon} className={navIconClass(isNavItemActive(settingsNavItem.key, pathname))} />
             {copy.nav.settings}
           </Link>
         </div>
@@ -390,7 +396,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Button aria-controls="mobile-navigation" aria-expanded={mobileOpen} aria-label={copy.common.openNavigation} className="xl:hidden" onClick={() => setMobileOpen(true)} ref={mobileOpenButtonRef} size="icon" variant="ghost">
               <AppIcon name="menu" className="size-5" />
             </Button>
-            <span className="truncate text-lg font-semibold tracking-[-0.02em]">{getPageTitle(pathname, copy)}</span>
+            <span className="truncate text-lg font-semibold tracking-tight">{getPageTitle(pathname, copy)}</span>
           </div>
         </header>
 

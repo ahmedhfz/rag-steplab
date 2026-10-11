@@ -3,12 +3,13 @@
 import Link from "next/link";
 
 import { useDocumentPipeline, type PipelineOperationStatus } from "@/components/document-pipeline-provider";
-import { OperationStatusBadge } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { isExceptionTone, PIPELINE_STEP_STATUS, StatusIcon, StatusPill } from "@/components/ui/status-pill";
+import { UI_COPY, type AppLocale } from "@/lib/copy";
+import { operationToStepState } from "@/lib/figma-view-models";
 import type { RunSummary } from "@/lib/rag-api-types";
-import type { AppLocale } from "@/lib/copy";
 
 function runToOperationStatus(run: RunSummary | undefined, fallback: PipelineOperationStatus): PipelineOperationStatus {
   if (!run) return fallback;
@@ -30,10 +31,16 @@ function LineageLink({
   /** Omitted while the workspace is loading, so no stage shows a false "Locked". */
   status?: PipelineOperationStatus;
 }) {
+  const state = status ? operationToStepState(status) : null;
+  const presentation = state ? PIPELINE_STEP_STATUS[state] : null;
+  const statusLabel = state ? UI_COPY[locale].status[state] : null;
+  // Completed/ready/locked stay icon-only; only exceptions earn visible text.
   return (
-    <Link className="flex min-w-0 items-center gap-1.5 rounded-[8px] px-1.5 py-1 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/25" href={href}>
+    <Link className="flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-secondary" data-status={status} href={href}>
       <span className="text-xs font-medium text-foreground">{label}</span>
-      {status ? <OperationStatusBadge locale={locale} status={status} /> : null}
+      {presentation && statusLabel ? isExceptionTone(presentation.tone)
+        ? <StatusPill tone={presentation.tone}>{statusLabel}</StatusPill>
+        : <StatusIcon icon={presentation.icon} label={statusLabel} tone={presentation.tone} /> : null}
     </Link>
   );
 }
@@ -90,7 +97,7 @@ export function PipelineContextBar({ showLineage = true }: { showLineage?: boole
         </div>
         {showLineage ? <span aria-hidden="true" className="text-input">/</span> : null}
         <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value)} value={activePipelineId ?? ""}>
-          <SelectTrigger aria-label={labels.pipeline} className="h-8 min-w-0 max-w-[min(18rem,55vw)] overflow-hidden border-0 px-1 text-xs font-semibold text-accent-foreground shadow-none sm:w-[16rem] sm:max-w-[16rem] sm:shrink-0 [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]]:truncate [&_[data-slot=select-value]]:whitespace-nowrap" data-testid="pipeline-context-pipeline-selector" title={activePipeline?.name ?? labels.noPipeline}>
+          <SelectTrigger aria-label={labels.pipeline} className="h-8 min-w-0 max-w-[min(18rem,55vw)] overflow-hidden border-0 px-1 text-xs font-medium text-foreground shadow-none sm:w-[16rem] sm:max-w-[16rem] sm:shrink-0 [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]]:truncate [&_[data-slot=select-value]]:whitespace-nowrap" data-testid="pipeline-context-pipeline-selector" title={activePipeline?.name ?? labels.noPipeline}>
             <SelectValue placeholder={labels.noPipeline} />
           </SelectTrigger>
           <SelectContent>{pipelines.map((pipeline) => <SelectItem className="h-auto min-h-8 whitespace-normal break-words" key={pipeline.id} value={pipeline.id}>{pipeline.name}{pipeline.isDefault ? " · default" : ""}</SelectItem>)}</SelectContent>
@@ -103,7 +110,7 @@ export function PipelineContextBar({ showLineage = true }: { showLineage?: boole
             <LineageLink href="/chunking" label={labels.chunk} locale={locale} status={lineageLoading ? undefined : chunkStageStatus} />
             <span aria-hidden="true" className="text-input"><AppIcon name="arrowRight" className="size-3.5" /></span>
             <LineageLink href="/embeddings" label={labels.embedding} locale={locale} status={lineageLoading ? undefined : embeddingStageStatus} />
-            {isHistorical ? <span className="truncate text-[10px] text-warning">({labels.historical})</span> : null}
+            {isHistorical ? <StatusPill className="truncate" tone="warning">{labels.historical}</StatusPill> : null}
           </nav> : null}
       </div>
     </section>

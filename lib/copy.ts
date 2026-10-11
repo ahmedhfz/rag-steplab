@@ -1,600 +1,443 @@
+import { usePreferences } from "@/components/preferences-provider";
 import type { DocumentActivityEventType, PipelineStepKey, PipelineStepState } from "@/lib/rag-ui-types";
 
 export type AppLocale = "en" | "tr";
 export type AppNavKey = "overview" | "documents" | "parse" | "chunking" | "embeddings" | "playground" | "evaluation" | "settings" | "chunks" | "retrieval";
 export type DocumentViewKey = "overview" | "parsed" | "chunks";
 
-type DocumentViewCopy = {
-  title: string;
-  description: string;
-};
+/** Widens literal `as const` leaves so other locales may use different strings. */
+type Widen<T> = T extends string
+  ? string
+  : T extends number
+    ? number
+    : T extends boolean
+      ? boolean
+      : T extends readonly (infer Item)[]
+        ? Widen<Item>[]
+        : { -readonly [Key in keyof T]: Widen<T[Key]> };
 
-export type AppCopy = {
-  productName: string;
-  nav: Record<AppNavKey, string> & {
-    pipeline: string;
-    experiment: string;
-    system: string;
-  };
-  status: Record<PipelineStepState, string>;
-  guides: string;
-  help: string;
-  guidePanel: { title: string; description: string };
-  helpPanel: { title: string; description: string; settingsLink: string };
-  footer: { localProject: string; backendStatus: string };
+/**
+ * English is the source of truth for the copy shape. Add a key here first;
+ * `tr` must then provide the same key (the AppCopy annotation enforces it).
+ */
+const en = {
+  productName: "RAG StepLab",
+  nav: {
+    overview: "Overview", documents: "Documents", parse: "Parsing", chunking: "Chunking", embeddings: "Embeddings",
+    playground: "Playground", evaluation: "Evaluation", settings: "Settings", chunks: "Chunks", retrieval: "Retrieval",
+    pipeline: "Build", experiment: "Test", system: "System",
+  },
+  status: { "Not started": "Not started", Ready: "Ready", Processing: "Processing", Completed: "Completed", Skipped: "Skipped", Error: "Error", Locked: "Locked", Stale: "Stale" },
+  guides: "Guides",
+  help: "Help",
+  guidePanel: {
+    title: "Learn the RAG flow",
+    description: "Run a real PDF through every RAG stage and inspect each input, output, configuration, and lineage decision.",
+  },
+  helpPanel: {
+    title: "About this lab",
+    description: "This learning lab connects parsing, chunking, pgvector/FTS retrieval, reranking, context, grounded generation, citations, and evaluation.",
+    settingsLink: "Open settings",
+  },
+  footer: { localProject: "RAG learning laboratory", backendStatus: "RAG learning pipeline" },
   common: {
-    close: string;
-    back: string;
-    openNavigation: string;
-    primaryNavigation: string;
-    accountMenu: string;
-    frontendFoundation: string;
-    signOut: string;
-    storagePending: string;
-    backToOverview: string;
-    learningHint: string;
-  };
+    close: "Close",
+    back: "Back",
+    openNavigation: "Open navigation",
+    primaryNavigation: "Primary navigation",
+    accountMenu: "Account menu",
+    frontendFoundation: "Full pipeline lab",
+    signOut: "Sign out",
+    storagePending: "Loading preferences…",
+    backToOverview: "Back to overview",
+    learningHint: "Learning hint",
+    howItWorks: "How it works",
+    technicalDetails: "Technical details",
+  },
   overview: {
-    title: string;
-    steps: Record<PipelineStepKey, string>;
-    pipelineStatus: string;
-    noPipelineRun: string;
-    pipelineHint: string;
-    uploadDocument: string;
-    dropPdf: string;
-    choosePdf: string;
-    fileRequirements: string;
-    noFileSent: string;
-    selectedDocument: string;
-    noDocumentSelected: string;
-    fileName: string;
-    size: string;
-    status: string;
-    removeSelected: string;
-    localSelection: string;
-    documentSelected: string;
-    parse: string;
-    backendActionNotConnected: string;
-    parseDocument: string;
-    reparseDocument: string;
-    parseReady: string;
-    parseQueued: string;
-    parseRunning: string;
-    parseProcessing: string;
-    parseCompleted: string;
-    parseFailed: string;
-    parseReasonSelected: string;
-    parseReasonEmpty: string;
-    parseReasonPersisted: string;
-    parseReasonReady: string;
-    parseReasonProcessing: string;
-    parseReasonQueued: string;
-    parseReasonRunning: string;
-    parseReasonCompleted: string;
-    parseReasonError: string;
-    parseSummary: string;
-    openParsedContent: string;
-    noParseSummary: string;
-    activity: string;
-    noActivity: string;
-    parseProgress: string;
-    parseProgressEstimated: string;
-    activityEvents: Record<DocumentActivityEventType, string>;
-    emptyFile: string;
-    backendUnavailable: string;
-    modalDispatchFailed: string;
-    invalidResponse: string;
-    doclingError: string;
-    parseInterrupted: string;
-    parsePollTimeout: string;
-    unknownParseError: string;
-    invalidPdf: string;
-    fileTooLarge: string;
-  };
+    title: "Build your RAG, one step at a time.",
+    steps: { document: "Document", parse: "Parse", chunk: "Chunk", embed: "Embed", index: "Index", retrieve: "Retrieve", rerank: "Rerank", context: "Context", generate: "Generate", evaluate: "Evaluate" },
+    pipelineStatus: "Pipeline Status",
+    noPipelineRun: "No pipeline run yet.",
+    pipelineHint: "Choose a PDF, then run Parse Document to send it through the parser service. Later stages remain locked.",
+    uploadDocument: "Upload Document",
+    dropPdf: "Drag and drop a PDF file here",
+    choosePdf: "Choose PDF",
+    fileRequirements: "PDF only • Max 50 MB",
+    noFileSent: "No file is sent yet",
+    selectedDocument: "Selected Document",
+    noDocumentSelected: "No document selected.",
+    fileName: "File Name",
+    size: "Size",
+    status: "Status",
+    removeSelected: "Remove selected document",
+    localSelection: "Selected locally",
+    documentSelected: "Document selected",
+    parse: "Parse",
+    backendActionNotConnected: "Document parser",
+    parseDocument: "Parse Document",
+    reparseDocument: "Reparse Document",
+    parseReady: "Ready to send this PDF to the parser service.",
+    parseQueued: "Parsing is queued and will start when capacity is available.",
+    parseRunning: "The PDF is being parsed. This can take a moment.",
+    parseProcessing: "The PDF is being parsed. This can take a moment.",
+    parseCompleted: "Parsing completed. The content is ready for chunking.",
+    parseFailed: "Parsing failed.",
+    parseReasonReady: "Click Parse Document to start the real parser request.",
+    parseReasonQueued: "Parsing is queued and will start when capacity is available.",
+    parseReasonRunning: "The PDF is being parsed.",
+    parseReasonProcessing: "The PDF is being parsed.",
+    parseReasonCompleted: "Parse completed. You can inspect the returned content or run parsing again.",
+    parseReasonError: "The PDF was sent, but the parser returned an error.",
+    parseReasonSelected: "The PDF is selected and ready for parsing.",
+    parseReasonEmpty: "Select a PDF first. Parsing sends the file to the parser service.",
+    parseReasonPersisted: "Reparse the saved PDF. The new result becomes the default; compatible history remains available.",
+    parseSummary: "Parse Summary",
+    openParsedContent: "Open Parsed Content",
+    noParseSummary: "A parse summary will appear after the document has been parsed.",
+    activity: "Activity",
+    noActivity: "No activity yet. Select a PDF to begin.",
+    parseProgress: "Progress",
+    parseProgressEstimated: "estimated",
+    activityEvents: {
+      documentSelected: "Document selected",
+      parseRequested: "Parse requested",
+      parsing: "Parsing",
+      parseCompleted: "Parse completed",
+      parseFailed: "Parse failed",
+    },
+    emptyFile: "The selected file is empty.",
+    backendUnavailable: "The RAG service is temporarily unavailable. Retry shortly.",
+    modalDispatchFailed: "Parsing could not start. Try again when the service is available.",
+    invalidResponse: "The document could not be parsed because the result was invalid.",
+    doclingError: "This PDF could not be parsed. Try a different or undamaged PDF.",
+    parseInterrupted: "Parsing stopped before the document was completed. Try again.",
+    parsePollTimeout: "The parse may still be running. Browser polling stopped after 15 minutes; refresh the page to resume status checks.",
+    unknownParseError: "The document could not be parsed.",
+    invalidPdf: "Only PDF files are supported.",
+    fileTooLarge: "The PDF must be 50 MB or smaller.",
+  },
   documents: {
-    root: string;
-    tabs: Record<DocumentViewKey, string>;
-    views: Record<DocumentViewKey, DocumentViewCopy>;
-    noDocumentTitle: string;
-    metadataPending: string;
-    document: string;
-    fileName: string;
-    size: string;
-    noDocumentSelected: string;
-    chooseFromOverview: string;
-    parseSummary: string;
-    noParseSummary: string;
-    pages: string;
-    noPages: string;
-    parsedElements: string;
-    outline: string;
-    selectedSection: string;
-    source: string;
-    noOutline: string;
-    noParsedElements: string;
-    viewMode: string;
-    structured: string;
-    markdown: string;
-    json: string;
-    parsedViewsUnavailable: string;
-    elementTypes: Record<"heading" | "paragraph" | "list" | "table" | "other", string>;
-    page: string;
-    pageElements: string;
-    summaryFields: {
-      pageCount: string;
-      headingCount: string;
-      paragraphCount: string;
-      listCount: string;
-      tableCount: string;
-    };
-    chunks: string;
-    noChunks: string;
-  };
+    root: "Documents",
+    tabs: { overview: "Overview", parsed: "Parsed Content", chunks: "Chunks" },
+    views: {
+      overview: { title: "Document Overview", description: "Inspect document metadata and parse output before chunking." },
+      parsed: { title: "Parsed Content", description: "Inspect structured elements returned by the parser." },
+      chunks: { title: "Chunks", description: "Explore chunks after parsing and chunking are available." },
+    },
+    noDocumentTitle: "No document selected",
+    metadataPending: "Document details will appear after a PDF is added.",
+    document: "Document",
+    fileName: "File name",
+    size: "Size",
+    noDocumentSelected: "No document is available yet.",
+    chooseFromOverview: "Choose a PDF from Overview",
+    parseSummary: "Parse Summary",
+    noParseSummary: "No parse summary is available yet.",
+    pages: "Pages",
+    noPages: "No pages are available until parsing completes.",
+    parsedElements: "Parsed Elements",
+    outline: "Content outline",
+    selectedSection: "Selected section",
+    source: "Source",
+    noOutline: "The parser returned content, but no heading hierarchy was available.",
+    noParsedElements: "Select a parsed page to inspect its elements.",
+    viewMode: "Parsed content view mode",
+    structured: "Structured",
+    markdown: "Markdown",
+    json: "JSON",
+    parsedViewsUnavailable: "Views become available after a real parse completes.",
+    elementTypes: { heading: "Heading", paragraph: "Paragraph", list: "List", table: "Table", other: "Other" },
+    page: "Page",
+    pageElements: "elements",
+    summaryFields: { pageCount: "Pages", headingCount: "Headings", paragraphCount: "Paragraphs", listCount: "Lists", tableCount: "Tables" },
+    chunks: "Chunks",
+    noChunks: "No chunks are available until parsing and chunking complete.",
+  },
   retrieval: {
-    title: string;
-    question: string;
-    questionPlaceholder: string;
-    clearQuestion: string;
-    ask: string;
-    askUnavailable: string;
-    topK: string;
-    mode: string;
-    modes: { dense: string; hybrid: string; keyword: string };
-    reranker: string;
-    notConfigured: string;
-    rerankerUnavailable: string;
-    reset: string;
-    nothingToReset: string;
-    hint: string;
-    retrievedChunks: string;
-    rank: string;
-    score: string;
-    sourceDocument: string;
-    page: string;
-    preview: string;
-    noResults: string;
-    resultsUnavailable: string;
-    generatedAnswer: string;
-    noAnswer: string;
-    trace: string;
-    copyTrace: string;
-    traceUnavailable: string;
-    time: string;
-    step: string;
-    component: string;
-    details: string;
-    inputOutput: string;
-    noTrace: string;
-  };
+    title: "Playground",
+    question: "Question",
+    questionPlaceholder: "Enter a question to prepare a retrieval request",
+    clearQuestion: "Clear question",
+    ask: "Ask",
+    askUnavailable: "Ask becomes available after the active document has current chunks and embeddings.",
+    topK: "Top-K",
+    mode: "Mode",
+    modes: { dense: "Dense", hybrid: "Hybrid", keyword: "Keyword" },
+    reranker: "Reranker",
+    notConfigured: "Not configured",
+    rerankerUnavailable: "Reranking becomes available with a current retrieval-ready document.",
+    reset: "Reset",
+    nothingToReset: "No query settings have changed.",
+    hint: "Choose retrieval settings, then run a real experiment against the active document.",
+    retrievedChunks: "Retrieved Chunks",
+    rank: "Rank",
+    score: "Score",
+    sourceDocument: "Source Document",
+    page: "Page",
+    preview: "Preview",
+    noResults: "No retrieval results are available yet.",
+    resultsUnavailable: "Results appear after a real retrieval experiment runs.",
+    generatedAnswer: "Generated Answer",
+    noAnswer: "No generated answer exists for the current experiment.",
+    trace: "Retrieval Trace",
+    copyTrace: "Copy trace",
+    traceUnavailable: "Trace data will be available after a real retrieval run.",
+    time: "Time",
+    step: "Step",
+    component: "Component",
+    details: "Details",
+    inputOutput: "Input / Output",
+    noTrace: "No trace data is available yet.",
+  },
   settings: {
-    workspace: string;
-    title: string;
-    description: string;
-    languageTitle: string;
-    languageDescription: string;
-    english: string;
-    turkish: string;
-    themeTitle: string;
-    themeDescription: string;
-    themeSystem: string;
-    themeLight: string;
-    themeDark: string;
-    hintsTitle: string;
-    hintsDescription: string;
-    hintsEnabled: string;
-    hintsDisabled: string;
-    resetTitle: string;
-    resetDescription: string;
-    reset: string;
-    nothingToReset: string;
-    preferencesSaved: string;
-  };
+    workspace: "Workspace",
+    title: "Settings",
+    description: "Manage your workspace preferences.",
+    languageTitle: "Language",
+    languageDescription: "Interface language.",
+    english: "English",
+    turkish: "Türkçe",
+    themeTitle: "Theme",
+    themeDescription: "Choose a color theme or follow your system setting.",
+    themeSystem: "System",
+    themeLight: "Light",
+    themeDark: "Dark",
+    hintsTitle: "Learning hints",
+    hintsDescription: "Show collapsed learning notes.",
+    hintsEnabled: "Show learning hints",
+    hintsDisabled: "Hide learning hints",
+    resetTitle: "Reset preferences",
+    resetDescription: "Restore default preferences.",
+    reset: "Reset",
+    nothingToReset: "Preferences already use the defaults.",
+    preferencesSaved: "Changes are saved automatically.",
+  },
   evaluation: {
-    title: string;
-    description: string;
-    emptyTitle: string;
-    emptyDescription: string;
-    emptyNote: string;
-  };
+    title: "Evaluation",
+    description: "Measure how reliably your RAG finds relevant evidence and keeps answers grounded.",
+    emptyTitle: "No evaluation data yet",
+    emptyDescription: "Create a dataset after the active document has current chunks and embeddings, then run a real evaluation.",
+    emptyNote: "Results appear here after a reproducible evaluation run.",
+  },
+} as const;
+
+export type AppCopy = Widen<typeof en>;
+
+const tr: AppCopy = {
+  productName: "RAG StepLab",
+  nav: {
+    overview: "Genel Bakış", documents: "Dokümanlar", parse: "Ayrıştırma", chunking: "Parçalama", embeddings: "Embedding",
+    playground: "Deney Alanı", evaluation: "Değerlendirme", settings: "Ayarlar", chunks: "Parçalar", retrieval: "Getirme",
+    pipeline: "Yapı", experiment: "Test", system: "Sistem",
+  },
+  status: { "Not started": "Başlatılmadı", Ready: "Hazır", Processing: "İşleniyor", Completed: "Tamamlandı", Skipped: "Atlandı", Error: "Hata", Locked: "Kilitli", Stale: "Eski" },
+  guides: "Rehberler",
+  help: "Yardım",
+  guidePanel: {
+    title: "RAG akışını öğren",
+    description: "Gerçek bir PDF'i tüm RAG aşamalarından geçirin; her girdi, çıktı, ayar ve lineage kararını inceleyin.",
+  },
+  helpPanel: {
+    title: "Bu laboratuvar hakkında",
+    description: "Bu öğrenme laboratuvarı ayrıştırma, parçalama, pgvector/FTS getirme, yeniden sıralama, bağlam, grounded üretim, citations ve değerlendirmeyi bağlar.",
+    settingsLink: "Ayarları aç",
+  },
+  footer: { localProject: "RAG öğrenme laboratuvarı", backendStatus: "RAG öğrenme pipeline'ı" },
+  common: {
+    close: "Kapat",
+    back: "Geri",
+    openNavigation: "Gezinmeyi aç",
+    primaryNavigation: "Birincil gezinme",
+    accountMenu: "Hesap menüsü",
+    frontendFoundation: "Tam pipeline laboratuvarı",
+    signOut: "Çıkış yap",
+    storagePending: "Tercihler yükleniyor…",
+    backToOverview: "Genel bakışa dön",
+    learningHint: "Öğrenme ipucu",
+    howItWorks: "Nasıl çalışır?",
+    technicalDetails: "Teknik ayrıntılar",
+  },
+  overview: {
+    title: "RAG'ınızı adım adım oluşturun.",
+    steps: { document: "Doküman", parse: "Ayrıştır", chunk: "Parçala", embed: "Vektörleştir", index: "İndeksle", retrieve: "Getir", rerank: "Yeniden sırala", context: "Bağlam", generate: "Üret", evaluate: "Değerlendir" },
+    pipelineStatus: "İşlem Hattı Durumu",
+    noPipelineRun: "İşlem hattı henüz çalışmadı.",
+    pipelineHint: "PDF'i ayrıştırın; ardından gerçek parçalama, embedding, getirme, üretim ve değerlendirme aşamalarını sırayla çalıştırın.",
+    uploadDocument: "Doküman Yükle",
+    dropPdf: "PDF dosyasını buraya sürükleyip bırakın",
+    choosePdf: "PDF Seç",
+    fileRequirements: "Yalnız PDF • En fazla 50 MB",
+    noFileSent: "Henüz hiçbir dosya gönderilmedi",
+    selectedDocument: "Seçili Doküman",
+    noDocumentSelected: "Doküman seçilmedi.",
+    fileName: "Dosya Adı",
+    size: "Boyut",
+    status: "Durum",
+    removeSelected: "Seçili dokümanı kaldır",
+    localSelection: "Yerel seçildi",
+    documentSelected: "Doküman seçildi",
+    parse: "Ayrıştırma",
+    backendActionNotConnected: "Doküman ayrıştırıcı",
+    parseDocument: "Dokümanı Ayrıştır",
+    reparseDocument: "Dokümanı Yeniden Ayrıştır",
+    parseReady: "Bu PDF ayrıştırma servisine gönderilmeye hazır.",
+    parseQueued: "Ayrıştırma sıraya alındı; kapasite uygun olduğunda başlayacak.",
+    parseRunning: "PDF ayrıştırılıyor. Bu işlem biraz sürebilir.",
+    parseProcessing: "PDF ayrıştırılıyor. Bu işlem biraz sürebilir.",
+    parseCompleted: "Ayrıştırma tamamlandı. İçerik parçalama için hazır.",
+    parseFailed: "Ayrıştırma başarısız.",
+    parseReasonReady: "Gerçek ayrıştırma isteğini başlatmak için Dokümanı Ayrıştır'a tıklayın.",
+    parseReasonQueued: "Ayrıştırma sıraya alındı; kapasite uygun olduğunda başlayacak.",
+    parseReasonRunning: "PDF ayrıştırılıyor.",
+    parseReasonProcessing: "PDF ayrıştırılıyor.",
+    parseReasonCompleted: "Ayrıştırma tamamlandı. Dönen içeriği inceleyebilir veya yeniden çalıştırabilirsiniz.",
+    parseReasonError: "PDF gönderildi ancak ayrıştırıcı hata döndürdü.",
+    parseReasonSelected: "PDF seçildi ve ayrıştırmaya hazır.",
+    parseReasonEmpty: "Önce PDF seçin. Ayrıştırma dosyayı ayrıştırma servisine gönderir.",
+    parseReasonPersisted: "Kaydedilmiş PDF'i yeniden ayrıştırır. Yeni sonuç varsayılan olur; uyumlu geçmiş kullanılabilir kalır.",
+    parseSummary: "Ayrıştırma Özeti",
+    openParsedContent: "Ayrıştırılmış İçeriği Aç",
+    noParseSummary: "Doküman ayrıştırıldıktan sonra özeti burada görünür.",
+    activity: "Aktivite",
+    noActivity: "Henüz aktivite yok. Başlamak için PDF seçin.",
+    parseProgress: "İlerleme",
+    parseProgressEstimated: "tahmini",
+    activityEvents: {
+      documentSelected: "Doküman seçildi",
+      parseRequested: "Ayrıştırma istendi",
+      parsing: "Ayrıştırılıyor",
+      parseCompleted: "Ayrıştırma tamamlandı",
+      parseFailed: "Ayrıştırma başarısız",
+    },
+    emptyFile: "Seçilen dosya boş.",
+    backendUnavailable: "RAG servisi geçici olarak kullanılamıyor. Kısa süre sonra tekrar deneyin.",
+    modalDispatchFailed: "Ayrıştırma başlatılamadı. Servis kullanılabilir olduğunda tekrar deneyin.",
+    invalidResponse: "Geçersiz sonuç nedeniyle doküman ayrıştırılamadı.",
+    doclingError: "Bu PDF ayrıştırılamadı. Farklı veya bozulmamış bir PDF deneyin.",
+    parseInterrupted: "Doküman tamamlanmadan ayrıştırma durdu. Tekrar deneyin.",
+    parsePollTimeout: "Ayrıştırma hâlâ sürüyor olabilir. Tarayıcı takibi 15 dakika sonra durdu; durum takibini sürdürmek için sayfayı yenileyin.",
+    unknownParseError: "Doküman ayrıştırılamadı.",
+    invalidPdf: "Yalnız PDF dosyaları desteklenir.",
+    fileTooLarge: "PDF 50 MB veya daha küçük olmalıdır.",
+  },
+  documents: {
+    root: "Dokümanlar",
+    tabs: { overview: "Genel Bakış", parsed: "Ayrıştırılmış İçerik", chunks: "Parçalar" },
+    views: {
+      overview: { title: "Doküman Genel Bakışı", description: "Parçalama öncesinde doküman üst verisini ve ayrıştırma çıktısını inceleyin." },
+      parsed: { title: "Ayrıştırılmış İçerik", description: "Ayrıştırıcı tarafından döndürülen yapısal öğeleri inceleyin." },
+      chunks: { title: "Parçalar", description: "Ayrıştırma ve parçalama hazır olduğunda içerik parçalarını inceleyin." },
+    },
+    noDocumentTitle: "Doküman seçilmedi",
+    metadataPending: "PDF eklendikten sonra doküman bilgileri burada görünür.",
+    document: "Doküman",
+    fileName: "Dosya adı",
+    size: "Boyut",
+    noDocumentSelected: "Henüz kullanılabilir doküman yok.",
+    chooseFromOverview: "Genel Bakıştan PDF seç",
+    parseSummary: "Ayrıştırma Özeti",
+    noParseSummary: "Henüz ayrıştırma özeti yok.",
+    pages: "Sayfalar",
+    noPages: "Ayrıştırma tamamlanana kadar sayfa bulunmaz.",
+    parsedElements: "Ayrıştırılmış Öğeler",
+    outline: "İçerik hiyerarşisi",
+    selectedSection: "Seçili bölüm",
+    source: "Kaynak",
+    noOutline: "Ayrıştırıcı içerik döndürdü ancak başlık hiyerarşisi bulunamadı.",
+    noParsedElements: "Öğelerini incelemek için ayrıştırılmış bir sayfa seçin.",
+    viewMode: "Ayrıştırılmış içerik görünüm modu",
+    structured: "Yapısal",
+    markdown: "Markdown",
+    json: "JSON",
+    parsedViewsUnavailable: "Gerçek bir ayrıştırma tamamlandıktan sonra görünümler kullanılabilir.",
+    elementTypes: { heading: "Başlık", paragraph: "Paragraf", list: "Liste", table: "Tablo", other: "Diğer" },
+    page: "Sayfa",
+    pageElements: "öğe",
+    summaryFields: { pageCount: "Sayfa", headingCount: "Başlık", paragraphCount: "Paragraf", listCount: "Liste", tableCount: "Tablo" },
+    chunks: "Parçalar",
+    noChunks: "Ayrıştırma ve parçalama tamamlanana kadar içerik parçası bulunmaz.",
+  },
+  retrieval: {
+    title: "Deney Alanı",
+    question: "Soru",
+    questionPlaceholder: "Getirme isteği hazırlamak için soru girin",
+    clearQuestion: "Soruyu temizle",
+    ask: "Sor",
+    askUnavailable: "Aktif dokümanın güncel parçaları ve embedding'leri hazır olduğunda soru gönderilebilir.",
+    topK: "Top-K",
+    mode: "Mod",
+    modes: { dense: "Dense", hybrid: "Hybrid", keyword: "Keyword" },
+    reranker: "Reranker",
+    notConfigured: "Yapılandırılmadı",
+    rerankerUnavailable: "Güncel ve getirmeye hazır bir dokümanla yeniden sıralama kullanılabilir.",
+    reset: "Sıfırla",
+    nothingToReset: "Sorgu ayarlarında değişiklik yok.",
+    hint: "Getirme ayarlarını seçin, ardından aktif dokümana karşı gerçek bir deney çalıştırın.",
+    retrievedChunks: "Getirilen Parçalar",
+    rank: "Sıra",
+    score: "Skor",
+    sourceDocument: "Kaynak Doküman",
+    page: "Sayfa",
+    preview: "Önizleme",
+    noResults: "Henüz getirme sonucu yok.",
+    resultsUnavailable: "Gerçek bir getirme deneyi çalıştıktan sonra sonuçlar burada görünür.",
+    generatedAnswer: "Üretilen Cevap",
+    noAnswer: "Mevcut deney için üretilmiş cevap yok.",
+    trace: "Getirme İzi",
+    copyTrace: "İzi kopyala",
+    traceUnavailable: "Gerçek getirme çalışmasından sonra iz verisi kullanılabilir.",
+    time: "Zaman",
+    step: "Adım",
+    component: "Bileşen",
+    details: "Detaylar",
+    inputOutput: "Girdi / Çıktı",
+    noTrace: "Henüz iz verisi yok.",
+  },
+  settings: {
+    workspace: "Çalışma alanı",
+    title: "Ayarlar",
+    description: "Çalışma alanı tercihlerinizi yönetin.",
+    languageTitle: "Dil",
+    languageDescription: "Arayüz dili.",
+    english: "English",
+    turkish: "Türkçe",
+    themeTitle: "Tema",
+    themeDescription: "Bir renk teması seçin veya sistem ayarınızı kullanın.",
+    themeSystem: "Sistem",
+    themeLight: "Açık",
+    themeDark: "Koyu",
+    hintsTitle: "Öğrenme ipuçları",
+    hintsDescription: "Kapalı öğrenme notlarını gösterin.",
+    hintsEnabled: "Öğrenme ipuçlarını göster",
+    hintsDisabled: "Öğrenme ipuçlarını gizle",
+    resetTitle: "Tercihleri sıfırla",
+    resetDescription: "Varsayılan tercihlere dönün.",
+    reset: "Sıfırla",
+    nothingToReset: "Tercihler zaten varsayılan değerlerde.",
+    preferencesSaved: "Değişiklikler otomatik kaydedilir.",
+  },
+  evaluation: {
+    title: "Değerlendirme",
+    description: "RAG sisteminizin ilgili kanıtı ne kadar iyi bulduğunu ve cevaplarını ne kadar sağlam tuttuğunu ölçün.",
+    emptyTitle: "Henüz değerlendirme verisi yok",
+    emptyDescription: "Aktif dokümanın güncel parçaları ve embedding'leri hazır olduktan sonra veri seti oluşturup gerçek değerlendirme çalıştırın.",
+    emptyNote: "Sonuçlar, tekrarlanabilir bir değerlendirme çalışmasından sonra burada görünür.",
+  },
 };
 
-export const UI_COPY = {
-  en: {
-    productName: "RAG StepLab",
-    nav: {
-      overview: "Overview", documents: "Documents", parse: "Parsing", chunking: "Chunking", embeddings: "Embeddings",
-      playground: "Playground", evaluation: "Evaluation", settings: "Settings", chunks: "Chunks", retrieval: "Retrieval",
-      pipeline: "Build", experiment: "Test", system: "System",
-    },
-    status: { "Not started": "Not started", Ready: "Ready", Processing: "Processing", Completed: "Completed", Skipped: "Skipped", Error: "Error", Locked: "Locked", Stale: "Stale" },
-    guides: "Guides",
-    help: "Help",
-    guidePanel: {
-      title: "Learn the RAG flow",
-      description: "Run a real PDF through every RAG stage and inspect each input, output, configuration, and lineage decision.",
-    },
-    helpPanel: {
-      title: "About this lab",
-      description: "This learning lab connects parsing, chunking, pgvector/FTS retrieval, reranking, context, grounded generation, citations, and evaluation.",
-      settingsLink: "Open settings",
-    },
-    footer: { localProject: "RAG learning laboratory", backendStatus: "RAG learning pipeline" },
-    common: {
-      close: "Close",
-      back: "Back",
-      openNavigation: "Open navigation",
-      primaryNavigation: "Primary navigation",
-      accountMenu: "Account menu",
-      frontendFoundation: "Full pipeline lab",
-      signOut: "Sign out",
-      storagePending: "Loading preferences…",
-      backToOverview: "Back to overview",
-      learningHint: "Learning hint",
-    },
-    overview: {
-      title: "Build your RAG, one step at a time.",
-      steps: { document: "Document", parse: "Parse", chunk: "Chunk", embed: "Embed", index: "Index", retrieve: "Retrieve", rerank: "Rerank", context: "Context", generate: "Generate", evaluate: "Evaluate" },
-      pipelineStatus: "Pipeline Status",
-      noPipelineRun: "No pipeline run yet.",
-      pipelineHint: "Choose a PDF, then run Parse Document to send it through the parser service. Later stages remain locked.",
-      uploadDocument: "Upload Document",
-      dropPdf: "Drag and drop a PDF file here",
-      choosePdf: "Choose PDF",
-      fileRequirements: "PDF only • Max 50 MB",
-      noFileSent: "No file is sent yet",
-      selectedDocument: "Selected Document",
-      noDocumentSelected: "No document selected.",
-      fileName: "File Name",
-      size: "Size",
-      status: "Status",
-      removeSelected: "Remove selected document",
-      localSelection: "Selected locally",
-      documentSelected: "Document selected",
-      parse: "Parse",
-      backendActionNotConnected: "Document parser",
-      parseDocument: "Parse Document",
-      reparseDocument: "Reparse Document",
-      parseReady: "Ready to send this PDF to the parser service.",
-      parseQueued: "Parsing is queued and will start when capacity is available.",
-      parseRunning: "The PDF is being parsed. This can take a moment.",
-      parseProcessing: "The PDF is being parsed. This can take a moment.",
-      parseCompleted: "Parsing completed. The content is ready for chunking.",
-      parseFailed: "Parsing failed.",
-      parseReasonReady: "Click Parse Document to start the real parser request.",
-      parseReasonQueued: "Parsing is queued and will start when capacity is available.",
-      parseReasonRunning: "The PDF is being parsed.",
-      parseReasonProcessing: "The PDF is being parsed.",
-      parseReasonCompleted: "Parse completed. You can inspect the returned content or run parsing again.",
-      parseReasonError: "The PDF was sent, but the parser returned an error.",
-      parseReasonSelected: "The PDF is selected and ready for parsing.",
-      parseReasonEmpty: "Select a PDF first. Parsing sends the file to the parser service.",
-      parseReasonPersisted: "Reparse the saved PDF. The new result becomes the default; compatible history remains available.",
-      parseSummary: "Parse Summary",
-      openParsedContent: "Open Parsed Content",
-      noParseSummary: "A parse summary will appear after the document has been parsed.",
-      activity: "Activity",
-      noActivity: "No activity yet. Select a PDF to begin.",
-      parseProgress: "Progress",
-      parseProgressEstimated: "estimated",
-      activityEvents: {
-        documentSelected: "Document selected",
-        parseRequested: "Parse requested",
-        parsing: "Parsing",
-        parseCompleted: "Parse completed",
-        parseFailed: "Parse failed",
-      },
-      emptyFile: "The selected file is empty.",
-      backendUnavailable: "The RAG service is temporarily unavailable. Retry shortly.",
-      modalDispatchFailed: "Parsing could not start. Try again when the service is available.",
-      invalidResponse: "The document could not be parsed because the result was invalid.",
-      doclingError: "This PDF could not be parsed. Try a different or undamaged PDF.",
-      parseInterrupted: "Parsing stopped before the document was completed. Try again.",
-      parsePollTimeout: "The parse may still be running. Browser polling stopped after 15 minutes; refresh the page to resume status checks.",
-      unknownParseError: "The document could not be parsed.",
-      invalidPdf: "Only PDF files are supported.",
-      fileTooLarge: "The PDF must be 50 MB or smaller.",
-    },
-    documents: {
-      root: "Documents",
-      tabs: { overview: "Overview", parsed: "Parsed Content", chunks: "Chunks" },
-      views: {
-        overview: { title: "Document Overview", description: "Inspect document metadata and parse output before chunking." },
-        parsed: { title: "Parsed Content", description: "Inspect structured elements returned by the parser." },
-        chunks: { title: "Chunks", description: "Explore chunks after parsing and chunking are available." },
-      },
-      noDocumentTitle: "No document selected",
-      metadataPending: "Document details will appear after a PDF is added.",
-      document: "Document",
-      fileName: "File name",
-      size: "Size",
-      noDocumentSelected: "No document is available yet.",
-      chooseFromOverview: "Choose a PDF from Overview",
-      parseSummary: "Parse Summary",
-      noParseSummary: "No parse summary is available yet.",
-      pages: "Pages",
-      noPages: "No pages are available until parsing completes.",
-      parsedElements: "Parsed Elements",
-      outline: "Content outline",
-      selectedSection: "Selected section",
-      source: "Source",
-      noOutline: "The parser returned content, but no heading hierarchy was available.",
-      noParsedElements: "Select a parsed page to inspect its elements.",
-      viewMode: "Parsed content view mode",
-      structured: "Structured",
-      markdown: "Markdown",
-      json: "JSON",
-      parsedViewsUnavailable: "Views become available after a real parse completes.",
-      elementTypes: { heading: "Heading", paragraph: "Paragraph", list: "List", table: "Table", other: "Other" },
-      page: "Page",
-      pageElements: "elements",
-      summaryFields: { pageCount: "Pages", headingCount: "Headings", paragraphCount: "Paragraphs", listCount: "Lists", tableCount: "Tables" },
-      chunks: "Chunks",
-      noChunks: "No chunks are available until parsing and chunking complete.",
-    },
-    retrieval: {
-      title: "Playground",
-      question: "Question",
-      questionPlaceholder: "Enter a question to prepare a retrieval request",
-      clearQuestion: "Clear question",
-      ask: "Ask",
-      askUnavailable: "Ask becomes available after the active document has current chunks and embeddings.",
-      topK: "Top-K",
-      mode: "Mode",
-      modes: { dense: "Dense", hybrid: "Hybrid", keyword: "Keyword" },
-      reranker: "Reranker",
-      notConfigured: "Not configured",
-      rerankerUnavailable: "Reranking becomes available with a current retrieval-ready document.",
-      reset: "Reset",
-      nothingToReset: "No query settings have changed.",
-      hint: "Choose retrieval settings, then run a real experiment against the active document.",
-      retrievedChunks: "Retrieved Chunks",
-      rank: "Rank",
-      score: "Score",
-      sourceDocument: "Source Document",
-      page: "Page",
-      preview: "Preview",
-      noResults: "No retrieval results are available yet.",
-      resultsUnavailable: "Results appear after a real retrieval experiment runs.",
-      generatedAnswer: "Generated Answer",
-      noAnswer: "No generated answer exists for the current experiment.",
-      trace: "Retrieval Trace",
-      copyTrace: "Copy trace",
-      traceUnavailable: "Trace data will be available after a real retrieval run.",
-      time: "Time",
-      step: "Step",
-      component: "Component",
-      details: "Details",
-      inputOutput: "Input / Output",
-      noTrace: "No trace data is available yet.",
-    },
-    settings: {
-      workspace: "Workspace",
-      title: "Settings",
-      description: "Manage your workspace preferences.",
-      languageTitle: "Language",
-      languageDescription: "Interface language.",
-      english: "English",
-      turkish: "Türkçe",
-      themeTitle: "Theme",
-      themeDescription: "Choose a color theme or follow your system setting.",
-      themeSystem: "System",
-      themeLight: "Light",
-      themeDark: "Dark",
-      hintsTitle: "Learning hints",
-      hintsDescription: "Show collapsed learning notes.",
-      hintsEnabled: "Show learning hints",
-      hintsDisabled: "Hide learning hints",
-      resetTitle: "Reset preferences",
-      resetDescription: "Restore default preferences.",
-      reset: "Reset",
-      nothingToReset: "Preferences already use the defaults.",
-      preferencesSaved: "Changes are saved automatically.",
-    },
-    evaluation: {
-      title: "Evaluation",
-      description: "Measure how reliably your RAG finds relevant evidence and keeps answers grounded.",
-      emptyTitle: "No evaluation data yet",
-      emptyDescription: "Create a dataset after the active document has current chunks and embeddings, then run a real evaluation.",
-      emptyNote: "Results appear here after a reproducible evaluation run.",
-    },
-  },
-  tr: {
-    productName: "RAG StepLab",
-    nav: {
-      overview: "Genel Bakış", documents: "Dokümanlar", parse: "Ayrıştırma", chunking: "Parçalama", embeddings: "Embedding",
-      playground: "Deney Alanı", evaluation: "Değerlendirme", settings: "Ayarlar", chunks: "Parçalar", retrieval: "Getirme",
-      pipeline: "Yapı", experiment: "Test", system: "Sistem",
-    },
-    status: { "Not started": "Başlatılmadı", Ready: "Hazır", Processing: "İşleniyor", Completed: "Tamamlandı", Skipped: "Atlandı", Error: "Hata", Locked: "Kilitli", Stale: "Eski" },
-    guides: "Rehberler",
-    help: "Yardım",
-    guidePanel: {
-      title: "RAG akışını öğren",
-      description: "Gerçek bir PDF'i tüm RAG aşamalarından geçirin; her girdi, çıktı, ayar ve lineage kararını inceleyin.",
-    },
-    helpPanel: {
-      title: "Bu laboratuvar hakkında",
-      description: "Bu öğrenme laboratuvarı ayrıştırma, parçalama, pgvector/FTS getirme, yeniden sıralama, bağlam, grounded üretim, citations ve değerlendirmeyi bağlar.",
-      settingsLink: "Ayarları aç",
-    },
-    footer: { localProject: "RAG öğrenme laboratuvarı", backendStatus: "RAG öğrenme pipeline'ı" },
-    common: {
-      close: "Kapat",
-      back: "Geri",
-      openNavigation: "Gezinmeyi aç",
-      primaryNavigation: "Birincil gezinme",
-      accountMenu: "Hesap menüsü",
-      frontendFoundation: "Tam pipeline laboratuvarı",
-      signOut: "Çıkış yap",
-      storagePending: "Tercihler yükleniyor…",
-      backToOverview: "Genel bakışa dön",
-      learningHint: "Öğrenme ipucu",
-    },
-    overview: {
-      title: "RAG'ınızı adım adım oluşturun.",
-      steps: { document: "Doküman", parse: "Ayrıştır", chunk: "Parçala", embed: "Vektörleştir", index: "İndeksle", retrieve: "Getir", rerank: "Yeniden sırala", context: "Bağlam", generate: "Üret", evaluate: "Değerlendir" },
-      pipelineStatus: "İşlem Hattı Durumu",
-      noPipelineRun: "İşlem hattı henüz çalışmadı.",
-      pipelineHint: "PDF'i ayrıştırın; ardından gerçek parçalama, embedding, getirme, üretim ve değerlendirme aşamalarını sırayla çalıştırın.",
-      uploadDocument: "Doküman Yükle",
-      dropPdf: "PDF dosyasını buraya sürükleyip bırakın",
-      choosePdf: "PDF Seç",
-      fileRequirements: "Yalnız PDF • En fazla 50 MB",
-      noFileSent: "Henüz hiçbir dosya gönderilmedi",
-      selectedDocument: "Seçili Doküman",
-      noDocumentSelected: "Doküman seçilmedi.",
-      fileName: "Dosya Adı",
-      size: "Boyut",
-      status: "Durum",
-      removeSelected: "Seçili dokümanı kaldır",
-      localSelection: "Yerel seçildi",
-      documentSelected: "Doküman seçildi",
-      parse: "Ayrıştırma",
-      backendActionNotConnected: "Doküman ayrıştırıcı",
-      parseDocument: "Dokümanı Ayrıştır",
-      reparseDocument: "Dokümanı Yeniden Ayrıştır",
-      parseReady: "Bu PDF ayrıştırma servisine gönderilmeye hazır.",
-      parseQueued: "Ayrıştırma sıraya alındı; kapasite uygun olduğunda başlayacak.",
-      parseRunning: "PDF ayrıştırılıyor. Bu işlem biraz sürebilir.",
-      parseProcessing: "PDF ayrıştırılıyor. Bu işlem biraz sürebilir.",
-      parseCompleted: "Ayrıştırma tamamlandı. İçerik parçalama için hazır.",
-      parseFailed: "Ayrıştırma başarısız.",
-      parseReasonReady: "Gerçek ayrıştırma isteğini başlatmak için Dokümanı Ayrıştır'a tıklayın.",
-      parseReasonQueued: "Ayrıştırma sıraya alındı; kapasite uygun olduğunda başlayacak.",
-      parseReasonRunning: "PDF ayrıştırılıyor.",
-      parseReasonProcessing: "PDF ayrıştırılıyor.",
-      parseReasonCompleted: "Ayrıştırma tamamlandı. Dönen içeriği inceleyebilir veya yeniden çalıştırabilirsiniz.",
-      parseReasonError: "PDF gönderildi ancak ayrıştırıcı hata döndürdü.",
-      parseReasonSelected: "PDF seçildi ve ayrıştırmaya hazır.",
-      parseReasonEmpty: "Önce PDF seçin. Ayrıştırma dosyayı ayrıştırma servisine gönderir.",
-      parseReasonPersisted: "Kaydedilmiş PDF'i yeniden ayrıştırır. Yeni sonuç varsayılan olur; uyumlu geçmiş kullanılabilir kalır.",
-      parseSummary: "Ayrıştırma Özeti",
-      openParsedContent: "Ayrıştırılmış İçeriği Aç",
-      noParseSummary: "Doküman ayrıştırıldıktan sonra özeti burada görünür.",
-      activity: "Aktivite",
-      noActivity: "Henüz aktivite yok. Başlamak için PDF seçin.",
-      parseProgress: "İlerleme",
-      parseProgressEstimated: "tahmini",
-      activityEvents: {
-        documentSelected: "Doküman seçildi",
-        parseRequested: "Ayrıştırma istendi",
-        parsing: "Ayrıştırılıyor",
-        parseCompleted: "Ayrıştırma tamamlandı",
-        parseFailed: "Ayrıştırma başarısız",
-      },
-      emptyFile: "Seçilen dosya boş.",
-      backendUnavailable: "RAG servisi geçici olarak kullanılamıyor. Kısa süre sonra tekrar deneyin.",
-      modalDispatchFailed: "Ayrıştırma başlatılamadı. Servis kullanılabilir olduğunda tekrar deneyin.",
-      invalidResponse: "Geçersiz sonuç nedeniyle doküman ayrıştırılamadı.",
-      doclingError: "Bu PDF ayrıştırılamadı. Farklı veya bozulmamış bir PDF deneyin.",
-      parseInterrupted: "Doküman tamamlanmadan ayrıştırma durdu. Tekrar deneyin.",
-      parsePollTimeout: "Ayrıştırma hâlâ sürüyor olabilir. Tarayıcı takibi 15 dakika sonra durdu; durum takibini sürdürmek için sayfayı yenileyin.",
-      unknownParseError: "Doküman ayrıştırılamadı.",
-      invalidPdf: "Yalnız PDF dosyaları desteklenir.",
-      fileTooLarge: "PDF 50 MB veya daha küçük olmalıdır.",
-    },
-    documents: {
-      root: "Dokümanlar",
-      tabs: { overview: "Genel Bakış", parsed: "Ayrıştırılmış İçerik", chunks: "Parçalar" },
-      views: {
-        overview: { title: "Doküman Genel Bakışı", description: "Parçalama öncesinde doküman üst verisini ve ayrıştırma çıktısını inceleyin." },
-        parsed: { title: "Ayrıştırılmış İçerik", description: "Ayrıştırıcı tarafından döndürülen yapısal öğeleri inceleyin." },
-        chunks: { title: "Parçalar", description: "Ayrıştırma ve parçalama hazır olduğunda içerik parçalarını inceleyin." },
-      },
-      noDocumentTitle: "Doküman seçilmedi",
-      metadataPending: "PDF eklendikten sonra doküman bilgileri burada görünür.",
-      document: "Doküman",
-      fileName: "Dosya adı",
-      size: "Boyut",
-      noDocumentSelected: "Henüz kullanılabilir doküman yok.",
-      chooseFromOverview: "Genel Bakıştan PDF seç",
-      parseSummary: "Ayrıştırma Özeti",
-      noParseSummary: "Henüz ayrıştırma özeti yok.",
-      pages: "Sayfalar",
-      noPages: "Ayrıştırma tamamlanana kadar sayfa bulunmaz.",
-      parsedElements: "Ayrıştırılmış Öğeler",
-      outline: "İçerik hiyerarşisi",
-      selectedSection: "Seçili bölüm",
-      source: "Kaynak",
-      noOutline: "Ayrıştırıcı içerik döndürdü ancak başlık hiyerarşisi bulunamadı.",
-      noParsedElements: "Öğelerini incelemek için ayrıştırılmış bir sayfa seçin.",
-      viewMode: "Ayrıştırılmış içerik görünüm modu",
-      structured: "Yapısal",
-      markdown: "Markdown",
-      json: "JSON",
-      parsedViewsUnavailable: "Gerçek bir ayrıştırma tamamlandıktan sonra görünümler kullanılabilir.",
-      elementTypes: { heading: "Başlık", paragraph: "Paragraf", list: "Liste", table: "Tablo", other: "Diğer" },
-      page: "Sayfa",
-      pageElements: "öğe",
-      summaryFields: { pageCount: "Sayfa", headingCount: "Başlık", paragraphCount: "Paragraf", listCount: "Liste", tableCount: "Tablo" },
-      chunks: "Parçalar",
-      noChunks: "Ayrıştırma ve parçalama tamamlanana kadar içerik parçası bulunmaz.",
-    },
-    retrieval: {
-      title: "Deney Alanı",
-      question: "Soru",
-      questionPlaceholder: "Getirme isteği hazırlamak için soru girin",
-      clearQuestion: "Soruyu temizle",
-      ask: "Sor",
-      askUnavailable: "Aktif dokümanın güncel parçaları ve embedding'leri hazır olduğunda soru gönderilebilir.",
-      topK: "Top-K",
-      mode: "Mod",
-      modes: { dense: "Dense", hybrid: "Hybrid", keyword: "Keyword" },
-      reranker: "Reranker",
-      notConfigured: "Yapılandırılmadı",
-      rerankerUnavailable: "Güncel ve getirmeye hazır bir dokümanla yeniden sıralama kullanılabilir.",
-      reset: "Sıfırla",
-      nothingToReset: "Sorgu ayarlarında değişiklik yok.",
-      hint: "Getirme ayarlarını seçin, ardından aktif dokümana karşı gerçek bir deney çalıştırın.",
-      retrievedChunks: "Getirilen Parçalar",
-      rank: "Sıra",
-      score: "Skor",
-      sourceDocument: "Kaynak Doküman",
-      page: "Sayfa",
-      preview: "Önizleme",
-      noResults: "Henüz getirme sonucu yok.",
-      resultsUnavailable: "Gerçek bir getirme deneyi çalıştıktan sonra sonuçlar burada görünür.",
-      generatedAnswer: "Üretilen Cevap",
-      noAnswer: "Mevcut deney için üretilmiş cevap yok.",
-      trace: "Getirme İzi",
-      copyTrace: "İzi kopyala",
-      traceUnavailable: "Gerçek getirme çalışmasından sonra iz verisi kullanılabilir.",
-      time: "Zaman",
-      step: "Adım",
-      component: "Bileşen",
-      details: "Detaylar",
-      inputOutput: "Girdi / Çıktı",
-      noTrace: "Henüz iz verisi yok.",
-    },
-    settings: {
-      workspace: "Çalışma alanı",
-      title: "Ayarlar",
-      description: "Çalışma alanı tercihlerinizi yönetin.",
-      languageTitle: "Dil",
-      languageDescription: "Arayüz dili.",
-      english: "English",
-      turkish: "Türkçe",
-      themeTitle: "Tema",
-      themeDescription: "Bir renk teması seçin veya sistem ayarınızı kullanın.",
-      themeSystem: "Sistem",
-      themeLight: "Açık",
-      themeDark: "Koyu",
-      hintsTitle: "Öğrenme ipuçları",
-      hintsDescription: "Kapalı öğrenme notlarını gösterin.",
-      hintsEnabled: "Öğrenme ipuçlarını göster",
-      hintsDisabled: "Öğrenme ipuçlarını gizle",
-      resetTitle: "Tercihleri sıfırla",
-      resetDescription: "Varsayılan tercihlere dönün.",
-      reset: "Sıfırla",
-      nothingToReset: "Tercihler zaten varsayılan değerlerde.",
-      preferencesSaved: "Değişiklikler otomatik kaydedilir.",
-    },
-    evaluation: {
-      title: "Değerlendirme",
-      description: "RAG sisteminizin ilgili kanıtı ne kadar iyi bulduğunu ve cevaplarını ne kadar sağlam tuttuğunu ölçün.",
-      emptyTitle: "Henüz değerlendirme verisi yok",
-      emptyDescription: "Aktif dokümanın güncel parçaları ve embedding'leri hazır olduktan sonra veri seti oluşturup gerçek değerlendirme çalıştırın.",
-      emptyNote: "Sonuçlar, tekrarlanabilir bir değerlendirme çalışmasından sonra burada görünür.",
-    },
-  },
-} as const satisfies Record<AppLocale, AppCopy>;
+/** Enum-keyed sections must stay exhaustive; usage sites index them by these unions. */
+type ExhaustiveCopyKeys = {
+  nav: Record<AppNavKey, string>;
+  status: Record<PipelineStepState, string>;
+  overview: { steps: Record<PipelineStepKey, string>; activityEvents: Record<DocumentActivityEventType, string> };
+  documents: { tabs: Record<DocumentViewKey, string>; views: Record<DocumentViewKey, { title: string; description: string }> };
+};
+
+export const UI_COPY: Record<AppLocale, AppCopy> = { en, tr } satisfies Record<AppLocale, ExhaustiveCopyKeys>;
+
+/** Copy for the active interface locale (PreferencesProvider owns the locale). */
+export function useCopy(): AppCopy {
+  const { preferences } = usePreferences();
+  return UI_COPY[preferences.locale];
+}
