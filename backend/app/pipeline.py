@@ -2141,6 +2141,7 @@ def _create_experiment(
                 "attempt_count": 1,
                 "lease_token": lease_token,
                 "lease_expires_at": started_at + timedelta(seconds=lease_duration_seconds),
+                "lease_duration_seconds": lease_duration_seconds,
                 "worker_started_at": started_at,
             }
         )
@@ -2256,6 +2257,8 @@ def queue_experiment(
         "attempt_count": 1,
         "lease_token": lease_token,
         "lease_expires_at": queued_at + timedelta(seconds=lease_duration_seconds),
+        # The repository recomputes the expiry from the database clock.
+        "lease_duration_seconds": lease_duration_seconds,
         "worker_started_at": None,
     })
     if not owner:
@@ -2909,6 +2912,8 @@ def queue_evaluation(request: EvaluationRunRequest, *, repository: Repository | 
         "attempt_count": 1,
         "lease_token": lease_token,
         "lease_expires_at": queued_at + timedelta(seconds=lease_duration_seconds),
+        # The repository recomputes the expiry from the database clock.
+        "lease_duration_seconds": lease_duration_seconds,
         "worker_started_at": None,
         "started_at": queued_at,
         "completed_at": None,

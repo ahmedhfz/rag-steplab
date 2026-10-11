@@ -221,11 +221,14 @@ Hosted ortamda embedding de experiment/evaluation gibi durable `pipeline_worker`
 üzerinde çalışır; API isteği yalnız claim + dispatch yapar. `?async=true` olmadan
 istek en fazla `EMBEDDING_SYNC_WAIT_SECONDS` (varsayılan 100) bekler ve run bu
 sürede biterse önceki 200 sözleşmesini korur, aksi halde 202 döner
-(`GET /embedding-runs/{id}` ile izlenir). Worker başlayana kadarki embedding lease'i
-tek `pipeline_worker` container'ında başka bir işin (≤ worker timeout) arkasında
-beklemeyi ve cold start'ı kapsar; worker başlayınca her sağlayıcı batch'inden önce,
-deneme başına istek timeout'u + istemcinin en fazla 20 sn backoff'u üzerinden hesaplanan
-batch bütçesiyle yenilenir. Chunk lease'i API isteği bütçesine (300 sn + tolerans)
+(`GET /embedding-runs/{id}` ile izlenir). Dispatch edilmiş ama worker'ı henüz
+başlamamış run'lar (tek `pipeline_worker` kuyruğunda diğer kullanıcıların işlerini
+bekleyenler) execution lease'iyle değil `PIPELINE_QUEUE_TIMEOUT_SECONDS` (varsayılan
+6 sa) ile sınırlanır; ölü kuyruk girdisi Modal call durumu üzerinden ayrıca yakalanır.
+Lease worker başladığında başlar ve her sağlayıcı batch'inden önce, deneme başına
+istek timeout'u + istemcinin en fazla 20 sn backoff'u üzerinden hesaplanan batch
+bütçesiyle yenilenir. Hiç dispatch edilmemiş run'ları da sweeper lease'e göre kapatır.
+Experiment/evaluation dahil tüm claim lease'leri DB saatiyle hesaplanır. Chunk lease'i API isteği bütçesine (300 sn + tolerans)
 bağlıdır. Lease süreleri ve süre dolumu PostgreSQL `now()` ile hesaplanır.
 Modal sert ölümü (OOM, timeout, preemption) polling'de ve yeni iş kabulünden önce
 Modal call durumu (run başına en çok 30 sn'de bir) sorgulanarak `worker_terminated`

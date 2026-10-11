@@ -138,7 +138,9 @@ def test_fencing_token_blocks_reclaimed_worker_and_dispatch_reservation_is_atomi
     assert reserved["dispatch_id"] == "dispatch-1"
     assert duplicate_reservation["dispatch_id"] == "dispatch-1"
 
+    # The worker started and then stopped renewing its lease.
     repository.experiments[first["id"]]["status"] = "running"
+    repository.experiments[first["id"]]["worker_started_at"] = now_utc() - timedelta(seconds=60)
     repository.experiments[first["id"]]["lease_expires_at"] = now_utc() - timedelta(seconds=1)
     reclaimed, reclaimed_owner = repository.claim_experiment(
         {

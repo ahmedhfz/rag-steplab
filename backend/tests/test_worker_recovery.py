@@ -104,6 +104,8 @@ def test_stale_embedding_worker_cannot_complete_after_reclaim(monkeypatch, hoste
     run = client.post(f"/documents/{document_id}/embeddings?async=true", json={"chunkRunId": chunk_id}).json()
     _kind, run_id, stale_token = hosted[0]
     repository = get_repository()
+    # The worker started and then died: its lease expires.
+    repository.embedding_runs[run_id]["worker_started_at"] = now_utc() - timedelta(seconds=60)
     repository.embedding_runs[run_id]["lease_expires_at"] = now_utc() - timedelta(seconds=1)
 
     reclaimed = client.post(f"/documents/{document_id}/embeddings?async=true", json={"chunkRunId": chunk_id})
@@ -358,28 +360,53 @@ def test_started_worker_with_unrecorded_call_id_is_neither_interrupted_nor_redis
     assert repository.renew_pipeline_lease("experiment", experiment["id"], token, 60) is not None
 
 
-def test_embedding_claim_lease_covers_waiting_behind_a_full_worker_job(monkeypatch, hosted):
-    from app.config import embedding_batch_lease_seconds, embedding_claim_lease_seconds, get_settings
+def test_dispatched_run_waits_in_the_worker_queue_beyond_its_execution_lease(monkeypatch, hosted):
+    """Codex #130-3: several jobs ahead in the single worker must not expire a queued run."""
+
+    from app.config import embedding_batch_lease_seconds, get_settings
 
     settings = get_settings()
-    assert embedding_claim_lease_seconds(settings) >= (
-        settings.pipeline_worker_startup_timeout_seconds + settings.pipeline_worker_timeout_seconds
-    )
     document_id, chunk_id = _document_with_chunk(monkeypatch)
     run = client.post(f"/documents/{document_id}/embeddings?async=true", json={"chunkRunId": chunk_id}).json()
     stored = get_repository().embedding_runs[run["id"]]
-    queued_window = (stored["lease_expires_at"] - stored["started_at"]).total_seconds()
-    assert queued_window >= settings.pipeline_worker_timeout_seconds
-
-    # 25 minutes queued behind another job: still not expired, the worker can start.
-    stored["started_at"] -= timedelta(minutes=25)
-    stored["lease_expires_at"] -= timedelta(minutes=25)
+    # Two hours queued behind other users' evaluations: far beyond any lease.
+    stored["started_at"] -= timedelta(hours=2)
+    stored["lease_expires_at"] = now_utc() - timedelta(hours=1)
     assert client.get(f"/embedding-runs/{run['id']}").json()["status"] == "running"
     _kind, run_id, token = hosted[0]
     started = get_repository().start_pipeline_worker("embedding", run_id, token, embedding_batch_lease_seconds(settings))
     assert started is not None
-    # After start the short batch lease applies.
+    # From now on the short execution lease applies.
     assert (started["lease_expires_at"] - now_utc()).total_seconds() <= embedding_batch_lease_seconds(settings) + 1
+
+
+def test_queue_wait_is_bounded_by_the_queue_timeout(monkeypatch, hosted):
+    from app.config import get_settings
+
+    document_id, chunk_id = _document_with_chunk(monkeypatch)
+    run = client.post(f"/documents/{document_id}/embeddings?async=true", json={"chunkRunId": chunk_id}).json()
+    stored = get_repository().embedding_runs[run["id"]]
+    stored["started_at"] -= timedelta(seconds=get_settings().pipeline_queue_timeout_seconds + 1)
+    polled = client.get(f"/embedding-runs/{run['id']}").json()
+    assert polled["status"] == "failed" and polled["errorCode"] == "worker_queue_timeout"
+
+
+def test_sweeper_reconciles_runs_that_were_never_dispatched(monkeypatch, hosted):
+    """Codex #130-5: claim committed, API died before the dispatch reservation."""
+
+    document_id, chunk_id = _document_with_chunk(monkeypatch)
+    repository = get_repository()
+    claim, claimed = repository.scoped(main_user()).claim_embedding_run(
+        document_id, chunk_id, "gemini-embedding-2", 768, "format-v1"
+    )
+    assert claimed and claim["dispatch_id"] is None
+    repository.embedding_runs[claim["id"]]["lease_expires_at"] = now_utc() - timedelta(seconds=1)
+
+    counts = maintenance.sweep_pipeline_runs(repository)
+
+    assert counts == {"checked": 1, "interrupted": 1}
+    assert repository.embedding_runs[claim["id"]]["status"] == "interrupted"
+    assert repository.embedding_runs[claim["id"]]["error_code"] == "worker_lease_expired"
 
 
 def test_batch_lease_covers_the_full_provider_retry_envelope():
@@ -390,3 +417,35 @@ def test_batch_lease_covers_the_full_provider_retry_envelope():
     attempts = settings.gemini_max_retries + 1
     worst_case = attempts * settings.gemini_timeout_seconds + (attempts - 1) * MAX_RETRY_DELAY_SECONDS
     assert embedding_batch_lease_seconds(settings) >= worst_case + settings.pipeline_lease_grace_seconds
+
+
+def test_queued_claims_take_their_lease_expiry_from_the_repository_clock(monkeypatch):
+    """Codex #130-4: queue_experiment/queue_evaluation must not fix expiry with the container clock."""
+
+    from app import pipeline
+    from app.config import get_settings, pipeline_lease_duration_seconds
+    from app.schemas import EvaluationRunRequest, ExperimentCreateRequest
+
+    document_id, chunk_id = _document_with_chunk(monkeypatch)
+    dataset = client.post(
+        "/evaluation/datasets", json={"documentId": document_id, "name": "d", "cases": [{"question": "retrieval"}]},
+    ).json()
+    skewed = now_utc() + timedelta(days=1)
+    monkeypatch.setattr(pipeline, "now_utc", lambda: skewed)  # API container clock far ahead
+    repository = get_repository().scoped(main_user())
+    duration = pipeline_lease_duration_seconds(get_settings())
+
+    experiment = pipeline.queue_experiment(
+        ExperimentCreateRequest(document_id=document_id, chunk_run_id=chunk_id, query="retrieval",
+                                target_stage="retrieval", retrieval={"mode": "keyword", "topK": 1}),
+        repository=repository,
+    )
+    experiment_expiry = get_repository().experiments[experiment["id"]]["lease_expires_at"]
+    assert abs((experiment_expiry - (now_utc() + timedelta(seconds=duration))).total_seconds()) < 5
+    get_repository().experiments[experiment["id"]]["status"] = "completed"  # free the user's admission slot
+
+    evaluation = pipeline.queue_evaluation(
+        EvaluationRunRequest(dataset_id=dataset["id"], retrieval={"mode": "keyword", "topK": 1}), repository=repository,
+    )
+    evaluation_expiry = get_repository().evaluations[evaluation["id"]]["lease_expires_at"]
+    assert abs((evaluation_expiry - (now_utc() + timedelta(seconds=duration))).total_seconds()) < 5
