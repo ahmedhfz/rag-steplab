@@ -110,10 +110,32 @@ def duration_ms_between(started_at: datetime | None, completed_at: datetime | No
     return max(1, math.ceil((completed_at - started_at).total_seconds() * 1000))
 
 
+def _awaiting_worker(row: dict[str, Any]) -> bool:
+    """Dispatched to a real worker call that has not started yet."""
+
+    dispatch_id = row.get("dispatch_id")
+    return (
+        row.get("status") in {"queued", "running"}
+        and row.get("worker_started_at") is None
+        and bool(dispatch_id)
+        and not str(dispatch_id).startswith("dispatching-")
+    )
+
+
 def _lease_expired(row: dict[str, Any], now: datetime | None = None) -> bool:
-    """Treat a legacy active row as expired only after its derived budget."""
+    """Treat a legacy active row as expired only after its derived budget.
+
+    A dispatched run still waiting for its worker is bounded by the queue
+    timeout, not the execution lease: the single worker may be busy with
+    several other users' jobs. Its lease starts when the worker starts.
+    """
 
     current = now or now_utc()
+    if _awaiting_worker(row):
+        queued = row.get("started_at") or row.get("created_at")
+        if not isinstance(queued, datetime):
+            return False
+        return queued + timedelta(seconds=get_settings().pipeline_queue_timeout_seconds) <= current
     expiry = row.get("lease_expires_at")
     if isinstance(expiry, datetime):
         return expiry <= current
@@ -207,7 +229,9 @@ def _expired_run_update(row: dict[str, Any], *, parse: bool = False, now: dateti
         return {}
     values = {
         "status": "interrupted",
-        "error_code": "parse_timeout" if parse else "worker_lease_expired",
+        "error_code": "parse_timeout" if parse else (
+            "worker_queue_timeout" if _awaiting_worker(row) else "worker_lease_expired"
+        ),
         "error_message": "The run exceeded its execution deadline before completion.",
         "completed_at": current,
         # The worker's actual stop time is unknown; wall time since creation
@@ -832,8 +856,9 @@ class Repository:
         raise NotImplementedError
 
     def list_active_dispatches(
-        self, *, owner_user_id: uuid.UUID | str | None = None, limit: int = 100
+        self, *, owner_user_id: uuid.UUID | str | None = None, limit: int = 100, include_undispatched: bool = False
     ) -> list[dict[str, Any]]:
+        """Active durable runs; ``include_undispatched`` adds runs never dispatched."""
         raise NotImplementedError
 
     def start_pipeline_worker(
@@ -2282,13 +2307,15 @@ class InMemoryRepository(Repository):
                 })
             return copy.deepcopy(row)
 
-    def list_active_dispatches(self, *, owner_user_id=None, limit=100):
+    def list_active_dispatches(self, *, owner_user_id=None, limit=100, include_undispatched=False):
         owner = None if owner_user_id is None else uuid.UUID(str(owner_user_id))
         rows = []
         with self._lock:
             for kind in ("experiment", "evaluation", "embedding"):
                 for row in self._pipeline_store(kind).values():
-                    if row.get("status") not in {"queued", "running"} or not row.get("dispatch_id"):
+                    if row.get("status") not in {"queued", "running"}:
+                        continue
+                    if not row.get("dispatch_id") and not include_undispatched:
                         continue
                     document_id = row.get("document_id") or self.datasets.get(row.get("dataset_id"), {}).get("document_id")
                     if owner is not None and self.documents.get(document_id, {}).get("owner_user_id") != owner:
@@ -2379,6 +2406,8 @@ class SqlAlchemyRepository(Repository):
                     "started_at": row.started_at,
                     "created_at": row.created_at,
                     "lease_expires_at": getattr(row, "lease_expires_at", None),
+                    "dispatch_id": getattr(row, "dispatch_id", None),
+                    "worker_started_at": getattr(row, "worker_started_at", None),
                 }
                 for key, value in _expired_run_update(payload, parse=model is ParseRun, now=current).items():
                     setattr(row, key, value)
@@ -4626,7 +4655,7 @@ class SqlAlchemyRepository(Repository):
             session.flush()
             return self._pipeline_dict(kind, entity)
 
-    def list_active_dispatches(self, *, owner_user_id=None, limit=100):
+    def list_active_dispatches(self, *, owner_user_id=None, limit=100, include_undispatched=False):
         """Active durable runs (all kinds) with their dispatch identity."""
 
         rows: list[dict[str, Any]] = []
@@ -4643,7 +4672,9 @@ class SqlAlchemyRepository(Repository):
                     )
                 else:
                     query = query.join(Document, Document.id == model.document_id)
-                query = query.where(model.status.in_(["queued", "running"]), model.dispatch_id.is_not(None))
+                query = query.where(model.status.in_(["queued", "running"]))
+                if not include_undispatched:
+                    query = query.where(model.dispatch_id.is_not(None))
                 if owner is not None:
                     query = query.where(Document.owner_user_id == owner)
                 for row in session.execute(query.order_by(model.started_at).limit(limit)).mappings():
@@ -4994,8 +5025,10 @@ class ScopedRepository(Repository):
             kind, run_id, dispatch_id, code, message, only_if_unstarted=only_if_unstarted
         )
 
-    def list_active_dispatches(self, *, owner_user_id=None, limit=100):
-        return self._repository.list_active_dispatches(owner_user_id=self.owner_user_id, limit=limit)
+    def list_active_dispatches(self, *, owner_user_id=None, limit=100, include_undispatched=False):
+        return self._repository.list_active_dispatches(
+            owner_user_id=self.owner_user_id, limit=limit, include_undispatched=include_undispatched
+        )
 
     def start_pipeline_worker(self, kind, run_id, lease_token, lease_duration_seconds):
         row = self._owned_pipeline_row(kind, run_id)

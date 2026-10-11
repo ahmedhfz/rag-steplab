@@ -143,3 +143,32 @@ def test_stale_reservation_never_touches_a_started_worker(pg):
     untouched = pg.interrupt_pipeline_run("embedding", claim["id"], stale, "pipeline_dispatch_lost", "x", only_if_unstarted=True)
     assert untouched["status"] == "running" and untouched["lease_token"] == claim["lease_token"]
     assert [row["worker_started_at"] is not None for row in pg.list_active_dispatches()] == [True]
+
+
+def test_queued_dispatch_survives_lease_expiry_and_undispatched_runs_are_listed(pg, admin_engine):
+    """Codex #130-3/#130-5 on PostgreSQL: queue wait vs lease, and sweeper visibility."""
+
+    from app.errors import ApiProblem
+
+    document = new_document(pg)
+    parse = completed_parse(pg, document["id"])
+    chunk = completed_chunk(pg, document["id"], parse["id"])
+    claim, _ = pg.scoped(OWNER_A).claim_embedding_run(document["id"], chunk["id"], "gemini-embedding-2", 768, "format-v1")
+
+    assert pg.list_active_dispatches() == []
+    assert [row["id"] for row in pg.list_active_dispatches(include_undispatched=True)] == [claim["id"]]
+
+    pg.claim_pipeline_dispatch("embedding", claim["id"], "fc-queued", claim["lease_token"])
+    admin_execute(
+        admin_engine,
+        "update rag_lab.embedding_runs set lease_expires_at = now() - interval '1 hour' where id = :id",
+        id=claim["id"],
+    )
+    assert pg.reconcile_pipeline_lease("embedding", claim["id"])["status"] == "running"
+    # Admission still sees the queued run as the user's active job instead of interrupting it.
+    try:
+        pg.scoped(OWNER_A).claim_embedding_run(document["id"], chunk["id"], "gemini-embedding-2", 768, "format-v2")
+        raise AssertionError("expected user_run_limit_reached")
+    except ApiProblem as exc:
+        assert exc.code == "user_run_limit_reached"
+    assert pg.start_pipeline_worker("embedding", claim["id"], claim["lease_token"], 60) is not None

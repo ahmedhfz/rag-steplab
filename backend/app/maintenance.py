@@ -175,7 +175,9 @@ def reconcile_user_runs(repository) -> None:
 
 def sweep_pipeline_runs(repository, *, limit: int = 100) -> dict[str, int]:
     counts = {"checked": 0, "interrupted": 0}
-    for active in repository.list_active_dispatches(limit=limit):
+    # Never-dispatched runs (the API died between claim and dispatch) have no
+    # call to check; their lease alone decides, so they must be listed too.
+    for active in repository.list_active_dispatches(limit=limit, include_undispatched=True):
         counts["checked"] += 1
         result = reconcile_active_run(repository, active["kind"], active, check_modal=True)
         if result is None or result.get("status") not in {"queued", "running"}:

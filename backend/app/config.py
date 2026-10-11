@@ -94,6 +94,10 @@ class Settings:
     # without ?async=true waits at most this long for the terminal state
     # (well below the 150 s Modal web redirect and 300 s function limits).
     embedding_sync_wait_seconds: int = 100
+    # A dispatched run waits in the single pipeline_worker queue behind other
+    # users' jobs. That wait is bounded separately from the execution lease;
+    # dead queue entries are still detected via Modal's call status.
+    pipeline_queue_timeout_seconds: int = 6 * 3600
     # Re-dispatch a queued run whose "dispatching-*" reservation was never
     # replaced by a real Modal call id (API container died in between).
     dispatch_reservation_ttl_seconds: int = 60
@@ -181,20 +185,16 @@ def embedding_batch_lease_seconds(settings: Settings) -> int:
 
 
 def embedding_claim_lease_seconds(settings: Settings) -> int:
-    """Lease from claim until the worker starts.
+    """Lease from claim until dispatch and worker start.
 
-    The single pipeline_worker container (max_containers=1) may first finish
-    another job of up to ``pipeline_worker_timeout_seconds``; dispatch, that
-    queue wait and cold start must not expire the run. Once the worker starts,
-    ``start_pipeline_worker`` switches to the short batch lease, so a dead
-    worker is still detected after one batch budget.
+    Once the run is dispatched, waiting in the worker queue is bounded by
+    ``pipeline_queue_timeout_seconds`` instead (see ``repository._lease_expired``),
+    so this only has to cover dispatch and cold start; an API that dies before
+    dispatching is then reconciled within minutes. After start the short batch
+    lease applies.
     """
 
-    return (
-        settings.pipeline_worker_startup_timeout_seconds
-        + settings.pipeline_worker_timeout_seconds
-        + embedding_batch_lease_seconds(settings)
-    )
+    return settings.pipeline_worker_startup_timeout_seconds + embedding_batch_lease_seconds(settings)
 
 
 @lru_cache(maxsize=1)
@@ -237,6 +237,7 @@ def get_settings() -> Settings:
         pipeline_worker_startup_timeout_seconds=max(30, _int("PIPELINE_WORKER_STARTUP_TIMEOUT_SECONDS", 300)),
         pipeline_lease_grace_seconds=max(10, _int("PIPELINE_LEASE_GRACE_SECONDS", 120)),
         embedding_sync_wait_seconds=max(0, min(140, _int("EMBEDDING_SYNC_WAIT_SECONDS", 100))),
+        pipeline_queue_timeout_seconds=max(300, _int("PIPELINE_QUEUE_TIMEOUT_SECONDS", 6 * 3600)),
         dispatch_reservation_ttl_seconds=max(10, _int("DISPATCH_RESERVATION_TTL_SECONDS", 60)),
         storage_cleanup_max_attempts=max(1, _int("STORAGE_CLEANUP_MAX_ATTEMPTS", 8)),
         storage_cleanup_backoff_base_seconds=max(1, _int("STORAGE_CLEANUP_BACKOFF_BASE_SECONDS", 30)),
