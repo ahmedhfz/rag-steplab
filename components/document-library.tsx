@@ -115,8 +115,10 @@ export function DocumentLibrary() {
               <EmptyState className="rounded-lg border border-dashed border-input bg-card py-12" description={labels.emptyDescription} icon="document" title={labels.empty} />
             ) : (
               <>
-                <div className="hidden min-w-0 max-w-full overflow-x-auto rounded-lg border border-border bg-card md:block" data-testid="document-library-table">
-                  <table className="w-full min-w-[720px] table-fixed text-left text-sm">
+                {/* The fixed columns take 560px; 880px keeps >=320px for the name column so the
+                    file name stays readable next to the "In use" badge. Below lg the cards are used. */}
+                <div className="hidden min-w-0 max-w-full overflow-x-auto rounded-lg border border-border bg-card lg:block" data-testid="document-library-table">
+                  <table className="w-full min-w-[880px] table-fixed text-left text-sm">
                     <caption className="sr-only">{labels.title}</caption>
                     <colgroup>
                       <col />
@@ -163,7 +165,7 @@ export function DocumentLibrary() {
                   </table>
                 </div>
 
-                <div className="md:hidden" data-testid="document-library-mobile">
+                <div className="lg:hidden" data-testid="document-library-mobile">
                   <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
                     {documents.map((document) => {
                       const isActive = document.id === activeDocumentId;
