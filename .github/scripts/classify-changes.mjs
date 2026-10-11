@@ -125,11 +125,13 @@ const productionVisualSourcePaths = [
   "app/settings/page.tsx",
   "components/app-shell.tsx",
   "components/auth-shell.tsx",
+  "components/brand-mark.tsx",
   "components/chunks-pipeline.tsx",
   "components/document-library.tsx",
   "components/document-pipeline-provider.tsx",
   "components/documents-screen.tsx",
   "components/evaluation-screen.tsx",
+  "components/login-hero.tsx",
   "components/login-screen.tsx",
   "components/overview-screen.tsx",
   "components/page-transition.tsx",
@@ -144,7 +146,6 @@ const productionVisualSourcePaths = [
   "components/source-inspector.tsx",
   "components/status-indicator.tsx",
   "components/ui/",
-  "public/assets/figma/overview/",
   "lib/figma-view-models.ts",
   "lib/overview-journey.ts",
   "lib/theme.ts",
@@ -278,6 +279,8 @@ if (process.argv.includes("--self-test")) {
   assertClassification([".python-version"], { backend: true });
   assertClassification(["public/samples/rag-steplab-sample-city-bikes.pdf"], { node: true, frontend: true, seeded_e2e: true });
   assertClassification(["components/login-screen.tsx"], { node: true, frontend: true, auth_e2e: true, production_visual: true });
+  assertClassification(["components/brand-mark.tsx"], { node: true, frontend: true, production_visual: true });
+  assertClassification(["components/login-hero.tsx"], { node: true, frontend: true, production_visual: true });
   assertClassification(["app/globals.css"], { node: true, frontend: true, seeded_e2e: true, production_visual: true });
   assertClassification(["lib/theme.ts"], { node: true, frontend: true, seeded_e2e: true, production_visual: true });
   assertClassification(["components/preferences-provider.tsx"], { node: true, frontend: true, seeded_e2e: true, production_visual: true });

@@ -163,15 +163,6 @@
   --overlay: #000000;
 }
 
-/* Preserve the original artwork in Light; recolor monochrome marks in Dark. */
-.dark .theme-brand-mark {
-  filter: brightness(0) saturate(100%) invert(73%) sepia(18%) saturate(914%) hue-rotate(291deg) brightness(94%) contrast(86%);
-}
-
-.dark .theme-success-check {
-  filter: brightness(0);
-}
-
 @layer base {
   * {
     @apply border-border outline-ring/50;

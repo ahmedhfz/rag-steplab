@@ -3,19 +3,17 @@
 import { TransitionPanel, TransitionSurface } from "@/components/ui/transitions";
 
 import Link from "next/link";
-import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { MotionConfig } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuthBootstrap } from "@/components/auth-provider";
+import { BrandMark } from "@/components/brand-mark";
 import { usePreferences } from "@/components/preferences-provider";
 import { PageTransition } from "@/components/page-transition";
 import { AppIcon, type SemanticIconName } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
 import { type AppCopy, type AppNavGroupKey, type AppNavKey, UI_COPY } from "@/lib/copy";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { UI_ASSETS } from "@/lib/ui-assets";
 import { cn } from "@/lib/utils";
 
 type NavItem = { key: AppNavKey; href: string; icon: SemanticIconName };
@@ -218,7 +216,7 @@ function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: st
   return (
     <div className="flex h-full flex-col bg-card">
       <div className="flex h-[72px] items-center gap-2.5 px-5 pb-5 pt-6">
-        <Image alt="" className="theme-brand-mark" height={28} priority src={UI_ASSETS.brand.mark} width={28} />
+        <BrandMark />
         <span className="text-base font-semibold tracking-tight text-foreground">{copy.productName}</span>
       </div>
 
@@ -342,15 +340,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   if (pathname === "/login" || pathname === "/auth/reset-password") {
-    return (
-      <MotionConfig reducedMotion="user">
-        <PageTransition>{children}</PageTransition>
-      </MotionConfig>
-    );
+    return <PageTransition>{children}</PageTransition>;
   }
 
   return (
-    <MotionConfig reducedMotion="user">
       <div className="min-h-screen w-full min-w-0 bg-background text-foreground">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] border-r border-border xl:block" data-testid="app-shell-sidebar">
         <Sidebar copy={copy} onSignOut={signOut} pathname={pathname} user={authUser} />
@@ -386,7 +379,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       </div>
-    </MotionConfig>
   );
 }
 

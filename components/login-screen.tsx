@@ -6,14 +6,14 @@ import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore } from "react";
 
 import { shakeValidation } from "@/lib/transitions";
-import { AuthShell } from "@/components/auth-shell";
+import { AuthShell, MIN_PASSWORD_LENGTH } from "@/components/auth-shell";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePreferences } from "@/components/preferences-provider";
 import { safeNextPath } from "@/lib/auth-redirect";
 import { getSupabaseBrowserClient, supabaseAuthErrorMessage } from "@/lib/supabase/browser";
-import type { AppLocale } from "@/lib/copy";
+import { type AppCopy, type AppLocale, interpolate, useCopy } from "@/lib/copy";
 
 function GoogleMark() {
   return (
@@ -27,19 +27,6 @@ function GoogleMark() {
 }
 
 type Mode = "signin" | "signup" | "forgot";
-
-const AUTH_ERROR_MESSAGES: Record<AppLocale, Record<string, string>> = {
-  tr: {
-    confirmation_invalid_or_expired: "Doğrulama bağlantısı geçersiz veya süresi dolmuş.",
-    recovery_invalid_or_expired: "Şifre yenileme bağlantısı geçersiz veya süresi dolmuş.",
-    oauth_failed: "Google ile giriş tamamlanamadı. Lütfen tekrar deneyin.",
-  },
-  en: {
-    confirmation_invalid_or_expired: "The confirmation link is invalid or expired.",
-    recovery_invalid_or_expired: "The password reset link is invalid or expired.",
-    oauth_failed: "Google sign-in could not be completed. Please try again.",
-  },
-};
 
 const subscribeToAuthError = () => () => undefined;
 
@@ -62,19 +49,25 @@ function getServerNextPath() {
   return "/";
 }
 
-function friendlyAuthError(error: unknown, locale: AppLocale) {
+/** Only codes the auth route handlers set map to a message; anything else stays silent. */
+function linkErrorMessage(code: string, linkErrors: AppCopy["auth"]["linkErrors"]) {
+  return Object.hasOwn(linkErrors, code) ? linkErrors[code as keyof typeof linkErrors] : "";
+}
+
+function friendlyAuthError(error: unknown, errors: AppCopy["auth"]["errors"], locale: AppLocale) {
   const message = error instanceof Error ? error.message.toLowerCase() : "";
-  const tr = locale === "tr";
-  if (message.includes("invalid login credentials")) return tr ? "E-posta veya şifre hatalı." : "The email or password is incorrect.";
-  if (message.includes("user already registered") || message.includes("already been registered")) return tr ? "Bu e-posta ile kayıtlı bir hesap zaten var." : "An account with this email already exists.";
-  if (message.includes("email not confirmed")) return tr ? "Devam etmek için e-posta adresinizi doğrulayın." : "Confirm your email address before continuing.";
-  if (message.includes("password")) return tr ? "Şifre gereksinimleri karşılanmıyor." : "The password does not meet the requirements.";
-  if (message.includes("rate limit") || message.includes("too many")) return tr ? "Çok fazla deneme yapıldı. Biraz sonra tekrar deneyin." : "Too many attempts. Please try again shortly.";
+  if (message.includes("invalid login credentials")) return errors.invalidCredentials;
+  if (message.includes("user already registered") || message.includes("already been registered")) return errors.alreadyRegistered;
+  if (message.includes("email not confirmed")) return errors.emailNotConfirmed;
+  if (message.includes("password")) return errors.passwordRequirements;
+  if (message.includes("rate limit") || message.includes("too many")) return errors.rateLimited;
   return supabaseAuthErrorMessage(error, locale);
 }
 
 export function LoginScreen() {
   const { preferences } = usePreferences();
+  const auth = useCopy().auth;
+  const labels = auth.login;
   const router = useRouter();
   const urlAuthErrorCode = useSyncExternalStore(subscribeToAuthError, getAuthErrorMessage, getServerAuthErrorMessage);
   const nextPath = useSyncExternalStore(subscribeToAuthError, getNextPath, getServerNextPath);
@@ -105,17 +98,17 @@ export function LoginScreen() {
           redirectTo: `${window.location.origin}/auth/confirm?next=/auth/reset-password`,
         });
         if (error) throw error;
-        setStatusMessage(preferences.locale === "tr" ? "Şifre yenileme bağlantısı e-posta adresinize gönderildi." : "A password reset link was sent to your email.");
+        setStatusMessage(auth.messages.resetLinkSent);
         return;
       }
       if (mode === "signup") {
-        if (password.length < 10) {
-          setStatusMessage(preferences.locale === "tr" ? "Şifreniz en az 10 karakter olmalı." : "Your password must be at least 10 characters.");
+        if (password.length < MIN_PASSWORD_LENGTH) {
+          setStatusMessage(interpolate(auth.messages.passwordTooShort, { min: MIN_PASSWORD_LENGTH }));
           return;
         }
         if (password !== confirmation) {
           shakeValidation(document.getElementById("login-password-confirm"));
-          setStatusMessage(preferences.locale === "tr" ? "Şifreler eşleşmiyor." : "The passwords do not match.");
+          setStatusMessage(auth.messages.passwordMismatch);
           return;
         }
         const { data, error } = await supabase.auth.signUp({
@@ -128,7 +121,7 @@ export function LoginScreen() {
         if (data.session) {
           router.replace(nextPath);
           router.refresh();
-        } else setStatusMessage(preferences.locale === "tr" ? "Kayıt tamamlandı. Devam etmek için e-posta adresinizi doğrulayın." : "Account created. Confirm your email address before continuing.");
+        } else setStatusMessage(auth.messages.accountCreated);
         return;
       }
       const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -137,32 +130,25 @@ export function LoginScreen() {
       // Auth cookie değişikliğinin stale App Router cache'inde kalmasını engeller.
       router.refresh();
     } catch (error) {
-      setStatusMessage(friendlyAuthError(error, preferences.locale));
+      setStatusMessage(friendlyAuthError(error, auth.errors, preferences.locale));
     } finally {
       setBusy(false);
     }
   }
 
-  const labels = preferences.locale === "tr"
-    ? {
-        titleSignIn: "Hesabınıza giriş yapın", titleSignInAccessible: "Hesabınıza giriş yapın", titleSignUp: "Hesap oluşturun", titleForgot: "Şifrenizi yenileyin", subtitleSignIn: "RAG StepLab çalışma alanınıza devam edin.", subtitleSignUp: "RAG'inizi oluşturmaya ve anlamaya başlayın.", subtitleForgot: "Yeni bir şifre belirlemek için size güvenli bir bağlantı göndereceğiz.", submitSignIn: "Giriş yap", submitSignUp: "Kayıt ol", submitForgot: "Bağlantı gönder", wait: "Bekleyin…", email: "E-posta", emailPlaceholder: "ornek@firma.com", emailPlaceholderSignup: "siz@firma.com", password: "Şifre", passwordPlaceholder: "••••••••", showPassword: "Şifreyi göster", hidePassword: "Şifreyi gizle", confirm: "Şifre tekrarı", confirmPlaceholder: "Şifrenizi yeniden girin", google: "Google ile devam et", forgot: "Şifremi unuttum", back: "Giriş ekranına dön", noAccount: "Hesabın yok mu?", alreadyAccount: "Zaten hesabınız var mı?", home: "RAG StepLab ana sayfa", form: "Giriş formu", or: "veya", language: "Dil",
-      }
-    : {
-        titleSignIn: "Sign in", titleSignInAccessible: "Sign in to your account", titleSignUp: "Create account", titleForgot: "Reset your password", subtitleSignIn: "Continue to your RAG StepLab workspace.", subtitleSignUp: "Start building and understanding your RAG.", subtitleForgot: "We'll email you a secure link to set a new password.", submitSignIn: "Sign in", submitSignUp: "Create account", submitForgot: "Send reset link", wait: "Please wait…", email: "Email", emailPlaceholder: "ayse@steplab.dev", emailPlaceholderSignup: "you@company.com", password: "Password", passwordPlaceholder: "••••••••", showPassword: "Show password", hidePassword: "Hide password", confirm: "Confirm password", confirmPlaceholder: "Re-enter password", google: "Continue with Google", forgot: "Forgot password?", back: "Back to sign in", noAccount: "Don't have an account?", alreadyAccount: "Already have an account?", home: "RAG StepLab home", form: "Sign-in form", or: "or", language: "Language",
-      };
   const title = mode === "signup" ? labels.titleSignUp : mode === "forgot" ? labels.titleForgot : labels.titleSignIn;
-  const titleAccessible = mode === "signin" ? labels.titleSignInAccessible : title;
   const subtitle = mode === "signin" ? labels.subtitleSignIn : mode === "signup" ? labels.subtitleSignUp : labels.subtitleForgot;
   const submitLabel = mode === "signup" ? labels.submitSignUp : mode === "forgot" ? labels.submitForgot : labels.submitSignIn;
-  const urlStatusMessage = AUTH_ERROR_MESSAGES[preferences.locale][urlAuthErrorCode] ?? "";
+  const urlStatusMessage = linkErrorMessage(urlAuthErrorCode, auth.linkErrors);
   const visibleStatus = statusMessage || urlStatusMessage;
 
   return (
     <AuthShell>
       <section aria-label={labels.form} className="w-full max-w-[360px]">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}<span className="sr-only">{titleAccessible}</span></h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
         <p className="mt-1.5 text-sm text-muted-foreground">{subtitle}</p>
-        {mode !== "forgot" ? <p className="mt-3 text-sm text-muted-foreground md:sr-only">{preferences.locale === "tr" ? "PDF'den cevaba: parse, chunk, retrieval ve kaynakları adım adım inceleyin." : "From PDF to answer: inspect parsing, chunks, retrieval, and sources step by step."}</p> : null}
+        {/* The desktop hero carries this message; small screens hide the hero and show it here. */}
+        {mode !== "forgot" ? <p className="mt-3 text-sm text-muted-foreground md:hidden" data-testid="auth-intro">{labels.intro}</p> : null}
 
         <TransitionForm aria-describedby="login-status" className="mt-7" onSubmit={submit}>
           <div className="space-y-2">
@@ -175,14 +161,14 @@ export function LoginScreen() {
           {mode !== "forgot" ? <div className="mt-4 space-y-2">
             <div className="flex items-center justify-between text-sm font-medium text-foreground"><label htmlFor="login-password">{labels.password}</label>{mode === "signin" ? <button className="font-medium text-brand hover:underline" onClick={() => setAuthMode("forgot")} type="button">{labels.forgot}</button> : null}</div>
             <div className="relative">
-              <Input autoComplete={mode === "signup" ? "new-password" : "current-password"} className="h-10 pr-10" id="login-password" minLength={mode === "signup" ? 10 : undefined} onChange={(event) => setPassword(event.target.value)} placeholder={labels.passwordPlaceholder} required type={showPassword ? "text" : "password"} value={password} />
+              <Input autoComplete={mode === "signup" ? "new-password" : "current-password"} className="h-10 pr-10" id="login-password" minLength={mode === "signup" ? MIN_PASSWORD_LENGTH : undefined} onChange={(event) => setPassword(event.target.value)} placeholder={labels.passwordPlaceholder} required type={showPassword ? "text" : "password"} value={password} />
               <button aria-label={showPassword ? labels.hidePassword : labels.showPassword} className="absolute right-2.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded-sm text-subtle-foreground transition-colors hover:text-foreground" onClick={() => setShowPassword((current) => !current)} type="button"><IconSwap active={showPassword} first={<AppIcon name="eye" className="size-4" />} second={<AppIcon name="eyeOff" className="size-4" />} /></button>
             </div>
           </div> : null}
 
           {mode === "signup" ? <div className="mt-4 space-y-2">
             <label className="text-sm font-medium text-foreground" htmlFor="login-password-confirm">{labels.confirm}</label>
-            <Input autoComplete="new-password" className="h-10" id="login-password-confirm" minLength={10} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.confirmPlaceholder} required type="password" value={confirmation} />
+            <Input autoComplete="new-password" className="h-10" id="login-password-confirm" minLength={MIN_PASSWORD_LENGTH} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.confirmPlaceholder} required type="password" value={confirmation} />
           </div> : null}
 
           <Button className="mt-6 w-full" size="lg" disabled={busy} type="submit"><TransitionText>{busy ? labels.wait : submitLabel}</TransitionText>{mode === "signin" && !busy ? <AppIcon name="arrowRight" className="size-4" /> : null}</Button>
