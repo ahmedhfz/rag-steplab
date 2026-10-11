@@ -20,7 +20,9 @@ for (const locale of ["en", "tr"] as const) {
     await expect(table).toBeVisible();
     await expect(page.getByTestId("document-library-mobile")).toBeHidden();
     const row = table.getByTestId("document-library-row").first();
-    await expect(row.getByText(inUse, { exact: true })).toBeVisible();
+    // Select it so the "In use" badge competes with the name for the column width.
+    await row.getByRole("button").first().click();
+    await expect(row.locator("[data-tone]").filter({ hasText: inUse })).toBeVisible();
     const nameBox = await row.getByTestId("document-library-name").boundingBox();
     expect(nameBox?.width ?? 0).toBeGreaterThanOrEqual(120);
 
