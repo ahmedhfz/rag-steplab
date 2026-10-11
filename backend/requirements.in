@@ -12,6 +12,6 @@ supabase>=2.15,<3
 google-genai>=1.32,<2
 tiktoken>=0.8,<1
 # GHSA-42vr-xj54-vc7v (PyJWKClient.get_signing_key_from_jwt DoS) ve GHSA-x33g-cr3x-6449 2.15.0'da düzeltildi.
-PyJWT[crypto]>=2.15.0,<3
+PyJWT[crypto]>=2.15.1,<3
 # API, Modal function dispatch için client'ı runtime'da kullanır. Modal sürümünün tek kaynağı burasıdır.
 modal==1.6.1
