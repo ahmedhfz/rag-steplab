@@ -32,7 +32,7 @@ test("authenticated seeded workspace kritik rotaları ve blocker durumlarını a
 
   await page.goto("/playground");
   await expect(page.getByText("Skipped", { exact: true }).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Run generation again" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Regenerate answer" })).toBeEnabled();
 
   quality.assertClean();
 });

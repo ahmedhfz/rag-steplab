@@ -351,24 +351,28 @@ async function prepareState(page: Page, state: VisualState) {
     await expect(page.getByTestId("experiment-stage-trace")).toBeVisible();
     await page.getByTestId("experiment-stage-trace").getByRole("button", { name: /^Answer\b/ }).click();
     await expect(page.getByTestId("playground-stage-content").getByRole("heading", { name: "Answer", level: 2 })).toBeVisible();
-    await expect(page.getByTestId("playground-current-actions").getByRole("button", { name: "Run generation again", exact: true })).toBeVisible();
+    await expect(page.getByTestId("playground-current-actions").getByRole("button", { name: "Regenerate answer", exact: true })).toBeVisible();
     await expect(page.getByTestId("playground-current-actions").getByRole("button", { name: "Copy trace", exact: true })).toBeVisible();
+  } else if (stateKey === "evaluation-dataset") {
+    // A seeded dataset makes Results the default tab; the dataset state is one click away.
+    await page.getByTestId("evaluation-tab-dataset").click();
   } else if (stateKey === "evaluation-results") {
-    await page.getByTestId("evaluation-tab-results").click();
+    await expect(page.getByTestId("evaluation-tab-results")).toHaveAttribute("aria-selected", "true");
     await expect(page.getByTestId("evaluation-panel-results")).toBeVisible();
     await expect(page.getByText("Hit@K", { exact: true }).first()).toBeVisible();
   } else if (stateKey === "evaluation-compare") {
     await page.getByTestId("evaluation-tab-compare").click();
     const history = page.getByTestId("evaluation-history");
     await expect(history).toBeVisible();
-    await history.locator("summary").click();
+    // Fewer than two selected runs: the history starts open.
+    await expect(history).toHaveAttribute("open", "");
     const checks = history.locator('input[type="checkbox"]');
     await expect(checks).toHaveCount(2);
     await checks.nth(0).check();
     await checks.nth(1).check();
     await expect(page.getByTestId("evaluation-compare-content")).toBeVisible();
-    await expect(page.getByTestId("evaluation-compare-content")).toContainText("RUN A");
-    await expect(page.getByTestId("evaluation-compare-content")).toContainText("RUN B");
+    await expect(page.getByTestId("evaluation-compare-run-a")).toBeVisible();
+    await expect(page.getByTestId("evaluation-compare-run-b")).toBeVisible();
     await expect(page.getByTestId("evaluation-compare-context")).toContainText("Changed settings");
   }
 
@@ -379,7 +383,7 @@ async function prepareState(page: Page, state: VisualState) {
   } else if (stateKey === "playground-retrieval") {
     await expect(page.getByTestId("experiment-stage-trace")).toBeVisible();
     await expect(page.getByTestId("playground-stage-content")).toContainText("ORBIT-731");
-    await expect(page.getByTestId("playground-current-actions").getByRole("button", { name: "Continue", exact: true })).toBeVisible();
+    await expect(page.getByTestId("playground-current-actions").getByRole("button", { name: "Run next stage", exact: true })).toBeVisible();
     await expect(page.getByTestId("playground-current-actions").getByRole("button", { name: "Copy trace", exact: true })).toBeVisible();
   } else if (stateKey === "parsing-result") {
     await expect(page.getByTestId("parse-result-summary")).toBeVisible();
