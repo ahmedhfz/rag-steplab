@@ -621,9 +621,9 @@ distro==1.9.0 \
     --hash=sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed \
     --hash=sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2
     # via google-genai
-fastapi==0.139.2 \
-    --hash=sha256:333145a6891e9b5b3cfceb69baf817e8240cde4d4588ae5a10bf56ffacb6255e \
-    --hash=sha256:b9ad015a835173d59865e2f5d8296fbc2b317bf56a2ba1a5bfbdd03de2fd4b1c
+fastapi==0.142.3 \
+    --hash=sha256:519ca478f8acacc2062f204cde0bc233119c413c78477ddce299db8c0d5792d1 \
+    --hash=sha256:5a27878d54a17627a849fc26096b9f37191106cab4b063ca60b0c7770ab39f9d
     # via -r requirements.in
 frozenlist==1.8.0 \
     --hash=sha256:0325024fe97f94c41c08872db482cf8ac4800d80e79222c6b0b7b162d5b13686 \
@@ -941,9 +941,9 @@ mdurl==0.1.2 \
     --hash=sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8 \
     --hash=sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba
     # via markdown-it-py
-modal==1.5.4 \
-    --hash=sha256:3e54e26037c445af42f9a9ef9862b66bdd2e0b1faeced5fcc7adf3e5f59e44ed \
-    --hash=sha256:d611bb47fc07117f5d194f7f9a9c0aba4537573a136349bbe45c5694e64bca92
+modal==1.6.1 \
+    --hash=sha256:f408ef88563003a83e491a6be09d4221eaa6e038fa4faa2ad8b15b25afe949a4 \
+    --hash=sha256:ff17768f67a65595aa7882e893e6cb78e2e001b3653aa52cfe98d4051d8d9e9e
     # via -r requirements.in
 multidict==6.9.1 \
     --hash=sha256:006c4478de0a1876f4834e14255776286f09b9846b505fe63f67f9d173a9487c \
@@ -1121,6 +1121,10 @@ multidict==6.9.1 \
     #   aiohttp
     #   grpclib
     #   yarl
+opentelemetry-api==1.45.1 \
+    --hash=sha256:aa38ed19bcc084ba42782a73255b3582283eced7ad6dddbd6695189e69adfb75 \
+    --hash=sha256:b31553efa588ae44bc306f863c785c5333a9ecc091248c6ee68b4b6c87fdedfb
+    # via fastapi
 packaging==26.3 \
     --hash=sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79 \
     --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
@@ -1957,6 +1961,7 @@ typing-extensions==4.16.0 \
     #   fastapi
     #   google-genai
     #   modal
+    #   opentelemetry-api
     #   pydantic
     #   pydantic-core
     #   realtime
