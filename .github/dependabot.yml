@@ -10,6 +10,15 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # Runtime Node 24 (package.json engines, .nvmrc); tipler runtime major'ını aşmamalı.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # eslint-config-next'in getirdiği eslint-plugin-react ESLint 10 ile yüklenemiyor
+      # (`contextOrFilename.getFilename is not a function`). Next config ESLint 10'u
+      # desteklediğinde bu kuralı silin.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
 
   # backend/requirements*.in → requirements*.txt hash'li uv lock'ları. Dependabot `uv pip compile`
   # başlığındaki seçeneklerle (--universal --generate-hashes --python-version) lock'ları yeniden üretir.
