@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildOverviewViewModel,
   experimentStageToStepState,
+  journeyLockReason,
   operationToStepState,
   runToStepState,
 } from "@/lib/figma-view-models";
@@ -99,7 +100,53 @@ describe("Figma presentation state adapters", () => {
       generate: "Completed",
       evaluate: "Completed",
     });
-    expect(complete.continuation).toEqual({ href: "/playground", kind: "playground", state: "Ready" });
+    // A completed experiment extends the continuation chain to Evaluation (N-6).
+    expect(complete.continuation).toEqual({ href: "/evaluation", kind: "evaluation", state: "Completed" });
+
+    const lineageOnly = buildOverviewViewModel({ ...overviewInput(), evaluation: undefined, experiment: undefined, hasEvaluationDataset: false });
+    expect(lineageOnly.continuation).toEqual({ href: "/playground", kind: "playground", state: "Ready" });
+  });
+
+  it("continues from a finished experiment to Evaluation even before a dataset exists", () => {
+    const experimentDone = buildOverviewViewModel({ ...overviewInput(), evaluation: undefined, hasEvaluationDataset: false });
+    expect(experimentDone.pipelineState.evaluate).toBe("Ready");
+    expect(experimentDone.continuation).toEqual({ href: "/evaluation", kind: "evaluation", state: "Ready" });
+
+    const running = buildOverviewViewModel({ ...overviewInput(), evaluation: { status: "running" } });
+    expect(running.continuation).toEqual({ href: "/evaluation", kind: "evaluation-processing", state: "Processing" });
+    const failed = buildOverviewViewModel({ ...overviewInput(), evaluation: { status: "failed" } });
+    expect(failed.continuation).toEqual({ href: "/evaluation", kind: "evaluation-error", state: "Error" });
+  });
+
+  it("keeps the Playground as the next step until the experiment has produced an answer", () => {
+    for (const target of ["retrieval", "reranking", "context"] as const) {
+      const stageStatuses = Object.fromEntries(
+        (["retrieval", "reranking", "context"] as const).slice(0, ["retrieval", "reranking", "context"].indexOf(target) + 1).map((stage) => [stage, "completed"]),
+      ) as Record<string, "completed">;
+      const stopped = buildOverviewViewModel({ ...overviewInput(), evaluation: undefined, hasEvaluationDataset: false, experiment: { status: "completed", stageStatuses } });
+      expect(stopped.continuation, target).toEqual({ href: "/playground", kind: "playground", state: "Ready" });
+      expect(stopped.pipelineState.evaluate, target).toBe("Locked");
+    }
+  });
+
+  it("explains locked journey steps by the first unfinished upstream step", () => {
+    const embeddingsReady = buildOverviewViewModel({
+      ...overviewInput(),
+      embedding: undefined,
+      embeddingStatus: "ready",
+      evaluation: undefined,
+      experiment: undefined,
+      hasEvaluationDataset: false,
+      selectedEmbeddingRunId: null,
+    });
+    expect(journeyLockReason("embed", embeddingsReady.pipelineState)).toBeNull();
+    expect(journeyLockReason("retrieve", embeddingsReady.pipelineState)).toBe("missing_embedding");
+    expect(journeyLockReason("generate", embeddingsReady.pipelineState)).toBe("missing_embedding");
+    expect(journeyLockReason("evaluate", embeddingsReady.pipelineState)).toBe("missing_embedding");
+
+    const empty = buildOverviewViewModel({ ...overviewInput(), activeDocument: undefined, activeDocumentId: null, parse: undefined, chunk: undefined, embedding: undefined, experiment: undefined, evaluation: undefined, selectedParseRunId: null, selectedChunkRunId: null, selectedEmbeddingRunId: null, chunkStatus: "locked", embeddingStatus: "locked", hasEvaluationDataset: false });
+    expect(journeyLockReason("parse", empty.pipelineState)).toBe("missing_document");
+    expect(journeyLockReason("chunk", empty.pipelineState)).toBe("missing_document");
   });
 
   it("preserves processing and stale/error continuation states", () => {

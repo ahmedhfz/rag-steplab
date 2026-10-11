@@ -2,14 +2,15 @@ import { expect, test } from "@playwright/test";
 import { installSeededApi } from "../support/seeded-api";
 import { selectSeededDocument } from "../support/seeded-workspace";
 
-test("@critical desktop reports focus and strategy keyboard navigation", async ({ page }) => {
+test("@critical desktop parse summary and strategy keyboard navigation", async ({ page }) => {
   await page.setViewportSize({ width: 1441, height: 1041 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await installSeededApi(page);
   await page.goto("/parse");
   await selectSeededDocument(page);
-  await page.getByRole("button", { name: "View results", exact: true }).click();
-  await expect(page.getByTestId("parse-result-summary")).toBeFocused();
+  // The summary is already on screen; there is no "View results" scroll button any more.
+  await expect(page.getByTestId("parse-result-summary")).toBeVisible();
+  await expect(page.getByTestId("parse-reports-action")).toHaveCount(0);
   await page.goto("/chunking");
   const radios = page.getByRole("radiogroup").getByRole("radio");
   const selected = page.getByRole("radio", { checked: true });

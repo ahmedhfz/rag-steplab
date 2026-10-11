@@ -178,6 +178,7 @@ function Probe() {
     loadExperiment,
     resumeRunTracking,
     reparseActiveDocument,
+    resumeParseTracking,
     parseResult: viewedParseResult,
     selectedParseResult,
     workspaceStatus,
@@ -211,6 +212,7 @@ function Probe() {
       <output data-testid="workspace-status">{workspaceStatus ?? "unknown"}</output>
       <output data-testid="reparse-impact">{reparseImpact ? `${reparseImpact.target}:${reparseImpact.requiresConfirmation}` : "unknown"}</output>
       <button onClick={() => void reparseActiveDocument()} type="button">Reparse document</button>
+      <button onClick={() => void resumeParseTracking()} type="button">Resume parse tracking</button>
       <button onClick={() => void runEmbedding()} type="button">Run embedding</button>
       <output data-testid="embedding-status">{embeddingStatus}:{embeddingError?.code ?? "none"}</output>
       <button onClick={() => void selectPersistedDocument("document-new")} type="button">Switch to new</button>
@@ -1022,6 +1024,62 @@ describe("Document pipeline lineage regressions", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(patchedUrls).toEqual([]);
+    expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2");
+    expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-alt");
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("embedding-alt");
+  });
+
+  it("resumes a timed-out reparse in its original pipeline scope instead of the newly active one", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:document:test-user:document-old", "pipeline-1");
+    const detail = selectableLineageSummary();
+    const pipelineOne = namedPipeline("pipeline-1");
+    const pipelineTwo = namedPipeline("pipeline-2", { chunkRunId: "chunk-alt", embeddingRunId: "embedding-alt" });
+    let parsePolls = 0;
+    const patchedUrls: string[] = [];
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/capabilities")) return Promise.resolve(jsonResponse(capabilities));
+      if (url.endsWith("/documents")) return Promise.resolve(jsonResponse({ items: [persistedDocument()] }));
+      if (url.endsWith("/documents/document-old/summary")) return Promise.resolve(jsonResponse(detail));
+      if (url.endsWith("/documents/document-old/pipelines")) return Promise.resolve(jsonResponse([pipelineOne, pipelineTwo]));
+      if (url.endsWith("/documents/document-old/parse") && init?.method === "POST") {
+        return Promise.resolve(jsonResponse({ id: "parse-reparsed", documentId: "document-old", status: "queued", progress: 0 }, 202));
+      }
+      if (url.includes("/parse-runs/parse-reparsed")) {
+        parsePolls += 1;
+        // First tracking pass ends like the 15-minute browser timeout; resuming finds the run completed.
+        if (parsePolls === 1) return Promise.resolve(jsonResponse({ error: { code: "parse_poll_timeout", message: "Tracking paused." } }, 409));
+        return Promise.resolve(jsonResponse({ ...parseResult("document-old", "parse-reparsed", "lesson.pdf", "Reparsed"), id: "parse-reparsed" }));
+      }
+      // Pipeline two's own parse is complete, so a resume that tracked it would also reach a PATCH.
+      if (url.includes("/parse-runs/document-old-parse")) {
+        return Promise.resolve(jsonResponse({ ...parseResult("document-old", "document-old-parse", "lesson.pdf", "Pipeline two parse"), id: "document-old-parse" }));
+      }
+      if (init?.method === "PATCH") {
+        patchedUrls.push(url);
+        return Promise.resolve(jsonResponse({ ...pipelineTwo, revision: 2, parseRunId: "parse-reparsed", chunkRunId: null, embeddingRunId: null }));
+      }
+      if (url.includes("/parse-runs/") || url.includes("/chunk-runs/") || url.includes("/embedding-runs/")) return new Promise<Response>(() => undefined);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
+    fireEvent.click(screen.getByRole("button", { name: "Reparse document" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) => String(url).endsWith("/documents/document-old/parse") && init?.method === "POST")).toBe(true));
+    fireEvent.click(screen.getByRole("button", { name: "Select pipeline two" }));
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2"));
+    // The first status read waits one poll interval (1 s) after the queued response, then times out.
+    await waitFor(() => expect(parsePolls).toBe(1), { timeout: 3_000 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume parse tracking" }));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Resume commits nothing to pipeline two and follows the run that timed out.
+    expect(patchedUrls).toEqual([]);
+    expect(parsePolls).toBeGreaterThanOrEqual(2);
     expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2");
     expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-alt");
     expect(screen.getByTestId("selected-embedding")).toHaveTextContent("embedding-alt");

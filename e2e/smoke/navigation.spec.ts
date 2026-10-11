@@ -58,7 +58,8 @@ test("seeded state reload sonrası korunur ve responsive gezinme çalışır", a
   await page.screenshot({ path: "output/playwright/responsive-shell/documents-390.png", fullPage: true });
 
   await page.goto("/settings");
-  const languageDescription = page.getByText("Interface language.");
+  // The row title is the anchor; the redundant "Interface language." description is gone.
+  const languageDescription = page.getByTestId("settings-language-row").getByRole("heading", { name: "Language", level: 2 });
   const languageControl = page.getByRole("radiogroup", { name: "Language" });
   const descriptionBox = await languageDescription.boundingBox();
   const languageControlBox = await languageControl.boundingBox();

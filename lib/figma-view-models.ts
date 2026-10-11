@@ -1,5 +1,6 @@
+import type { BlockerCode } from "@/lib/blockers";
 import type { ExperimentSummary, RunStatus, RunSummary } from "@/lib/rag-api-types";
-import { normalizeJourneyPipelineState } from "@/lib/overview-journey";
+import { JOURNEY_STAGE_KEYS, normalizeJourneyPipelineState } from "@/lib/overview-journey";
 import type { PipelineStepKey, PipelineStepState } from "@/lib/rag-ui-types";
 
 export type PipelineOperationStatusLike = "locked" | "ready" | "processing" | "completed" | "skipped" | "error" | "stale";
@@ -15,7 +16,10 @@ export type OverviewContinuationKind =
   | "embedding-processing"
   | "embedding-error"
   | "embedding"
-  | "playground";
+  | "playground"
+  | "evaluation-processing"
+  | "evaluation-error"
+  | "evaluation";
 
 export type OverviewViewModel = {
   pipelineState: Record<PipelineStepKey, PipelineStepState>;
@@ -105,13 +109,17 @@ export function buildOverviewViewModel({
           : "Ready";
   const chunkState = chunk?.status === "completed" && chunk.isCompatible ? "Completed" : operationToStepState(chunkStatus);
   const embeddingState = embedding?.status === "completed" && embedding.isCompatible ? "Completed" : operationToStepState(embeddingStatus);
+  // An experiment that produced an answer makes Evaluation the next learning step
+  // even before a dataset exists (the dataset is created on the Evaluation page).
+  // A run that stopped at retrieval, reranking or context still continues in the Playground.
+  const experimentCompleted = experiment?.status === "completed" && experiment.stageStatuses.generation === "completed";
   const evaluationState: PipelineStepState = evaluation
     ? evaluation.status === "completed"
       ? "Completed"
       : evaluation.status === "running" || evaluation.status === "queued"
         ? "Processing"
         : "Error"
-    : selectedChunkRunId && selectedEmbeddingRunId && hasEvaluationDataset
+    : selectedChunkRunId && selectedEmbeddingRunId && (hasEvaluationDataset || experimentCompleted)
       ? "Ready"
       : "Locked";
 
@@ -127,7 +135,10 @@ export function buildOverviewViewModel({
   else if (embeddingState === "Processing") continuation = { href: "/embeddings", kind: "embedding-processing", state: "Processing" };
   else if (embeddingState === "Error" || embeddingState === "Stale") continuation = { href: "/embeddings", kind: "embedding-error", state: embeddingState };
   else if (!selectedEmbeddingRunId || embeddingState === "Ready") continuation = { href: "/embeddings", kind: "embedding", state: "Ready" };
-  else continuation = { href: "/playground", kind: "playground", state: "Ready" };
+  else if (!experimentCompleted) continuation = { href: "/playground", kind: "playground", state: "Ready" };
+  else if (evaluationState === "Processing") continuation = { href: "/evaluation", kind: "evaluation-processing", state: "Processing" };
+  else if (evaluationState === "Error") continuation = { href: "/evaluation", kind: "evaluation-error", state: "Error" };
+  else continuation = { href: "/evaluation", kind: "evaluation", state: evaluationState === "Completed" ? "Completed" : "Ready" };
 
   const pipelineState = normalizeJourneyPipelineState({
     document: hasDocument ? "Completed" : "Not started",
@@ -143,4 +154,30 @@ export function buildOverviewViewModel({
   });
 
   return { continuation, pipelineState };
+}
+
+/** The prerequisite a journey step waits for, keyed by the earliest unfinished upstream step. */
+const STEP_PREREQUISITE: Record<Exclude<PipelineStepKey, "index">, BlockerCode> = {
+  document: "missing_document",
+  parse: "missing_parse",
+  chunk: "missing_chunk",
+  embed: "missing_embedding",
+  retrieve: "missing_experiment",
+  rerank: "missing_experiment",
+  context: "missing_experiment",
+  generate: "missing_experiment",
+  evaluate: "missing_dataset",
+};
+
+/**
+ * Why a Locked journey step is locked. The reason always points at the first
+ * unfinished upstream step, so the visible hint names the action that unlocks it
+ * (e.g. a locked Retrieval says "create embeddings", not "run an experiment").
+ */
+export function journeyLockReason(step: PipelineStepKey, pipelineState: Record<PipelineStepKey, PipelineStepState>): BlockerCode | null {
+  if (pipelineState[step] !== "Locked") return null;
+  const key = step === "index" ? "embed" : step;
+  const position = JOURNEY_STAGE_KEYS.indexOf(key);
+  const blocking = JOURNEY_STAGE_KEYS.slice(0, position).find((upstream) => pipelineState[upstream] !== "Completed" && pipelineState[upstream] !== "Skipped");
+  return STEP_PREREQUISITE[blocking ?? key];
 }

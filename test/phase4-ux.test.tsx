@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ChunkingScreen, EmbeddingsScreen } from "@/components/pipeline-stage-screens";
@@ -41,19 +41,22 @@ describe("Phase 6B pipeline IA", () => {
     renderWithPipeline(<ParseScreen />);
     expect(screen.getByRole("heading", { name: "Parsing", level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Parse" })).toBeDisabled();
-    await waitFor(() => expect(screen.getAllByText("Select a document before parsing.").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getByTestId("parse-blocker")).toHaveTextContent("Select a document to continue."));
+    expect(within(screen.getByTestId("parse-blocker")).getByRole("link", { name: /Go to Documents/ })).toHaveAttribute("href", "/documents");
+    expect(screen.getByRole("button", { name: "Parse" })).toHaveAccessibleDescription(/Select a document to continue/);
 
     cleanup();
     renderWithPipeline(<ChunkingScreen />);
     expect(screen.getByRole("button", { name: "Run chunking" })).toBeDisabled();
-    expect(screen.queryByTestId("chunking-next-action")).not.toBeInTheDocument();
+    // The locked next step stays visible (disabled) instead of disappearing.
+    expect(screen.getByTestId("chunking-next-action")).toBeDisabled();
     await waitFor(() => expect(document.getElementById("chunk-disabled-reason")).toBeTruthy());
     expect(document.getElementById("chunk-disabled-reason")).toHaveTextContent(/operation|document|parse/i);
 
     cleanup();
     renderWithPipeline(<EmbeddingsScreen />);
     expect(screen.getByRole("button", { name: "Create embeddings" })).toBeDisabled();
-    expect(screen.queryByTestId("embeddings-next-action")).not.toBeInTheDocument();
+    expect(screen.getByTestId("embeddings-next-action")).toBeDisabled();
     await waitFor(() => expect(screen.getByTestId("embedding-blocker")).toBeInTheDocument());
     expect(screen.getByTestId("embedding-blocker")).toHaveTextContent(/operation|document|chunk run/i);
   });

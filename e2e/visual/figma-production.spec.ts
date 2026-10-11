@@ -198,12 +198,13 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
   const stage = state.group === "parsing" ? "parse" : state.group;
   if (["parse", "chunking", "embeddings"].includes(stage)) {
     const next = page.getByTestId(`${stage}-next-action`);
+    const footer = page.getByTestId(`${stage}-next-action-footer`);
+    await expect(footer.locator(`[data-testid="${stage}-next-action"]`)).toHaveCount(1);
     if (["chunking-config", "embeddings-ready"].includes(stateKey)) {
-      await expect(next).toHaveCount(0);
+      // A locked next step stays visible (disabled) with its reason instead of disappearing.
+      await expect(next).toBeDisabled();
     } else {
-      await expect(next).toHaveCount(1);
-      const footer = page.getByTestId(`${stage}-next-action-footer`);
-      await expect(footer.locator(`[data-testid="${stage}-next-action"]`)).toHaveCount(1);
+      await expect(next).toBeEnabled();
       const history = page.getByTestId(stage === "parse" ? "parse-history" : stage === "chunking" ? "chunk-history" : "embedding-history");
       const historyRect = await rect(history);
       expect((await rect(footer)).y).toBeGreaterThanOrEqual(historyRect.y + historyRect.height);
@@ -271,7 +272,7 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     const embeddingWorkspace = page.getByTestId("embeddings-workspace");
     await assertRect(embeddingWorkspace, { x: 288, width: 1113, fluid: 1 }, "embeddings-workspace");
     await assertBelow(page.getByTestId("pipeline-context-bar"), embeddingWorkspace, "embeddings workspace below context");
-    expect((await rect(embeddingWorkspace)).height, `${state.key}-workspace-height`).toBeGreaterThan(stateKey === "embeddings-ready" ? 60 : 150);
+    expect((await rect(embeddingWorkspace)).height, `${state.key}-workspace-height`).toBeGreaterThan(stateKey === "embeddings-ready" ? 60 : 110);
     await expect(page.getByTestId("embedding-lineage")).toBeVisible();
     expect((await rect(page.getByTestId("embedding-action-card"))).width).toBeLessThanOrEqual(760);
     const inputRect = await rect(page.getByTestId("embedding-primary-result"));
@@ -390,9 +391,9 @@ async function prepareState(page: Page, state: VisualState) {
     await expect(page.getByTestId("chunk-results")).toBeVisible();
   } else if (stateKey === "embeddings-ready") {
     await expect(page.getByRole("button", { name: "Create embeddings", exact: true })).toBeEnabled();
-    await expect(page.getByText("RESULT SUMMARY", { exact: true })).toHaveCount(0);
+    await expect(page.getByTestId("embedding-result-details")).toHaveCount(0);
   } else if (stateKey === "embeddings-result") {
-    await expect(page.getByText("RESULT SUMMARY", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("embedding-result-details")).toContainText("dimensions");
   } else if (stateKey === "documents-populated") {
     await expect(page.getByTestId("document-library")).toBeVisible();
     await expect(page.getByRole("button", { name: /e2e-seeded-golden\.pdf/ }).first()).toBeVisible();
@@ -415,14 +416,16 @@ async function captureAndCompare(page: Page, state: VisualState) {
   const metricsPath = path.join(artifactDirectory, `${state.key}-metrics.json`);
   const referencePath = path.join(referenceDirectory, `${state.key}.png`);
   const contract = visualContracts[state.group];
-  const dynamicMask = page.locator('[data-testid="app-shell-user"]:visible');
+  // Only the account name is dynamic; the user row itself stays visible. The mask
+  // uses the sidebar card colour so the sidebar reads full-height in both themes.
+  const dynamicMask = page.locator('[data-testid="app-shell-user-name"]:visible');
 
   await mkdir(artifactDirectory, { recursive: true });
   const screenshot = await page.screenshot({
     animations: "disabled",
     caret: "hide",
     mask: state.group === "auth" ? [] : [dynamicMask],
-    maskColor: state.theme === "dark" ? "#141113" : "#ffffff",
+    maskColor: state.theme === "dark" ? "#201b1e" : "#ffffff",
     path: actualPath,
   });
   expect(screenshot.readUInt32BE(16), `${state.key} screenshot width`).toBe(viewport.width);

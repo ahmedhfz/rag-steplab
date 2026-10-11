@@ -34,8 +34,9 @@ describe("DocumentsScreen", () => {
 
     expect(screen.getByRole("heading", { name: "Parsing" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Parse" })).toBeDisabled();
-    expect(screen.getByRole("group", { name: "Parsed content view mode" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Structured" })).toBeDisabled();
+    // No phantom view controls before there is any parse output.
+    expect(screen.queryByRole("group", { name: "Raw output format" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("parse-raw-output")).not.toBeInTheDocument();
   });
 
   it("does not issue document detail fetches while Documents is empty", async () => {
