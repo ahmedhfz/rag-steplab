@@ -5,7 +5,8 @@ import { AppShell } from "@/components/app-shell";
 import { AuthProvider } from "@/components/auth-provider";
 import { DocumentPipelineProvider } from "@/components/document-pipeline-provider";
 import { PreferencesProvider } from "@/components/preferences-provider";
-import { THEME_BOOTSTRAP_SCRIPT } from "@/lib/theme";
+import { TITLE_TEMPLATE } from "@/lib/page-titles";
+import { DEFAULT_LOCALE, LOCALE_BOOTSTRAP_SCRIPT, THEME_BOOTSTRAP_SCRIPT } from "@/lib/theme";
 
 import "./globals.css";
 
@@ -34,7 +35,8 @@ function siteUrl() {
 // The share image comes from app/opengraph-image.tsx; Twitter inherits title, description and image from openGraph.
 export const metadata: Metadata = {
   metadataBase: siteUrl(),
-  title: SITE_NAME,
+  // Each page.tsx names itself (`pageMetadata`); the shell localizes it after hydration.
+  title: { default: SITE_NAME, template: TITLE_TEMPLATE },
   description: SITE_DESCRIPTION,
   applicationName: SITE_NAME,
   openGraph: {
@@ -51,9 +53,11 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    // Theme and locale bootstraps rewrite class/style/lang before hydration.
+    <html lang={DEFAULT_LOCALE} suppressHydrationWarning>
       <head>
         <script data-theme-bootstrap dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }} />
+        <script data-locale-bootstrap dangerouslySetInnerHTML={{ __html: LOCALE_BOOTSTRAP_SCRIPT }} />
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <PreferencesProvider>

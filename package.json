@@ -13,7 +13,7 @@
     "e2e:critical": "playwright test --project=chromium-seeded --grep \"@critical|resets its lineage and Journey state\"",
     "e2e:auth": "playwright test --project=auth",
     "e2e:full": "playwright test --project=full-rag --workers=1",
-    "e2e:visual:production": "playwright test --project=figma-production",
+    "e2e:visual:production": "playwright test --project=production-visual",
     "e2e:headed": "playwright test --project=chromium-seeded --headed",
     "e2e:report": "playwright show-report output/playwright/report",
     "e2e:fixture": "node scripts/e2e.mjs fixture",
@@ -40,6 +40,7 @@
     "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@playwright/test": "1.63.0",
     "@tailwindcss/postcss": "4.3.3",
     "@testing-library/dom": "^10.4.2",

@@ -4,13 +4,15 @@ import path from "node:path";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-import { installSeededApi, type SeededScenario } from "../support/seeded-api";
+import { expectNoHorizontalOverflow } from "../support/overflow";
+import { installSeededApi, seededStressNames, type SeededScenario } from "../support/seeded-api";
 import { selectSeededDocument } from "../support/seeded-workspace";
 
 const viewport = { width: 1441, height: 1041 } as const;
-const artifactDirectory = path.resolve("output/playwright/figma-production");
+const mobileViewport = { width: 390, height: 844 } as const;
+const artifactDirectory = path.resolve("output/playwright/production-visual");
 const referenceDirectory = path.resolve("e2e/visual/reference/production");
-const visualDiff = path.resolve("e2e/visual/figma-visual-diff.mjs");
+const visualDiff = path.resolve("e2e/visual/visual-diff.mjs");
 const updateReferences = process.env.UPDATE_PRODUCTION_VISUAL_REFERENCES === "1";
 
 type VisualGroup = "overview" | "documents" | "parsing" | "chunking" | "embeddings" | "playground" | "evaluation" | "settings" | "auth";
@@ -23,6 +25,11 @@ type VisualState = {
   theme?: "light" | "dark";
   canonicalKey?: string;
   openSelect?: boolean;
+  /** Mobile states (390×844) assert the no-overflow contract instead of the desktop geometry. */
+  viewport?: { width: number; height: number };
+  locale?: "en" | "tr";
+  /** Long single-token document/pipeline names (wrapping and truncation stress). */
+  longNames?: boolean;
 };
 
 const visualStates: VisualState[] = [
@@ -49,21 +56,35 @@ const darkVisualStates: VisualState[] = [
   { key: "overview-dark", canonicalKey: "overview", scenario: "complete", route: "/", group: "overview", theme: "dark" },
   { key: "chunking-config-select-dark", canonicalKey: "chunking-config", scenario: "chunking-config", route: "/chunking", group: "chunking", theme: "dark", openSelect: true },
   { key: "playground-context-dark", canonicalKey: "playground-context", scenario: "playground-context", route: "/playground", group: "playground", theme: "dark" },
+  // Also the README's Dark screenshot source (docs/images/playground-dark.png).
+  { key: "playground-answer-dark", canonicalKey: "playground-answer", scenario: "playground-answer", route: "/playground", group: "playground", theme: "dark" },
   { key: "evaluation-compare-dark", canonicalKey: "evaluation-compare", scenario: "evaluation-compare", route: "/evaluation", group: "evaluation", theme: "dark" },
   { key: "settings-dark", canonicalKey: "settings", scenario: "settings", route: "/settings", group: "settings", theme: "dark" },
 ];
 
-const visualContracts: Record<VisualGroup, { maxMae: number; maxChangedPixelPercentage: number }> = {
-  overview: { maxMae: 3.7, maxChangedPixelPercentage: 5 },
-  documents: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
-  parsing: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
-  chunking: { maxMae: 5, maxChangedPixelPercentage: 8 },
-  embeddings: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
-  playground: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
-  evaluation: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
-  settings: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
-  auth: { maxMae: 4.5, maxChangedPixelPercentage: 8 },
-};
+// Turkish interface: no mixed-language leftovers in a dense Prepare and a dense Test screen.
+const turkishVisualStates: VisualState[] = [
+  { key: "chunking-result-tr", canonicalKey: "chunking-result", scenario: "chunking-result", route: "/chunking", group: "chunking", locale: "tr" },
+  { key: "playground-answer-tr", canonicalKey: "playground-answer", scenario: "playground-answer", route: "/playground", group: "playground", locale: "tr" },
+];
+
+const mobileVisualStates: VisualState[] = [
+  { key: "overview-mobile", canonicalKey: "overview", scenario: "complete", route: "/", group: "overview", viewport: mobileViewport },
+  { key: "documents-populated-mobile", canonicalKey: "documents-populated", scenario: "documents-populated", route: "/documents", group: "documents", viewport: mobileViewport, longNames: true },
+  { key: "parsing-result-mobile", canonicalKey: "parsing-result", scenario: "parsing-result", route: "/parse", group: "parsing", viewport: mobileViewport },
+  { key: "playground-answer-mobile", canonicalKey: "playground-answer", scenario: "playground-answer", route: "/playground", group: "playground", viewport: mobileViewport },
+  { key: "evaluation-compare-mobile", canonicalKey: "evaluation-compare", scenario: "evaluation-compare", route: "/evaluation", group: "evaluation", viewport: mobileViewport },
+  { key: "playground-answer-mobile-dark", canonicalKey: "playground-answer", scenario: "playground-answer", route: "/playground", group: "playground", viewport: mobileViewport, theme: "dark" },
+];
+
+/**
+ * References are generated in the CI Linux/Chromium image (`production-visual-update`),
+ * so only rendering noise remains; any real layout or copy change exceeds this.
+ */
+const visualContract = { maxMae: 1.5, maxChangedPixelPercentage: 1.5 } as const;
+
+/** Host chrome outside the app (Vercel Preview toolbar, Next dev overlay) never enters a frame. */
+const hiddenHostChrome = "vercel-live-feedback, nextjs-portal { display: none !important; }";
 
 /**
  * `fluid` widths were measured without a scrollbar; at >=768px `scrollbar-gutter: stable`
@@ -125,16 +146,16 @@ async function assertShellGeometry(page: Page) {
 }
 
 async function assertOverviewGeometry(page: Page, theme: "light" | "dark") {
-  await assertRect(page.getByTestId("figma-overview-main"), { x: 248, y: 0, width: (await contentWidth(page)) - 248 }, "overview-main");
+  await assertRect(page.getByTestId("overview-main"), { x: 248, y: 0, width: (await contentWidth(page)) - 248 }, "overview-main");
   // PageHeader has no fixed height; only the column and the stacking order are contracts.
-  const header = page.getByTestId("figma-overview-header");
+  const header = page.getByTestId("overview-page-header");
   await assertRect(header, { x: 288, y: 40, width: 1113, fluid: 1 }, "overview-header");
   const workspace = page.getByTestId("workspace-control-plane");
   await assertRect(workspace, { x: 288, width: 1113, fluid: 1 }, "overview-control-plane");
   await assertBelow(header, workspace, "overview-control-plane below header");
   await expect(page.getByTestId("continue-surface")).toBeVisible();
   await expect(page.getByTestId("overview-lineage")).toHaveCount(0);
-  const pipeline = page.getByTestId("figma-overview-pipeline");
+  const pipeline = page.getByTestId("overview-pipeline");
   await assertRect(pipeline, { x: 288, width: 1113, fluid: 1 }, "overview-pipeline");
   await assertBelow(workspace, pipeline, "overview-pipeline below control plane");
   await assertRect(page.getByTestId("overview-journey"), { x: 309, width: 1071, fluid: 1, height: 216 }, "overview-journey");
@@ -144,9 +165,9 @@ async function assertOverviewGeometry(page: Page, theme: "light" | "dark") {
   await expect(canvas).toHaveAttribute("preserveAspectRatio", "none");
   await expect(canvas.locator("path")).toHaveCount(8);
 
-  const prepare = await rect(page.getByTestId("figma-overview-prepare"));
-  const testGroup = await rect(page.getByTestId("figma-overview-test"));
-  const measure = await rect(page.getByTestId("figma-overview-measure"));
+  const prepare = await rect(page.getByTestId("overview-group-prepare"));
+  const testGroup = await rect(page.getByTestId("overview-group-test"));
+  const measure = await rect(page.getByTestId("overview-group-measure"));
   const expectedGroupRatios = {
     prepare: { left: 25.034 / 1054.1, width: 441 / 1054.1 },
     test: { left: 476.356 / 1054.1, width: 428 / 1054.1 },
@@ -185,11 +206,28 @@ async function assertOverviewGeometry(page: Page, theme: "light" | "dark") {
   expect(evaluation!.x + evaluation!.width / 2).toBeGreaterThanOrEqual(measure.x);
   expect(evaluation!.x + evaluation!.width / 2).toBeLessThanOrEqual(measure.x + measure.width);
   // "How it works" lives in the PageHeader help slot, under the title block.
-  const learningNote = page.getByTestId("figma-overview-learning-note");
+  const learningNote = page.getByTestId("overview-learning-note");
   await assertRect(learningNote, { x: 288 }, "overview-learning-note");
   const headerRect = await rect(header);
   const noteRect = await rect(learningNote);
   expect(noteRect.y + noteRect.height, "learning note inside header").toBeLessThanOrEqual(headerRect.y + headerRect.height + 1);
+}
+
+async function assertThemeAndLocale(page: Page, state: VisualState) {
+  const html = page.locator("html");
+  await expect(html).toHaveClass(state.theme === "dark" ? /\bdark\b/ : /^(?!.*\bdark\b)/);
+  await expect(html).toHaveCSS("color-scheme", state.theme ?? "light");
+  await expect(html).toHaveAttribute("lang", state.locale ?? "en");
+}
+
+/** Mobile: drawer navigation, full-width main and the no-overflow contract (content stays reachable). */
+async function assertMobileGeometry(page: Page, state: VisualState) {
+  const size = state.viewport ?? mobileViewport;
+  expect(await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))).toEqual(size);
+  await expect(page.getByTestId("app-shell-sidebar")).toBeHidden();
+  await expect(page.getByRole("button", { name: "Open navigation" })).toBeVisible();
+  await assertRect(page.getByTestId("app-shell-main"), { x: 0, width: await contentWidth(page) }, `${state.key}-main`);
+  await expectNoHorizontalOverflow(page, state.key);
 }
 
 async function assertRouteGeometry(page: Page, state: VisualState) {
@@ -215,14 +253,14 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     return;
   }
   if (stateKey === "overview-first-use") {
-    await assertRect(page.getByTestId("figma-overview-main"), { x: 248, y: 0, width: (await contentWidth(page)) - 248 }, "overview-main");
-    await assertRect(page.getByTestId("figma-overview-header"), { x: 288, y: 40, width: 1113, fluid: 1 }, "overview-header");
+    await assertRect(page.getByTestId("overview-main"), { x: 248, y: 0, width: (await contentWidth(page)) - 248 }, "overview-main");
+    await assertRect(page.getByTestId("overview-page-header"), { x: 288, y: 40, width: 1113, fluid: 1 }, "overview-header");
     const firstUse = page.getByTestId("overview-first-use");
     await assertRect(firstUse, { x: 288, width: 1113, fluid: 1 }, "overview-first-use");
     await expect(page.getByTestId("workspace-control-plane")).toHaveCount(0);
     await expect(firstUse.getByRole("button", { name: "Try a sample PDF" })).toBeVisible();
     await expect(firstUse.getByRole("link", { name: "Add your own PDF" })).toBeVisible();
-    expect((await rect(page.getByTestId("figma-overview-pipeline"))).y).toBeGreaterThan((await rect(firstUse)).y + (await rect(firstUse)).height);
+    expect((await rect(page.getByTestId("overview-pipeline"))).y).toBeGreaterThan((await rect(firstUse)).y + (await rect(firstUse)).height);
     return;
   }
 
@@ -322,9 +360,17 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
   }
 }
 
+/** The few UI strings prepareState clicks or reads, per seeded locale. */
+const stateCopy = {
+  en: { answer: "Answer", regenerate: "Regenerate answer", copyTrace: "Copy trace" },
+  tr: { answer: "Cevap", regenerate: "Cevabı yeniden üret", copyTrace: "İzi kopyala" },
+} as const;
+
 async function prepareState(page: Page, state: VisualState) {
   const stateKey = state.canonicalKey ?? state.key;
-  await page.setViewportSize(viewport);
+  const text = stateCopy[state.locale ?? "en"];
+  const documentName = state.longNames ? seededStressNames.document : "e2e-seeded-golden.pdf";
+  await page.setViewportSize(state.viewport ?? viewport);
   await page.emulateMedia({ colorScheme: state.theme ?? "light", reducedMotion: "reduce" });
   if (stateKey === "overview-first-use") {
     await page.goto(state.route, { waitUntil: "networkidle" });
@@ -332,7 +378,7 @@ async function prepareState(page: Page, state: VisualState) {
     return;
   }
   await page.goto("/parse", { waitUntil: "networkidle" });
-  await selectSeededDocument(page);
+  await selectSeededDocument(page, documentName);
   await page.goto(state.route, { waitUntil: "networkidle" });
 
   if (stateKey === "playground-reranking") {
@@ -349,10 +395,10 @@ async function prepareState(page: Page, state: VisualState) {
     await expect(page.getByTestId("playground-stage-content").getByRole("heading", { name: "Build context", level: 2 })).toBeVisible();
   } else if (stateKey === "playground-answer") {
     await expect(page.getByTestId("experiment-stage-trace")).toBeVisible();
-    await page.getByTestId("experiment-stage-trace").getByRole("button", { name: /^Answer\b/ }).click();
-    await expect(page.getByTestId("playground-stage-content").getByRole("heading", { name: "Answer", level: 2 })).toBeVisible();
-    await expect(page.getByTestId("playground-current-actions").getByRole("button", { name: "Regenerate answer", exact: true })).toBeVisible();
-    await expect(page.getByTestId("playground-current-actions").getByRole("button", { name: "Copy trace", exact: true })).toBeVisible();
+    await page.getByTestId("experiment-stage-trace").getByRole("button", { name: new RegExp(`^${text.answer}\\b`) }).click();
+    await expect(page.getByTestId("playground-stage-content").getByRole("heading", { name: text.answer, level: 2 })).toBeVisible();
+    await expect(page.getByTestId("playground-current-actions").getByRole("button", { name: text.regenerate, exact: true })).toBeVisible();
+    await expect(page.getByTestId("playground-current-actions").getByRole("button", { name: text.copyTrace, exact: true })).toBeVisible();
   } else if (stateKey === "evaluation-dataset") {
     // A seeded dataset makes Results the default tab; the dataset state is one click away.
     await page.getByTestId("evaluation-tab-dataset").click();
@@ -400,7 +446,7 @@ async function prepareState(page: Page, state: VisualState) {
     await expect(page.getByTestId("embedding-result-details")).toContainText("dimensions");
   } else if (stateKey === "documents-populated") {
     await expect(page.getByTestId("document-library")).toBeVisible();
-    await expect(page.getByRole("button", { name: /e2e-seeded-golden\.pdf/ }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: documentName }).first()).toBeVisible();
   } else if (stateKey === "evaluation-dataset") {
     await expect(page.getByTestId("evaluation-panel-dataset")).toBeVisible();
     await expect(page.getByRole("button", { name: /e2e-seeded-golden-dataset/ }).first()).toBeVisible();
@@ -419,7 +465,8 @@ async function captureAndCompare(page: Page, state: VisualState) {
   const diffPath = path.join(artifactDirectory, `${state.key}-diff.png`);
   const metricsPath = path.join(artifactDirectory, `${state.key}-metrics.json`);
   const referencePath = path.join(referenceDirectory, `${state.key}.png`);
-  const contract = visualContracts[state.group];
+  const contract = visualContract;
+  const size = state.viewport ?? viewport;
   // Only the account name is dynamic; the user row itself stays visible. The mask
   // uses the sidebar card colour so the sidebar reads full-height in both themes.
   const dynamicMask = page.locator('[data-testid="app-shell-user-name"]:visible');
@@ -431,9 +478,10 @@ async function captureAndCompare(page: Page, state: VisualState) {
     mask: state.group === "auth" ? [] : [dynamicMask],
     maskColor: state.theme === "dark" ? "#201b1e" : "#ffffff",
     path: actualPath,
+    style: hiddenHostChrome,
   });
-  expect(screenshot.readUInt32BE(16), `${state.key} screenshot width`).toBe(viewport.width);
-  expect(screenshot.readUInt32BE(20), `${state.key} screenshot height`).toBe(viewport.height);
+  expect(screenshot.readUInt32BE(16), `${state.key} screenshot width`).toBe(size.width);
+  expect(screenshot.readUInt32BE(20), `${state.key} screenshot height`).toBe(size.height);
 
   if (updateReferences) {
     await mkdir(referenceDirectory, { recursive: true });
@@ -467,14 +515,28 @@ test.describe("canonical desktop production React visual contracts", () => {
   // Referans üretiminde bir durumdaki sapma diğer durumların referansını engellemesin.
   test.describe.configure({ mode: updateReferences ? "default" : "serial" });
 
-  for (const state of [...visualStates, ...darkVisualStates]) {
+  for (const state of [...visualStates, ...darkVisualStates, ...turkishVisualStates]) {
     test(`${state.key} real React state preserves geometry and visual contract`, async ({ page }) => {
-      await installSeededApi(page, { scenario: state.scenario, theme: state.theme ?? "light" });
+      await installSeededApi(page, { scenario: state.scenario, theme: state.theme ?? "light", locale: state.locale ?? "en" });
       await prepareState(page, state);
       await settle(page);
-      await expect(page.locator("html")).toHaveClass(state.theme === "dark" ? /\bdark\b/ : /^(?!.*\bdark\b)/);
-      await expect(page.locator("html")).toHaveCSS("color-scheme", state.theme ?? "light");
+      await assertThemeAndLocale(page, state);
       await assertRouteGeometry(page, state);
+      await captureAndCompare(page, state);
+    });
+  }
+});
+
+test.describe("mobile production React visual contracts", () => {
+  test.describe.configure({ mode: updateReferences ? "default" : "serial" });
+
+  for (const state of mobileVisualStates) {
+    test(`${state.key} real React state has no horizontal overflow and keeps its visual contract`, async ({ page }) => {
+      await installSeededApi(page, { scenario: state.scenario, theme: state.theme ?? "light", longNames: state.longNames });
+      await prepareState(page, state);
+      await settle(page);
+      await assertThemeAndLocale(page, state);
+      await assertMobileGeometry(page, state);
       await captureAndCompare(page, state);
     });
   }

@@ -12,7 +12,7 @@ export default defineConfig({
     setupFiles: ["./test/setup.ts"],
     clearMocks: true,
     restoreMocks: true,
-    // JSDOM + Motion + Radix yüzeyleri tek süreçte daha deterministik çalışır;
+    // JSDOM + Radix yüzeyleri tek süreçte daha deterministik çalışır;
     // worker yarışları user-event testlerini yapay olarak yavaşlatabiliyor.
     maxWorkers: 1,
     // İzole koşuda ~3 sn süren user-event testleri yük altında 5 sn varsayılanını aşıyordu.

@@ -6,7 +6,7 @@ import { PNG } from "pngjs";
 const [referencePath, actualPath, diffPath, metricsPath, maxMaeArg = "3.5", channelThresholdArg = "20", maxChangedPixelPercentageArg = "100"] = process.argv.slice(2);
 
 if (!referencePath || !actualPath || !diffPath || !metricsPath) {
-  throw new Error("Usage: node scripts/figma-visual-diff.mjs <reference> <actual> <diff> <metrics> [max-mae] [channel-threshold] [max-changed-pixel-percentage]");
+  throw new Error("Usage: node e2e/visual/visual-diff.mjs <reference> <actual> <diff> <metrics> [max-mae] [channel-threshold] [max-changed-pixel-percentage]");
 }
 
 const maxMae = Number(maxMaeArg);

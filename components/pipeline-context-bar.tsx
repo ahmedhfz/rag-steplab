@@ -7,7 +7,7 @@ import { AppIcon } from "@/components/ui/app-icon";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { isExceptionTone, PIPELINE_STEP_STATUS, StatusIcon, StatusPill } from "@/components/ui/status-pill";
 import { type AppCopy, useCopy } from "@/lib/copy";
-import { operationToStepState } from "@/lib/figma-view-models";
+import { operationToStepState } from "@/lib/overview-view-model";
 import type { RunSummary } from "@/lib/rag-api-types";
 
 function runToOperationStatus(run: RunSummary | undefined, fallback: PipelineOperationStatus): PipelineOperationStatus {

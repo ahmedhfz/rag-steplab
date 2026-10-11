@@ -6,7 +6,7 @@ import {
   journeyLockReason,
   operationToStepState,
   runToStepState,
-} from "@/lib/figma-view-models";
+} from "@/lib/overview-view-model";
 
 const completeRun = {
   status: "completed" as const,
@@ -41,7 +41,7 @@ function overviewInput(overrides: Partial<Parameters<typeof buildOverviewViewMod
   };
 }
 
-describe("Figma presentation state adapters", () => {
+describe("Overview view model", () => {
   it("maps backend operation states to the canonical pipeline vocabulary", () => {
     expect(operationToStepState("locked")).toBe("Locked");
     expect(operationToStepState("ready")).toBe("Ready");

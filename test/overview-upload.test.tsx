@@ -19,7 +19,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("Phase 6B document ownership", () => {
+describe("Overview document ownership", () => {
   it("shows a useful first step and the Journey before the first document", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       const payload = url.endsWith("/capabilities") ? capabilities : { items: [] };

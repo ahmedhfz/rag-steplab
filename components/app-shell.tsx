@@ -4,7 +4,7 @@ import { TransitionPanel, TransitionSurface } from "@/components/ui/transitions"
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type Ref, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { useAuthBootstrap } from "@/components/auth-provider";
 import { BrandMark } from "@/components/brand-mark";
@@ -13,6 +13,7 @@ import { PageTransition } from "@/components/page-transition";
 import { AppIcon, type SemanticIconName } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
 import { type AppCopy, type AppNavGroupKey, type AppNavKey, UI_COPY } from "@/lib/copy";
+import { documentTitle, pageTitle, pageTitleKey } from "@/lib/page-titles";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { cn } from "@/lib/utils";
 
@@ -95,16 +96,17 @@ type UserMenuItemProps = {
   label: string;
   onClick?: () => void;
   href?: string;
+  ref?: Ref<HTMLButtonElement>;
 };
 
-function UserMenuItem({ icon, label, onClick, href }: UserMenuItemProps) {
+function UserMenuItem({ icon, label, onClick, href, ref }: UserMenuItemProps) {
   const className = "flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground";
 
   if (href) {
     return <Link className={className} href={href} onClick={onClick}><AppIcon name={icon} className="size-4 text-subtle-foreground" />{label}</Link>;
   }
 
-  return <button className={className} onClick={onClick} type="button"><AppIcon name={icon} className="size-4 text-subtle-foreground" />{label}</button>;
+  return <button className={className} onClick={onClick} ref={ref} type="button"><AppIcon name={icon} className="size-4 text-subtle-foreground" />{label}</button>;
 }
 
 type UserMenuProps = {
@@ -114,13 +116,32 @@ type UserMenuProps = {
   onSignOut: () => Promise<void>;
 };
 
+type UserMenuView = "menu" | "help";
+
+/** Disclosure (not a dialog): the trigger keeps focus on open and Tab enters the panel. */
 function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
-  const [openView, setOpenView] = useState<"menu" | "help">("menu");
+  const [openView, setOpenView] = useState<UserMenuView>("menu");
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const helpRef = useRef<HTMLButtonElement>(null);
+  const backRef = useRef<HTMLButtonElement>(null);
+  // A view switch unmounts the focused control; focus follows to its counterpart.
+  const focusAfterViewChange = useRef(false);
+  const panelId = useId();
   const displayName = user.name ?? user.email ?? copy.productName;
   const initials = getInitials(user.name, user.email);
+
+  function switchView(view: UserMenuView) {
+    focusAfterViewChange.current = true;
+    setOpenView(view);
+  }
+
+  useEffect(() => {
+    if (!focusAfterViewChange.current) return;
+    focusAfterViewChange.current = false;
+    (openView === "help" ? backRef : helpRef).current?.focus();
+  }, [openView]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -137,6 +158,7 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
         setIsOpen(false);
         triggerRef.current?.focus();
       } else {
+        focusAfterViewChange.current = true;
         setOpenView("menu");
       }
     }
@@ -162,8 +184,8 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
   return (
     <div className="relative" ref={containerRef}>
       <button
+        aria-controls={isOpen ? panelId : undefined}
         aria-expanded={isOpen}
-        aria-haspopup="dialog"
         aria-label={`${displayName} — ${copy.common.accountMenu}`}
         className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-surface-subtle"
         onClick={() => { setIsOpen(!isOpen); setOpenView("menu"); }}
@@ -180,7 +202,8 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
       <TransitionSurface kind="dropdown" open={isOpen} data-origin="bottom-left"
             aria-label={copy.common.accountMenu}
             className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-50 overflow-hidden rounded-lg border border-border bg-card p-1.5 shadow-lg shadow-foreground/8"
-            role="dialog"
+            id={panelId}
+            role="group"
           >
             <TransitionPanel transitionKey={openView}>
             {openView === "menu" && (
@@ -189,7 +212,7 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
                   <p className="truncate text-sm font-semibold text-foreground">{displayName}</p>
                   <p className="truncate text-xs text-subtle-foreground">{user.email ?? copy.common.accountFallback}</p>
                 </div>
-                <UserMenuItem icon="help" label={copy.help} onClick={() => setOpenView("help")} />
+                <UserMenuItem icon="help" label={copy.help} onClick={() => switchView("help")} ref={helpRef} />
                 <UserMenuItem href="/settings" icon="settings" label={copy.nav.settings} onClick={closeAfterNavigation} />
                 <div className="my-1 border-t" />
                 <UserMenuItem icon="logOut" label={copy.common.signOut} onClick={() => void handleSignOut()} />
@@ -198,7 +221,7 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
 
             {openView === "help" && (
               <div className="p-1">
-                <button className="mb-2 flex items-center gap-1.5 rounded-sm px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-secondary hover:text-foreground" onClick={() => setOpenView("menu")} type="button">
+                <button className="mb-2 flex items-center gap-1.5 rounded-sm px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-secondary hover:text-foreground" onClick={() => switchView("menu")} ref={backRef} type="button">
                   <AppIcon name="arrowLeft" className="size-3.5" />
                   {copy.common.back}
                 </button>
@@ -264,16 +287,32 @@ function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: st
 }
 
 function getPageTitle(pathname: string, copy: AppCopy) {
-  if (pathname === "/") return copy.nav.overview;
-  if (pathname === "/parse" || pathname === "/documents/parsed") return copy.nav.parse;
-  if (pathname === "/chunking" || pathname === "/documents/chunks") return copy.nav.chunking;
-  if (pathname === "/embeddings") return copy.nav.embeddings;
-  if (pathname.startsWith("/documents")) return copy.nav.documents;
-  if (pathname === "/playground" || pathname === "/retrieval") return copy.nav.playground;
-  if (pathname === "/evaluation") return copy.nav.evaluation;
-  if (pathname === "/settings") return copy.nav.settings;
-  return copy.productName;
+  const key = pageTitleKey(pathname);
+  return key ? pageTitle(copy, key) : copy.productName;
 }
+
+/**
+ * Route metadata is English (the server does not know the stored locale). After
+ * hydration the tab title follows the interface locale; route metadata can be
+ * streamed in after navigation, so a rewritten <title> is localized again.
+ */
+function useLocalizedDocumentTitle(pathname: string, copy: AppCopy, isHydrated: boolean) {
+  useEffect(() => {
+    if (!isHydrated) return;
+    const title = documentTitle(copy, pathname);
+    if (!title) return;
+
+    const apply = () => {
+      if (document.title !== title) document.title = title;
+    };
+    apply();
+    const observer = new MutationObserver(apply);
+    observer.observe(document.head, { characterData: true, childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [copy, isHydrated, pathname]);
+}
+
+const XL_MEDIA_QUERY = "(min-width: 1280px)";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -281,11 +320,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const mobileOpenButtonRef = useRef<HTMLButtonElement>(null);
   const mobileCloseButtonRef = useRef<HTMLButtonElement>(null);
   const mobilePanelRef = useRef<HTMLElement>(null);
-  const { preferences } = usePreferences();
+  const mainRef = useRef<HTMLElement>(null);
+  const previousPathname = useRef(pathname);
+  const { isHydrated, preferences } = usePreferences();
   const copy = UI_COPY[preferences.locale];
   const router = useRouter();
   const { user } = useAuthBootstrap();
   const authUser = useMemo(() => getAuthUserSummary(user), [user]);
+
+  useLocalizedDocumentTitle(pathname, copy, isHydrated);
+
+  // Client navigation keeps focus on the clicked link, which may no longer exist;
+  // move it to the new page instead. A full load already starts at the document top.
+  useEffect(() => {
+    if (previousPathname.current === pathname) return;
+    previousPathname.current = pathname;
+    mainRef.current?.focus({ preventScroll: true });
+  }, [pathname]);
 
   async function signOut() {
     try {
@@ -310,9 +361,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       setMobileOpen(false);
     }
 
+    // The drawer is hidden at xl; never leave the (inert) page behind it there.
+    let desktop: MediaQueryList | null = null;
+    const closeOnDesktop = (event: MediaQueryListEvent) => {
+      if (event.matches) setMobileOpen(false);
+    };
+    try {
+      desktop = window.matchMedia(XL_MEDIA_QUERY);
+      desktop.addEventListener("change", closeOnDesktop);
+    } catch {
+      // matchMedia olmayan ortamlarda drawer yalnız açık kapatma ile kapanır.
+    }
+
     document.addEventListener("keydown", handleEscape);
     return () => {
       document.removeEventListener("keydown", handleEscape);
+      desktop?.removeEventListener("change", closeOnDesktop);
       document.body.style.overflow = previousOverflow;
       openButton?.focus();
     };
@@ -345,14 +409,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
       <div className="min-h-screen w-full min-w-0 bg-background text-foreground">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] border-r border-border xl:block" data-testid="app-shell-sidebar">
+      <a
+        className="fixed left-3 top-3 z-[60] -translate-y-[calc(100%+1rem)] rounded-md border border-border bg-card px-3 py-2 text-sm font-medium text-foreground shadow-lg focus:translate-y-0"
+        data-testid="skip-to-content"
+        href="#main-content"
+        // Focus <main> directly: no hash entry in the router history.
+        onClick={(event) => { event.preventDefault(); mainRef.current?.focus(); }}
+      >
+        {copy.common.skipToContent}
+      </a>
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] border-r border-border xl:block" data-testid="app-shell-sidebar" inert={mobileOpen}>
         <Sidebar copy={copy} onSignOut={signOut} pathname={pathname} user={authUser} />
       </aside>
 
       <div
-        aria-hidden={!mobileOpen}
         className="pointer-events-none fixed inset-0 z-50 xl:hidden"
         id="mobile-navigation"
+        inert={!mobileOpen}
         onKeyDown={trapMobileFocus}
       >
         <TransitionSurface className="steplab-backdrop absolute inset-0" kind="modal" open={mobileOpen}>
@@ -364,7 +437,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </TransitionSurface>
       </div>
 
-      <div className="w-full min-w-0 xl:pl-[248px]">
+      {/* The open drawer is modal: the page behind it leaves the tab order and the accessibility tree. */}
+      <div className="w-full min-w-0 xl:pl-[248px]" inert={mobileOpen}>
         <header className="sticky top-0 z-30 flex h-[64px] items-center justify-between border-b border-border bg-card px-4 sm:px-7 xl:hidden">
           <div className="flex min-w-0 items-center gap-3">
             <Button aria-controls="mobile-navigation" aria-expanded={mobileOpen} aria-label={copy.common.openNavigation} className="xl:hidden" onClick={() => setMobileOpen(true)} ref={mobileOpenButtonRef} size="icon" variant="ghost">
@@ -374,7 +448,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="w-full min-w-0" data-testid="app-shell-main">
+        <main className="w-full min-w-0 outline-none" data-testid="app-shell-main" id="main-content" ref={mainRef} tabIndex={-1}>
           <PageTransition>{children}</PageTransition>
         </main>
       </div>

@@ -44,7 +44,7 @@ export function ChunkingScreen() {
   const onFormStateChange = useCallback((state: ChunkStageState) => setFormDirty(state.isDirty), []);
 
   return (
-    <div className="min-w-0 overflow-x-clip bg-background" data-testid="chunking-screen">
+    <div className="min-w-0 bg-background" data-testid="chunking-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <PageHeader data-testid="chunking-page-header" description={copy.chunking.description} help={<HowItWorks>{copy.chunking.howItWorks}</HowItWorks>} title={copy.nav.chunking} />
         <StageContextCard />
@@ -79,7 +79,7 @@ export function EmbeddingsScreen() {
   });
 
   return (
-    <div className="min-w-0 overflow-x-clip bg-background" data-testid="embeddings-screen">
+    <div className="min-w-0 bg-background" data-testid="embeddings-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <PageHeader data-testid="embeddings-page-header" description={copy.embeddings.description} title={copy.nav.embeddings} />
         <StageContextCard />

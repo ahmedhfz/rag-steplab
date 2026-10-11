@@ -17,8 +17,9 @@ function renderSettings() {
   );
 }
 
+// Theme radios stay disabled until stored preferences are read.
 async function waitForHydration() {
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Changes are saved automatically."));
+  await waitFor(() => expect(screen.getByRole("radio", { name: /^(System|Sistem)$/ })).toBeEnabled());
 }
 
 afterEach(() => {
@@ -80,6 +81,30 @@ describe("PreferencesProvider and SettingsScreen", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Ayarlar" })).toBeInTheDocument());
     expect(screen.getByLabelText("Türkçe")).toBeChecked();
     expect(screen.getByLabelText("English")).not.toBeChecked();
+  });
+
+  it("announces saving only after the user changes a preference, not on hydration", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ locale: "en", showLearningHints: true, theme: "dark" }));
+    renderSettings();
+    await waitForHydration();
+
+    expect(screen.getByLabelText("Dark")).toBeChecked();
+    expect(screen.getByRole("status")).toHaveTextContent("");
+
+    await user.click(screen.getByRole("switch", { name: "Show learning hints" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Changes are saved automatically.");
+  });
+
+  it("does not reset the bootstrapped document language before stored preferences load", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ locale: "tr", showLearningHints: true, theme: "system" }));
+    document.documentElement.lang = "tr";
+    renderSettings();
+
+    // The provider's pre-hydration default ("en") must not overwrite the bootstrap.
+    expect(document.documentElement).toHaveAttribute("lang", "tr");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Ayarlar" })).toBeInTheDocument());
+    expect(document.documentElement).toHaveAttribute("lang", "tr");
   });
 
   it("keeps settings controls labelled, resets changed preferences, and exposes the disabled reason", async () => {

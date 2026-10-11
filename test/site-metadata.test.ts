@@ -22,7 +22,8 @@ describe("root metadata", () => {
     const metadata = await loadMetadata();
 
     expect(String(metadata.metadataBase)).toBe("https://rag-steplab.vercel.app/");
-    expect(metadata.title).toBe("RAG StepLab");
+    // Pages name themselves through the template (`lib/page-titles.ts`).
+    expect(metadata.title).toEqual({ default: "RAG StepLab", template: "%s · RAG StepLab" });
     expect(metadata.openGraph).toMatchObject({
       type: "website",
       siteName: "RAG StepLab",

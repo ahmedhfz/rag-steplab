@@ -13,7 +13,7 @@ export function DocumentsScreen() {
   const { uploadNotice } = useDocumentPipeline();
 
   return (
-    <div className="min-w-0 overflow-x-clip bg-background" data-testid="documents-screen">
+    <div className="min-w-0 bg-background" data-testid="documents-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
         <PageHeader data-testid="documents-page-header" description={copy.documents.description} title={copy.nav.documents} />
         <DocumentUploadPanel />

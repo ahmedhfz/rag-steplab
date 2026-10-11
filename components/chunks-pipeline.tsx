@@ -25,11 +25,13 @@ const STRATEGIES: ChunkStrategy[] = ["fixed_token", "recursive_token", "structur
 
 /** Chunk text with Markdown pipe tables rendered as plain-text table cells (never HTML). */
 export function ChunkText({ text }: { text: string }) {
+  const copy = useCopy();
   const blocks = splitChunkText(text);
   return (
     <div className="space-y-4 text-sm leading-6 text-foreground" data-testid="chunk-text">
       {blocks.map((block, index) => block.type === "table" ? (
-        <div className="max-w-full overflow-x-auto rounded-md border border-border" key={index}>
+        // Focusable so a horizontally scrolling table can be scrolled from the keyboard.
+        <div aria-label={copy.documents.elementTypes.table} className="max-w-full overflow-x-auto rounded-md border border-border" key={index} role="group" tabIndex={0}>
           <table className="min-w-full text-left text-sm">
             <thead className="bg-technical">
               <tr>{block.header.map((cell, cellIndex) => <th className="border-b border-border px-3 py-2 font-medium" key={cellIndex} scope="col">{cell}</th>)}</tr>
@@ -71,21 +73,23 @@ function ChunkInspector({ run, documentId, parseResult }: { run: ChunkRun; docum
           <p className="text-sm font-semibold text-foreground">{labels.list} <span className="font-normal text-subtle-foreground tabular-nums">· {formatNumber(preferences.locale, run.chunkCount)}</span></p>
           <div className="relative mt-2.5"><AppIcon name="retrieve" className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-subtle-foreground" /><Input aria-label={labels.filter} className="pl-9" data-testid="chunk-filter" onChange={(event) => setQuery(event.target.value)} placeholder={labels.filterPlaceholder} value={query} /></div>
         </div>
-        <div className="max-h-[620px] overflow-y-auto" role="list" aria-label={labels.list}>
-          {visibleChunks.length ? visibleChunks.map((chunk) => {
+        <div className="max-h-[620px] overflow-y-auto">
+          {visibleChunks.length ? <ul aria-label={labels.list}>{visibleChunks.map((chunk) => {
             const selected = chunk.id === selectedChunk.id;
             const displayOrdinal = chunk.ordinal + 1;
             const parents = chunk.headingPath.slice(0, -1).join(" › ");
             return (
-              <button aria-pressed={selected} className={cn("block min-h-15 w-full border-l-2 px-4 py-2.5 text-left transition-colors", selected ? "border-brand bg-secondary" : "border-transparent hover:bg-surface-subtle")} data-testid="chunk-list-item" key={chunk.id} onClick={() => setSelectedChunkId(chunk.id)} type="button">
-                <span className="flex items-baseline justify-between gap-2">
-                  <span className="min-w-0 truncate text-sm font-medium text-foreground"><span className="mr-2 text-subtle-foreground tabular-nums">{String(displayOrdinal).padStart(2, "0")}</span>{chunk.headingPath.at(-1) || `${labels.chunk} ${displayOrdinal}`}</span>
-                  <span className="shrink-0 text-xs text-subtle-foreground tabular-nums" title={formatCount(preferences.locale, chunk.tokenCount, copy.units.token)}>{formatNumber(preferences.locale, chunk.tokenCount)}</span>
-                </span>
-                <span className="mt-0.5 block truncate text-xs text-subtle-foreground">{[parents, pageLabel(copy, chunk)].filter(Boolean).join(" · ")}</span>
-              </button>
+              <li key={chunk.id}>
+                <button aria-pressed={selected} className={cn("block min-h-15 w-full border-l-2 px-4 py-2.5 text-left transition-colors", selected ? "border-brand bg-secondary" : "border-transparent hover:bg-surface-subtle")} data-testid="chunk-list-item" onClick={() => setSelectedChunkId(chunk.id)} type="button">
+                  <span className="flex items-baseline justify-between gap-2">
+                    <span className="min-w-0 truncate text-sm font-medium text-foreground"><span className="mr-2 text-subtle-foreground tabular-nums">{String(displayOrdinal).padStart(2, "0")}</span>{chunk.headingPath.at(-1) || `${labels.chunk} ${displayOrdinal}`}</span>
+                    <span className="shrink-0 text-xs text-subtle-foreground tabular-nums" title={formatCount(preferences.locale, chunk.tokenCount, copy.units.token)}>{formatNumber(preferences.locale, chunk.tokenCount)}</span>
+                  </span>
+                  <span className="mt-0.5 block truncate text-xs text-subtle-foreground">{[parents, pageLabel(copy, chunk)].filter(Boolean).join(" · ")}</span>
+                </button>
+              </li>
             );
-          }) : <p className="px-4 py-6 text-center text-xs leading-5 text-muted-foreground">{labels.noMatches}</p>}
+          })}</ul> : <p className="px-4 py-6 text-center text-xs leading-5 text-muted-foreground">{labels.noMatches}</p>}
         </div>
       </aside>
       <TransitionPanel as="article" transitionKey={`${run.id}:${selectedChunk.id}`} className="min-w-0" data-testid="chunk-inspector-detail">

@@ -1,5 +1,5 @@
 import { usePreferences } from "@/components/preferences-provider";
-import type { OverviewContinuationKind } from "@/lib/figma-view-models";
+import type { OverviewContinuationKind } from "@/lib/overview-view-model";
 import type { ChunkStrategy } from "@/lib/rag-api-types";
 import type { PipelineStepKey, PipelineStepState } from "@/lib/rag-ui-types";
 
@@ -30,6 +30,11 @@ const en = {
   auth: {
     home: "RAG StepLab home",
     language: "Language",
+    serviceErrors: {
+      configurationMissing: "Authentication is not configured.",
+      sessionUnavailable: "Your session could not be verified. Please try again.",
+      generic: "The request could not be completed. Please try again.",
+    },
     hero: {
       title: "From PDF to answer",
       description: "Inspect every RAG step and the sources behind each answer.",
@@ -99,6 +104,8 @@ const en = {
     playground: "Playground", evaluation: "Evaluation", settings: "Settings",
   },
   navGroups: { prepare: "Prepare", test: "Test", measure: "Measure" },
+  /** Browser tab names for routes outside the sidebar (`lib/page-titles.ts`). */
+  documentTitles: { signIn: "Sign in", resetPassword: "Reset password" },
   status: { "Not started": "Not started", Ready: "Ready", Processing: "Processing", Completed: "Completed", Skipped: "Skipped", Error: "Error", Locked: "Locked", Stale: "Stale" },
   help: "Help",
   helpPanel: {
@@ -119,6 +126,7 @@ const en = {
     accountFallback: "RAG learning lab",
     signOut: "Sign out",
     storagePending: "Loading preferences…",
+    skipToContent: "Skip to content",
     howItWorks: "How it works",
     technicalDetails: "Technical details",
     defaultPipeline: "default",
@@ -697,6 +705,11 @@ const tr: AppCopy = {
   auth: {
     home: "RAG StepLab ana sayfa",
     language: "Dil",
+    serviceErrors: {
+      configurationMissing: "Kimlik doğrulama yapılandırması eksik.",
+      sessionUnavailable: "Oturum doğrulanamadı. Lütfen tekrar deneyin.",
+      generic: "İşlem tamamlanamadı. Lütfen tekrar deneyin.",
+    },
     hero: {
       title: "PDF'den cevaba",
       description: "Her RAG adımını ve cevapların dayandığı kaynakları inceleyin.",
@@ -765,6 +778,7 @@ const tr: AppCopy = {
     playground: "Deney Alanı", evaluation: "Değerlendirme", settings: "Ayarlar",
   },
   navGroups: { prepare: "Hazırla", test: "Test et", measure: "Ölç" },
+  documentTitles: { signIn: "Giriş yap", resetPassword: "Şifre yenileme" },
   status: { "Not started": "Başlatılmadı", Ready: "Hazır", Processing: "İşleniyor", Completed: "Tamamlandı", Skipped: "Atlandı", Error: "Hata", Locked: "Kilitli", Stale: "Eski" },
   help: "Yardım",
   helpPanel: {
@@ -785,6 +799,7 @@ const tr: AppCopy = {
     accountFallback: "RAG öğrenme laboratuvarı",
     signOut: "Çıkış yap",
     storagePending: "Tercihler yükleniyor…",
+    skipToContent: "İçeriğe geç",
     howItWorks: "Nasıl çalışır?",
     technicalDetails: "Teknik ayrıntılar",
     defaultPipeline: "varsayılan",
