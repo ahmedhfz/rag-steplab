@@ -39,6 +39,33 @@ describe("theme token contrast", () => {
     expect(contrast(tokens.destructive, tokens["destructive-subtle"])).toBeGreaterThanOrEqual(4.5);
   });
 
+  it("keeps secondary and tertiary text readable on cards, page and secondary surfaces in both themes", () => {
+    for (const tokens of [themeTokens(":root"), themeTokens(":root.dark")]) {
+      for (const surface of ["card", "background", "secondary", "popover"]) {
+        for (const text of ["muted-foreground", "subtle-foreground"]) {
+          expect(contrast(tokens[text], tokens[surface]), `${text} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
+  });
+
+  it("keeps form control borders (input, switch, checkbox, radio) at 3:1 in both themes", () => {
+    for (const tokens of [themeTokens(":root"), themeTokens(":root.dark")]) {
+      for (const surface of ["card", "background", "popover", "secondary"]) {
+        expect(contrast(tokens.input, tokens[surface]), `input on ${surface}`).toBeGreaterThanOrEqual(3);
+        expect(contrast(tokens["hover-border"], tokens[surface]), `hover-border on ${surface}`).toBeGreaterThanOrEqual(3);
+      }
+      // The select highlight bar uses the ring colour against the popover.
+      expect(contrast(tokens.ring, tokens.popover)).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it("lightens Dark surfaces with elevation instead of carving darker wells", () => {
+    const tokens = themeTokens(":root.dark");
+    const ladder = ["background", "surface-subtle", "card", "technical", "popover"].map((key) => luminance(tokens[key]));
+    expect(ladder).toEqual([...ladder].sort((left, right) => left - right));
+  });
+
   it("keeps Dark secondary text readable on cards, menus and selected surfaces", () => {
     const tokens = themeTokens(":root.dark");
     for (const surface of ["card", "popover", "secondary", "accent"]) {

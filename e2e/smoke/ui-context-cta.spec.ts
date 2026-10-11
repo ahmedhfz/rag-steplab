@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { installBrowserQualityGuards } from "../support/browser-quality";
+import { expectNoHorizontalOverflow } from "../support/overflow";
 import { installSeededApi, seededStressNames } from "../support/seeded-api";
 import { selectSeededDocument } from "../support/seeded-workspace";
 
@@ -22,14 +23,9 @@ const journeyViewports = [
   { width: 1920, height: 900 },
 ] as const;
 
+/** Document scroll and element-level spill/clip (screen roots no longer clip overflow away). */
 async function assertNoHorizontalOverflow(page: Page) {
-  const dimensions = await page.evaluate(() => ({
-    body: document.body.scrollWidth,
-    html: document.documentElement.scrollWidth,
-    viewport: window.innerWidth,
-  }));
-  expect(dimensions.body, "body horizontal overflow").toBeLessThanOrEqual(dimensions.viewport);
-  expect(dimensions.html, "html horizontal overflow").toBeLessThanOrEqual(dimensions.viewport);
+  await expectNoHorizontalOverflow(page, `${new URL(page.url()).pathname} at ${page.viewportSize()?.width}px`);
 }
 
 async function assertSingleLineTrigger(trigger: Locator) {
@@ -83,9 +79,10 @@ async function assertCompleteDesktopJourney(page: Page) {
   expect(nodeStateAndX.map(({ state }) => state)).toEqual(expectedStates);
   expect(nodeStateAndX.slice(1).every(({ x }, index) => x > nodeStateAndX[index].x)).toBe(true);
 
+  // Completed stages are neutral (--muted-foreground); brand marks only the next step.
   const completedIconColor = await chunkGlyph.evaluate((element) => getComputedStyle(element).color);
-  expect(completedIconColor).toBe("rgb(63, 122, 85)");
-  await expect(canvas).toHaveAttribute("viewBox", "0 0 1054.1 199.975");
+  expect(completedIconColor).toBe("rgb(90, 83, 87)");
+  await expect(canvas).toHaveAttribute("viewBox", "0 0 1054.1 200");
   await expect(canvas).toHaveAttribute("preserveAspectRatio", "none");
   await expect(canvas.locator("path").first()).toHaveAttribute("vector-effect", "non-scaling-stroke");
 
@@ -99,9 +96,9 @@ async function assertCompleteDesktopJourney(page: Page) {
     return {
       journey: rectOf("overview-journey-desktop"),
       canvas: rectOf("overview-journey-connectors"),
-      prepare: rectOf("figma-overview-prepare"),
-      test: rectOf("figma-overview-test"),
-      measure: rectOf("figma-overview-measure"),
+      prepare: rectOf("overview-group-prepare"),
+      test: rectOf("overview-group-test"),
+      measure: rectOf("overview-group-measure"),
       evaluation: rectOf("overview-journey-node-evaluate"),
     };
   });
@@ -163,7 +160,10 @@ test("@critical dense context controls remain usable at narrow desktop web width
     await page.goto("/settings", { waitUntil: "domcontentloaded" });
     const themeGroup = page.getByRole("radiogroup", { name: "Theme" });
     await expect(themeGroup).toBeVisible();
-    await expect(themeGroup).toHaveJSProperty("scrollWidth", await themeGroup.evaluate((element) => element.clientWidth));
+    // The sliding pill is placed with a fractional translate; its transformed box is rounded
+    // outward into scrollWidth, so a 1px excess is subpixel rounding, not overflow.
+    const themeWidths = await themeGroup.evaluate((element) => ({ scroll: element.scrollWidth, client: element.clientWidth }));
+    expect(themeWidths.scroll - themeWidths.client, "theme group overflow").toBeLessThanOrEqual(1);
 
     await page.goto("/evaluation", { waitUntil: "domcontentloaded" });
     await selectSeededDocument(page);

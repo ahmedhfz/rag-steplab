@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -125,6 +125,22 @@ describe("LoginScreen Supabase auth flows", () => {
     expect(screen.getByRole("status")).toHaveTextContent("e-posta adresinizi doğrulayın");
   });
 
+  it("names the same minimum length the signup form enforces", async () => {
+    const user = userEvent.setup();
+    render(<LoginScreen />);
+
+    await user.click(screen.getByRole("button", { name: "Kayıt ol" }));
+    await user.type(screen.getByLabelText("E-posta"), "new@example.com");
+    await user.type(screen.getByLabelText("Şifre"), "short");
+    await user.type(screen.getByLabelText("Şifre tekrarı"), "short");
+    // Bypass native minLength validation to reach the in-app message.
+    fireEvent.submit(screen.getByLabelText("Şifre").closest("form")!);
+
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Şifreniz en az 10 karakter olmalı."));
+    expect(screen.getByLabelText("Şifre")).toHaveAttribute("minLength", "10");
+    expect(mocks.signUp).not.toHaveBeenCalled();
+  });
+
   it("uses the recovery callback for forgot-password", async () => {
     const user = userEvent.setup();
     render(<LoginScreen />);
@@ -154,5 +170,14 @@ describe("LoginScreen Supabase auth flows", () => {
     render(<LoginScreen />);
 
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Google ile giriş tamamlanamadı"));
+  });
+
+  it("ignores auth_error values that are not known route handler codes", async () => {
+    // A prototype key used to resolve to Object.prototype and crash the render.
+    window.history.replaceState({}, "", "/login?auth_error=__proto__");
+    render(<LoginScreen />);
+
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument());
+    expect(screen.getByRole("status").textContent).toBe("");
   });
 });

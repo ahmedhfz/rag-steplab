@@ -1,136 +1,207 @@
 "use client";
 
-import { SuccessCheck, TransitionDetails, TransitionPanel, TransitionText } from "@/components/ui/transitions";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useMemo } from "react";
 
-
-import { Badge } from "@/components/ui/badge";
+import { usePreferences } from "@/components/preferences-provider";
+import { StageBlocker } from "@/components/stage-blocker";
 import { AppIcon } from "@/components/ui/app-icon";
-import type { AppLocale } from "@/lib/copy";
-import type { PipelineOperationStatus } from "@/components/document-pipeline-provider";
+import { Button } from "@/components/ui/button";
+import { Disclosure, TechnicalDetails } from "@/components/ui/disclosure";
+import { StatusPill } from "@/components/ui/status-pill";
+import type { PipelineAvailability } from "@/lib/blockers";
+import { interpolate, runName, useCopy } from "@/lib/copy";
+import { formatMs } from "@/lib/format";
+import { completedCompatibleRun } from "@/lib/pipeline-lineage";
 import type { RunSummary } from "@/lib/rag-api-types";
 import { cn } from "@/lib/utils";
-import { usePreferences } from "@/components/preferences-provider";
-
-const statusCopy = {
-  en: { locked: "Locked", ready: "Ready", processing: "Processing", completed: "Completed", skipped: "Skipped", error: "Error", stale: "Stale" },
-  tr: { locked: "Kilitli", ready: "Hazır", processing: "İşleniyor", completed: "Tamamlandı", skipped: "Atlandı", error: "Hata", stale: "Eski" },
-} as const;
-
-const statusStyles: Record<PipelineOperationStatus, string> = {
-  locked: "border-border bg-muted text-subtle-foreground",
-  ready: "border-accent-border bg-accent text-brand",
-  processing: "border-warning-border bg-warning-subtle text-warning",
-  completed: "border-success-border bg-success-subtle text-success",
-  skipped: "border-border bg-muted text-subtle-foreground",
-  error: "border-destructive-border bg-destructive-subtle text-destructive",
-  stale: "border-warning-border bg-warning-subtle text-warning",
-};
-
-function StatusIcon({ status }: { status: PipelineOperationStatus }) {
-  if (status === "processing") return <AppIcon name="loading" className="size-3 animate-spin" />;
-  if (status === "completed") return <SuccessCheck className="size-3" />;
-  if (status === "skipped") return <AppIcon name="minus" className="size-3" />;
-  if (status === "error") return <AppIcon name="warning" className="size-3" />;
-  if (status === "stale") return <AppIcon name="history" className="size-3" />;
-  if (status === "ready") return <AppIcon name="play" className="size-3" />;
-  return <AppIcon name="lock" className="size-3" />;
-}
-
-export function OperationStatusBadge({ status, locale }: { status: PipelineOperationStatus; locale: AppLocale }) {
-  return (
-    <Badge className={cn("gap-1 rounded-md font-medium", statusStyles[status])} variant="outline">
-      <StatusIcon status={status} />
-      <TransitionText>{statusCopy[locale][status]}</TransitionText>
-    </Badge>
-  );
-}
-
-export function StageSection({
-  title,
-  description,
-  status,
-  locale,
-  children,
-}: {
-  title: string;
-  description: string;
-  status: PipelineOperationStatus;
-  locale: AppLocale;
-  children: React.ReactNode;
-}) {
-  return (
-    <TransitionPanel as="section"
-      className="border-t border-border px-4 py-7 sm:px-8"
-    >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold">{title}</h2>
-          <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">{description}</p>
-        </div>
-        <OperationStatusBadge locale={locale} status={status} />
-      </div>
-      <div className="mt-5">{children}</div>
-    </TransitionPanel>
-  );
-}
-
-export function RunMetadata({ run, locale }: { run: RunSummary; locale: AppLocale }) {
-  const labels = locale === "tr"
-    ? { run: "Çalıştırma", duration: "Süre", lineage: "Lineage", config: "Teknik ayrıntılar", compatible: "Uyumlu", incompatible: "Bu lineage mevcut uyumluluk kurallarıyla kullanılamıyor." }
-    : { run: "Run", duration: "Duration", lineage: "Lineage", config: "Technical details", compatible: "Compatible", incompatible: "This lineage is not compatible with the current contract." };
-  const upstream = Object.entries(run.upstream).filter((entry): entry is [string, string] => Boolean(entry[1]));
-  return (
-    <div className="grid gap-3 border border-border bg-technical p-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
-      <div><div className="text-subtle-foreground">{labels.run}</div><div className="mt-1 font-medium text-foreground">{run.status === "completed" ? labels.compatible : run.status}</div><TransitionDetails className="mt-2"><summary className="cursor-pointer text-[10px] text-muted-foreground">{locale === "tr" ? "Teknik kimlik" : "Technical ID"}</summary><p className="mt-1 break-all font-mono text-[10px] text-muted-foreground">{run.id}</p></TransitionDetails></div>
-      <div><div className="text-subtle-foreground">{labels.duration}</div><div className="mt-1 font-medium text-foreground">{run.timing.durationMs === null ? "—" : `${run.timing.durationMs} ms`}</div></div>
-      <div><div className="text-subtle-foreground">{labels.lineage}</div><div className="mt-1 text-foreground">{upstream.length ? `${upstream.length} ${locale === "tr" ? "üst akış çıktısı" : `upstream output${upstream.length === 1 ? "" : "s"}`}` : "—"}</div><TransitionDetails className="mt-2"><summary className="cursor-pointer text-[10px] text-muted-foreground">{locale === "tr" ? "Kaynakları göster" : "Show sources"}</summary><div className="mt-1 space-y-1 break-all font-mono text-[10px] text-muted-foreground">{upstream.length ? upstream.map(([key, value]) => <div key={key}>{key}: {value}</div>) : "—"}</div></TransitionDetails></div>
-      <TransitionDetails>
-        <summary className="cursor-pointer font-medium text-muted-foreground">{labels.config}</summary>
-        <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-5 text-muted-foreground">{JSON.stringify(run.config, null, 2)}</pre>
-      </TransitionDetails>
-      {!run.isCompatible && <p className="text-warning sm:col-span-2 lg:col-span-4" role="status"><AppIcon name="history" className="mr-1 inline size-3.5" />{labels.incompatible}</p>}
-    </div>
-  );
-}
-
-export function LearningHint({ locale, children }: { locale: AppLocale; children: React.ReactNode }) {
-  const { preferences } = usePreferences();
-  if (!preferences.showLearningHints) return null;
-  return (
-    <TransitionDetails className="rounded-[10px] border border-brand-subtle bg-accent">
-      <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-accent-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/25">
-        <span>{locale === "tr" ? "Bu neden önemli?" : "Why this matters"}</span>
-        <AppIcon name="chevronDown" className="size-3.5 shrink-0 text-subtle-foreground" />
-      </summary>
-      <div className="border-t border-brand-subtle px-3 py-2 text-xs leading-5 text-accent-foreground/75" role="note">{children}</div>
-    </TransitionDetails>
-  );
-}
 
 export function PipelineErrorMessage({ message }: { message: string | null | undefined }) {
   if (!message) return null;
-  return <p className="border border-destructive-border bg-destructive-subtle px-3 py-2 text-xs text-destructive" role="alert">{message}</p>;
+  return <p className="rounded-md border border-destructive-border bg-destructive-subtle px-3 py-2 text-xs text-destructive" role="alert">{message}</p>;
 }
 
 export function DisabledReason({ id, children }: { id: string; children: React.ReactNode }) {
   return <p className="mt-2 text-xs leading-5 text-muted-foreground" id={id}>{children}</p>;
 }
 
-export function MetricCard({ label, value, description }: { label: string; value: string; description?: string }) {
+export type RunKind = "parse" | "chunk" | "embedding";
+
+const historyTestId: Record<RunKind, string> = { parse: "parse-history", chunk: "chunk-history", embedding: "embedding-history" };
+
+/** Opens a stage's run history and brings it into view (the incompatible-lineage way out). */
+export function revealRunHistory(kind: RunKind) {
+  const section = document.getElementById(historyTestId[kind]);
+  const details = section?.querySelector("details");
+  if (details && !details.open) details.open = true;
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  section?.scrollIntoView?.({ behavior: reduce ? "auto" : "smooth", block: "start" });
+}
+
+/** Whether StageBlockerRow renders anything for this availability (for aria-describedby wiring). */
+export function hasVisibleBlocker(blocker: PipelineAvailability | null | undefined): blocker is PipelineAvailability {
+  return Boolean(blocker && !blocker.allowed && blocker.code && blocker.code !== "loading" && blocker.code !== "processing");
+}
+
+/**
+ * A stage blocker with its way out: a link to the unblocking page, or for an
+ * incompatible lineage a button that opens this stage's history. Loading and
+ * processing render nothing; the action itself already shows that state.
+ */
+export function StageBlockerRow({ blocker, kind, id, testId, className }: { blocker: PipelineAvailability | null | undefined; kind: RunKind; id?: string; testId?: string; className?: string }) {
+  const copy = useCopy();
+  if (!hasVisibleBlocker(blocker)) return null;
   return (
-    <div className="border border-border bg-card p-3">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-subtle-foreground">{label}</div>
-      <div className="mt-2 text-xl font-semibold text-foreground">{value}</div>
-      {description ? <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p> : null}
+    <div className={cn("flex flex-wrap items-baseline gap-x-3 gap-y-1", className)}>
+      <StageBlocker blocker={blocker} data-testid={testId} id={id} />
+      {blocker.code === "incompatible_lineage" ? (
+        <button className="inline-flex items-center gap-1 text-sm font-medium text-foreground underline-offset-4 hover:underline" data-testid={`${kind}-open-history`} onClick={() => revealRunHistory(kind)} type="button">
+          {copy.runs.openHistory}
+          <AppIcon name="arrowRight" className="size-3.5" />
+        </button>
+      ) : null}
     </div>
   );
 }
 
-export function EmptyPipelineState({ children }: { children: React.ReactNode }) {
+/**
+ * The stage footer: the next step stays visible even while locked, with the
+ * reason and the action that unlocks it. `emphasis` keeps one primary action
+ * per page (secondary while the stage has unapplied changes).
+ */
+export function StageNextAction({ href, label, disabled, testId, blocker, reason, emphasis = "primary" }: {
+  href: string;
+  label: string;
+  disabled: boolean;
+  testId: string;
+  /** Availability of the next stage; when blocked its message and CTA explain why. */
+  blocker?: PipelineAvailability | null;
+  /** Fallback explanation when the next stage is locked for a stage-local reason. */
+  reason: string;
+  emphasis?: "primary" | "secondary";
+}) {
+  const pathname = usePathname();
+  const reasonId = `${testId}-reason`;
+  const variant = emphasis === "primary" ? "default" : "outline";
+  // A blocker that points back at this page restates the stage's own job; the
+  // stage reason says it better. Blockers elsewhere (or without a page) win.
+  const showBlocker = hasVisibleBlocker(blocker) && (!blocker.href || blocker.href !== pathname);
   return (
-    <div aria-live="polite" className="flex min-h-24 items-center justify-center border-y border-border px-5 py-7 text-center text-sm text-muted-foreground">
-      <AppIcon name="clock" className="mr-2 size-4" />{children}
+    <footer className="mt-8 flex flex-wrap items-center justify-end gap-x-4 gap-y-2 border-t border-border pt-5" data-testid={`${testId}-footer`}>
+      {disabled ? (showBlocker
+        ? <StageBlocker blocker={blocker} className="min-w-0 flex-1 justify-end text-right" id={reasonId} />
+        : <p className="min-w-0 flex-1 text-right text-sm text-muted-foreground" id={reasonId}>{reason}</p>) : null}
+      {disabled ? (
+        <Button aria-describedby={reasonId} data-testid={testId} disabled variant={variant}>{label}<AppIcon name="arrowRight" className="size-4" /></Button>
+      ) : (
+        <Button asChild data-testid={testId} variant={variant}>
+          <Link href={href}>{label}<AppIcon name="arrowRight" className="size-4" /></Link>
+        </Button>
+      )}
+    </footer>
+  );
+}
+
+/**
+ * Persistent inspect-mode band: an inspected historical run is on screen while
+ * the pipeline keeps using another one. Use and back actions are explicit.
+ */
+export function InspectionBand({ kind, runs, selectedId, inspectedId, canUse, onUse, onBack }: {
+  kind: RunKind;
+  runs: RunSummary[];
+  selectedId: string | null;
+  inspectedId: string | null;
+  canUse: boolean;
+  onUse: (runId: string) => unknown;
+  onBack: (runId: string) => unknown;
+}) {
+  const copy = useCopy();
+  if (!inspectedId || inspectedId === selectedId) return null;
+  const inspected = runs.find((run) => run.id === inspectedId);
+  const selected = selectedId ? runs.find((run) => run.id === selectedId) : undefined;
+  const inspectedName = runName(copy, kind, inspected?.runNumber);
+  const text = selectedId
+    ? interpolate(copy.runs.inspectionBand, { inspected: inspectedName, selected: runName(copy, kind, selected?.runNumber) })
+    : interpolate(copy.runs.inspectionBandEmpty, { inspected: inspectedName });
+  return (
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-warning-border bg-warning-subtle px-4 py-2.5" data-testid={`${kind}-inspection-band`} role="status">
+      <p className="flex min-w-0 items-center gap-2 text-sm text-foreground"><AppIcon name="eye" className="size-4 shrink-0 text-warning" />{text}</p>
+      <div className="flex flex-wrap gap-2">
+        {canUse && completedCompatibleRun(inspected) ? <Button onClick={() => void onUse(inspectedId)} size="sm">{copy.runs.useInPipeline}</Button> : null}
+        {selectedId ? <Button onClick={() => void onBack(selectedId)} size="sm" variant="outline">{copy.runs.backToPipeline}</Button> : null}
+      </div>
     </div>
   );
 }
 
+/**
+ * One run history for every stage (Q12): In use · Inspecting · Document
+ * default · Historical. "Selected"/"Compatible" stay silent; only an
+ * unusable run explains itself. Raw IDs and durations live in Technical details.
+ */
+export function RunHistory({ kind, runs, selectedId, inspectedId, defaultId, hasPipeline, onInspect, onUse }: {
+  kind: RunKind;
+  runs: RunSummary[];
+  selectedId: string | null;
+  inspectedId?: string | null;
+  defaultId: string | null | undefined;
+  /** With a saved pipeline the row action only inspects; without one it selects. */
+  hasPipeline: boolean;
+  onInspect: (runId: string) => unknown;
+  onUse?: (runId: string) => unknown;
+}) {
+  const copy = useCopy();
+  const { preferences } = usePreferences();
+  const ordered = useMemo(
+    () => [...runs].sort((a, b) => (b.runNumber ?? 0) - (a.runNumber ?? 0) || String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? ""))),
+    [runs],
+  );
+  if (!ordered.length) return null;
+  const viewedId = inspectedId ?? selectedId;
+
+  return (
+    <section className="mt-8 scroll-mt-6" data-testid={historyTestId[kind]} id={historyTestId[kind]}>
+      <Disclosure contentClassName="divide-y divide-border p-0" meta={ordered.length} title={copy.runs.history[kind]}>
+        {ordered.map((run) => {
+          const usable = completedCompatibleRun(run);
+          const isSelected = run.id === selectedId;
+          const isViewed = run.id === viewedId;
+          const problem = run.status === "queued" || run.status === "running"
+            ? copy.runs.running
+            : run.status === "failed"
+              ? copy.runs.failed
+              : !run.isCompatible
+                ? copy.runs.incompatible
+                : null;
+          return (
+            <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between" data-testid={`${historyTestId[kind]}-row`} key={run.id}>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="text-sm font-medium text-foreground tabular-nums">{runName(copy, kind, run.runNumber)}</span>
+                  {isSelected ? <StatusPill tone="neutral">{copy.runs.inUse}</StatusPill> : null}
+                  {!isSelected && isViewed ? <StatusPill tone="warning">{copy.runs.inspecting}</StatusPill> : null}
+                  {!isSelected && run.id === defaultId ? <StatusPill tone="idle">{copy.runs.documentDefault}</StatusPill> : null}
+                  {run.historicalLineage ? <StatusPill tone="warning">{copy.runs.historical}</StatusPill> : null}
+                </div>
+                {problem ? <p className={cn("mt-1 text-xs", run.status === "failed" ? "text-destructive" : run.isCompatible ? "text-muted-foreground" : "text-warning")}>{problem}</p> : null}
+                {run.error?.message ? <p className="mt-1 text-xs text-destructive">{run.error.message}</p> : null}
+                {!run.isCompatible && run.compatibilityReason ? <p className="mt-1 text-xs text-warning">{run.compatibilityReason}</p> : null}
+                <TechnicalDetails className="mt-1">
+                  <dl className="grid gap-1 text-xs text-muted-foreground">
+                    {run.timing.durationMs != null ? <div className="flex gap-2"><dt>{copy.runs.duration}</dt><dd className="tabular-nums text-foreground">{formatMs(preferences.locale, run.timing.durationMs)}</dd></div> : null}
+                    <div className="flex min-w-0 gap-2"><dt className="shrink-0">{copy.runs.runId}</dt><dd className="min-w-0 font-mono text-foreground [overflow-wrap:anywhere]">{run.id}</dd></div>
+                  </dl>
+                </TechnicalDetails>
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                {usable && !isViewed ? <Button onClick={() => void onInspect(run.id)} size="sm" variant="outline">{hasPipeline ? copy.runs.inspect : copy.runs.select}</Button> : null}
+                {onUse && hasPipeline && usable && isViewed && !isSelected ? <Button onClick={() => void onUse(run.id)} size="sm" variant="outline">{copy.runs.useInPipeline}</Button> : null}
+              </div>
+            </div>
+          );
+        })}
+      </Disclosure>
+    </section>
+  );
+}

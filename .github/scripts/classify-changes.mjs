@@ -89,7 +89,7 @@ const seededContractPaths = [
   "components/settings-screen.tsx",
   "lib/document-api.ts",
   "lib/document-parse-types.ts",
-  "lib/figma-view-models.ts",
+  "lib/overview-view-model.ts",
   "lib/overview-journey.ts",
   "lib/theme.ts",
   "lib/rag-api.ts",
@@ -108,8 +108,8 @@ const seededContractPaths = [
   "playwright.config.ts",
 ];
 const productionVisualPaths = [
-  "e2e/visual/figma-production.spec.ts",
-  "e2e/visual/figma-visual-diff.mjs",
+  "e2e/visual/production-visual.spec.ts",
+  "e2e/visual/visual-diff.mjs",
   "e2e/visual/reference/production/",
 ];
 const productionVisualSourcePaths = [
@@ -125,11 +125,13 @@ const productionVisualSourcePaths = [
   "app/settings/page.tsx",
   "components/app-shell.tsx",
   "components/auth-shell.tsx",
+  "components/brand-mark.tsx",
   "components/chunks-pipeline.tsx",
   "components/document-library.tsx",
   "components/document-pipeline-provider.tsx",
   "components/documents-screen.tsx",
   "components/evaluation-screen.tsx",
+  "components/login-hero.tsx",
   "components/login-screen.tsx",
   "components/overview-screen.tsx",
   "components/page-transition.tsx",
@@ -144,8 +146,7 @@ const productionVisualSourcePaths = [
   "components/source-inspector.tsx",
   "components/status-indicator.tsx",
   "components/ui/",
-  "public/assets/figma/overview/",
-  "lib/figma-view-models.ts",
+  "lib/overview-view-model.ts",
   "lib/overview-journey.ts",
   "lib/theme.ts",
 ];
@@ -278,6 +279,8 @@ if (process.argv.includes("--self-test")) {
   assertClassification([".python-version"], { backend: true });
   assertClassification(["public/samples/rag-steplab-sample-city-bikes.pdf"], { node: true, frontend: true, seeded_e2e: true });
   assertClassification(["components/login-screen.tsx"], { node: true, frontend: true, auth_e2e: true, production_visual: true });
+  assertClassification(["components/brand-mark.tsx"], { node: true, frontend: true, production_visual: true });
+  assertClassification(["components/login-hero.tsx"], { node: true, frontend: true, production_visual: true });
   assertClassification(["app/globals.css"], { node: true, frontend: true, seeded_e2e: true, production_visual: true });
   assertClassification(["lib/theme.ts"], { node: true, frontend: true, seeded_e2e: true, production_visual: true });
   assertClassification(["components/preferences-provider.tsx"], { node: true, frontend: true, seeded_e2e: true, production_visual: true });
@@ -290,7 +293,7 @@ if (process.argv.includes("--self-test")) {
   assertClassification(["backend/app/parser.py"], { backend: true, modal_deploy: true, modal_image: true, worker_provider: true });
   assertClassification(["backend/modal_app.py"], { backend: true, modal_deploy: true, modal_image: true, worker_provider: true });
   assertClassification(["supabase/migrations/20260821083157_auth_owner_strict.sql"], { database: true, migration: true });
-  assertClassification(["e2e/visual/figma-production.spec.ts"], { node: true, playwright_list: true, production_visual: true });
+  assertClassification(["e2e/visual/production-visual.spec.ts"], { node: true, playwright_list: true, production_visual: true });
   assertClassification(["e2e/visual/reference/production/overview.png"], { node: true, playwright_list: true, production_visual: true });
   assertClassification(["e2e/smoke/rag-inspection.spec.ts"], { node: true, seeded_e2e: true, playwright_list: true });
   assertClassification(["e2e/smoke/navigation.spec.ts"], { node: true, seeded_e2e: true, playwright_list: true });
@@ -300,7 +303,8 @@ if (process.argv.includes("--self-test")) {
   assertClassification(["e2e/support/auth.ts"], { node: true, auth_e2e: true, seeded_e2e: true, playwright_list: true });
   assertClassification(["e2e/support/seeded-api.ts"], { node: true, seeded_e2e: true, playwright_list: true });
   assertClassification(["playwright.config.ts"], { node: true, seeded_e2e: true, playwright_list: true });
-  assertClassification(["e2e/visual/figma-visual-diff.mjs"], { node: true, playwright_list: true, production_visual: true });
+  assertClassification(["e2e/visual/visual-diff.mjs"], { node: true, playwright_list: true, production_visual: true });
+  assertClassification(["lib/overview-view-model.ts"], { node: true, frontend: true, seeded_e2e: true, production_visual: true });
   assertClassification(
     ["components/retrieval-screen.tsx", "backend/app/schemas.py", "supabase/migrations/20260821083157_auth_owner_strict.sql"],
     { node: true, frontend: true, backend: true, database: true, migration: true, seeded_e2e: true, modal_deploy: true, production_visual: true },

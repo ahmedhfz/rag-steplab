@@ -35,7 +35,7 @@ test("@critical click upload, drag/drop ve duplicate reuse notice birlikte çal�
   await expect(page.getByRole("alert").filter({ hasText: "Only PDF files are supported" })).toBeVisible();
 
   await dropFile(page, "e2e-seeded-golden.pdf", "application/pdf", pdf);
-  await expect(page.getByRole("status")).toContainText("Existing document reused");
+  await expect(page.getByRole("status").filter({ hasText: "This PDF is already in your library." })).toBeVisible();
 
   quality.assertClean();
 });
@@ -60,7 +60,11 @@ test("@critical parse lifecycle gerçek UI progress, phase ve elapsed durumları
 
   await page.goto("/parse");
   await selectSeededDocument(page);
-  await page.getByRole("button", { name: "Parse again" }).click();
+  await page.getByTestId("parse-run-action").click();
+  // The seeded pipeline already has chunks and embeddings, so reparse is confirmed first.
+  const reparseDialog = page.getByTestId("reparse-dialog");
+  await expect(reparseDialog).toContainText("Earlier results stay in history.");
+  await reparseDialog.getByRole("button", { name: "Parse again" }).click();
   await expect(page.getByRole("progressbar", { name: /Progress 0%/ })).toBeVisible();
   await expect(page.getByText("Reading document", { exact: true })).toBeVisible({ timeout: 5_000 });
   await expect(page.getByRole("progressbar", { name: /Progress 100%/ })).toBeVisible({ timeout: 8_000 });
@@ -82,10 +86,10 @@ test("@critical chunk ve embedding UI yalnız ilgili katmanın seeded contractı
 
   await page.goto("/embeddings");
   await page.getByRole("button", { name: "Create embeddings" }).click();
-  await expect(page.getByRole("status")).toContainText("1 chunks are being embedded. Individual chunk progress is not available.");
+  await expect(page.getByRole("status").filter({ hasText: "Embedding in progress" })).toContainText("1 chunk · Embedding in progress; per-chunk progress isn't available.");
   await page.getByTestId("embedding-details").locator("summary").click();
   await expect(page.getByText("gemini-embedding-2", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("768", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("768 dimensions", { exact: true }).first()).toBeVisible();
 
   quality.assertClean();
 });

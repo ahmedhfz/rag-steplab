@@ -37,8 +37,9 @@ for (const locale of ["tr", "en"] as const) {
     await expect(page).toHaveURL(/\/parse$/);
     await expect(page.getByTestId("pipeline-context-document-selector")).toContainText(sample.fileName);
     await expect(page.getByTestId("parse-result-summary")).toHaveCount(0);
-    await expect(page.getByTestId("parse-reports-action")).toBeDisabled();
     await expect(page.getByTestId("parse-run-action")).toBeEnabled();
+    // Chunking stays visible but locked until this document is parsed.
+    await expect(page.getByTestId("parse-next-action")).toBeDisabled();
     expect(api.parseRequests).toEqual([]);
 
     await page.getByTestId("parse-run-action").click();
