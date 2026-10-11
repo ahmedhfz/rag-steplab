@@ -709,9 +709,9 @@ distro==1.9.0 \
     # via
     #   -c requirements.txt
     #   google-genai
-fastapi==0.142.3 \
-    --hash=sha256:519ca478f8acacc2062f204cde0bc233119c413c78477ddce299db8c0d5792d1 \
-    --hash=sha256:5a27878d54a17627a849fc26096b9f37191106cab4b063ca60b0c7770ab39f9d
+fastapi==0.143.0 \
+    --hash=sha256:1acffe48206a80917cf7dac21992b5c44b25384e8902bf745c1fd9dabcf6c51f \
+    --hash=sha256:3e9395fd35276425b61b516a31fdd7c77fe2af83e41b4da22e30696fb1304c5d
     # via
     #   -c requirements.txt
     #   -r requirements.in
