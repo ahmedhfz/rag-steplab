@@ -1,42 +1,43 @@
 "use client";
 
-import { SlidingTabs, TransitionCheckbox, TransitionDetails, TransitionNumber, TransitionPanel } from "@/components/ui/transitions";
-
-import { useEffect, useMemo, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
-import { DisabledReason, PipelineErrorMessage } from "@/components/pipeline-learning-ui";
+import { PipelineErrorMessage } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
 import { SourceInspector } from "@/components/source-inspector";
-import { AppIcon } from "@/components/ui/app-icon";
+import { StageBlocker } from "@/components/stage-blocker";
+import { AppIcon, type SemanticIconName } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
+import { Disclosure, TechnicalDetails } from "@/components/ui/disclosure";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/ui/page-header";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { StatusPill } from "@/components/ui/status-pill";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { UI_COPY } from "@/lib/copy";
-import type { EvaluationRun, RetrievalMode } from "@/lib/rag-api-types";
-import { firstBlocker } from "@/lib/blockers";
+import { SlidingTabs, TransitionCheckbox, TransitionPanel } from "@/components/ui/transitions";
+import { blocker, getPipelineAvailability } from "@/lib/blockers";
+import { type AppCopy, type AppLocale, interpolate, runName, UI_COPY } from "@/lib/copy";
+import type { ParsedElement } from "@/lib/document-parse-types";
+import { formatCount, formatMs, formatNumber, formatScore } from "@/lib/format";
+import type { EvaluationCaseResult, EvaluationRun, GenerationMetricMethod, RetrievalMode, StageRetrievalMetricsByStage } from "@/lib/rag-api-types";
+import { cn } from "@/lib/utils";
 
 type EvaluationTab = "dataset" | "results" | "compare";
 type EvaluationOutcome = "answer" | "insufficient_context";
+type EvaluationCopy = AppCopy["evaluation"];
+
+const TABS: EvaluationTab[] = ["dataset", "results", "compare"];
+/** Diagnostic review threshold for answer cases; it is not a correctness verdict. */
+const CASE_THRESHOLD = 0.5;
 
 type DraftEvaluationCase = {
   question: string;
   elements: string;
   reference: string;
   expectedOutcome: EvaluationOutcome;
-};
-
-function metric(value: number | null) {
-  return value === null ? "—" : value.toFixed(3);
-}
-
-type ParsedSourceElement = {
-  id: string;
-  pageNumbers: number[];
-  text: string;
-  type: string;
 };
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -57,6 +58,10 @@ function booleanValue(value: unknown) {
 
 function configValue(config: Record<string, unknown>, key: string) {
   return stringValue(config[key]) ?? stringValue(config[key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)]);
+}
+
+function splitIds(value: string) {
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 function evaluationConfig(run: EvaluationRun) {
@@ -80,16 +85,20 @@ function evaluationConfig(run: EvaluationRun) {
   };
 }
 
+/** The judge produced the answer metrics (directly via `method`, or inferred for older runs). */
+function usedJudge(run: EvaluationRun) {
+  const metrics = run.results.generationMetrics;
+  if (metrics?.method) return metrics.method !== "citation_token_overlap_v1";
+  const judge = evaluationConfig(run).judge;
+  return judge ?? (metrics?.faithfulness !== null && metrics?.faithfulness !== undefined);
+}
+
 function comparableValue(left: string | number | boolean | null, right: string | number | boolean | null) {
   if (left === null || right === null) return "unknown" as const;
   return left === right ? "same" as const : "different" as const;
 }
 
-function runIdentity(run: EvaluationRun, fallbackNumber: number) {
-  return `Evaluation ${run.runNumber ?? fallbackNumber}`;
-}
-
-function runDate(run: EvaluationRun, locale: "en" | "tr") {
+function runDate(run: EvaluationRun, locale: AppLocale) {
   const value = run.createdAt ?? run.timing.startedAt;
   if (!value) return null;
   const date = new Date(value);
@@ -97,171 +106,272 @@ function runDate(run: EvaluationRun, locale: "en" | "tr") {
   return new Intl.DateTimeFormat(locale === "tr" ? "tr-TR" : "en-US", { dateStyle: "medium" }).format(date);
 }
 
-function sourceLabelFor(element: ParsedSourceElement, locale: "en" | "tr") {
-  const description = element.text.trim() || element.id;
-  return `${element.pageNumbers[0] ? `${locale === "tr" ? "Sayfa" : "Page"} ${element.pageNumbers[0]} · ` : ""}${element.type} · ${description}`;
+function truncate(text: string, max: number) {
+  const line = text.replace(/\s+/g, " ").trim();
+  return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
 }
 
-function toggleElementValue(current: string, elementId: string) {
-  const values = current.split(",").map((value) => value.trim()).filter(Boolean);
-  return values.includes(elementId) ? values.filter((value) => value !== elementId).join(", ") : [...values, elementId].join(", ");
+type PickerElement = { element: ParsedElement; section: string | null; summary: string };
+
+/** One-line, plain-text summary; table pipes become "Table · 4 rows · first cells…". */
+function elementSummary(element: ParsedElement, copy: EvaluationCopy, locale: AppLocale) {
+  const units = UI_COPY[locale].units;
+  if (element.type === "table") {
+    const rows = element.table?.rows?.length
+      ? element.table.rows
+      : element.text.split("\n").filter((line) => line.includes("|") && !/^[\s|:-]+$/.test(line)).map((line) => line.split("|").map((cell) => cell.trim()).filter(Boolean));
+    if (rows.length) {
+      return interpolate(copy.tableSummary, { rows: formatCount(locale, rows.length, units.row), cells: truncate(rows[0].join(", "), 60) });
+    }
+  }
+  return truncate(element.text || element.id, 160);
 }
 
-function SourcePicker({
-  ariaLabel,
-  elements,
-  inputId,
-  labels,
-  locale,
-  onChange,
-  value,
-}: {
-  ariaLabel: string;
-  elements: ParsedSourceElement[];
+function buildPickerElements(elements: ParsedElement[], copy: EvaluationCopy, locale: AppLocale): PickerElement[] {
+  const seen = new Set<string>();
+  let section: string | null = null;
+  const items: PickerElement[] = [];
+  for (const element of elements) {
+    if (seen.has(element.id)) continue;
+    seen.add(element.id);
+    if (element.type === "heading" && element.text.trim()) section = truncate(element.text, 60);
+    items.push({ element, section, summary: elementSummary(element, copy, locale) });
+  }
+  return items;
+}
+
+function SourcePicker({ copy, elementTypes, elements, inputId, locale, onChange, value }: {
+  copy: EvaluationCopy;
+  elementTypes: AppCopy["documents"]["elementTypes"];
+  elements: PickerElement[];
   inputId: string;
-  labels: { relevant: string; relevantHint: string; sourcePicker: string; technicalSources: string; noSources: string };
-  locale: "en" | "tr";
+  locale: AppLocale;
   onChange: (value: string) => void;
   value: string;
 }) {
-  const selectedIds = value.split(",").map((item) => item.trim()).filter(Boolean);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState("all");
+  const [section, setSection] = useState("all");
+  const selectedIds = splitIds(value);
+  const byId = useMemo(() => new Map(elements.map((item) => [item.element.id, item])), [elements]);
+  const pages = useMemo(() => Array.from(new Set(elements.flatMap((item) => item.element.pageNumbers))).sort((a, b) => a - b), [elements]);
+  const sections = useMemo(() => Array.from(new Set(elements.map((item) => item.section).filter((item): item is string => Boolean(item)))), [elements]);
+  const needle = query.trim().toLocaleLowerCase(locale);
+  const filtered = elements.filter((item) =>
+    (page === "all" || item.element.pageNumbers.includes(Number(page)))
+    && (section === "all" || item.section === section)
+    && (!needle || item.element.text.toLocaleLowerCase(locale).includes(needle) || item.summary.toLocaleLowerCase(locale).includes(needle)));
+  const toggle = (id: string) => onChange(selectedIds.includes(id) ? selectedIds.filter((item) => item !== id).join(", ") : [...selectedIds, id].join(", "));
+  const pageLabel = (item: PickerElement) => item.element.pageNumbers[0] ? `${UI_COPY[locale].units.pageShort} ${item.element.pageNumbers[0]}` : null;
+
   return (
-    <div className="rounded-[10px] border border-border bg-technical p-2.5" data-testid={`source-picker-${inputId}`}>
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <p className="text-[13px] font-medium text-foreground">{labels.relevant}</p>
-          <p className="mt-1 text-[11px] font-normal leading-4 text-subtle-foreground">{labels.relevantHint}</p>
+    <div className="min-w-0 sm:col-span-2" data-testid={`source-picker-${inputId}`}>
+      <p className="text-sm font-medium text-foreground">{copy.evidence}</p>
+      <p className="mt-0.5 text-xs text-muted-foreground" id={`${inputId}-hint`}>{copy.evidenceHint}</p>
+      {selectedIds.length ? (
+        <ul aria-label={copy.evidence} className="mt-2 flex flex-wrap gap-1.5">
+          {selectedIds.map((id) => {
+            const item = byId.get(id);
+            const label = item ? [pageLabel(item), item.summary].filter(Boolean).join(" · ") : id;
+            return (
+              <li className="inline-flex min-w-0 max-w-full items-center gap-0.5 rounded-sm bg-secondary py-0.5 pl-2 pr-0.5 text-xs text-foreground" key={id}>
+                <span className={cn("truncate", !item && "font-mono")}>{label}</span>
+                <button aria-label={interpolate(copy.removeSource, { label })} className="grid size-5 shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-surface-subtle hover:text-foreground" onClick={() => toggle(id)} type="button"><AppIcon name="close" className="size-3" /></button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {elements.length ? (
+        <Button aria-controls={`${inputId}-panel`} aria-expanded={open} className="mt-2" onClick={() => setOpen((current) => !current)} size="sm" type="button" variant="outline">
+          <AppIcon name="fileSearch" className="size-4" />{open ? copy.hideSources : copy.chooseSources}<span className="text-subtle-foreground tabular-nums">{formatNumber(locale, elements.length)}</span>
+        </Button>
+      ) : <p className="mt-2 text-xs text-muted-foreground">{copy.noSources}</p>}
+      {open ? (
+        <div className="mt-2 rounded-md border border-border" id={`${inputId}-panel`}>
+          <div className="flex flex-wrap gap-2 border-b border-border p-2">
+            <Input aria-label={copy.searchSources} className="h-8 min-w-[12rem] flex-1" onChange={(event) => setQuery(event.target.value)} placeholder={copy.searchPlaceholder} type="search" value={query} />
+            {pages.length > 1 ? (
+              <Select onValueChange={setPage} value={page}>
+                <SelectTrigger aria-label={copy.pageFilter} className="h-8 w-auto min-w-[8rem]"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="all">{copy.allPages}</SelectItem>{pages.map((number) => <SelectItem key={number} value={String(number)}>{interpolate(copy.pageOption, { page: number })}</SelectItem>)}</SelectContent>
+              </Select>
+            ) : null}
+            {sections.length > 1 ? (
+              <Select onValueChange={setSection} value={section}>
+                <SelectTrigger aria-label={copy.sectionFilter} className="h-8 w-auto min-w-[10rem] max-w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="all">{copy.allSections}</SelectItem>{sections.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent>
+              </Select>
+            ) : null}
+          </div>
+          <p aria-live="polite" className="px-3 pt-2 text-xs text-muted-foreground tabular-nums">{interpolate(copy.matchCount, { shown: formatNumber(locale, filtered.length), total: formatNumber(locale, elements.length) })}</p>
+          {filtered.length ? (
+            // One bounded scroll area; default overscroll lets the page keep scrolling at its ends.
+            <ul aria-label={copy.sourceList} className="max-h-72 overflow-y-auto p-1">
+              {filtered.map((item) => {
+                const selected = selectedIds.includes(item.element.id);
+                return (
+                  <li key={item.element.id}>
+                    <button aria-pressed={selected} className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-xs hover:bg-surface-subtle" onClick={() => toggle(item.element.id)} type="button">
+                      <span aria-hidden="true" className={cn("mt-0.5 grid size-4 shrink-0 place-items-center rounded-sm border", selected ? "border-foreground bg-foreground text-background" : "border-input")}>{selected ? <AppIcon name="check" className="size-3" /> : null}</span>
+                      <span className="min-w-0 flex-1">
+                        {/* Extracted document text is untrusted data: plain text only. */}
+                        <span className="line-clamp-2 break-words text-foreground">{item.summary}</span>
+                        <span className="mt-0.5 block text-muted-foreground tabular-nums">{[elementTypes[item.element.type], pageLabel(item), item.section && item.element.type !== "heading" ? item.section : null].filter(Boolean).join(" · ")}</span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : <p className="p-3 text-xs text-muted-foreground">{copy.noMatches}</p>}
         </div>
-        <span className="rounded-full bg-card px-2 py-1 text-[11px] font-medium text-brand">{selectedIds.length}</span>
-      </div>
-      {elements.length ? <div className="mt-2.5 flex max-h-24 flex-wrap gap-1.5 overflow-y-auto" role="list" aria-label={ariaLabel}>{elements.map((element) => { const selected = selectedIds.includes(element.id); const label = sourceLabelFor(element, locale); return <button aria-label={label} aria-pressed={selected} className={selected ? "max-w-full whitespace-normal break-words rounded-[6px] border border-accent-border bg-accent px-2 py-1 text-left text-xs leading-4 text-accent-foreground" : "max-w-full whitespace-normal break-words rounded-[6px] border border-border bg-card px-2 py-1 text-left text-xs leading-4 text-muted-foreground hover:border-accent-border"} key={element.id} onClick={() => onChange(toggleElementValue(value, element.id))} title={label} type="button">{label}</button>; })}</div> : <p className="mt-2.5 text-xs text-subtle-foreground">{labels.noSources}</p>}
-      <TransitionDetails className="mt-2.5 border-t border-border pt-2">
-        <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground">{labels.technicalSources}</summary>
-        <Input aria-describedby={`${inputId}-hint`} aria-label={labels.technicalSources} className="mt-1.5 h-9 font-mono text-xs" id={inputId} onChange={(event) => onChange(event.target.value)} placeholder="element-1, element-4" value={value} />
-        <span className="sr-only" id={`${inputId}-hint`}>{labels.relevantHint}</span>
-      </TransitionDetails>
+      ) : null}
+      <TechnicalDetails className="mt-2" title={copy.technicalSources}>
+        <Input aria-describedby={`${inputId}-hint`} aria-label={copy.technicalSources} className="font-mono text-xs" id={inputId} onChange={(event) => onChange(event.target.value)} placeholder="element-1, element-4" value={value} />
+      </TechnicalDetails>
     </div>
   );
 }
 
-function OutcomeSelect({
-  id,
-  locale,
-  onChange,
-  value,
-}: {
-  id: string;
-  locale: "en" | "tr";
-  onChange: (value: EvaluationOutcome) => void;
-  value: EvaluationOutcome;
-}) {
-  const label = locale === "tr" ? "Beklenen sonuç" : "Expected result";
+function OutcomeSelect({ copy, id, onChange, value }: { copy: EvaluationCopy; id: string; onChange: (value: EvaluationOutcome) => void; value: EvaluationOutcome }) {
   return (
-    <label className="text-[13px] font-medium text-foreground" htmlFor={id}>
-      {label}
+    <label className="text-sm font-medium text-foreground" htmlFor={id}>
+      {copy.expectedResult}
       <Select onValueChange={(next) => onChange(next as EvaluationOutcome)} value={value}>
-        <SelectTrigger className="mt-1.5 h-9 text-[13px]" id={id}><SelectValue /></SelectTrigger>
+        <SelectTrigger className="mt-1.5" id={id}><SelectValue /></SelectTrigger>
         <SelectContent>
-          <SelectItem value="answer">{locale === "tr" ? "Cevap" : "Answer"}</SelectItem>
-          <SelectItem value="insufficient_context">{locale === "tr" ? "Yetersiz bağlam" : "Insufficient context"}</SelectItem>
+          <SelectItem value="answer">{copy.outcomes.answer}</SelectItem>
+          <SelectItem value="insufficient_context">{copy.outcomes.insufficient_context}</SelectItem>
         </SelectContent>
       </Select>
     </label>
   );
 }
 
-function statusPill(label: string, tone: "success" | "ready" | "muted" = "success") {
-  const styles = tone === "success" ? "bg-success-subtle text-success" : tone === "ready" ? "bg-accent text-brand" : "bg-secondary text-subtle-foreground";
-  return <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium ${styles}`}><span aria-hidden="true" className="size-1.5 rounded-full bg-current" />{label}</span>;
+/** A missing metric is "not measured" — never shown as a measured 0. */
+function MetricValue({ copy, value, className }: { copy: EvaluationCopy; value: number | null | undefined; className?: string }) {
+  if (value === null || value === undefined) return <span className={cn("text-subtle-foreground", className)} title={copy.notMeasured}>—<span className="sr-only"> {copy.notMeasured}</span></span>;
+  return <span className={cn("text-foreground tabular-nums", className)}>{formatScore(value)}</span>;
 }
 
-type MetricRow = {
-  key: string;
-  label: string;
-  value: number | null;
-  description?: string;
-};
+type MetricRow = { key: string; label: string; value: number | null | undefined; hint?: string; sampleSize?: number | null };
 
-function MetricList({ rows, testId }: { rows: MetricRow[]; testId: string }) {
+function MetricGroup({ children, copy, locale, note, rows, sampleSize, testId, title }: { children?: ReactNode; copy: EvaluationCopy; locale: AppLocale; note?: string | null; rows: MetricRow[]; sampleSize: number | null | undefined; testId: string; title: string }) {
+  const units = UI_COPY[locale].units;
   return (
-    <dl className="divide-y divide-border rounded-[12px] border border-border bg-card px-4" data-testid={testId}>
-      {rows.map((row) => (
-        <div className="grid gap-1 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-5" key={row.key}>
-          <dt className="min-w-0">
-            <span className="block text-[13px] font-medium text-foreground">{row.label}</span>
-            {row.description ? <span className="mt-1 block max-w-[520px] text-[11px] leading-4 text-subtle-foreground">{row.description}</span> : null}
-          </dt>
-          <dd className="font-mono text-[18px] font-semibold tracking-[-0.02em] text-foreground">{metric(row.value)}</dd>
-        </div>
-      ))}
-    </dl>
+    <section className="min-w-0">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+        {typeof sampleSize === "number" ? <span className="text-xs text-muted-foreground tabular-nums">{interpolate(copy.sampleSize, { count: formatCount(locale, sampleSize, units.question) })}</span> : null}
+      </div>
+      {note ? <p className="mt-1 text-xs text-muted-foreground">{note}</p> : null}
+      <dl className="mt-2 divide-y divide-border rounded-lg border border-border bg-card px-4" data-testid={testId}>
+        {rows.map((row) => (
+          <div className="grid gap-1 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-5" key={row.key}>
+            <dt className="min-w-0">
+              <span className="block text-sm font-medium text-foreground">{row.label}</span>
+              {row.hint ? <span className="mt-0.5 block max-w-[560px] text-xs text-muted-foreground">{row.hint}</span> : null}
+            </dt>
+            <dd className="flex items-baseline gap-2 sm:justify-end">
+              <MetricValue className="text-lg font-semibold" copy={copy} value={row.value} />
+              {typeof row.sampleSize === "number" && row.sampleSize !== sampleSize ? <span className="text-xs text-subtle-foreground tabular-nums">{interpolate(copy.sampleSize, { count: formatNumber(locale, row.sampleSize) })}</span> : null}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {children}
+    </section>
   );
 }
 
-type ComparisonMetric = {
-  key: string;
-  label: string;
-  first: number | null;
-  second: number | null;
-  description?: string;
-};
-
-type ComparisonMetricGroup = {
-  key: string;
-  label: string;
-  metrics: ComparisonMetric[];
-};
-
-function deltaPresentation(first: number | null, second: number | null, labels: { improved: string; declined: string; unchanged: string }) {
-  if (typeof first !== "number" || typeof second !== "number") {
-    return { value: "—", trend: "none" as const, label: "", className: "bg-secondary text-subtle-foreground" };
-  }
-  const delta = second - first;
-  if (Math.abs(delta) < 0.0005) {
-    return { value: "0.000", trend: "unchanged" as const, label: labels.unchanged, className: "bg-secondary text-muted-foreground" };
-  }
-  return delta > 0
-    ? { value: `+${delta.toFixed(3)}`, trend: "improved" as const, label: labels.improved, className: "bg-success-subtle text-success" }
-    : { value: delta.toFixed(3), trend: "declined" as const, label: labels.declined, className: "bg-destructive-subtle text-destructive" };
+function StageRetrievalTable({ copy, locale, metrics }: { copy: EvaluationCopy; locale: AppLocale; metrics: StageRetrievalMetricsByStage }) {
+  const stages = (["retrieval", "reranking", "context"] as const).filter((stage) => metrics[stage]);
+  if (!stages.length) return null;
+  return (
+    <Disclosure className="mt-2" title={copy.perStage} variant="inline">
+      <Table aria-label={copy.perStage}>
+        <TableHeader><TableRow><TableHead scope="col">{copy.stage}</TableHead><TableHead className="text-right" scope="col">{copy.metrics.hitAtK}</TableHead><TableHead className="text-right" scope="col">{copy.metrics.recallAtK}</TableHead><TableHead className="text-right" scope="col">{copy.metrics.precisionAtK}</TableHead><TableHead className="text-right" scope="col">{copy.metrics.mrr}</TableHead><TableHead className="text-right" scope="col">n</TableHead></TableRow></TableHeader>
+        <TableBody>
+          {stages.map((stage) => {
+            const row = metrics[stage]!;
+            return <TableRow key={stage}><TableHead className="normal-case tracking-normal text-foreground" scope="row">{copy.stageNames[stage]}</TableHead><TableCell className="text-right"><MetricValue copy={copy} value={row.hitAtK} /></TableCell><TableCell className="text-right"><MetricValue copy={copy} value={row.recallAtK} /></TableCell><TableCell className="text-right"><MetricValue copy={copy} value={row.precisionAtK} /></TableCell><TableCell className="text-right"><MetricValue copy={copy} value={row.mrr} /></TableCell><TableCell className="text-right">{formatNumber(locale, row.eligibleCaseCount)}</TableCell></TableRow>;
+          })}
+        </TableBody>
+      </Table>
+    </Disclosure>
+  );
 }
 
-function ComparisonMetricTable({ groups, labels }: { groups: ComparisonMetricGroup[]; labels: { metric: string; runA: string; runB: string; delta: string; improved: string; declined: string; unchanged: string; comparison: string } }) {
+type CaseState = "ok" | "review" | "notMeasured";
+
+const caseIcon: Record<CaseState, { icon: SemanticIconName; className: string }> = {
+  ok: { icon: "completed", className: "bg-secondary text-muted-foreground" },
+  review: { icon: "warningTriangle", className: "bg-warning-subtle text-warning" },
+  notMeasured: { icon: "circle", className: "bg-secondary text-subtle-foreground" },
+};
+
+/** Diagnostic triage of one question: the threshold flags what to review, it is not a pass/fail verdict. */
+function caseDiagnosis(item: EvaluationCaseResult, judge: boolean, copy: EvaluationCopy): { state: CaseState; meta: string } {
+  if (item.expectedOutcome === "insufficient_context") {
+    if (item.abstentionCorrect === true) return { state: "ok", meta: copy.correctAbstention };
+    if (item.abstentionCorrect === false) return { state: "review", meta: copy.unexpectedAnswer };
+    return { state: "notMeasured", meta: copy.abstentionNotScored };
+  }
+  const outcome = item.generationOutcome ?? (item.insufficientContext ? "insufficient_context" : "answered");
+  if (outcome === "grounding_rejected") return { state: "review", meta: copy.groundingRejected };
+  if (outcome === "insufficient_context") return { state: "review", meta: copy.noAnswerGiven };
+  const grounding = (judge ? item.generationMetrics?.faithfulness : item.generationMetrics?.lexicalOverlap) ?? item.groundedness;
+  const groundingLabel = judge ? copy.groundingShort.judge : copy.groundingShort.lexical;
+  const meta = `${groundingLabel} ${formatScore(grounding)} · ${copy.citationShort} ${formatScore(item.citationValidity)}`;
+  if (grounding === null || grounding === undefined || item.citationValidity === null) return { state: "notMeasured", meta };
+  return { state: grounding >= CASE_THRESHOLD && item.citationValidity >= CASE_THRESHOLD ? "ok" : "review", meta };
+}
+
+function DeltaValue({ comparable, copy, first, second }: { comparable: boolean; copy: EvaluationCopy; first: number | null | undefined; second: number | null | undefined }) {
+  if (!comparable) return <span className="text-xs text-subtle-foreground" title={copy.notComparable}>—<span className="sr-only"> {copy.notComparable}</span></span>;
+  if (typeof first !== "number" || typeof second !== "number") return <span className="text-xs text-subtle-foreground" title={copy.notMeasured}>—<span className="sr-only"> {copy.notMeasured}</span></span>;
+  const delta = second - first;
+  if (Math.abs(delta) < 0.005) return <span className="text-xs text-muted-foreground tabular-nums">0.00<span className="sr-only"> {copy.unchanged}</span></span>;
+  // Neutral on purpose: the arrow gives the direction, colour must not read as better/worse.
   return (
-    <div aria-label={labels.comparison} className="overflow-hidden rounded-[12px] border border-border bg-card" data-testid="evaluation-compare-metrics" role="table">
-      <div className="hidden grid-cols-[minmax(0,1fr)_92px_92px_112px] gap-3 border-b border-border bg-technical px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground sm:grid" role="row">
-        <span role="columnheader">{labels.metric}</span>
-        <span role="columnheader">{labels.runA}</span>
-        <span role="columnheader">{labels.runB}</span>
-        <span role="columnheader">{labels.delta}</span>
-      </div>
-      {groups.map((group) => (
-        <section className="border-b border-border last:border-b-0" key={group.key} role="rowgroup">
-          <h3 className="bg-technical px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-brand">{group.label}</h3>
-          {group.metrics.map((item) => {
-            const delta = deltaPresentation(item.first, item.second, labels);
-            return (
-              <div className="grid gap-3 border-t border-border px-4 py-3 sm:grid-cols-[minmax(0,1fr)_92px_92px_112px] sm:items-center" key={item.key} role="row">
-                <div className="min-w-0" role="cell">
-                  <span className="block text-[13px] font-medium text-foreground">{item.label}</span>
-                  {item.description ? <span className="mt-1 block text-[11px] leading-4 text-subtle-foreground">{item.description}</span> : null}
-                </div>
-                <div className="flex items-center justify-between gap-3 sm:block" role="cell">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground sm:hidden">{labels.runA}</span>
-                  <span className="font-mono text-[13px] text-foreground">{metric(item.first)}</span>
-                </div>
-                <div className="flex items-center justify-between gap-3 sm:block" role="cell">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground sm:hidden">{labels.runB}</span>
-                  <span className="font-mono text-[13px] text-foreground">{metric(item.second)}</span>
-                </div>
-                <div className="flex items-center justify-between gap-3 sm:block" role="cell">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground sm:hidden">{labels.delta}</span>
-                  <span className={`inline-flex items-center gap-1 rounded-[7px] px-2 py-1 text-right font-mono text-[11px] font-medium ${delta.className}`}><span>{delta.value}</span>{delta.trend === "improved" ? <AppIcon name="trendUp" className="size-3" /> : delta.trend === "declined" ? <AppIcon name="trendDown" className="size-3" /> : null}{delta.label ? <span className="font-sans">{delta.label}</span> : null}</span>
-                </div>
-              </div>
-            );
-          })}
-        </section>
-      ))}
+    <span className="inline-flex items-center justify-end gap-1 text-xs font-medium text-foreground tabular-nums">
+      <AppIcon aria-hidden="true" className="size-3 text-muted-foreground" name={delta > 0 ? "trendUp" : "trendDown"} />
+      {delta > 0 ? "+" : "−"}{formatScore(Math.abs(delta))}
+      <span className="sr-only"> {delta > 0 ? copy.higher : copy.lower}</span>
+    </span>
+  );
+}
+
+type ComparisonMetric = { key: string; label: string; first: number | null | undefined; second: number | null | undefined; comparable: boolean; hint?: string };
+
+function ComparisonMetricTable({ copy, groups }: { copy: EvaluationCopy; groups: Array<{ key: string; label: string; metrics: ComparisonMetric[] }> }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border bg-card">
+      <table aria-label={copy.metricComparison} className="w-full text-sm" data-testid="evaluation-compare-metrics">
+        <thead>
+          <tr className="border-b border-border">
+            <th className="px-3 py-2 text-left text-2xs font-medium uppercase tracking-wide text-muted-foreground" scope="col">{copy.metric}</th>
+            <th className="w-14 px-2 py-2 text-right text-2xs font-medium uppercase tracking-wide text-muted-foreground" scope="col">{copy.runA}</th>
+            <th className="w-14 px-2 py-2 text-right text-2xs font-medium uppercase tracking-wide text-muted-foreground" scope="col">{copy.runB}</th>
+            <th className="w-20 px-3 py-2 text-right text-2xs font-medium uppercase tracking-wide text-muted-foreground" scope="col"><abbr className="no-underline" title={copy.deltaNote}>{copy.delta}</abbr></th>
+          </tr>
+        </thead>
+        {groups.map((group) => (
+          <tbody key={group.key}>
+            <tr><th className="bg-technical px-3 py-2 text-left text-xs font-semibold text-muted-foreground" colSpan={4} scope="rowgroup">{group.label}</th></tr>
+            {group.metrics.map((item) => (
+              <tr className="border-t border-border" key={item.key}>
+                <th className="px-3 py-2.5 text-left font-medium text-foreground" scope="row">{item.label}{item.hint ? <span className="mt-0.5 block text-xs font-normal text-muted-foreground">{item.hint}</span> : null}</th>
+                <td className="px-2 py-2.5 text-right"><MetricValue copy={copy} value={item.first} /></td>
+                <td className="px-2 py-2.5 text-right"><MetricValue copy={copy} value={item.second} /></td>
+                <td className="px-3 py-2.5 text-right"><DeltaValue comparable={item.comparable} copy={copy} first={item.first} second={item.second} /></td>
+              </tr>
+            ))}
+          </tbody>
+        ))}
+      </table>
     </div>
   );
 }
@@ -278,11 +388,16 @@ export function EvaluationScreen() {
 
 function EvaluationWorkspace() {
   const { preferences } = usePreferences();
-  const copy = UI_COPY[preferences.locale];
+  const locale = preferences.locale;
+  const allCopy = UI_COPY[locale];
+  const copy = allCopy.evaluation;
+  const retrievalCopy = allCopy.retrieval;
+  const units = allCopy.units;
   const {
     activeDocument,
     activePipeline,
     selectedParseResult: parseResult,
+    persistenceStatus,
     workspaceStatus,
     selectedParseRunId,
     selectedChunkRunId,
@@ -313,81 +428,73 @@ function EvaluationWorkspace() {
   const [judge, setJudge] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [onlyChanged, setOnlyChanged] = useState(true);
-  const [activeTab, setActiveTab] = useState<EvaluationTab>("dataset");
+  const [chosenTab, setChosenTab] = useState<EvaluationTab | null>(null);
   const [selectedCaseIndex, setSelectedCaseIndex] = useState(0);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
+  const [pendingCreateFrom, setPendingCreateFrom] = useState<string[] | null>(null);
+  const tabRefs = useRef<Partial<Record<EvaluationTab, HTMLButtonElement | null>>>({});
 
-  const labels = preferences.locale === "tr"
-    ? {
-        dataset: "Dataset", datasetTab: "Dataset", resultsTab: "Sonuçlar", compareTab: "Karşılaştır", resultsTitle: "Evaluation sonuçları", compareTitle: "Evaluation karşılaştırması", compareDescription: "İki run'ın bağlamını ve değişen ayarlarını karşılaştırın.", datasetDescription: "Golden soruları ve kaynak kanıtlarını sürümlü olarak kaydedin.", name: "Dataset adı", question: "Golden soru", relevant: "Seçili kaynak kanıtı", relevantHint: "Parse edilmiş kaynak öğelerini seçin; ham kimlikler teknik ayrıntılarda kalır.", reference: "Referans cevap (opsiyonel)", create: "Dataset oluştur", needDocument: "Önce kalıcı parse run içeren bir doküman seçin.", selectDataset: "Dataset seç", run: "Evaluation çalıştır", judge: "Gemini judge", judgeModel: "Judge model", needPipeline: "Evaluation için aktif chunk ve embedding run gerekir.", metrics: "Ölçümler", history: "Evaluation geçmişi ve karşılaştırma", compare: "Karşılaştır", advanced: "Gelişmiş ayarlar", addCase: "Case ekle", removeCase: "Case'i kaldır", sourcePicker: "Parse source elementlerinden seç", technicalSources: "Teknik kaynak kimlikleri", noSources: "Aktif parse kaynağı bulunamadı.", newVersion: "Seçili dataset'ten yeni sürüm oluştur", hit: "Hit@K", recall: "Recall@K", precision: "Precision@K", mrr: "MRR", citation: "Citation referans geçerliliği", groundedness: "Faithfulness", cases: "Case sayısı", progress: "Case ilerlemesi", duplicate: "Çoğalt", moveUp: "Yukarı", moveDown: "Aşağı", expected: "Beklenen kaynaklar", retrieved: "Getirilen kaynaklar", answer: "Üretilen cevap", noAnswer: "Generation bu case için çalıştırılmadı.", citations: "Citation'lar", retrievalNote: "Retrieval ve generation metrikleri ayrı hesaplanır.", retrievalQuality: "Retrieval kalitesi", answerQuality: "Answer kalitesi", caseDiagnostics: "Case tanıları", selectedCase: "Seçili case", noData: "Henüz evaluation verisi yok", datasetReady: "Dataset hazır", currentDataset: "Mevcut dataset'ler", runA: "RUN A", runB: "RUN B", metricDeltas: "METRIC DELTALARI", insight: "Karşılaştırılan run'ların ayar farkları görünür; metrik değişimini bu bağlamla birlikte yorumlayın.", noCompare: "Karşılaştırmak için en az iki gerçek evaluation run'ı gerekir.", contextDocument: "Doküman", contextPipeline: "Indexing pipeline", contextDataset: "Dataset", contextConfig: "Yapılandırma", configSummary: "Aktif yapılandırma", rerankerOn: "Reranker açık", rerankerOff: "Reranker kapalı", judgeOn: "Judge açık", judgeOff: "Judge kapalı", same: "Aynı", different: "Farklı", unknown: "Kayıtlı değil", compatibility: "Bağlam uyumluluğu", onlyChanged: "Yalnızca değişenler", changedSettings: "Değişen ayarlar", noChanges: "Kayıtlı yapılandırma farkı yok.", included: "Dahil edildi", excluded: "Çıkarıldı",
-      }
-    : {
-        dataset: "Dataset", datasetTab: "Dataset", resultsTab: "Results", compareTab: "Compare", resultsTitle: "Evaluation results", compareTitle: "Compare evaluation runs", compareDescription: "Compare the context and changed settings of two runs.", datasetDescription: "Save golden questions and source evidence as a versioned dataset.", name: "Dataset name", question: "Golden question", relevant: "Selected source evidence", relevantHint: "Choose parsed source elements; raw IDs stay inside technical details.", reference: "Reference answer (optional)", create: "Create dataset", needDocument: "Select a persisted document with a parse run first.", selectDataset: "Select dataset", run: "Run evaluation", judge: "Gemini judge", judgeModel: "Judge model", needPipeline: "Evaluation requires active chunk and embedding runs.", metrics: "Metrics", history: "Evaluation history and comparison", compare: "Compare", advanced: "Advanced settings", addCase: "Add case", removeCase: "Remove case", sourcePicker: "Select from parsed source elements", technicalSources: "Technical source IDs", noSources: "No active parsed source elements are available.", newVersion: "Create a new version from the selected dataset", hit: "Hit@K", recall: "Recall@K", precision: "Precision@K", mrr: "MRR", citation: "Citation reference validity", groundedness: "Faithfulness", cases: "Cases", progress: "Case progress", duplicate: "Duplicate", moveUp: "Move up", moveDown: "Move down", expected: "Expected sources", retrieved: "Retrieved sources", answer: "Generated answer", noAnswer: "Generation was not run for this case.", citations: "Citations", retrievalNote: "Retrieval and generation metrics are calculated separately.", retrievalQuality: "Retrieval quality", answerQuality: "Answer quality", caseDiagnostics: "Case diagnostics", selectedCase: "Selected case", noData: "No evaluation data yet", datasetReady: "Dataset ready", currentDataset: "Current datasets", runA: "RUN A", runB: "RUN B", metricDeltas: "METRIC DELTAS", insight: "The selected runs' configuration changes remain visible beside their metric deltas; use that context to interpret the result.", noCompare: "At least two real evaluation runs are required to compare.", contextDocument: "Document", contextPipeline: "Indexing pipeline", contextDataset: "Dataset", contextConfig: "Configuration", configSummary: "Active configuration", rerankerOn: "Reranker on", rerankerOff: "Reranker off", judgeOn: "Judge on", judgeOff: "Judge off", same: "Same", different: "Different", unknown: "Not recorded", compatibility: "Context compatibility", onlyChanged: "Only changed", changedSettings: "Changed settings", noChanges: "No recorded configuration differences.", included: "Included", excluded: "Excluded",
-      };
+  // A created dataset becomes the selection and the results view (the next step is running it).
+  if (pendingCreateFrom) {
+    const created = evaluationDatasets.find((dataset) => !pendingCreateFrom.includes(dataset.id));
+    if (created) {
+      setPendingCreateFrom(null);
+      setDatasetId(created.id);
+      setBaseDatasetId(created.id);
+      setSubmitAttempted(false);
+      setChosenTab("results");
+    }
+  }
+  // Smart default: with a dataset the next step is running it, without one it is creating one.
+  const activeTab: EvaluationTab = chosenTab ?? (evaluationDatasets.length ? "results" : "dataset");
+  const editForm = () => { if (chosenTab === null) setChosenTab("dataset"); };
 
-  const datasetBlocker = firstBlocker(preferences.locale, [
-    [workspaceStatus === "loading", "loading"],
-    [evaluationStatus === "processing", "processing"],
-    [!activeDocument?.id, "missing_document"],
-    [!selectedParseRunId, "missing_parse"],
-    [!datasetName.trim(), "missing_dataset_name"],
-    [!question.trim(), "missing_question"],
-    [expectedOutcome === "answer" && !elementIds.trim(), "missing_sources"],
-    [additionalCases.some((item) => !item.question.trim()), "missing_question"],
-    [additionalCases.some((item) => item.expectedOutcome === "answer" && !item.elements.trim()), "missing_sources"],
-  ]);
-  const canCreateDataset = !datasetBlocker;
+  const lineageInput = {
+    document: activeDocument,
+    pipeline: activePipeline,
+    selection: { selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId },
+    parseRun: activeDocument?.parseRuns?.find((run) => run.id === selectedParseRunId) ?? null,
+    chunkRun: activeDocument?.chunkRuns?.find((run) => run.id === selectedChunkRunId) ?? null,
+    embeddingRun: mode === "keyword" ? null : activeDocument?.embeddingRuns?.find((run) => run.id === selectedEmbeddingRunId) ?? null,
+    persistenceStatus,
+    workspaceStatus,
+    processing: evaluationStatus === "processing",
+  };
+  const datasetAvailability = getPipelineAvailability(locale, "dataset", lineageInput);
+  const formError = !datasetName.trim()
+    ? blocker(locale, "missing_dataset_name").message
+    : !question.trim() || additionalCases.some((item) => !item.question.trim())
+      ? copy.enterQuestion
+      : (expectedOutcome === "answer" && !elementIds.trim()) || additionalCases.some((item) => item.expectedOutcome === "answer" && !item.elements.trim())
+        ? blocker(locale, "missing_sources").message
+        : null;
+  // A pristine form is not an error: validation speaks only after input or a submit attempt.
+  const formDirty = Boolean(datasetName || question || elementIds || referenceAnswer || additionalCases.length);
+  const showFormError = Boolean(formError) && (submitAttempted || formDirty);
   // A dataset choice only counts while it belongs to the current lineage's dataset list.
   const selectedDatasetId = evaluationDatasets.some((dataset) => dataset.id === datasetId) ? datasetId : evaluationDatasets[0]?.id ?? "";
-  const evaluationBlocker = firstBlocker(preferences.locale, [
-    [workspaceStatus === "loading", "loading"],
-    [evaluationStatus === "processing", "processing"],
-    [!activeDocument?.id, "missing_document"],
-    [!selectedDatasetId, "missing_dataset"],
-    [!selectedChunkRunId, "missing_chunk"],
-    [mode !== "keyword" && !selectedEmbeddingRunId, "missing_embedding"],
-  ]);
-  const canRun = !evaluationBlocker;
+  const runAvailability = getPipelineAvailability(locale, "evaluation", { ...lineageInput, hasDataset: Boolean(selectedDatasetId), retrievalMode: mode });
+  const canRun = runAvailability.allowed;
+  const showRunBlocker = !runAvailability.allowed && !["loading", "processing", "missing_dataset"].includes(runAvailability.code ?? "");
+  const showDatasetBlocker = !datasetAvailability.allowed && datasetAvailability.code !== "loading" && datasetAvailability.code !== "processing";
   const selectedRuns = useMemo(() => compareIds.map((id) => evaluationHistory.find((run) => run.id === id)).filter((run): run is EvaluationRun => Boolean(run)).slice(0, 2), [compareIds, evaluationHistory]);
   const selectedDataset = evaluationDatasets.find((dataset) => dataset.id === selectedDatasetId);
   const completedCases = evaluationRun?.caseResults?.length ?? 0;
   const totalCases = selectedDataset?.caseCount ?? 0;
-  const activeCaseIndex = evaluationRun?.caseResults?.[selectedCaseIndex] ? selectedCaseIndex : 0;
-  const parseElements = parseResult?.structured.pages.flatMap((page) => page.elements) ?? [];
-  const activeConfigSummary = `${copy.retrieval.modes[mode]} · Top ${topK} · ${reranker ? labels.rerankerOn : labels.rerankerOff} · ${judge ? labels.judgeOn : labels.judgeOff}`;
-  const comparisonConfigs = selectedRuns.length >= 2 ? selectedRuns.slice(0, 2).map((run) => evaluationConfig(run)) : [];
-  const comparisonSettings: Array<{ key: string; label: string; first: string | number | boolean | null; second: string | number | boolean | null }> = comparisonConfigs.length === 2 ? [
-    { key: "retrieval", label: preferences.locale === "tr" ? "Retrieval modu" : "Retrieval mode", first: comparisonConfigs[0].retrievalMode, second: comparisonConfigs[1].retrievalMode },
-    { key: "topK", label: "Top K", first: comparisonConfigs[0].topK, second: comparisonConfigs[1].topK },
-    { key: "reranker", label: preferences.locale === "tr" ? "Reranker" : "Reranker", first: comparisonConfigs[0].rerankerEnabled, second: comparisonConfigs[1].rerankerEnabled },
-    { key: "candidateCount", label: preferences.locale === "tr" ? "Rerank aday sayısı" : "Reranker candidates", first: comparisonConfigs[0].candidateCount, second: comparisonConfigs[1].candidateCount },
-    { key: "context", label: preferences.locale === "tr" ? "Context token bütçesi" : "Context token budget", first: comparisonConfigs[0].tokenBudget, second: comparisonConfigs[1].tokenBudget },
-    { key: "temperature", label: "Temperature", first: comparisonConfigs[0].temperature, second: comparisonConfigs[1].temperature },
-    { key: "maxOutputTokens", label: preferences.locale === "tr" ? "Maksimum çıktı token'ı" : "Max output tokens", first: comparisonConfigs[0].maxOutputTokens, second: comparisonConfigs[1].maxOutputTokens },
-    { key: "judge", label: labels.judge, first: comparisonConfigs[0].judge, second: comparisonConfigs[1].judge },
-  ] : [];
-  const comparisonContext = comparisonConfigs.length === 2 ? [
-    { key: "dataset", label: preferences.locale === "tr" ? "Aynı dataset mi?" : "Same dataset?", state: comparableValue(selectedRuns[0].datasetId, selectedRuns[1].datasetId) },
-    { key: "pipeline", label: preferences.locale === "tr" ? "Aynı pipeline mı?" : "Same pipeline?", state: comparableValue(comparisonConfigs[0].pipelineId ?? stringValue(selectedRuns[0].upstream.pipelineId), comparisonConfigs[1].pipelineId ?? stringValue(selectedRuns[1].upstream.pipelineId)) },
-    { key: "embedding", label: preferences.locale === "tr" ? "Aynı embedding mi?" : "Same embedding?", state: comparableValue(comparisonConfigs[0].embeddingRunId, comparisonConfigs[1].embeddingRunId) },
-    { key: "settings", label: preferences.locale === "tr" ? "Değişen ayarlar?" : "Changed settings?", state: comparisonSettings.some((item) => item.first !== null && item.second !== null && item.first !== item.second) ? "different" as const : "same" as const },
-  ] : [];
-  const changedSettings = comparisonSettings.filter((item) => item.first !== null && item.second !== null && item.first !== item.second);
-  const visibleComparisonSettings = onlyChanged ? changedSettings : comparisonSettings;
-
-  function comparisonValue(value: string | number | boolean | null) {
-    if (value === null) return labels.unknown;
-    if (typeof value === "string" && value in copy.retrieval.modes) return copy.retrieval.modes[value as RetrievalMode];
-    return String(value);
-  }
-
-  function comparisonSettingValue(key: string, value: string | number | boolean | null) {
-    if (typeof value === "boolean") return key === "judge" ? (value ? labels.judgeOn : labels.judgeOff) : (value ? labels.rerankerOn : labels.rerankerOff);
-    return comparisonValue(value);
-  }
-
-  function comparisonStateLabel(state: "same" | "different" | "unknown") {
-    return state === "same" ? labels.same : state === "different" ? labels.different : labels.unknown;
-  }
+  const parseElements = useMemo(() => buildPickerElements(parseResult?.structured.pages.flatMap((page) => page.elements) ?? [], copy, locale), [copy, locale, parseResult]);
+  const configSummary = (config: { retrievalMode: string | null; topK: number | string | null; rerankerEnabled: boolean | null; judge: boolean | null }) => [
+    config.retrievalMode && config.retrievalMode in retrievalCopy.modes ? retrievalCopy.modes[config.retrievalMode as RetrievalMode] : config.retrievalMode ?? "—",
+    interpolate(copy.configTopK, { k: config.topK ?? "—" }),
+    config.rerankerEnabled ? copy.rerankerOn : copy.rerankerOff,
+    config.judge ? copy.judgeOn : copy.judgeOff,
+  ].join(" · ");
+  const activeConfigSummary = configSummary({ retrievalMode: mode, topK, rerankerEnabled: reranker, judge });
+  const historyPosition = (runId: string) => {
+    const index = evaluationHistory.findIndex((run) => run.id === runId);
+    return index < 0 ? 1 : evaluationHistory.length - index;
+  };
+  const evaluationName = (run: EvaluationRun) => runName(allCopy, "evaluation", run.runNumber ?? historyPosition(run.id));
+  const methodLabel = (method: GenerationMetricMethod | null | undefined) => method ? copy.methods[method] : copy.unknown;
 
   useEffect(() => {
     if (selectedDatasetId) {
@@ -396,11 +503,30 @@ function EvaluationWorkspace() {
     }
   }, [loadEvaluationDataset, refreshEvaluationRuns, selectedDatasetId]);
 
+  function selectTab(tab: EvaluationTab) {
+    setChosenTab(tab);
+  }
+
+  function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    const index = TABS.indexOf(activeTab);
+    const next = event.key === "ArrowRight" ? TABS[(index + 1) % TABS.length]
+      : event.key === "ArrowLeft" ? TABS[(index - 1 + TABS.length) % TABS.length]
+        : event.key === "Home" ? TABS[0]
+          : event.key === "End" ? TABS[TABS.length - 1]
+            : null;
+    if (!next) return;
+    event.preventDefault();
+    selectTab(next);
+    tabRefs.current[next]?.focus();
+  }
+
   function handleCreateDataset() {
-    if (!canCreateDataset) return;
+    setSubmitAttempted(true);
+    if (!datasetAvailability.allowed || formError) return;
+    setPendingCreateFrom(evaluationDatasets.map((dataset) => dataset.id));
     void createDataset(datasetName.trim(), [
-      { question: question.trim(), relevantElementIds: elementIds.split(",").map((value) => value.trim()).filter(Boolean), referenceAnswer: referenceAnswer.trim() || null, expectedOutcome },
-      ...additionalCases.map((item) => ({ question: item.question.trim(), relevantElementIds: item.elements.split(",").map((value) => value.trim()).filter(Boolean), referenceAnswer: item.reference.trim() || null, expectedOutcome: item.expectedOutcome })),
+      { question: question.trim(), relevantElementIds: splitIds(elementIds), referenceAnswer: referenceAnswer.trim() || null, expectedOutcome },
+      ...additionalCases.map((item) => ({ question: item.question.trim(), relevantElementIds: splitIds(item.elements), referenceAnswer: item.reference.trim() || null, expectedOutcome: item.expectedOutcome })),
     ], evaluationDatasets.some((dataset) => dataset.id === baseDatasetId) ? baseDatasetId : null);
   }
 
@@ -420,167 +546,392 @@ function EvaluationWorkspace() {
     setCompareIds((current) => current.includes(runId) ? current.filter((id) => id !== runId) : current.length < 2 ? [...current, runId] : [current[1], runId]);
   }
 
-  const tabs: Array<[EvaluationTab, string]> = [["dataset", labels.datasetTab], ["results", labels.resultsTab], ["compare", labels.compareTab]];
+  function updateCase(index: number, patch: Partial<DraftEvaluationCase>) {
+    editForm();
+    setAdditionalCases((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, ...patch } : entry));
+  }
 
+  const comparisonConfigs = selectedRuns.length >= 2 ? selectedRuns.map((run) => evaluationConfig(run)) : [];
+  const comparisonSettings: Array<{ key: keyof EvaluationCopy["settings"]; first: string | number | boolean | null; second: string | number | boolean | null }> = comparisonConfigs.length === 2 ? [
+    { key: "retrieval", first: comparisonConfigs[0].retrievalMode, second: comparisonConfigs[1].retrievalMode },
+    { key: "topK", first: comparisonConfigs[0].topK, second: comparisonConfigs[1].topK },
+    { key: "reranker", first: comparisonConfigs[0].rerankerEnabled, second: comparisonConfigs[1].rerankerEnabled },
+    { key: "candidateCount", first: comparisonConfigs[0].candidateCount, second: comparisonConfigs[1].candidateCount },
+    { key: "context", first: comparisonConfigs[0].tokenBudget, second: comparisonConfigs[1].tokenBudget },
+    { key: "temperature", first: comparisonConfigs[0].temperature, second: comparisonConfigs[1].temperature },
+    { key: "maxOutputTokens", first: comparisonConfigs[0].maxOutputTokens, second: comparisonConfigs[1].maxOutputTokens },
+    { key: "judge", first: comparisonConfigs[0].judge, second: comparisonConfigs[1].judge },
+  ] : [];
+  const changedSettings = comparisonSettings.filter((item) => item.first !== null && item.second !== null && item.first !== item.second);
+  const visibleComparisonSettings = onlyChanged ? changedSettings : comparisonSettings;
+  const comparisonChecks = comparisonConfigs.length === 2 ? [
+    { key: "dataset" as const, state: comparableValue(selectedRuns[0].datasetId, selectedRuns[1].datasetId) },
+    { key: "pipeline" as const, state: comparableValue(comparisonConfigs[0].pipelineId ?? stringValue(selectedRuns[0].upstream.pipelineId), comparisonConfigs[1].pipelineId ?? stringValue(selectedRuns[1].upstream.pipelineId)) },
+    { key: "embedding" as const, state: comparableValue(comparisonConfigs[0].embeddingRunId, comparisonConfigs[1].embeddingRunId) },
+  ] : [];
+
+  function settingValue(key: keyof EvaluationCopy["settings"], value: string | number | boolean | null) {
+    if (value === null) return copy.unknown;
+    if (typeof value === "boolean") return key === "judge" ? (value ? copy.judgeOn : copy.judgeOff) : (value ? copy.rerankerOn : copy.rerankerOff);
+    if (typeof value === "string" && value in retrievalCopy.modes) return retrievalCopy.modes[value as RetrievalMode];
+    return typeof value === "number" ? formatNumber(locale, value) : value;
+  }
+
+  const panelClass = "mt-6";
   return (
-    <div className="min-w-0 overflow-x-clip bg-background" data-testid="evaluation-screen">
+    <div className="min-w-0 bg-background" data-testid="evaluation-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
-        <header className="h-[92px]" data-testid="evaluation-page-header">
-          <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-brand">TEST</p>
-          <h1 className="mt-1 text-[30px] font-semibold leading-9 tracking-[-0.02em] text-foreground">{copy.evaluation.title}</h1>
-          <p className="mt-1 max-w-[680px] text-sm leading-5 text-muted-foreground">{copy.evaluation.description}</p>
-        </header>
+        <PageHeader data-testid="evaluation-page-header" description={copy.description} title={copy.title} />
 
-        <section aria-label={preferences.locale === "tr" ? "Evaluation bağlam özeti" : "Evaluation context summary"} className="mt-4 rounded-[14px] border border-border bg-card px-4 py-2.5" data-testid="evaluation-workspace-context">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center">
-            <div className="min-w-0 md:flex-[0_1_18rem]">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{labels.contextDataset}</p>
-              <h2 className="mt-1 truncate text-[14px] font-semibold text-foreground">{selectedDataset?.name ?? (preferences.locale === "tr" ? "Dataset seçilmedi" : "No dataset selected")}</h2>
-              {selectedDataset ? <p className="mt-0.5 text-[11px] text-muted-foreground">v{selectedDataset.version} · {selectedDataset.caseCount} {labels.cases}</p> : null}
-            </div>
-            <div className="min-w-0 md:flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{labels.configSummary}</p><p className="mt-1 break-words text-[13px] font-medium text-foreground" data-testid="evaluation-config-summary">{activeConfigSummary}</p></div>
-            <div className="self-start md:ml-auto md:self-auto">{selectedDataset ? statusPill(labels.datasetReady) : statusPill(preferences.locale === "tr" ? "Dataset gerekli" : "Dataset needed", "muted")}</div>
+        <section aria-label={copy.contextLabel} className="mt-6 rounded-lg border border-border bg-card px-4 py-3" data-testid="evaluation-workspace-context">
+          <div className="flex flex-col gap-1 md:flex-row md:items-center md:gap-3">
+            <p className="min-w-0 truncate text-sm font-medium text-foreground">
+              {selectedDataset ? selectedDataset.name : copy.noDataset}
+              {selectedDataset ? <span className="font-normal text-muted-foreground tabular-nums"> {interpolate(copy.datasetVersion, { version: selectedDataset.version })} · {formatCount(locale, selectedDataset.caseCount, units.question)}</span> : null}
+            </p>
+            <span aria-hidden="true" className="hidden text-subtle-foreground md:inline">—</span>
+            <p className="min-w-0 break-words text-sm text-muted-foreground" data-testid="evaluation-config-summary">{activeConfigSummary}</p>
+            {!selectedDataset ? <StatusPill className="md:ml-auto" tone="idle">{copy.datasetNeeded}</StatusPill> : null}
           </div>
         </section>
 
-        <nav aria-label={preferences.locale === "tr" ? "Evaluation görünümleri" : "Evaluation views"} className="mt-4 border-b border-border" data-testid="evaluation-tabs" role="tablist">
-          <SlidingTabs className="flex gap-2" underline value={activeTab}>{tabs.map(([tab, label]) => <button aria-controls={`evaluation-panel-${tab}`} aria-selected={activeTab === tab} className={activeTab === tab ? "border-b-2 border-brand px-1 py-2.5 text-[13px] font-medium text-foreground" : "border-b-2 border-transparent px-1 py-2.5 text-[13px] font-medium text-muted-foreground hover:text-accent-foreground"} data-testid={`evaluation-tab-${tab}`} id={`evaluation-tab-${tab}`} key={tab} onClick={() => setActiveTab(tab)} role="tab" type="button">{label}</button>)}</SlidingTabs>
-        </nav>
+        <div className="mt-4 border-b border-border">
+          <SlidingTabs aria-label={copy.tabsLabel} className="flex gap-2" data-testid="evaluation-tabs" role="tablist" underline value={activeTab}>
+            {TABS.map((tab) => (
+              <button
+                aria-controls={activeTab === tab ? `evaluation-panel-${tab}` : undefined}
+                aria-selected={activeTab === tab}
+                className={activeTab === tab ? "border-b-2 border-foreground px-1 py-2.5 text-sm font-medium text-foreground" : "border-b-2 border-transparent px-1 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground"}
+                data-testid={`evaluation-tab-${tab}`}
+                id={`evaluation-tab-${tab}`}
+                key={tab}
+                onClick={() => selectTab(tab)}
+                onKeyDown={handleTabKeyDown}
+                ref={(element) => { tabRefs.current[tab] = element; }}
+                role="tab"
+                tabIndex={activeTab === tab ? 0 : -1}
+                type="button"
+              >
+                {copy.tabs[tab]}
+              </button>
+            ))}
+          </SlidingTabs>
+        </div>
 
         {activeTab === "dataset" ? (
-          <TransitionPanel as="section" transitionKey={activeTab} aria-labelledby="evaluation-tab-dataset" className="mt-6" data-testid="evaluation-panel-dataset" id="evaluation-panel-dataset" role="tabpanel">
-            <div>
-              <div><h2 className="text-[18px] font-semibold text-foreground">{labels.dataset}</h2><p className="mt-1 max-w-[600px] text-[13px] leading-5 text-muted-foreground">{labels.datasetDescription}</p></div>
-              <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-                  <div className="grid gap-3.5 rounded-[14px] border border-border bg-card p-4 sm:grid-cols-2">
-                   <label className="text-[13px] font-medium text-foreground" htmlFor="dataset-name">{labels.name}<Input className="mt-1.5 h-9 text-[13px]" id="dataset-name" onChange={(event) => setDatasetName(event.target.value)} value={datasetName} /></label>
-                   <label className="text-[13px] font-medium text-foreground" htmlFor="golden-question">{labels.question}<Input className="mt-1.5 h-9 text-[13px]" id="golden-question" onChange={(event) => setQuestion(event.target.value)} value={question} /></label>
-                   <OutcomeSelect id="expected-outcome" locale={preferences.locale} onChange={setExpectedOutcome} value={expectedOutcome} />
-                   {expectedOutcome === "answer" ? <div className="sm:col-span-2"><SourcePicker ariaLabel={labels.sourcePicker} elements={parseElements} inputId="relevant-elements" labels={labels} locale={preferences.locale} onChange={setElementIds} value={elementIds} /></div> : <p className="rounded-[12px] border border-warning-border bg-warning-subtle p-3 text-xs leading-5 text-warning sm:col-span-2" data-testid="insufficient-context-case-hint">{preferences.locale === "tr" ? "Bu case doğru bir şekilde cevap verilmemesini ölçer; kaynak kanıtı zorunlu değildir." : "This case measures correct abstention; source evidence is not required."}</p>}
-                   <label className="text-[13px] font-medium text-foreground sm:col-span-2" htmlFor="reference-answer">{labels.reference}<Input className="mt-1.5 h-9 text-[13px]" id="reference-answer" onChange={(event) => setReferenceAnswer(event.target.value)} value={referenceAnswer} /></label>
-                  {additionalCases.length ? <div className="space-y-2.5 sm:col-span-2"><h3 className="text-[13px] font-semibold text-foreground">{preferences.locale === "tr" ? "Ek golden case'ler" : "Additional golden cases"}</h3>{additionalCases.map((item, index) => <div className="grid gap-2.5 rounded-[10px] border border-border p-3 sm:grid-cols-2" key={`case-${index}`}><label className="text-[12px] font-medium" htmlFor={`case-question-${index}`}>{labels.question}<Input className="mt-1.5 h-9 text-[13px]" id={`case-question-${index}`} onChange={(event) => setAdditionalCases((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, question: event.target.value } : entry))} value={item.question} /></label><OutcomeSelect id={`case-outcome-${index}`} locale={preferences.locale} onChange={(value) => setAdditionalCases((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, expectedOutcome: value } : entry))} value={item.expectedOutcome} />{item.expectedOutcome === "answer" ? <div className="sm:col-span-2"><SourcePicker ariaLabel={`${labels.sourcePicker} ${index + 2}`} elements={parseElements} inputId={`case-elements-${index}`} labels={labels} locale={preferences.locale} onChange={(value) => setAdditionalCases((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, elements: value } : entry))} value={item.elements} /></div> : <p className="rounded-[9px] border border-warning-border bg-warning-subtle p-2.5 text-xs text-warning sm:col-span-2">{preferences.locale === "tr" ? "Kaynak kanıtı gerekmez." : "Source evidence is not required."}</p>}<label className="text-[12px] font-medium sm:col-span-2" htmlFor={`case-reference-${index}`}>{labels.reference}<Input className="mt-1.5 h-9 text-[13px]" id={`case-reference-${index}`} onChange={(event) => setAdditionalCases((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, reference: event.target.value } : entry))} value={item.reference} /></label><div className="flex flex-wrap gap-1.5 sm:col-span-2"><Button onClick={() => setAdditionalCases((current) => [...current.slice(0, index + 1), { ...item }, ...current.slice(index + 1)])} size="sm" variant="outline">{labels.duplicate}</Button><Button disabled={index === 0} onClick={() => setAdditionalCases((current) => { const next = [...current]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next; })} size="sm" variant="ghost">{labels.moveUp}</Button><Button disabled={index === additionalCases.length - 1} onClick={() => setAdditionalCases((current) => { const next = [...current]; [next[index], next[index + 1]] = [next[index + 1], next[index]]; return next; })} size="sm" variant="ghost">{labels.moveDown}</Button><Button onClick={() => setAdditionalCases((current) => current.filter((_, entryIndex) => entryIndex !== index))} size="sm" variant="ghost">{labels.removeCase}</Button></div></div>)}</div> : null}
-                  <Button className="w-fit" onClick={() => setAdditionalCases((current) => [...current, { question: "", elements: "", reference: "", expectedOutcome: "answer" }])} size="sm" type="button" variant="outline"><AppIcon name="plus" className="size-4" />{labels.addCase}</Button>
+          <TransitionPanel aria-labelledby="evaluation-tab-dataset" as="section" className={panelClass} data-testid="evaluation-panel-dataset" id="evaluation-panel-dataset" role="tabpanel" transitionKey={activeTab}>
+            <p className="text-sm text-muted-foreground">{copy.datasetIntro}</p>
+            <div className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
+              <div className="min-w-0 rounded-lg border border-border bg-card p-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="text-sm font-medium text-foreground" htmlFor="dataset-name">{copy.name}<Input className="mt-1.5" id="dataset-name" onChange={(event) => { editForm(); setDatasetName(event.target.value); }} value={datasetName} /></label>
+                  <label className="text-sm font-medium text-foreground" htmlFor="golden-question">{copy.question}<Input className="mt-1.5" id="golden-question" onChange={(event) => { editForm(); setQuestion(event.target.value); }} value={question} /></label>
+                  <OutcomeSelect copy={copy} id="expected-outcome" onChange={(value) => { editForm(); setExpectedOutcome(value); }} value={expectedOutcome} />
+                  {expectedOutcome === "answer"
+                    ? <SourcePicker copy={copy} elementTypes={allCopy.documents.elementTypes} elements={parseElements} inputId="relevant-elements" locale={locale} onChange={(value) => { editForm(); setElementIds(value); }} value={elementIds} />
+                    : <p className="text-xs text-muted-foreground sm:col-span-2" data-testid="insufficient-context-case-hint">{copy.abstentionHint}</p>}
+                  <label className="text-sm font-medium text-foreground sm:col-span-2" htmlFor="reference-answer">{copy.reference}<Input className="mt-1.5" id="reference-answer" onChange={(event) => { editForm(); setReferenceAnswer(event.target.value); }} value={referenceAnswer} /></label>
                 </div>
-                <aside className="rounded-[14px] border border-border bg-card p-4"><h3 className="text-[13px] font-semibold text-foreground">{labels.currentDataset}</h3><p className="mt-1 text-[11.5px] leading-[18px] text-muted-foreground">{preferences.locale === "tr" ? "Dataset sürümleri burada görünür ve yeni versiyon için seçilebilir." : "Persisted dataset versions appear here and can be selected as a base."}</p>{evaluationDatasets.length ? <div className="mt-3 space-y-1.5">{evaluationDatasets.map((dataset) => <button className={dataset.id === baseDatasetId || dataset.id === selectedDatasetId ? "block w-full rounded-[9px] border border-accent-border bg-accent px-3 py-2.5 text-left" : "block w-full rounded-[9px] border border-border bg-card px-3 py-2.5 text-left hover:border-accent-border"} key={dataset.id} onClick={() => { setDatasetId(dataset.id); setBaseDatasetId(dataset.id); }} type="button"><span className="block text-[13px] font-medium text-foreground">{dataset.name} · v{dataset.version}</span><span className="mt-0.5 block text-[11px] text-muted-foreground">{dataset.caseCount} {labels.cases}</span></button>)}</div> : <div className="mt-3 rounded-[9px] border border-dashed border-input p-3 text-xs leading-5 text-muted-foreground">{copy.evaluation.emptyDescription}</div>}</aside>
+                {additionalCases.map((item, index) => (
+                  <fieldset className="mt-5 grid min-w-0 gap-4 border-t border-border pt-4 sm:grid-cols-2" key={`case-${index}`}>
+                    <legend className="float-left text-xs font-semibold text-muted-foreground sm:col-span-2">{interpolate(copy.questionNumber, { number: index + 2 })}</legend>
+                    <label className="clear-left text-sm font-medium text-foreground" htmlFor={`case-question-${index}`}>{copy.question}<Input className="mt-1.5" id={`case-question-${index}`} onChange={(event) => updateCase(index, { question: event.target.value })} value={item.question} /></label>
+                    <OutcomeSelect copy={copy} id={`case-outcome-${index}`} onChange={(value) => updateCase(index, { expectedOutcome: value })} value={item.expectedOutcome} />
+                    {item.expectedOutcome === "answer"
+                      ? <SourcePicker copy={copy} elementTypes={allCopy.documents.elementTypes} elements={parseElements} inputId={`case-elements-${index}`} locale={locale} onChange={(value) => updateCase(index, { elements: value })} value={item.elements} />
+                      : <p className="text-xs text-muted-foreground sm:col-span-2">{copy.noEvidenceNeeded}</p>}
+                    <label className="text-sm font-medium text-foreground sm:col-span-2" htmlFor={`case-reference-${index}`}>{copy.reference}<Input className="mt-1.5" id={`case-reference-${index}`} onChange={(event) => updateCase(index, { reference: event.target.value })} value={item.reference} /></label>
+                    <div className="flex flex-wrap gap-1.5 sm:col-span-2">
+                      <Button onClick={() => { editForm(); setAdditionalCases((current) => [...current.slice(0, index + 1), { ...item }, ...current.slice(index + 1)]); }} size="sm" type="button" variant="outline">{copy.duplicate}</Button>
+                      <Button disabled={index === 0} onClick={() => setAdditionalCases((current) => { const next = [...current]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next; })} size="sm" type="button" variant="ghost">{copy.moveUp}</Button>
+                      <Button disabled={index === additionalCases.length - 1} onClick={() => setAdditionalCases((current) => { const next = [...current]; [next[index], next[index + 1]] = [next[index + 1], next[index]]; return next; })} size="sm" type="button" variant="ghost">{copy.moveDown}</Button>
+                      <Button onClick={() => setAdditionalCases((current) => current.filter((_, entryIndex) => entryIndex !== index))} size="sm" type="button" variant="ghost">{copy.removeCase}</Button>
+                    </div>
+                  </fieldset>
+                ))}
+                <Button className="mt-5" onClick={() => { editForm(); setAdditionalCases((current) => [...current, { question: "", elements: "", reference: "", expectedOutcome: "answer" }]); }} size="sm" type="button" variant="outline"><AppIcon name="plus" className="size-4" />{copy.addCase}</Button>
               </div>
-              <div className="mt-3 flex max-w-[760px] flex-wrap items-start gap-3 border-t border-border pt-3"><Button aria-describedby={!canCreateDataset ? "dataset-disabled-reason" : undefined} aria-busy={evaluationStatus === "processing"} className="h-9 gap-2 rounded-[9px] px-3.5 text-[13px]" disabled={!canCreateDataset} onClick={handleCreateDataset}><AppIcon name="database" className="size-3.5" />{labels.create}</Button>{!canCreateDataset ? <DisabledReason id="dataset-disabled-reason">{datasetBlocker?.message}</DisabledReason> : null}</div>
+              <aside aria-labelledby="evaluation-datasets-title" className="min-w-0">
+                <h3 className="text-sm font-semibold text-foreground" id="evaluation-datasets-title">{copy.datasets}</h3>
+                {evaluationDatasets.length ? (
+                  <ul className="mt-2 space-y-1.5">
+                    {evaluationDatasets.map((dataset) => (
+                      <li key={dataset.id}>
+                        <button aria-pressed={dataset.id === selectedDatasetId} className={dataset.id === selectedDatasetId ? "block w-full rounded-md border border-hover-border bg-secondary px-3 py-2 text-left" : "block w-full rounded-md border border-border bg-card px-3 py-2 text-left hover:bg-surface-subtle"} onClick={() => { setDatasetId(dataset.id); setBaseDatasetId(dataset.id); }} type="button">
+                          <span className="block truncate text-sm font-medium text-foreground">{dataset.name} · {interpolate(copy.datasetVersion, { version: dataset.version })}</span>
+                          <span className="mt-0.5 block text-xs text-muted-foreground tabular-nums">{formatCount(locale, dataset.caseCount, units.question)}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="mt-2 text-xs text-muted-foreground">{copy.noDatasets}</p>}
+              </aside>
             </div>
+            <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+              <Button aria-busy={evaluationStatus === "processing"} aria-describedby={showDatasetBlocker ? "dataset-disabled-reason" : showFormError ? "dataset-form-error" : undefined} disabled={!datasetAvailability.allowed} onClick={handleCreateDataset}><AppIcon name="database" className="size-3.5" />{copy.create}</Button>
+              {showDatasetBlocker ? <StageBlocker blocker={datasetAvailability} id="dataset-disabled-reason" /> : showFormError ? <p className={cn("text-xs", submitAttempted ? "text-destructive" : "text-muted-foreground")} id="dataset-form-error" role="status">{formError}</p> : null}
+            </div>
+            {evaluationError && activeTab === "dataset" ? <div className="mt-3"><PipelineErrorMessage message={evaluationError.message} /></div> : null}
           </TransitionPanel>
         ) : null}
 
         {activeTab === "results" ? (
-          <TransitionPanel as="section" transitionKey={activeTab} aria-labelledby="evaluation-tab-results" className="mt-6" data-testid="evaluation-panel-results" id="evaluation-panel-results" role="tabpanel">
-            <div className="rounded-[14px] border border-border bg-card p-4">
-              <div className="flex flex-wrap items-end gap-x-8 gap-y-4">
-                <label className="min-w-[180px] text-[12.5px] font-medium text-muted-foreground" htmlFor="evaluation-dataset">{labels.selectDataset}<Select onValueChange={(value) => { setDatasetId(value); setBaseDatasetId(value); }} value={selectedDatasetId}><SelectTrigger className="mt-2 h-9 text-[13px]" id="evaluation-dataset"><SelectValue placeholder={labels.selectDataset} /></SelectTrigger><SelectContent>{evaluationDatasets.map((dataset) => <SelectItem key={dataset.id} value={dataset.id}>{dataset.name} · v{dataset.version}</SelectItem>)}</SelectContent></Select></label>
-                <fieldset><legend className="text-[12.5px] font-medium text-muted-foreground">Retrieval</legend><div className="mt-2 flex h-9 items-center rounded-[9px] border border-border bg-secondary p-1">{(["dense", "hybrid", "keyword"] as const).map((value) => <button aria-pressed={mode === value} className={mode === value ? "h-full rounded-[7px] bg-card px-3 text-[12px] font-medium text-foreground shadow-sm" : "h-full rounded-[7px] px-3 text-[12px] text-muted-foreground"} key={value} onClick={() => setMode(value)} type="button">{copy.retrieval.modes[value]}</button>)}</div></fieldset>
-                <label className="text-[12.5px] font-medium text-muted-foreground" htmlFor="evaluation-top-k">Top K<Select onValueChange={setTopK} value={topK}><SelectTrigger className="mt-2 h-9 w-[76px] text-[13px]" id="evaluation-top-k"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="3">3</SelectItem><SelectItem value="5">5</SelectItem><SelectItem value="10">10</SelectItem></SelectContent></Select></label>
+          <TransitionPanel aria-labelledby="evaluation-tab-results" as="section" className={panelClass} data-testid="evaluation-panel-results" id="evaluation-panel-results" role="tabpanel" transitionKey={activeTab}>
+            <div className="rounded-lg border border-border bg-card p-4">
+              <div className="flex flex-wrap items-end gap-x-6 gap-y-4">
+                <label className="min-w-[180px] text-xs font-medium text-muted-foreground" htmlFor="evaluation-dataset">{copy.selectDataset}<Select onValueChange={(value) => { setDatasetId(value); setBaseDatasetId(value); }} value={selectedDatasetId}><SelectTrigger className="mt-1.5" id="evaluation-dataset"><SelectValue placeholder={copy.noDataset} /></SelectTrigger><SelectContent>{evaluationDatasets.map((dataset) => <SelectItem key={dataset.id} value={dataset.id}>{dataset.name} · {interpolate(copy.datasetVersion, { version: dataset.version })}</SelectItem>)}</SelectContent></Select></label>
+                <fieldset><legend className="text-xs font-medium text-muted-foreground">{retrievalCopy.retrieval}</legend><div aria-label={retrievalCopy.mode} className="mt-1.5 flex h-9 items-center rounded-md border border-border bg-secondary p-1" role="group">{(["dense", "hybrid", "keyword"] as const).map((value) => <button aria-pressed={mode === value} className={mode === value ? "h-full rounded-sm bg-card px-3 text-xs font-medium text-foreground shadow-sm" : "h-full rounded-sm px-3 text-xs text-muted-foreground hover:bg-card/70"} key={value} onClick={() => setMode(value)} type="button">{retrievalCopy.modes[value]}</button>)}</div></fieldset>
+                <label className="text-xs font-medium text-muted-foreground" htmlFor="evaluation-top-k">{retrievalCopy.topK}<Select onValueChange={setTopK} value={topK}><SelectTrigger className="mt-1.5 w-[76px] tabular-nums" id="evaluation-top-k"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="3">3</SelectItem><SelectItem value="5">5</SelectItem><SelectItem value="10">10</SelectItem></SelectContent></Select></label>
                 <div>
-                  <span className="mb-2 block text-[12.5px] font-medium text-muted-foreground">{copy.retrieval.reranker}</span>
-                  <label className="flex h-9 min-w-[108px] items-center justify-between gap-3 rounded-[9px] border border-input bg-card pl-3 pr-1 text-[12px] font-medium text-muted-foreground" data-testid="evaluation-reranker-control" htmlFor="evaluation-reranker">
-                    <span>{reranker ? (preferences.locale === "tr" ? "Açık" : "On") : (preferences.locale === "tr" ? "Kapalı" : "Off")}</span>
-                    <Switch aria-label={copy.retrieval.reranker} checked={reranker} className="h-9" id="evaluation-reranker" onCheckedChange={setReranker} />
+                  <span className="mb-1.5 block text-xs font-medium text-muted-foreground">{retrievalCopy.reranker}</span>
+                  <label className="flex h-9 min-w-[108px] items-center justify-between gap-3 rounded-md border border-input bg-card pl-3 pr-1 text-xs font-medium text-muted-foreground" data-testid="evaluation-reranker-control" htmlFor="evaluation-reranker">
+                    <span>{reranker ? retrievalCopy.on : retrievalCopy.off}</span>
+                    <Switch aria-label={retrievalCopy.reranker} checked={reranker} className="h-9" id="evaluation-reranker" onCheckedChange={setReranker} />
                   </label>
                 </div>
-                <Button aria-describedby={!canRun ? "evaluation-disabled-reason" : undefined} aria-busy={evaluationStatus === "processing"} className="ml-0 h-[42px] gap-2 sm:ml-auto" disabled={!canRun} onClick={handleRun}><AppIcon name="play" className="size-4" />{labels.run}</Button>
+                <Button aria-busy={evaluationStatus === "processing"} aria-describedby={!canRun ? "evaluation-disabled-reason" : undefined} className="sm:ml-auto" disabled={!canRun} onClick={handleRun}><AppIcon name="play" className="size-4" />{copy.run}</Button>
               </div>
-              <TransitionDetails className="mt-4 rounded-[10px] border border-border"><summary className="flex h-10 cursor-pointer list-none items-center justify-between px-3.5 text-[12.5px] font-medium text-foreground"><span>{labels.advanced} — {labels.judge}</span><AppIcon name="chevronDown" className="size-3.5 text-subtle-foreground" /></summary><div className="grid gap-3 border-t border-border p-3.5 sm:grid-cols-2"><label className="flex items-center justify-between gap-3 text-[12px] font-medium" htmlFor="evaluation-judge"><span>{labels.judge}<span className="mt-1 block font-normal text-muted-foreground">{preferences.locale === "tr" ? "Cevap kalitesi için isteğe bağlı değerlendirme" : "Optional answer-quality scoring"}</span></span><Switch checked={judge} id="evaluation-judge" onCheckedChange={setJudge} /></label><p className="text-xs leading-5 text-muted-foreground">{labels.retrievalNote}</p></div></TransitionDetails>
-              {!canRun ? <DisabledReason id="evaluation-disabled-reason">{evaluationBlocker?.message}</DisabledReason> : null}<PipelineErrorMessage message={evaluationError?.code === "run_poll_timeout" ? (preferences.locale === "tr" ? "Tarayıcı takibi duraklatıldı; run arka planda devam ediyor olabilir." : "Browser tracking paused; the run may still be active.") : evaluationError?.message} />
-              {evaluationRun && (evaluationRun.status === "queued" || evaluationRun.status === "running") && evaluationStatus !== "processing" ? <Button onClick={() => void resumeRunTracking("evaluation")} variant="outline">{preferences.locale === "tr" ? "Takibi sürdür" : "Resume tracking"}</Button> : null}
-            </div>
-
-            {evaluationRun ? (
-              <>
-                <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_240px]">
-                  <div className="min-w-0">
-                    <h2 className="text-[13px] font-semibold uppercase tracking-[0.05em] text-subtle-foreground">{labels.retrievalQuality}</h2>
-                    <MetricList rows={[
-                      { key: "hitAtK", label: labels.hit, value: evaluationRun.results.hitAtK },
-                      { key: "recallAtK", label: labels.recall, value: evaluationRun.results.recallAtK },
-                      { key: "precisionAtK", label: labels.precision, value: evaluationRun.results.precisionAtK },
-                      { key: "mrr", label: labels.mrr, value: evaluationRun.results.mrr },
-                    ]} testId="evaluation-retrieval-metrics" />
-                    <p className="mt-3 text-xs text-subtle-foreground">{preferences.locale === "tr" ? "Retrieval'a uygun case" : "Retrieval-eligible cases"}: {evaluationRun.results.retrievalEligibleCaseCount ?? "—"}</p>
-                    <h2 className="mt-7 text-[13px] font-semibold uppercase tracking-[0.05em] text-subtle-foreground">{labels.answerQuality}</h2>
-                    <MetricList rows={[
-                      { key: "faithfulness", label: "Faithfulness", value: evaluationRun.results.generationMetrics?.faithfulness ?? null, description: preferences.locale === "tr" ? "Cevap iddialarının getirilen context'e bağlı kalma düzeyi." : "How well answer claims stay grounded in retrieved context." },
-                      { key: "answerRelevance", label: "Answer relevance", value: evaluationRun.results.generationMetrics?.answerRelevance ?? null },
-                      { key: "answerCorrectness", label: "Answer correctness", value: evaluationRun.results.generationMetrics?.answerCorrectness ?? null },
-                      { key: "citationValidity", label: labels.citation, value: evaluationRun.results.citationValidity, description: preferences.locale === "tr" ? "Üretilen citation ID'sinin verilen context'te bulunmasıdır; iddianın desteklenmesini ölçmez." : "Whether generated citation IDs belong to the supplied context; it does not measure claim support." },
-                      { key: "abstentionAccuracy", label: preferences.locale === "tr" ? "No-answer doğruluğu" : "Abstention accuracy", value: evaluationRun.results.abstentionAccuracy, description: preferences.locale === "tr" ? "Yetersiz bağlamda cevap vermeme kararlarının doğruluğu." : "Correct no-answer decisions for insufficient-context cases." },
-                    ]} testId="evaluation-answer-metrics" />
-                  </div>
-                  <aside className="self-start rounded-[12px] border border-border bg-card p-3"><h2 className="text-[11px] font-semibold uppercase tracking-[0.05em] text-subtle-foreground">{labels.cases}</h2><div className="mt-1.5 flex items-baseline gap-1.5"><span className="text-[22px] font-semibold text-foreground"><TransitionNumber>{evaluationRun.results.caseCount ?? completedCases}</TransitionNumber></span><span className="text-[12px] text-muted-foreground">/ {totalCases || completedCases} {preferences.locale === "tr" ? "tamamlandı" : "completed"}</span></div><div aria-valuemax={totalCases || completedCases || 1} aria-valuemin={0} aria-valuenow={completedCases} className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-border" role="progressbar"><div className="t-resize h-full rounded-full bg-success" style={{ width: `${Math.min(100, (completedCases / Math.max(1, totalCases || completedCases)) * 100)}%` }} /></div></aside>
+              <Disclosure className="mt-3" title={copy.advanced} variant="inline">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="flex items-center justify-between gap-3 text-xs font-medium text-foreground" htmlFor="evaluation-judge"><span>{copy.judge}<span className="mt-1 block font-normal text-muted-foreground">{capabilities?.judgeModel ? interpolate(copy.judgeHint, { model: capabilities.judgeModel }) : copy.judgeHintGeneric}</span></span><Switch checked={judge} id="evaluation-judge" onCheckedChange={setJudge} /></label>
+                  <p className="text-xs text-muted-foreground">{copy.separateMetrics}</p>
                 </div>
-                <TransitionDetails className="mt-6 rounded-[12px] border border-border bg-card" data-testid="evaluation-run-details"><summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-[13px] font-medium text-foreground"><span>{preferences.locale === "tr" ? "Details / yapılandırma" : "Details / configuration"}</span><AppIcon name="chevronDown" className="size-4 text-subtle-foreground" /></summary><div className="grid gap-4 border-t border-border bg-technical p-4 sm:grid-cols-2"><div><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{preferences.locale === "tr" ? "Yapılandırma" : "Configuration"}</p><p className="mt-1 text-[13px] text-foreground">{activeConfigSummary}</p></div><div><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{preferences.locale === "tr" ? "Provenance" : "Provenance"}</p><p className="mt-1 text-[13px] text-foreground">{activeDocument?.fileName ?? "—"} · {activePipeline?.name ?? "—"}</p></div><div><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{preferences.locale === "tr" ? "Çıktı" : "Output"}</p><p className="mt-1 text-[13px] text-foreground">{labels.cases}: {evaluationRun.results.caseCount ?? completedCases} · {labels.judgeModel}: {evaluationRun.results.judgeModel ?? capabilities?.judgeModel ?? "—"}</p></div><div><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle-foreground">{preferences.locale === "tr" ? "Identifiers" : "Identifiers"}</p><p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">Run: {evaluationRun.id}</p><p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">Dataset: {evaluationRun.datasetId}</p></div></div></TransitionDetails>
-                {evaluationRun.caseResults?.length ? (
-                  <section aria-label={labels.caseDiagnostics} className="mt-8">
-                    <h2 className="text-[13px] font-semibold text-foreground">{labels.caseDiagnostics}</h2>
-                    <div className="mt-3 space-y-2">
-                      {evaluationRun.caseResults.map((item, index) => {
-                        const noAnswerCase = item.expectedOutcome === "insufficient_context";
-                        const faithfulness = item.generationMetrics?.faithfulness ?? null;
-                        const groundingScore = faithfulness ?? item.groundedness;
-                        // A missing metric is "not scored"; it never counts as a pass.
-                        const passed = noAnswerCase ? item.abstentionCorrect === true : groundingScore !== null && item.citationValidity !== null && groundingScore >= 0.5 && item.citationValidity >= 0.5;
-                        const outcomeLabel = noAnswerCase
-                          ? item.abstentionCorrect === true
-                            ? (preferences.locale === "tr" ? "Doğru no-answer" : "Correct no-answer")
-                            : item.abstentionCorrect === false
-                              ? (preferences.locale === "tr" ? "Beklenmeyen cevap" : "Unexpected answer")
-                              : (preferences.locale === "tr" ? "No-answer ölçülmedi" : "No-answer not scored")
-                          : `${faithfulness === null ? "Faithfulness —" : `Faithfulness ${faithfulness.toFixed(2)}`} · ${preferences.locale === "tr" ? "Citation üyeliği" : "Citation membership"} ${item.citationValidity === null ? "—" : item.citationValidity.toFixed(2)}`;
-                        return (
-                          <TransitionDetails className="overflow-hidden rounded-[16px] border border-border bg-card" key={item.experimentId || `${item.question}-${index}`} open={activeCaseIndex === index}>
-                            <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3" onClick={() => setSelectedCaseIndex(index)}>
-                              <span aria-hidden="true" className={passed ? "grid size-6 shrink-0 place-items-center rounded-full bg-success-subtle text-success" : "grid size-6 shrink-0 place-items-center rounded-full bg-destructive-subtle text-destructive"}>{passed ? <AppIcon name="completed" className="size-3.5" /> : <AppIcon name="warningTriangle" className="size-3.5" />}</span>
-                              <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">{item.question}</span>
-                              <span className="shrink-0 text-right text-[11px] font-medium text-muted-foreground">{outcomeLabel}</span>
-                            </summary>
-                            <div className="grid gap-4 border-t border-border bg-technical p-4 md:grid-cols-2">
+              </Disclosure>
+              {!canRun ? <span className="sr-only" id="evaluation-disabled-reason">{runAvailability.message}</span> : null}
+            </div>
+            <StageBlocker blocker={showRunBlocker ? runAvailability : null} className="mt-3" data-testid="evaluation-blocker" />
+            {evaluationError ? <div className="mt-3"><PipelineErrorMessage message={evaluationError.code === "run_poll_timeout" ? copy.trackingPaused : evaluationError.message} /></div> : null}
+            {evaluationRun && (evaluationRun.status === "queued" || evaluationRun.status === "running") && evaluationStatus !== "processing" ? <Button className="mt-3" onClick={() => void resumeRunTracking("evaluation")} variant="outline">{copy.resumeTracking}</Button> : null}
+            {evaluationStatus === "processing" && totalCases > 0 ? (
+              <div className="mt-4" role="status">
+                <div className="flex justify-between text-xs text-muted-foreground"><span>{copy.progress}</span><span className="tabular-nums">{formatNumber(locale, completedCases)}/{formatNumber(locale, totalCases)}</span></div>
+                <div aria-label={copy.progress} aria-valuemax={totalCases} aria-valuemin={0} aria-valuenow={completedCases} className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary" role="progressbar"><div className="h-full origin-left bg-muted-foreground transition-transform duration-300 motion-reduce:transition-none" style={{ transform: `scaleX(${Math.min(1, completedCases / totalCases)})` }} /></div>
+              </div>
+            ) : null}
+
+            {evaluationRun ? (() => {
+              const results = evaluationRun.results;
+              const judgeUsed = usedJudge(evaluationRun);
+              const generationMetrics = results.generationMetrics;
+              const caseCount = results.caseCount ?? completedCases;
+              const failedCases = evaluationRun.caseResults?.filter((item) => item.status === "failed") ?? [];
+              const measuredCases = evaluationRun.caseResults?.filter((item) => item.status !== "failed") ?? [];
+              const activeCase = measuredCases[selectedCaseIndex] ? selectedCaseIndex : 0;
+              const groundingLabel = judgeUsed ? copy.metrics.faithfulness : copy.metrics.lexicalOverlap;
+              const answerRows: MetricRow[] = [
+                ...(judgeUsed ? [
+                  { key: "faithfulness", label: copy.metrics.faithfulness, value: generationMetrics?.faithfulness, hint: copy.metricHints.faithfulness, sampleSize: generationMetrics?.scoredCaseCount },
+                  { key: "answerRelevance", label: copy.metrics.answerRelevance, value: generationMetrics?.answerRelevance, sampleSize: generationMetrics?.scoredCaseCount },
+                  { key: "answerCorrectness", label: copy.metrics.answerCorrectness, value: generationMetrics?.answerCorrectness, sampleSize: generationMetrics?.eligibleCaseCount },
+                ] : []),
+                ...(!judgeUsed || typeof generationMetrics?.lexicalOverlap === "number" ? [{ key: "lexicalOverlap", label: copy.metrics.lexicalOverlap, value: generationMetrics?.lexicalOverlap, hint: copy.metricHints.lexicalOverlap, sampleSize: generationMetrics?.lexicalScoredCaseCount }] : []),
+                { key: "citationValidity", label: copy.metrics.citationValidity, value: results.citationValidity, hint: copy.metricHints.citationValidity, sampleSize: results.citationValidityEligibleCaseCount },
+                { key: "abstentionAccuracy", label: copy.metrics.abstentionAccuracy, value: results.abstentionAccuracy, hint: copy.metricHints.abstentionAccuracy, sampleSize: results.abstentionEligibleCaseCount },
+                ...(typeof results.answerableCaseCount === "number" ? [{ key: "falseAbstentionRate", label: copy.metrics.falseAbstentionRate, value: results.falseAbstentionRate, hint: copy.metricHints.falseAbstentionRate, sampleSize: results.answerableCaseCount }] : []),
+              ];
+              return (
+                <>
+                  <p className="mt-6 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground tabular-nums" data-testid="evaluation-run-summary">
+                    <span className="font-medium text-foreground">{evaluationName(evaluationRun)}</span>
+                    <span>· {interpolate(copy.sampleSize, { count: formatCount(locale, caseCount, units.question) })}</span>
+                    {typeof results.retrievalEligibleCaseCount === "number" ? <span>· {interpolate(copy.retrievalEligible, { count: formatNumber(locale, results.retrievalEligibleCaseCount) })}</span> : null}
+                    {results.failedCaseCount ? <span className="text-destructive">· {interpolate(copy.failedSummary, { count: formatNumber(locale, results.failedCaseCount) })}</span> : null}
+                  </p>
+                  <div className="mt-4 grid gap-6 lg:grid-cols-2">
+                    <MetricGroup copy={copy} locale={locale} note={results.stageRetrievalMetrics ? copy.retrievalStageNote : null} rows={[
+                      { key: "hitAtK", label: copy.metrics.hitAtK, value: results.hitAtK },
+                      { key: "recallAtK", label: copy.metrics.recallAtK, value: results.recallAtK },
+                      { key: "precisionAtK", label: copy.metrics.precisionAtK, value: results.precisionAtK },
+                      { key: "mrr", label: copy.metrics.mrr, value: results.mrr },
+                    ]} sampleSize={results.retrievalEligibleCaseCount} testId="evaluation-retrieval-metrics" title={copy.retrievalQuality}>
+                      {results.stageRetrievalMetrics ? <StageRetrievalTable copy={copy} locale={locale} metrics={results.stageRetrievalMetrics} /> : null}
+                    </MetricGroup>
+                    <MetricGroup copy={copy} locale={locale} rows={answerRows} sampleSize={results.completedCaseCount ?? caseCount} testId="evaluation-answer-metrics" title={copy.answerQuality} />
+                  </div>
+
+                  {measuredCases.length ? (
+                    <section aria-labelledby="evaluation-cases-title" className="mt-8">
+                      <h2 className="text-sm font-semibold text-foreground" id="evaluation-cases-title">{copy.cases}</h2>
+                      <p className="mt-1 text-xs text-muted-foreground" data-testid="evaluation-case-threshold">{interpolate(copy.threshold, { grounding: groundingLabel })}</p>
+                      <div className="mt-3 space-y-2">
+                        {measuredCases.map((item, index) => {
+                          const noAnswerCase = item.expectedOutcome === "insufficient_context";
+                          const diagnosis = caseDiagnosis(item, judgeUsed, copy);
+                          const icon = caseIcon[diagnosis.state];
+                          return (
+                            <Disclosure contentClassName="grid gap-4 p-4 md:grid-cols-2" data-state={diagnosis.state} data-testid="evaluation-case" key={item.experimentId || `${item.question}-${index}`} meta={diagnosis.meta} onToggle={(event) => { if (event.currentTarget.open) setSelectedCaseIndex(index); }} open={activeCase === index} title={<span className="flex min-w-0 items-center gap-3"><span className={cn("grid size-6 shrink-0 place-items-center rounded-full", icon.className)} title={copy.caseStates[diagnosis.state]}><AppIcon aria-hidden="true" className="size-3.5" name={icon.icon} /><span className="sr-only">{copy.caseStates[diagnosis.state]}</span></span><span className="min-w-0 flex-1 truncate">{item.question}</span></span>}>
                               <div>
-                                <p className="text-[11px] uppercase tracking-wide text-subtle-foreground">{labels.expected}</p>
-                                <p className="mt-2 text-[13px] text-brand">{noAnswerCase ? (preferences.locale === "tr" ? "Cevap yok" : "No answer") : item.expectedElementIds.length || "—"}</p>
-                                {item.expectedElementIds.length ? <SourceInspector documentId={activeDocument?.id ?? null} parseResult={parseResult} sourceElementIds={item.expectedElementIds} triggerLabel={labels.expected} /> : null}
+                                <p className="text-xs text-muted-foreground">{copy.expectedSources}</p>
+                                <p className="mt-1 text-sm text-foreground tabular-nums">{noAnswerCase ? copy.noAnswerExpected : item.expectedElementIds.length || "—"}</p>
+                                {item.expectedElementIds.length ? <div className="mt-2"><SourceInspector documentId={activeDocument?.id ?? null} parseResult={parseResult} sourceElementIds={item.expectedElementIds} triggerAriaLabel={interpolate(retrievalCopy.inspectSource, { label: copy.expectedSources })} triggerLabel={copy.expectedSources} /></div> : null}
                               </div>
                               <div>
-                                <p className="text-[11px] uppercase tracking-wide text-subtle-foreground">{labels.retrieved}</p>
-                                <p className="mt-2 text-[13px] text-foreground">{item.retrievedElementIds.length || "—"}</p>
-                                {item.retrievedElementIds.length ? <SourceInspector documentId={activeDocument?.id ?? null} parseResult={parseResult} sourceElementIds={item.retrievedElementIds} triggerLabel={labels.retrieved} /> : null}
+                                <p className="text-xs text-muted-foreground">{copy.retrievedSources}</p>
+                                <p className="mt-1 text-sm text-foreground tabular-nums">{item.retrievedElementIds.length || "—"}</p>
+                                {item.retrievedElementIds.length ? <div className="mt-2"><SourceInspector documentId={activeDocument?.id ?? null} parseResult={parseResult} sourceElementIds={item.retrievedElementIds} triggerAriaLabel={interpolate(retrievalCopy.inspectSource, { label: copy.retrievedSources })} triggerLabel={copy.retrievedSources} /></div> : null}
                               </div>
-                              {noAnswerCase ? <div className="rounded-[10px] border border-warning-border bg-warning-subtle p-3 md:col-span-2"><p className="text-[11px] uppercase tracking-wide text-warning">{preferences.locale === "tr" ? "Beklenen sonuç" : "Expected result"}</p><p className="mt-1 text-[13px] text-warning">{preferences.locale === "tr" ? "Yetersiz bağlam: cevap üretmemeli" : "Insufficient context: no answer expected"}</p><p className="mt-2 text-[12px] text-muted-foreground">{preferences.locale === "tr" ? "Abstention doğruluğu" : "Abstention correctness"}: {item.abstentionCorrect === null || item.abstentionCorrect === undefined ? "—" : item.abstentionCorrect ? (preferences.locale === "tr" ? "Doğru" : "Correct") : (preferences.locale === "tr" ? "Yanlış" : "Incorrect")}</p></div> : null}
-                              <div className="md:col-span-2"><p className="text-[11px] uppercase tracking-wide text-subtle-foreground">{labels.answer}</p><p className="mt-2 text-[13px] leading-5 text-muted-foreground">{item.answer || (noAnswerCase && item.insufficientContext ? (preferences.locale === "tr" ? "Sistem yetersiz bağlamı algıladı ve cevap üretmedi." : "The system detected insufficient context and did not generate an answer.") : labels.noAnswer)}</p></div>
-                            </div>
-                          </TransitionDetails>
-                        );
-                      })}
-                    </div>
-                  </section>
-                ) : null}
-                {evaluationStatus === "processing" && totalCases > 0 ? <div className="mt-4 rounded-[10px] border border-border bg-card p-3" role="status"><div className="flex justify-between text-xs"><span>{labels.progress}</span><span>{completedCases}/{totalCases}</span></div><div aria-valuemax={totalCases} aria-valuemin={0} aria-valuenow={completedCases} className="mt-2 h-2 overflow-hidden rounded-full bg-secondary" role="progressbar"><div className="t-resize h-full bg-brand" style={{ width: `${Math.min(100, (completedCases / totalCases) * 100)}%` }} /></div></div> : null}
-              </>
-            ) : (
-              <div className="mt-6 flex min-h-[210px] flex-col items-center justify-center rounded-[16px] border border-border bg-card px-5 text-center"><AppIcon name="evaluate" className="size-8 text-subtle-foreground" /><h2 className="mt-3 text-[17px] font-semibold text-foreground">{labels.noData}</h2><p className="mt-2 max-w-md text-sm leading-5 text-muted-foreground">{copy.evaluation.emptyDescription}</p><p className="mt-2 text-xs text-subtle-foreground">{copy.evaluation.emptyNote}</p></div>
-            )}
+                              {noAnswerCase ? <p className="text-xs text-muted-foreground md:col-span-2">{copy.abstentionCorrectness}: <span className="text-foreground">{item.abstentionCorrect === null || item.abstentionCorrect === undefined ? copy.notMeasured : item.abstentionCorrect ? copy.correct : copy.incorrect}</span></p> : null}
+                              <div className="md:col-span-2">
+                                <p className="text-xs text-muted-foreground">{copy.generatedAnswer}</p>
+                                <p className="mt-1 break-words text-sm text-foreground">{item.answer || (item.insufficientContext ? copy.abstained : copy.noGeneration)}</p>
+                              </div>
+                            </Disclosure>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ) : null}
+
+                  {failedCases.length ? (
+                    <section aria-labelledby="evaluation-failed-title" className="mt-6" data-testid="evaluation-failed-cases">
+                      <h2 className="text-sm font-semibold text-foreground" id="evaluation-failed-title">{copy.failedCases}</h2>
+                      <ul className="mt-2 divide-y divide-border rounded-lg border border-border bg-card">
+                        {failedCases.map((item, index) => (
+                          <li className="px-4 py-3" key={`${item.question}-${index}`}>
+                            <div className="flex flex-wrap items-baseline justify-between gap-2"><p className="min-w-0 text-sm text-foreground">{item.question}</p><span className="text-xs text-destructive">{copy.errorCode}: <span className="font-mono">{item.errorCode ?? "—"}</span></span></div>
+                            {item.errorMessage ? <TechnicalDetails className="mt-1"><p className="break-words text-xs text-muted-foreground">{item.errorMessage}</p></TechnicalDetails> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
+
+                  <Disclosure className="mt-6" contentClassName="grid gap-4 p-4 text-xs sm:grid-cols-2" data-testid="evaluation-run-details" title={copy.details}>
+                    <div><p className="text-muted-foreground">{copy.configuration}</p><p className="mt-1 text-sm text-foreground">{configSummary(evaluationConfig(evaluationRun))}</p></div>
+                    <div className="min-w-0"><p className="text-muted-foreground">{copy.provenance}</p><p className="mt-1 text-sm text-foreground [overflow-wrap:anywhere]">{activeDocument?.fileName ?? "—"} · {activePipeline?.name ?? "—"}</p></div>
+                    <div><p className="text-muted-foreground">{copy.output}</p><p className="mt-1 text-sm text-foreground tabular-nums">{formatCount(locale, caseCount, units.question)} · {copy.judge}: {results.judgeModel ?? (judgeUsed ? capabilities?.judgeModel : null) ?? "—"} · {copy.metricMethod}: {methodLabel(generationMetrics?.method)}</p></div>
+                    <TechnicalDetails title={copy.identifiers}><p className="break-all font-mono text-xs text-muted-foreground">Run: {evaluationRun.id}</p><p className="mt-1 break-all font-mono text-xs text-muted-foreground">Dataset: {evaluationRun.datasetId}</p>{generationMetrics?.metricVersion ? <p className="mt-1 break-all font-mono text-xs text-muted-foreground">Metric: {generationMetrics.metricVersion}</p> : null}</TechnicalDetails>
+                  </Disclosure>
+                </>
+              );
+            })() : evaluationStatus !== "processing" ? (
+              <EmptyState
+                action={!selectedDataset ? <Button onClick={() => selectTab("dataset")} size="sm" variant="outline">{copy.goToDataset}</Button> : null}
+                className="mt-6 min-h-[210px] rounded-lg border border-border bg-card"
+                description={selectedDataset ? interpolate(copy.noRunsDescription, { dataset: selectedDataset.name }) : copy.noDatasetDescription}
+                icon="evaluate"
+                title={copy.noDataTitle}
+                titleAs="h2"
+              />
+            ) : null}
           </TransitionPanel>
         ) : null}
 
         {activeTab === "compare" ? (
-          <TransitionPanel as="section" transitionKey={activeTab} aria-labelledby="evaluation-tab-compare" className="mt-6" data-testid="evaluation-panel-compare" id="evaluation-panel-compare" role="tabpanel">
-            {selectedRuns.length >= 2 ? <div data-testid="evaluation-compare-content">
-              <div className="grid gap-3 lg:grid-cols-[1fr_32px_1fr] lg:items-center">
-                <article className="rounded-[14px] border border-border bg-card px-4 py-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-brand">{labels.runA}</p><p className="text-[11px] text-muted-foreground">{runDate(selectedRuns[0], preferences.locale) ?? "—"}</p></div><h2 className="mt-1.5 truncate text-[14px] font-medium text-foreground">{runIdentity(selectedRuns[0], 1)}</h2><p className="mt-1 text-[11.5px] text-muted-foreground">{selectedRuns[0].timing.durationMs === null ? "—" : `${selectedRuns[0].timing.durationMs} ms`} · {labels.cases} {selectedRuns[0].results?.caseCount ?? "—"}</p></article>
-                <span className="hidden text-center text-[12px] text-subtle-foreground lg:block">VS</span>
-                <article className="rounded-[14px] border border-border bg-card px-4 py-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-brand">{labels.runB}</p><p className="text-[11px] text-muted-foreground">{runDate(selectedRuns[1], preferences.locale) ?? "—"}</p></div><h2 className="mt-1.5 truncate text-[14px] font-medium text-foreground">{runIdentity(selectedRuns[1], 2)}</h2><p className="mt-1 text-[11.5px] text-muted-foreground">{selectedRuns[1].timing.durationMs === null ? "—" : `${selectedRuns[1].timing.durationMs} ms`} · {labels.cases} {selectedRuns[1].results?.caseCount ?? "—"}</p></article>
-              </div>
-              <section className="mt-5 rounded-[14px] border border-border bg-card p-4" data-testid="evaluation-compare-context"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-[12px] font-semibold uppercase tracking-[0.05em] text-subtle-foreground">{labels.compatibility}</h2><p className="mt-1 text-xs text-muted-foreground">{labels.compareDescription}</p></div><label className="flex items-center gap-2 text-xs font-medium text-muted-foreground" htmlFor="evaluation-only-changed">{labels.onlyChanged}<Switch checked={onlyChanged} id="evaluation-only-changed" onCheckedChange={setOnlyChanged} /></label></div><div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 border-y border-border py-2.5">{comparisonContext.map((item) => <div className="flex items-center gap-2" key={item.key}><span className="text-xs text-muted-foreground">{item.label}</span><span className={item.state === "same" ? "text-xs font-medium text-success" : item.state === "different" ? "text-xs font-medium text-warning" : "text-xs font-medium text-subtle-foreground"}>{comparisonStateLabel(item.state)}</span></div>)}</div><div className="mt-3"><h3 className="text-[11px] font-semibold uppercase tracking-[0.05em] text-subtle-foreground">{labels.changedSettings}</h3>{visibleComparisonSettings.length ? <div className="mt-2 divide-y divide-border">{visibleComparisonSettings.map((item) => <div className="grid gap-2 py-2 text-xs sm:grid-cols-[minmax(0,1fr)_1fr_1fr]" key={item.key}><span className="font-medium text-foreground">{item.label}</span><span className="text-muted-foreground">{labels.runA}: {comparisonSettingValue(item.key, item.first)}</span><span className="text-muted-foreground">{labels.runB}: {comparisonSettingValue(item.key, item.second)}</span></div>)}</div> : <p className="mt-2 text-xs text-subtle-foreground">{labels.noChanges}</p>}</div></section>
-              <section className="mt-8"><div className="flex flex-wrap items-end justify-between gap-2"><div><h2 className="text-[13px] font-semibold uppercase tracking-[0.05em] text-subtle-foreground">{preferences.locale === "tr" ? "Metrik karşılaştırması" : "Metric comparison"}</h2><p className="mt-1 text-xs text-muted-foreground">{preferences.locale === "tr" ? "Her satırda Run B'nin Run A'ya göre farkını açıkça görün." : "Read Run B against Run A without hiding the underlying values."}</p></div></div><div className="mt-4"><ComparisonMetricTable groups={[{ key: "retrieval", label: labels.retrievalQuality, metrics: [{ key: "hitAtK", label: labels.hit, first: selectedRuns[0].results.hitAtK, second: selectedRuns[1].results.hitAtK }, { key: "recallAtK", label: labels.recall, first: selectedRuns[0].results.recallAtK, second: selectedRuns[1].results.recallAtK }, { key: "precisionAtK", label: labels.precision, first: selectedRuns[0].results.precisionAtK, second: selectedRuns[1].results.precisionAtK }, { key: "mrr", label: labels.mrr, first: selectedRuns[0].results.mrr, second: selectedRuns[1].results.mrr }] }, { key: "answer", label: labels.answerQuality, metrics: [{ key: "faithfulness", label: "Faithfulness", first: selectedRuns[0].results.generationMetrics?.faithfulness ?? null, second: selectedRuns[1].results.generationMetrics?.faithfulness ?? null }, { key: "answerRelevance", label: "Answer relevance", first: selectedRuns[0].results.generationMetrics?.answerRelevance ?? null, second: selectedRuns[1].results.generationMetrics?.answerRelevance ?? null }, { key: "answerCorrectness", label: "Answer correctness", first: selectedRuns[0].results.generationMetrics?.answerCorrectness ?? null, second: selectedRuns[1].results.generationMetrics?.answerCorrectness ?? null }, { key: "citationValidity", label: labels.citation, first: selectedRuns[0].results.citationValidity, second: selectedRuns[1].results.citationValidity, description: preferences.locale === "tr" ? "Context ID üyeliği; iddia desteği değildir." : "Context ID membership; not claim support." }, { key: "abstentionAccuracy", label: preferences.locale === "tr" ? "No-answer doğruluğu" : "Abstention accuracy", first: selectedRuns[0].results.abstentionAccuracy, second: selectedRuns[1].results.abstentionAccuracy }] }]} labels={{ metric: preferences.locale === "tr" ? "Metrik" : "Metric", runA: labels.runA, runB: labels.runB, delta: "Δ", improved: preferences.locale === "tr" ? "Artış" : "Higher", declined: preferences.locale === "tr" ? "Düşüş" : "Lower", unchanged: preferences.locale === "tr" ? "Değişmedi" : "No change", comparison: preferences.locale === "tr" ? "Evaluation metrik karşılaştırması" : "Evaluation metric comparison" }} /></div></section>
-            </div> : <div className="flex min-h-[210px] flex-col items-center justify-center rounded-[16px] border border-border bg-card px-5 text-center"><AppIcon name="evaluate" className="size-8 text-subtle-foreground" /><h2 className="mt-3 text-[17px] font-semibold text-foreground">{labels.compareTitle}</h2><p className="mt-2 max-w-md text-sm leading-5 text-muted-foreground">{labels.noCompare}</p></div>}
-            <TransitionDetails className="mt-6 rounded-[12px] border border-border bg-card" data-testid="evaluation-history"><summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-[13px] font-medium text-foreground"><span>{labels.history}</span><AppIcon name="chevronDown" className="size-4 text-subtle-foreground" /></summary><div className="border-t border-border p-4">{evaluationHistory.length ? <Table><TableHeader><TableRow><TableHead>{labels.compare}</TableHead><TableHead>Run</TableHead><TableHead>{labels.hit}</TableHead><TableHead>{labels.recall}</TableHead><TableHead>{labels.precision}</TableHead><TableHead>{labels.mrr}</TableHead><TableHead>{labels.citation}</TableHead><TableHead>{labels.groundedness}</TableHead></TableRow></TableHeader><TableBody>{evaluationHistory.map((run, index) => <TableRow key={run.id}><TableCell><TransitionCheckbox aria-label={`${labels.compare} ${index + 1}`} checked={compareIds.includes(run.id)} disabled={!compareIds.includes(run.id) && compareIds.length >= 2} onChange={() => toggleCompare(run.id)} type="checkbox" /></TableCell><TableCell className="text-xs">{runIdentity(run, evaluationHistory.length - index)}</TableCell><TableCell>{metric(run.results.hitAtK)}</TableCell><TableCell>{metric(run.results.recallAtK)}</TableCell><TableCell>{metric(run.results.precisionAtK)}</TableCell><TableCell>{metric(run.results.mrr)}</TableCell><TableCell>{metric(run.results.citationValidity)}</TableCell><TableCell>{metric(run.results.generationMetrics?.faithfulness ?? null)}</TableCell></TableRow>)}</TableBody></Table> : <p className="text-sm text-muted-foreground">{labels.noCompare}</p>}</div></TransitionDetails>
+          <TransitionPanel aria-labelledby="evaluation-tab-compare" as="section" className={panelClass} data-testid="evaluation-panel-compare" id="evaluation-panel-compare" role="tabpanel" transitionKey={activeTab}>
+            {selectedRuns.length >= 2 ? (() => {
+              const [runA, runB] = selectedRuns;
+              const methodA = runA.results.generationMetrics?.method ?? null;
+              const methodB = runB.results.generationMetrics?.method ?? null;
+              const methodsMatch = methodA === methodB;
+              const anyJudge = usedJudge(runA) || usedJudge(runB);
+              const settingsDiffer = changedSettings.length > 0;
+              const metric = (key: string, label: string, pick: (run: EvaluationRun) => number | null | undefined, comparable = true, hint?: string): ComparisonMetric => ({ key, label, first: pick(runA), second: pick(runB), comparable, hint });
+              return (
+                <div data-testid="evaluation-compare-content">
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {selectedRuns.map((run, index) => {
+                      const letter = index === 0 ? copy.runA : copy.runB;
+                      return (
+                        <article className="min-w-0 rounded-lg border border-border bg-card px-4 py-3" data-testid={`evaluation-compare-run-${index === 0 ? "a" : "b"}`} key={run.id}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span aria-hidden="true" className="grid size-6 place-items-center rounded-sm bg-secondary text-xs font-semibold text-foreground">{letter}</span>
+                            <span className="text-xs text-muted-foreground tabular-nums">{runDate(run, locale) ?? "—"}</span>
+                          </div>
+                          <h2 className="mt-1.5 truncate text-base font-medium text-foreground"><span className="sr-only">{letter}: </span>{evaluationName(run)}</h2>
+                          <p className="mt-1 text-xs text-muted-foreground tabular-nums">{formatMs(locale, run.timing.durationMs)} · {formatCount(locale, run.results.caseCount ?? 0, units.question)}</p>
+                        </article>
+                      );
+                    })}
+                  </div>
+                  <section aria-labelledby="evaluation-compatibility-title" className="mt-5 rounded-lg border border-border bg-card p-4" data-testid="evaluation-compare-context">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <h2 className="text-sm font-semibold text-foreground" id="evaluation-compatibility-title">{copy.compatibility}</h2>
+                      <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground" htmlFor="evaluation-only-changed">{copy.onlyChanged}<Switch checked={onlyChanged} id="evaluation-only-changed" onCheckedChange={setOnlyChanged} /></label>
+                    </div>
+                    <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-2 border-y border-border py-2.5 text-xs" data-testid="evaluation-compare-checks">
+                      {comparisonChecks.map((item) => (
+                        <li className="inline-flex items-center gap-1.5" key={item.key}>
+                          <span className="text-foreground">{copy.contextChecks[item.key]}</span>
+                          {item.state === "same"
+                            ? <span className="inline-flex text-muted-foreground" title={copy.same}><AppIcon aria-hidden="true" className="size-3.5" name="check" /><span className="sr-only">{copy.same}</span></span>
+                            : <span className={item.state === "different" ? "text-warning" : "text-subtle-foreground"}>{item.state === "different" ? copy.different : copy.unknown}</span>}
+                        </li>
+                      ))}
+                      <li className={settingsDiffer ? "text-warning" : "text-muted-foreground"}>{settingsDiffer ? copy.settingsDifferent : copy.settingsSame}</li>
+                    </ul>
+                    <h3 className="mt-3 text-xs font-semibold text-muted-foreground">{copy.changedSettings}</h3>
+                    {visibleComparisonSettings.length ? (
+                      <table aria-label={copy.changedSettings} className="mt-2 w-full text-xs">
+                        <thead><tr className="text-left text-2xs uppercase tracking-wide text-muted-foreground"><th className="py-1.5 pr-3 font-medium" scope="col">{copy.setting}</th><th className="px-2 py-1.5 font-medium" scope="col">{copy.runA}</th><th className="py-1.5 pl-2 font-medium" scope="col">{copy.runB}</th></tr></thead>
+                        <tbody className="divide-y divide-border">
+                          {visibleComparisonSettings.map((item) => {
+                            const changed = item.first !== null && item.second !== null && item.first !== item.second;
+                            return <tr key={item.key}><th className="py-2 pr-3 text-left font-medium text-foreground" scope="row">{copy.settings[item.key]}</th><td className={cn("px-2 py-2", changed ? "font-medium text-foreground" : "text-muted-foreground")}>{settingValue(item.key, item.first)}</td><td className={cn("py-2 pl-2", changed ? "font-medium text-foreground" : "text-muted-foreground")}>{settingValue(item.key, item.second)}</td></tr>;
+                          })}
+                        </tbody>
+                      </table>
+                    ) : <p className="mt-2 text-xs text-muted-foreground">{copy.noChanges}</p>}
+                  </section>
+                  <section aria-labelledby="evaluation-metric-comparison-title" className="mt-8">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <h2 className="text-sm font-semibold text-foreground" id="evaluation-metric-comparison-title">{copy.metricComparison}</h2>
+                      <span className="text-xs text-muted-foreground">{copy.deltaNote}</span>
+                    </div>
+                    {!methodsMatch ? <p className="mt-1 text-xs text-muted-foreground" data-testid="evaluation-method-mismatch">{interpolate(copy.methodMismatch, { a: methodLabel(methodA), b: methodLabel(methodB) })}</p> : null}
+                    <div className="mt-3">
+                      <ComparisonMetricTable copy={copy} groups={[
+                        { key: "retrieval", label: copy.retrievalQuality, metrics: [
+                          metric("hitAtK", copy.metrics.hitAtK, (run) => run.results.hitAtK),
+                          metric("recallAtK", copy.metrics.recallAtK, (run) => run.results.recallAtK),
+                          metric("precisionAtK", copy.metrics.precisionAtK, (run) => run.results.precisionAtK),
+                          metric("mrr", copy.metrics.mrr, (run) => run.results.mrr),
+                        ] },
+                        { key: "answer", label: copy.answerQuality, metrics: [
+                          ...(anyJudge ? [
+                            metric("faithfulness", copy.metrics.faithfulness, (run) => run.results.generationMetrics?.faithfulness, methodsMatch),
+                            metric("answerRelevance", copy.metrics.answerRelevance, (run) => run.results.generationMetrics?.answerRelevance, methodsMatch),
+                            metric("answerCorrectness", copy.metrics.answerCorrectness, (run) => run.results.generationMetrics?.answerCorrectness, methodsMatch),
+                          ] : []),
+                          metric("lexicalOverlap", copy.metrics.lexicalOverlap, (run) => run.results.generationMetrics?.lexicalOverlap),
+                          metric("citationValidity", copy.metrics.citationValidity, (run) => run.results.citationValidity, true, copy.metricHints.citationValidity),
+                          metric("abstentionAccuracy", copy.metrics.abstentionAccuracy, (run) => run.results.abstentionAccuracy),
+                          ...(typeof runA.results.falseAbstentionRate === "number" || typeof runB.results.falseAbstentionRate === "number" ? [metric("falseAbstentionRate", copy.metrics.falseAbstentionRate, (run) => run.results.falseAbstentionRate)] : []),
+                        ] },
+                      ]} />
+                    </div>
+                  </section>
+                </div>
+              );
+            })() : <EmptyState className="min-h-[210px] rounded-lg border border-border bg-card" description={evaluationHistory.length >= 2 ? copy.noCompare : copy.notEnoughRuns} icon="evaluate" title={copy.compareTitle} titleAs="h2" />}
+            {/* With fewer than two selected runs the next step is picking them, so the history starts open. */}
+            <Disclosure className="mt-6" contentClassName="p-0" data-testid="evaluation-history" defaultOpen={selectedRuns.length < 2} meta={formatNumber(locale, evaluationHistory.length)} title={copy.history}>
+              {evaluationHistory.length ? (
+                <Table>
+                  <TableHeader><TableRow><TableHead className="w-10 pl-4"><span className="sr-only">{copy.tabs.compare}</span></TableHead><TableHead>{copy.runColumn}</TableHead><TableHead className="text-right">{copy.metrics.hitAtK}</TableHead><TableHead className="text-right">{copy.metrics.mrr}</TableHead><TableHead className="hidden text-right sm:table-cell">{copy.metrics.recallAtK}</TableHead><TableHead className="hidden text-right sm:table-cell">{copy.metrics.precisionAtK}</TableHead><TableHead className="hidden text-right md:table-cell">{copy.metrics.citationValidity}</TableHead><TableHead className="hidden pr-4 text-right md:table-cell">{copy.groundingShort.lexical}</TableHead></TableRow></TableHeader>
+                  <TableBody>
+                    {evaluationHistory.map((run) => {
+                      const name = evaluationName(run);
+                      return (
+                        <TableRow key={run.id}>
+                          <TableCell className="pl-4"><TransitionCheckbox aria-label={interpolate(copy.compareRun, { name })} checked={compareIds.includes(run.id)} disabled={!compareIds.includes(run.id) && compareIds.length >= 2} onChange={() => toggleCompare(run.id)} /></TableCell>
+                          <TableCell className="text-xs"><span className="block font-medium">{name}</span><span className="block text-muted-foreground">{runDate(run, locale) ?? "—"}</span></TableCell>
+                          <TableCell className="text-right"><MetricValue copy={copy} value={run.results.hitAtK} /></TableCell>
+                          <TableCell className="text-right"><MetricValue copy={copy} value={run.results.mrr} /></TableCell>
+                          <TableCell className="hidden text-right sm:table-cell"><MetricValue copy={copy} value={run.results.recallAtK} /></TableCell>
+                          <TableCell className="hidden text-right sm:table-cell"><MetricValue copy={copy} value={run.results.precisionAtK} /></TableCell>
+                          <TableCell className="hidden text-right md:table-cell"><MetricValue copy={copy} value={run.results.citationValidity} /></TableCell>
+                          <TableCell className="hidden pr-4 text-right md:table-cell"><MetricValue copy={copy} value={run.results.generationMetrics?.lexicalOverlap} /></TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              ) : <p className="p-4 text-sm text-muted-foreground">{copy.notEnoughRuns}</p>}
+            </Disclosure>
           </TransitionPanel>
         ) : null}
       </div>
     </div>
   );
 }
-

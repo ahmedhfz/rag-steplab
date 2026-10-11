@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installBrowserQualityGuards } from "../support/browser-quality";
+import { expectNoHorizontalOverflow } from "../support/overflow";
 import { installSeededApi } from "../support/seeded-api";
 import { selectSeededDocument } from "../support/seeded-workspace";
 
@@ -32,7 +33,7 @@ test("authenticated seeded workspace kritik rotaları ve blocker durumlarını a
 
   await page.goto("/playground");
   await expect(page.getByText("Skipped", { exact: true }).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Run generation again" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Regenerate answer" })).toBeEnabled();
 
   quality.assertClean();
 });
@@ -55,10 +56,12 @@ test("seeded state reload sonrası korunur ve responsive gezinme çalışır", a
   await mobileDocument.locator("summary").click();
   await expect(mobileDocument.getByRole("link", { name: "Open parsed content" })).toBeVisible();
   await mobileDocument.locator("summary").click();
+  await expectNoHorizontalOverflow(page, "documents at 390px");
   await page.screenshot({ path: "output/playwright/responsive-shell/documents-390.png", fullPage: true });
 
   await page.goto("/settings");
-  const languageDescription = page.getByText("Interface language.");
+  // The row title is the anchor; the redundant "Interface language." description is gone.
+  const languageDescription = page.getByTestId("settings-language-row").getByRole("heading", { name: "Language", level: 2 });
   const languageControl = page.getByRole("radiogroup", { name: "Language" });
   const descriptionBox = await languageDescription.boundingBox();
   const languageControlBox = await languageControl.boundingBox();
@@ -68,8 +71,13 @@ test("seeded state reload sonrası korunur ve responsive gezinme çalışır", a
 
   for (const width of [390, 768, 1024]) {
     await page.setViewportSize({ width, height: 844 });
-    await expect(page.locator("html")).toHaveJSProperty("scrollWidth", width);
-    await expect(page.locator("body")).toHaveJSProperty("scrollWidth", width);
+    // Taşma yok: içerik genişliği, ayrılmış scrollbar gutter'ı hariç görünür genişliği aşmaz.
+    const layoutWidth = await page.evaluate(() => Math.round(document.body.getBoundingClientRect().width));
+    expect(layoutWidth).toBeLessThanOrEqual(width);
+    await expect(page.locator("html")).toHaveJSProperty("scrollWidth", layoutWidth);
+    await expect(page.locator("body")).toHaveJSProperty("scrollWidth", layoutWidth);
+    // Screen roots no longer clip: nothing may spill out of, or be cut off inside, its box.
+    await expectNoHorizontalOverflow(page, `settings at ${width}px`);
 
     const openNavigation = page.getByRole("button", { name: "Open navigation" });
     await openNavigation.click();

@@ -15,9 +15,9 @@ Source: [Jakubantalik/transitions.dev](https://github.com/Jakubantalik/transitio
 | 10-success-check | Completed pipeline indicators |
 | 12-error-state-shake | Invalid upload and password confirmation |
 | 13-input-clear-dissolve | Playground question clear mirror/glow |
-| 14-skeleton-reveal | PDF preview, driven by the iframe load event |
+| 14-skeleton-reveal | PDF preview, driven by the iframe load event; `components/ui/skeleton.tsx` loading rows (in-flow, repeating pulse via `.steplab-skeleton`) |
 | 16-tabs-sliding | Language/theme, parsed-view, chunk strategy and evaluation controls |
-| 21-accordion | Native details throughout document/run/config/history panels |
+| 21-accordion | Native details through `components/ui/disclosure.tsx` (`Disclosure`, `TechnicalDetails`, `HowItWorks`) |
 | 25-checkbox-check | Run/case comparison controls |
 | 27-toggle | Learning hints switch |
 | 28-thinking-states | Parse, embedding and experiment processing labels |
@@ -31,7 +31,7 @@ The remaining catalog recipes require product patterns that these screens do not
 - Native details use `::details-content` to allow closing animation in supporting browsers. Other browsers retain native disclosure behavior. Nested accordion selectors are scoped in adapters so opening a parent cannot open a child.
 - Tab pills use measured control sizes and update on resizing/font readiness. The switch uses the source overshoot keyframes with the existing thumb travel and centered geometry.
 - Source reduced-motion rules and the application's global reduced-motion guard disable visual motion. Cleanup uses zero delay for manual surfaces in reduced-motion mode.
-- Existing MotionConfig remains for consumers outside this integration (`components/app-shell.tsx`). `.codex/config.toml` only registers the Motion documentation MCP servers for Codex; the transitions integration does not need them.
+- No JavaScript animation library is installed. Reduced motion is handled by the CSS rules above plus `reduceTransitions()` (`lib/transitions.ts`) for timers, WAAPI and shake shortcuts.
 
 ## Verification
 

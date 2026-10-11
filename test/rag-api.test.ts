@@ -568,6 +568,125 @@ describe("RAG API contract normalization", () => {
     expect(run.caseResults?.[0]).toMatchObject({ citationValidity: null, groundedness: null });
   });
 
+  it("normalizes retrieval score semantics, top-K results, answer segments and the grounding outcome", async () => {
+    const candidate = (chunkId: string, rank: number) => ({ chunkId, rank, score: 0.4, text: `Source ${chunkId}`, documentId: "document-1", pageNumbers: [rank], sourceElementIds: [], headingPath: [] });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "experiment-1",
+      status: "completed",
+      documentId: "document-1",
+      chunkRunId: "chunk-1",
+      embeddingRunId: "embedding-1",
+      query: "query",
+      targetStage: "generation",
+      timing: { durationMs: 12_000, queueDurationMs: 9_500 },
+      stageResults: {
+        retrieval: {
+          candidates: [candidate("chunk-1", 1), candidate("chunk-2", 2), candidate("chunk-3", 3)],
+          results: [candidate("chunk-1", 1)],
+          scoreSemantics: "relative_min_max_fusion_within_candidate_pool",
+          timings: { queryEmbeddingMs: 820.4, candidateQueryMs: 1200, assemblyMs: 2.1 },
+        },
+        reranking: { status: "completed", results: [{ ...candidate("chunk-2", 1), originalRank: 2, rerankRank: 1, rankedBy: "retrieval_fallback", rerankInputTruncated: true }] },
+        context: { selected: [], excluded: [], formattedContext: "", tokenBudget: 100, localTokenCount: 0 },
+        generation: {
+          answer: "",
+          outcome: "grounding_rejected",
+          insufficientContext: false,
+          segments: [],
+          citations: [],
+          groundingFailureDetail: { code: "unsupported_factual_token", token: "2027", attempts: 2 },
+        },
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    const run = await getExperiment("experiment-1");
+    expect(run.queueDurationMs).toBe(9_500);
+    expect(run.stageResults.retrieval).toMatchObject({
+      scoreSemantics: "relative_min_max_fusion_within_candidate_pool",
+      timings: { queryEmbeddingMs: 820.4, candidateQueryMs: 1200, assemblyMs: 2.1 },
+    });
+    // The pool stays available; the top-K list is what reached the context.
+    expect(run.stageResults.retrieval?.candidates).toHaveLength(3);
+    expect(run.stageResults.retrieval?.results?.map((item) => item.chunkId)).toEqual(["chunk-1"]);
+    expect(run.stageResults.reranking?.candidates[0]).toMatchObject({ rankedBy: "retrieval_fallback", rerankInputTruncated: true });
+    expect(run.stageResults.generation).toMatchObject({
+      outcome: "grounding_rejected",
+      insufficientContext: false,
+      segments: [],
+      groundingFailureDetail: { code: "unsupported_factual_token", token: "2027", attempts: 2 },
+    });
+  });
+
+  it("keeps segments with their citation IDs and stays backward compatible without the new fields", async () => {
+    const base = { id: "experiment-2", status: "completed", documentId: "document-1", chunkRunId: "chunk-1", embeddingRunId: null, query: "q", targetStage: "generation" };
+    const citation = { citationId: "C1", documentId: "document-1", chunkId: "chunk-1", pageNumbers: [3], valid: true, sourceElementIds: [] };
+    const stages = (generation: Record<string, unknown>) => ({
+      retrieval: { candidates: [{ chunkId: "chunk-1", rank: 1, text: "t", documentId: "document-1" }] },
+      reranking: { status: "skipped", candidates: [{ chunkId: "chunk-1", rank: 1, text: "t", documentId: "document-1" }] },
+      context: { candidates: [], finalContext: "", tokenBudget: 10, tokenCount: 0 },
+      generation: { citations: [citation], ...generation },
+    });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...base, stageResults: stages({ answer: "A.\n\nB.", outcome: "answered", segments: [{ text: "A.", citationIds: ["C1"] }, { text: " ", citationIds: [] }, { text: "B.", citationIds: ["C1"] }] }) }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...base, stageResults: stages({ answer: "Legacy answer" }) }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    const current = await getExperiment("experiment-2");
+    expect(current.stageResults.generation?.segments).toEqual([{ text: "A.", citationIds: ["C1"] }, { text: "B.", citationIds: ["C1"] }]);
+    const legacy = await getExperiment("experiment-2");
+    expect(legacy.queueDurationMs).toBeNull();
+    expect(legacy.stageResults.retrieval).toMatchObject({ results: null, scoreSemantics: null, timings: null });
+    expect(legacy.stageResults.reranking?.candidates[0]).toMatchObject({ rankedBy: null, rerankInputTruncated: null });
+    expect(legacy.stageResults.generation).toMatchObject({ outcome: null, segments: null, groundingFailureDetail: null });
+  });
+
+  it("normalizes evaluation methodology fields without turning missing metrics into zero", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "evaluation-2",
+      status: "completed",
+      datasetId: "dataset-1",
+      results: {
+        aggregate: {
+          caseCount: 3,
+          completedCaseCount: 2,
+          failedCaseCount: 1,
+          failedCaseCodes: [{ code: "citation_invalid", count: 1 }, { code: "", count: 4 }],
+          hitAtK: 1,
+          retrievalMetricsStage: "retrieval",
+          stageRetrievalMetrics: { retrieval: { hitAtK: 1, precisionAtK: 0.5, recallAtK: 1, mrr: 1, eligibleCaseCount: 2 }, reranking: null, context: {} },
+          citationValidity: null,
+          citationValidityEligibleCaseCount: 0,
+          answerableCaseCount: 2,
+          falseAbstentionRate: 0.5,
+          groundingRejectedCaseCount: 1,
+          generationMetrics: { faithfulness: null, answerRelevance: null, answerCorrectness: null, lexicalOverlap: 0.62, method: "citation_token_overlap_v1", metricVersion: "v2", lexicalScoredCaseCount: 1, skippedCaseCount: 1 },
+        },
+        caseResults: [
+          { question: "q1", expectedElementIds: [], retrievedElementIds: [], citations: [], status: "completed", generationOutcome: "grounding_rejected", generationMetrics: { faithfulness: null, lexicalOverlap: null, method: "citation_token_overlap_v1", skippedReason: "no_answer_segments" } },
+          { question: "q2", expectedElementIds: [], retrievedElementIds: [], citations: [], status: "failed", errorCode: "citation_invalid", errorMessage: "Unknown citation.", answer: null, generationMetrics: null, experimentId: null },
+          { question: "q3", expectedElementIds: [], retrievedElementIds: [], citations: [] },
+        ],
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    const run = await getEvaluationRun("evaluation-2");
+    expect(run.results).toMatchObject({
+      completedCaseCount: 2,
+      failedCaseCount: 1,
+      failedCaseCodes: [{ code: "citation_invalid", count: 1 }],
+      retrievalMetricsStage: "retrieval",
+      stageRetrievalMetrics: { retrieval: { hitAtK: 1, precisionAtK: 0.5, eligibleCaseCount: 2 }, reranking: null, context: null },
+      citationValidity: null,
+      answerableCaseCount: 2,
+      falseAbstentionRate: 0.5,
+      groundingRejectedCaseCount: 1,
+      generationMetrics: { faithfulness: null, lexicalOverlap: 0.62, method: "citation_token_overlap_v1", metricVersion: "v2", lexicalScoredCaseCount: 1 },
+    });
+    expect(run.caseResults?.[0]).toMatchObject({ status: "completed", generationOutcome: "grounding_rejected", generationMetrics: { lexicalOverlap: null, skippedReason: "no_answer_segments" } });
+    expect(run.caseResults?.[1]).toMatchObject({ status: "failed", errorCode: "citation_invalid", errorMessage: "Unknown citation.", answer: null, generationMetrics: null, experimentId: "" });
+    // Legacy cases without a status are completed; unknown fields stay null.
+    expect(run.caseResults?.[2]).toMatchObject({ status: "completed", errorCode: null, generationOutcome: null });
+  });
+
   it("does not fall back to the legacy document endpoint when the summary is missing", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code: "document_not_found", message: "Missing" } }), { status: 404, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);

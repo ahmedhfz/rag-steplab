@@ -1,166 +1,93 @@
 "use client";
 
-import { TransitionDetails } from "@/components/ui/transitions";
-
-import Link from "next/link";
+import { useCallback, useState } from "react";
 
 import { ChunkingWorkspace, EmbeddingWorkspace } from "@/components/chunks-pipeline";
 import { PipelineContextBar } from "@/components/pipeline-context-bar";
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
+import { InspectionBand, RunHistory, StageNextAction } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
-import { AppIcon } from "@/components/ui/app-icon";
-import { Button } from "@/components/ui/button";
-import type { AppLocale } from "@/lib/copy";
-import type { RunSummary } from "@/lib/rag-api-types";
+import { HowItWorks } from "@/components/ui/disclosure";
+import { PageHeader } from "@/components/ui/page-header";
+import { getPipelineAvailability } from "@/lib/blockers";
+import { useCopy } from "@/lib/copy";
+import type { ChunkStageState } from "@/lib/pipeline-lineage";
 
-function runStatusLabel(run: RunSummary, locale: AppLocale) {
-  if (run.status === "completed" && run.isCompatible) return locale === "tr" ? "Uyumlu" : "Compatible";
-  if (run.status === "completed") return locale === "tr" ? "Uyumsuz" : "Incompatible";
-  if (run.status === "running" || run.status === "queued") return locale === "tr" ? "Çalışıyor" : "Running";
-  return locale === "tr" ? "Başarısız" : "Failed";
-}
-
-function runSelectable(run: RunSummary) {
-  return run.status === "completed" && run.isCompatible;
-}
-
-function ArtifactHistory({
-  title,
-  runs,
-  selectedId,
-  inspectedId,
-  defaultId,
-  locale,
-  onSelect,
-  onUse,
-  kind,
-}: {
-  title: string;
-  runs: RunSummary[];
-  selectedId: string | null;
-  inspectedId?: string | null;
-  defaultId: string | null | undefined;
-  locale: AppLocale;
-  onSelect: (id: string) => Promise<void>;
-  onUse?: (id: string) => Promise<boolean>;
-  kind: "chunk" | "embedding";
-}) {
-  const labels = locale === "tr"
-    ? { empty: "Bu aşama için henüz sonuç yok.", selected: "Kullanımda", inspected: "İnceleniyor", active: "Varsayılan", historical: "Geçmiş", status: "Durum", inspect: "İncele", use: "Pipeline'da kullan" }
-    : { empty: "No result for this stage yet.", selected: "In use", inspected: "Inspecting", active: "Default", historical: "Historical", status: "Status", inspect: "Inspect", use: "Use in pipeline" };
-  if (!runs.length) return null;
-
+/** Context card shared by the Parsing, Chunking and Embeddings pages. */
+export function StageContextCard({ className = "mt-6 w-fit max-w-full" }: { className?: string }) {
   return (
-    <section className="mt-8" data-testid={`${kind}-history`}>
-      <TransitionDetails className="rounded-[12px] border-[1.712px] border-border bg-card">
-        <summary className="flex h-[46px] cursor-pointer list-none items-center justify-between px-4 text-[13px] font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/25 sm:px-5">
-          <span>{title} ({runs.length})</span><AppIcon name="chevronDown" className="size-3.5 text-subtle-foreground" />
-        </summary>
-        <div className="space-y-2 border-t-[1.712px] border-border p-4">
-          {runs.map((run) => {
-            const selectable = runSelectable(run);
-            const isSelected = run.id === selectedId;
-            const isInspected = run.id === (inspectedId ?? selectedId);
-            return (
-              <div className="flex flex-col gap-3 rounded-[10px] border-[1.712px] border-border bg-card p-3 sm:flex-row sm:items-center sm:justify-between" data-testid={`${kind}-history-row`} key={run.id}>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <span className="font-semibold">{kind === "chunk" ? "Chunk run" : "Embedding"} {run.runNumber ?? "—"}</span>
-                    {isSelected ? <span className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] text-brand">{labels.selected}</span> : null}
-                    {!isSelected && isInspected ? <span className="rounded-full bg-warning-subtle px-1.5 py-0.5 text-[10px] text-warning">{labels.inspected}</span> : null}
-                    {run.id === defaultId ? <span className="rounded-full bg-success-subtle px-1.5 py-0.5 text-[10px] text-success">{labels.active}</span> : null}
-                    {run.historicalLineage ? <span className="rounded-full bg-warning-subtle px-1.5 py-0.5 text-[10px] text-warning">{labels.historical}</span> : null}
-                  </div>
-                  <div className="mt-1 text-[11px] text-muted-foreground">{labels.status}: {runStatusLabel(run, locale)}</div>
-                  {run.error?.message ? <p className="mt-1 text-xs text-destructive">{run.error.message}</p> : null}
-                  {!run.isCompatible && run.compatibilityReason ? <p className="mt-1 text-xs text-warning">{run.compatibilityReason}</p> : null}
-                </div>
-                <div className="flex flex-wrap justify-end gap-2">
-                  <Button disabled={!selectable || isInspected} onClick={() => void onSelect(run.id)} size="sm" variant={isInspected ? "secondary" : "outline"}>{isInspected ? labels.inspected : labels.inspect}</Button>
-                  {onUse && isInspected && !isSelected ? <Button onClick={() => void onUse(run.id)} size="sm" variant="outline">{labels.use}</Button> : null}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </TransitionDetails>
-    </section>
-  );
-}
-
-function StageHeader({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
-  return (
-    <header className="flex min-h-[92px] items-start justify-between gap-6 max-md:flex-col" data-testid={`${title.toLowerCase()}-page-header`}>
-      <div className="max-w-[720px]">
-        <p className="text-xs font-semibold uppercase leading-[18px] tracking-[0.96px] text-brand">{eyebrow}</p>
-        <h1 className="mt-2 text-[30px] font-semibold leading-9 tracking-[-0.6px] text-foreground">{title}</h1>
-        <p className="mt-2 text-sm leading-[21px] text-muted-foreground">{description}</p>
-      </div>
-    </header>
-  );
-}
-
-export function StageNextAction({ href, label, disabled, testId }: { href: string; label: string; disabled: boolean; testId: string }) {
-  if (disabled) return null;
-  return (
-    <footer className="mt-8 flex justify-end border-t border-border pt-5" data-testid={`${testId}-footer`}>
-      <Button asChild className="h-[42px] gap-2 rounded-[10px] px-4 text-sm" data-testid={testId}>
-        <Link href={href}>{label}<AppIcon name="arrowRight" className="size-4" /></Link>
-      </Button>
-    </footer>
+    <div className={`${className} overflow-hidden rounded-lg border border-border bg-card [&>[data-testid=pipeline-context-bar]]:border-b-0`}>
+      <PipelineContextBar showLineage={false} />
+    </div>
   );
 }
 
 export function ChunkingScreen() {
+  const copy = useCopy();
   const { preferences } = usePreferences();
-  const locale = preferences.locale;
-  const { activeDocument, selectedParseRunId, selectedChunkRunId, inspectedChunkRunId, selectChunkRun, setPipelineChunkRun } = useDocumentPipeline();
-  const compatibleChunks = activeDocument?.chunkRuns.filter((run) => run.status === "completed" && run.isCompatible && run.upstream.parseRunId === selectedParseRunId) ?? [];
-  const labels = locale === "tr"
-    ? { description: "Yapılandırılmış içeriği retriever'ınızın bağımsız arayabileceği parçalara ayırın.", source: "Kaynak", basedOn: "Dayanak", elements: "Parse elementleri", noDocument: "Doküman seçin", latest: "Son Ayrıştırma", history: "Chunk sürüm geçmişi", next: "Embeddings'e git", nextReason: "Önce uyumlu ve tamamlanmış bir chunk run seçin." }
-    : { description: "Split structured content into pieces your retriever can search independently.", source: "Source", basedOn: "Based on", elements: "Parsed elements", noDocument: "Select a document", latest: "Latest Parse", history: "Chunk version history", next: "Go to Embeddings", nextReason: "Select a compatible completed chunk run first." };
+  const { activeDocument, activePipeline, selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId, inspectedChunkRunId, persistenceStatus, workspaceStatus, chunkStatus, selectChunkRun, inspectChunkRun, setPipelineChunkRun } = useDocumentPipeline();
+  const chunkRuns = activeDocument?.chunkRuns.filter((run) => run.upstream.parseRunId === selectedParseRunId) ?? [];
+  const selectedChunk = chunkRuns.find((run) => run.id === selectedChunkRunId) ?? null;
+  const nextAvailability = getPipelineAvailability(preferences.locale, "embedding", {
+    document: activeDocument,
+    pipeline: activePipeline,
+    selection: { selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId },
+    parseRun: activeDocument?.parseRuns.find((run) => run.id === selectedParseRunId) ?? null,
+    chunkRun: selectedChunk,
+    persistenceStatus,
+    workspaceStatus,
+  });
+  const canContinue = Boolean(selectedParseRunId && selectedChunk && selectedChunk.status === "completed" && selectedChunk.isCompatible && chunkStatus !== "processing");
+  // A form that differs from the selected run makes "Run chunking" the primary
+  // action, so the footer steps back to secondary until the form is applied.
+  const [formDirty, setFormDirty] = useState(false);
+  const onFormStateChange = useCallback((state: ChunkStageState) => setFormDirty(state.isDirty), []);
 
   return (
-    <div className="min-w-0 overflow-x-clip bg-background" data-testid="chunking-screen">
+    <div className="min-w-0 bg-background" data-testid="chunking-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
-        <StageHeader description={labels.description} eyebrow={locale === "tr" ? "Hazırla" : "Build"} title="Chunking" />
-        <div className="mt-3 w-fit max-w-full overflow-hidden rounded-[14px] border border-border bg-card [&>[data-testid=pipeline-context-bar]]:border-b-0">
-          <PipelineContextBar showLineage={false} />
-        </div>
-        <ChunkingWorkspace locale={locale} />
-        <ArtifactHistory defaultId={activeDocument?.activeChunkRunId} inspectedId={inspectedChunkRunId} kind="chunk" locale={locale} onSelect={selectChunkRun} onUse={setPipelineChunkRun} runs={activeDocument?.chunkRuns.filter((run) => run.upstream.parseRunId === selectedParseRunId) ?? []} selectedId={selectedChunkRunId} title={labels.history} />
-        <StageNextAction disabled={!selectedParseRunId || !compatibleChunks.some((run) => run.id === selectedChunkRunId)} href="/embeddings" label={labels.next} testId="chunking-next-action" />
+        <PageHeader data-testid="chunking-page-header" description={copy.chunking.description} help={<HowItWorks>{copy.chunking.howItWorks}</HowItWorks>} title={copy.nav.chunking} />
+        <StageContextCard />
+        <InspectionBand canUse={Boolean(activePipeline)} inspectedId={inspectedChunkRunId} kind="chunk" onBack={inspectChunkRun} onUse={setPipelineChunkRun} runs={chunkRuns} selectedId={selectedChunkRunId} />
+        <ChunkingWorkspace onFormStateChange={onFormStateChange} />
+        <RunHistory defaultId={activeDocument?.activeChunkRunId} hasPipeline={Boolean(activePipeline)} inspectedId={inspectedChunkRunId} kind="chunk" onInspect={selectChunkRun} onUse={setPipelineChunkRun} runs={chunkRuns} selectedId={selectedChunkRunId} />
+        <StageNextAction blocker={nextAvailability.allowed ? null : nextAvailability} disabled={!canContinue} emphasis={formDirty ? "secondary" : "primary"} href="/embeddings" label={copy.chunking.next} reason={copy.chunking.nextReason} testId="chunking-next-action" />
       </div>
     </div>
   );
 }
 
 export function EmbeddingsScreen() {
+  const copy = useCopy();
   const { preferences } = usePreferences();
-  const locale = preferences.locale;
-  const { activeDocument, selectedChunkRunId, selectedEmbeddingRunId, inspectedEmbeddingRunId, selectedEmbeddingRun, selectEmbeddingRun, setPipelineEmbeddingRun } = useDocumentPipeline();
+  const { activeDocument, activePipeline, selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId, inspectedEmbeddingRunId, selectedEmbeddingRun, persistenceStatus, workspaceStatus, embeddingStatus, selectEmbeddingRun, inspectEmbeddingRun, setPipelineEmbeddingRun } = useDocumentPipeline();
+  const embeddingRuns = activeDocument?.embeddingRuns.filter((run) => run.upstream.chunkRunId === selectedChunkRunId) ?? [];
   // The next step follows the selected lineage, never the inspection cursor.
-  const canContinue = Boolean(selectedChunkRunId && selectedEmbeddingRunId && selectedEmbeddingRun?.id === selectedEmbeddingRunId && selectedEmbeddingRun?.status === "completed" && selectedEmbeddingRun.isCompatible && selectedEmbeddingRun.upstream.chunkRunId === selectedChunkRunId);
-  const labels = locale === "tr"
-    ? { description: "Seçili chunk setini semantic search için embedding'lere dönüştürün.", chunks: "chunk", model: "Model", dimensions: "Boyut", noDocument: "Chunk seti seçin", create: "Embedding oluştur", creating: "Embedding oluşturuluyor", history: "Embedding sürüm geçmişi", next: "Playground'a git", nextReason: "Playground'a geçmeden önce embedding oluşturun." }
-    : { description: "Turn the selected chunk set into embeddings for semantic search.", chunks: "chunks", model: "Model", dimensions: "Dimensions", noDocument: "Select a chunk set", create: "Create embeddings", creating: "Creating embeddings", history: "Embedding version history", next: "Go to Playground", nextReason: "Create embeddings before continuing to Playground." };
+  const canContinue = Boolean(selectedChunkRunId && selectedEmbeddingRunId && selectedEmbeddingRun?.id === selectedEmbeddingRunId && selectedEmbeddingRun?.status === "completed" && selectedEmbeddingRun.isCompatible && selectedEmbeddingRun.upstream.chunkRunId === selectedChunkRunId && embeddingStatus !== "processing");
+  const nextAvailability = getPipelineAvailability(preferences.locale, "retrieval", {
+    document: activeDocument,
+    pipeline: activePipeline,
+    selection: { selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId },
+    parseRun: activeDocument?.parseRuns.find((run) => run.id === selectedParseRunId) ?? null,
+    chunkRun: activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId) ?? null,
+    embeddingRun: activeDocument?.embeddingRuns.find((run) => run.id === selectedEmbeddingRunId) ?? null,
+    // The Playground question is entered there; only lineage gates the step.
+    hasQuestion: true,
+    retrievalMode: "dense",
+    persistenceStatus,
+    workspaceStatus,
+  });
 
   return (
-    <div className="min-w-0 overflow-x-clip bg-background" data-testid="embeddings-screen">
+    <div className="min-w-0 bg-background" data-testid="embeddings-screen">
       <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
-        <StageHeader
-          description={labels.description}
-          eyebrow={locale === "tr" ? "Hazırla" : "Build"}
-          title="Embeddings"
-        />
-        <div className="mt-3 w-fit max-w-full overflow-hidden rounded-[14px] border border-border bg-card [&>[data-testid=pipeline-context-bar]]:border-b-0">
-          <PipelineContextBar showLineage={false} />
-        </div>
-        <EmbeddingWorkspace locale={locale} />
-        <ArtifactHistory defaultId={activeDocument?.activeEmbeddingRunId} inspectedId={inspectedEmbeddingRunId} kind="embedding" locale={locale} onSelect={selectEmbeddingRun} onUse={setPipelineEmbeddingRun} runs={activeDocument?.embeddingRuns.filter((run) => run.upstream.chunkRunId === selectedChunkRunId) ?? []} selectedId={selectedEmbeddingRunId} title={labels.history} />
-        <StageNextAction disabled={!canContinue} href="/playground" label={labels.next} testId="embeddings-next-action" />
+        <PageHeader data-testid="embeddings-page-header" description={copy.embeddings.description} title={copy.nav.embeddings} />
+        <StageContextCard />
+        <InspectionBand canUse={Boolean(activePipeline)} inspectedId={inspectedEmbeddingRunId} kind="embedding" onBack={inspectEmbeddingRun} onUse={setPipelineEmbeddingRun} runs={embeddingRuns} selectedId={selectedEmbeddingRunId} />
+        <EmbeddingWorkspace />
+        <RunHistory defaultId={activeDocument?.activeEmbeddingRunId} hasPipeline={Boolean(activePipeline)} inspectedId={inspectedEmbeddingRunId} kind="embedding" onInspect={selectEmbeddingRun} onUse={setPipelineEmbeddingRun} runs={embeddingRuns} selectedId={selectedEmbeddingRunId} />
+        <StageNextAction blocker={nextAvailability.allowed ? null : nextAvailability} disabled={!canContinue} href="/playground" label={copy.embeddings.next} reason={copy.embeddings.nextReason} testId="embeddings-next-action" />
       </div>
     </div>
   );
 }
-

@@ -6,10 +6,12 @@ import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
+import { useCopy } from "@/lib/copy";
 import { sampleForLocale } from "@/lib/sample-documents";
 
 export function SampleDocumentButton({ primary = false }: { primary?: boolean }) {
   const { preferences } = usePreferences();
+  const labels = useCopy().documents.sample;
   const { addDocument } = useDocumentPipeline();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +27,7 @@ export function SampleDocumentButton({ primary = false }: { primary?: boolean })
       const file = new File([await response.blob()], sample.fileName, { type: "application/pdf" });
       await addDocument(file);
     } catch {
-      setError(preferences.locale === "tr" ? "Örnek PDF eklenemedi. Tekrar deneyin." : "The sample PDF could not be added. Try again.");
+      setError(labels.failed);
     } finally {
       setBusy(false);
     }
@@ -33,9 +35,9 @@ export function SampleDocumentButton({ primary = false }: { primary?: boolean })
 
   return (
     <div>
-      <Button aria-busy={busy} className="gap-2" data-testid="sample-document-button" disabled={busy} onClick={() => void addSample()} type="button" variant={primary ? "default" : "outline"}>
-        <AppIcon className="size-4" name={busy ? "loading" : "document"} />
-        {busy ? (preferences.locale === "tr" ? "Örnek ekleniyor…" : "Adding sample…") : (preferences.locale === "tr" ? "Örnek PDF ile dene" : "Try a sample PDF")}
+      <Button aria-busy={busy} data-testid="sample-document-button" disabled={busy} onClick={() => void addSample()} type="button" variant={primary ? "default" : "outline"}>
+        <AppIcon className={busy ? "size-4 animate-spin motion-reduce:animate-none" : "size-4"} name={busy ? "loading" : "document"} />
+        {busy ? labels.adding : labels.action}
       </Button>
       {error ? <p className="mt-2 text-sm text-destructive" role="alert">{error}</p> : null}
     </div>

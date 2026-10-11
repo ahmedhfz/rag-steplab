@@ -5,7 +5,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { AppLocale } from "@/lib/copy";
 import {
   applyThemeToRoot,
+  DEFAULT_LOCALE,
   DEFAULT_THEME,
+  isAppLocale,
   isThemePreference,
   LEGACY_PREFERENCES_STORAGE_KEYS,
   PREFERENCES_STORAGE_KEY,
@@ -29,7 +31,7 @@ type PreferencesContextValue = {
 };
 
 const DEFAULT_PREFERENCES: AppPreferences = {
-  locale: "en",
+  locale: DEFAULT_LOCALE,
   showLearningHints: true,
   theme: DEFAULT_THEME,
 };
@@ -49,10 +51,6 @@ const FALLBACK_PREFERENCES: PreferencesContextValue = {
   resetPreferences: () => undefined,
 };
 
-function isLocale(value: unknown): value is AppLocale {
-  return value === "en" || value === "tr";
-}
-
 function readStoredPreferences(): AppPreferences {
   try {
     for (const key of [PREFERENCES_STORAGE_KEY, ...LEGACY_PREFERENCES_STORAGE_KEYS]) {
@@ -65,7 +63,7 @@ function readStoredPreferences(): AppPreferences {
 
         const stored = parsed as Partial<AppPreferences>;
         return {
-          locale: isLocale(stored.locale) ? stored.locale : DEFAULT_PREFERENCES.locale,
+          locale: isAppLocale(stored.locale) ? stored.locale : DEFAULT_PREFERENCES.locale,
           showLearningHints: typeof stored.showLearningHints === "boolean" ? stored.showLearningHints : DEFAULT_PREFERENCES.showLearningHints,
           theme: isThemePreference(stored.theme) ? stored.theme : DEFAULT_PREFERENCES.theme,
         };
@@ -98,8 +96,10 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
   }, []);
 
   useEffect(() => {
+    // Until hydration the default would undo LOCALE_BOOTSTRAP_SCRIPT's stored locale.
+    if (!isHydrated) return;
     document.documentElement.lang = preferences.locale;
-  }, [preferences.locale]);
+  }, [isHydrated, preferences.locale]);
 
   useEffect(() => {
     if (!isHydrated) return;
