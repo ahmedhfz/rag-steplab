@@ -18,5 +18,5 @@ lineage invalidation must take effect immediately; don't keep stale
 results alive for animation. Cancel observers/timers/frames on unmount.
 
 Run affected Vitest tests and the normal/reduced-motion transition smoke
-spec via the existing seeded E2E workflow. Keep the existing MotionConfig
-for legacy Motion consumers; new recipe effects are CSS-driven.
+spec via the existing seeded E2E workflow. Effects are CSS-driven; do not
+add a JavaScript animation library for them.

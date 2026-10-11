@@ -5,7 +5,7 @@ export type JourneyLabelPlacement = "above" | "below";
 
 export const JOURNEY_CANVAS = {
   width: 1054.1,
-  height: 199.975,
+  height: 200,
 } as const;
 
 export const JOURNEY_NODE_SIZE = 40;
@@ -145,16 +145,18 @@ export type JourneyNodeVisual = {
   opacity: number;
 };
 
-const SUCCESS = "var(--success)";
+// Emphasis discipline: completed work is neutral, only the next step carries
+// the brand colour; amber/destructive are reserved for real exceptions.
 const CHERRY = "var(--brand)";
 const WARNING = "var(--warning)";
 const ERROR = "var(--destructive)";
 const MUTED = "var(--subtle-foreground)";
 const SUBTLE = "var(--muted-foreground)";
 const BORDER = "var(--border)";
+const LINE = "var(--input)";
 
 export const JOURNEY_NODE_VISUALS: Readonly<Record<PipelineStepState, JourneyNodeVisual>> = {
-  Completed: { borderColor: "transparent", backgroundColor: "var(--success-subtle)", iconColor: SUCCESS, opacity: 1 },
+  Completed: { borderColor: BORDER, backgroundColor: "var(--card)", iconColor: SUBTLE, opacity: 1 },
   Ready: { borderColor: "var(--brand-subtle-border)", backgroundColor: "var(--brand-subtle)", iconColor: CHERRY, opacity: 1 },
   Processing: { borderColor: "var(--warning-border)", backgroundColor: "var(--warning-subtle)", iconColor: WARNING, opacity: 1 },
   Error: { borderColor: "var(--destructive-border)", backgroundColor: "var(--destructive-subtle)", iconColor: ERROR, opacity: 1 },
@@ -175,14 +177,14 @@ export type JourneyConnectorVisual = {
 };
 
 export const JOURNEY_CONNECTOR_VISUALS: Readonly<Record<PipelineStepState, JourneyConnectorVisual>> = {
-  Completed: { color: SUCCESS, opacity: 0.75, width: 2.56657 },
-  Ready: { color: CHERRY, opacity: 1, width: 2.56657 },
-  Processing: { color: WARNING, opacity: 0.9, width: 2.56657 },
-  Error: { color: ERROR, opacity: 0.9, width: 2.56657 },
-  Stale: { color: WARNING, opacity: 0.9, width: 2.56657 },
-  Skipped: { color: MUTED, opacity: 0.9, width: 2.56657 },
-  Locked: { color: "var(--input)", opacity: 1, width: 2.05326 },
-  "Not started": { color: "var(--input)", opacity: 1, width: 2.05326 },
+  Completed: { color: LINE, opacity: 1, width: 2 },
+  Ready: { color: CHERRY, opacity: 1, width: 2 },
+  Processing: { color: WARNING, opacity: 0.9, width: 2 },
+  Error: { color: ERROR, opacity: 0.9, width: 2 },
+  Stale: { color: WARNING, opacity: 0.9, width: 2 },
+  Skipped: { color: LINE, opacity: 1, width: 2 },
+  Locked: { color: LINE, opacity: 0.4, width: 1.5 },
+  "Not started": { color: LINE, opacity: 0.4, width: 1.5 },
 };
 
 export function journeyConnectorVisualForState(state: PipelineStepState): JourneyConnectorVisual {

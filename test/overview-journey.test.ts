@@ -5,6 +5,7 @@ import {
   deriveJourneyConnectorState,
   JOURNEY_CANVAS,
   JOURNEY_CONNECTOR_PAIRS,
+  JOURNEY_CONNECTOR_VISUALS,
   JOURNEY_GROUP_BOUNDS,
   JOURNEY_NODE_ANCHORS,
   JOURNEY_NODE_VISUALS,
@@ -108,8 +109,13 @@ describe("Overview journey presentation", () => {
       expect(visual.borderColor).toBeTruthy();
       expect(visual.opacity).toBeGreaterThan(0);
     }
-    expect(journeyNodeVisualForState("Completed").iconColor).toBe("var(--success)");
+    // Completed work is neutral; only the next step carries the brand colour.
+    expect(journeyNodeVisualForState("Completed").iconColor).toBe("var(--muted-foreground)");
+    expect(journeyNodeVisualForState("Completed").backgroundColor).toBe("var(--card)");
     expect(journeyNodeVisualForState("Ready").iconColor).toBe("var(--brand)");
+    expect(Object.values(JOURNEY_NODE_VISUALS).some((visual) => visual.iconColor === "var(--success)")).toBe(false);
+    expect(JOURNEY_CONNECTOR_VISUALS.Completed.color).not.toBe(JOURNEY_CONNECTOR_VISUALS.Ready.color);
+    expect(JOURNEY_CONNECTOR_VISUALS.Ready.color).toBe("var(--brand)");
     expect(journeyNodeVisualForState("Locked").iconColor).toBe("var(--subtle-foreground)");
     expect(journeyNodeVisualForState("Not started").iconColor).toBe("var(--muted-foreground)");
   });

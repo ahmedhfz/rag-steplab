@@ -254,6 +254,32 @@ export type RerankedCandidate = RetrievedCandidate & {
   rerankRank: number | null;
   /** @deprecated This is an ordinal compatibility value, not model confidence. */
   rerankScore: number | null;
+  /** "retrieval_fallback": the model omitted this candidate, so it keeps its retrieval order. */
+  rankedBy?: "model" | "retrieval_fallback" | null;
+  /** The reranker saw a token-limited excerpt of this candidate. */
+  rerankInputTruncated?: boolean | null;
+};
+
+/** What a retrieval `score` means; it is a ranking signal, never a correctness measure. */
+export type RetrievalScoreSemantics = "cosine_similarity" | "postgres_ts_rank" | "relative_min_max_fusion_within_candidate_pool";
+
+export type RetrievalTimings = {
+  queryEmbeddingMs: number | null;
+  candidateQueryMs: number | null;
+  assemblyMs: number | null;
+};
+
+export type GenerationOutcome = "answered" | "insufficient_context" | "grounding_rejected";
+
+export type AnswerSegment = {
+  text: string;
+  citationIds: string[];
+};
+
+export type GroundingFailureDetail = {
+  code: string;
+  token: string | null;
+  attempts: number | null;
 };
 
 export type ContextCandidate = {
@@ -292,7 +318,12 @@ export type StageIdentityMetadata = {
 
 export type ExperimentStageResults = {
   retrieval: {
+    /** The whole candidate pool (reranker input); older payloads only carry the top-K list here. */
     candidates: RetrievedCandidate[];
+    /** The top-K retrieval result consumed downstream; absent on older payloads. */
+    results?: RetrievedCandidate[] | null;
+    scoreSemantics?: RetrievalScoreSemantics | null;
+    timings?: RetrievalTimings | null;
     durationMs: number | null;
   } & Partial<StageIdentityMetadata> | null;
   reranking: {
@@ -318,6 +349,11 @@ export type ExperimentStageResults = {
     outputTokens: number | null;
     durationMs: number | null;
     insufficientContext: boolean;
+    /** Absent on payloads written before the outcome contract. */
+    outcome?: GenerationOutcome | null;
+    /** Validated answer segments with their citation IDs; `answer` is their "\n\n" join. */
+    segments?: AnswerSegment[] | null;
+    groundingFailureDetail?: GroundingFailureDetail | null;
   } & Partial<StageIdentityMetadata> | null;
 };
 
@@ -332,6 +368,8 @@ export type ExperimentRun = RunSummary & {
   reusedExperiment: boolean;
   continuedFromExperimentId: string | null;
   generationRerun: boolean;
+  /** Accepted → worker start (dispatch, queue, cold start); null when the backend does not report it. */
+  queueDurationMs?: number | null;
 };
 
 export type EvaluationCase = {
@@ -352,13 +390,35 @@ export type EvaluationDataset = {
   createdAt: string | null;
 };
 
+/** How answer metrics were produced; values from different methods are not comparable. */
+export type GenerationMetricMethod = "gemini_generation_metrics_v2" | "citation_token_overlap_v1" | "mixed";
+
 export type EvaluationGenerationMetrics = {
+  /** Judge metric; null when the judge was off or nothing was answered. */
   faithfulness: number | null;
   answerRelevance: number | null;
   answerCorrectness: number | null;
   eligibleCaseCount: number | null;
   scoredCaseCount: number | null;
+  /** Diagnostic share of answer words found in the cited sources; comparable across methods. */
+  lexicalOverlap?: number | null;
+  method?: GenerationMetricMethod | null;
+  metricVersion?: string | null;
+  lexicalScoredCaseCount?: number | null;
+  skippedCaseCount?: number | null;
+  /** Case level: why answer metrics were skipped (e.g. "no_answer_segments"). */
+  skippedReason?: string | null;
 };
+
+export type StageRetrievalMetrics = {
+  hitAtK: number | null;
+  precisionAtK: number | null;
+  recallAtK: number | null;
+  mrr: number | null;
+  eligibleCaseCount: number | null;
+};
+
+export type StageRetrievalMetricsByStage = Record<"retrieval" | "reranking" | "context", StageRetrievalMetrics | null>;
 
 export type EvaluationMetrics = {
   hitAtK: number | null;
@@ -373,6 +433,17 @@ export type EvaluationMetrics = {
   abstentionEligibleCaseCount: number | null;
   abstentionAccuracy: number | null;
   generationMetrics?: EvaluationGenerationMetrics | null;
+  completedCaseCount?: number | null;
+  failedCaseCount?: number | null;
+  failedCaseCodes?: Array<{ code: string; count: number }>;
+  /** Top-level Hit/Recall/MRR measure this stage (before reranking). */
+  retrievalMetricsStage?: string | null;
+  stageRetrievalMetrics?: StageRetrievalMetricsByStage | null;
+  citationValidityEligibleCaseCount?: number | null;
+  answerableCaseCount?: number | null;
+  /** Answerable cases that abstained; lower is better. */
+  falseAbstentionRate?: number | null;
+  groundingRejectedCaseCount?: number | null;
 };
 
 export type EvaluationCaseResult = {
@@ -395,6 +466,11 @@ export type EvaluationCaseResult = {
   groundednessDetail?: Record<string, unknown>;
   generationMetrics?: EvaluationGenerationMetrics | null;
   experimentId: string;
+  /** A failed case keeps its error instead of failing the whole evaluation. */
+  status?: "completed" | "failed";
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  generationOutcome?: GenerationOutcome | null;
 };
 
 export type EvaluationRun = RunSummary & {

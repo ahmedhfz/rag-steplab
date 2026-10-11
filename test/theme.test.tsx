@@ -6,6 +6,7 @@ import { PreferencesProvider } from "@/components/preferences-provider";
 import { SettingsScreen } from "@/components/settings-screen";
 import {
   LEGACY_PREFERENCES_STORAGE_KEYS,
+  LOCALE_BOOTSTRAP_SCRIPT,
   PREFERENCES_STORAGE_KEY,
   THEME_BOOTSTRAP_SCRIPT,
 } from "@/lib/theme";
@@ -37,7 +38,8 @@ function installMatchMedia(initialMatches: boolean) {
 
 async function renderSettings() {
   const result = render(<PreferencesProvider><SettingsScreen /></PreferencesProvider>);
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/Changes are saved automatically|Değişiklikler otomatik kaydedilir/));
+  // Theme radios stay disabled until stored preferences are read.
+  await waitFor(() => expect(screen.getByRole("radio", { name: /^(System|Sistem)$/ })).toBeEnabled());
   return result;
 }
 
@@ -46,6 +48,7 @@ afterEach(() => {
   localStorage.clear();
   document.documentElement.classList.remove("dark");
   document.documentElement.style.colorScheme = "";
+  document.documentElement.lang = "en";
   vi.unstubAllGlobals();
 });
 
@@ -113,5 +116,39 @@ describe("theme preferences", () => {
     localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({ theme: "dark" }));
     new Function(THEME_BOOTSTRAP_SCRIPT)();
     expect(document.documentElement).toHaveClass("dark");
+  });
+});
+
+describe("locale bootstrap", () => {
+  function bootstrapLocale() {
+    document.documentElement.lang = "en";
+    new Function(LOCALE_BOOTSTRAP_SCRIPT)();
+    return document.documentElement.lang;
+  }
+
+  it("sets <html lang> from the stored locale before hydration", () => {
+    localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({ locale: "tr", theme: "system" }));
+    expect(bootstrapLocale()).toBe("tr");
+  });
+
+  it("walks the storage keys in the provider's order and falls back to the default locale", () => {
+    expect(bootstrapLocale()).toBe("en");
+
+    // A corrupt current record defers to the first parseable legacy record, like the provider.
+    localStorage.setItem(PREFERENCES_STORAGE_KEY, "{not json");
+    localStorage.setItem(LEGACY_PREFERENCES_STORAGE_KEYS[0], JSON.stringify({ locale: "tr" }));
+    expect(bootstrapLocale()).toBe("tr");
+
+    // The first stored object wins even when its locale is unknown.
+    localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({ locale: "de" }));
+    expect(bootstrapLocale()).toBe("en");
+  });
+
+  it("agrees with the provider's hydrated locale", async () => {
+    localStorage.setItem(LEGACY_PREFERENCES_STORAGE_KEYS[1], JSON.stringify({ locale: "tr", showLearningHints: true }));
+    expect(bootstrapLocale()).toBe("tr");
+    await renderSettings();
+    expect(screen.getByRole("heading", { name: "Ayarlar" })).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("tr");
   });
 });

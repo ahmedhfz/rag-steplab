@@ -67,15 +67,19 @@ afterEach(() => {
 });
 
 describe("Retrieval reuse UI contract", () => {
-  it("shows truthful stage metadata and exposes explicit generation rerun", async () => {
+  it("shows reuse as the only visible exception and exposes explicit answer regeneration", async () => {
     const user = userEvent.setup();
     render(<PreferencesProvider><RetrievalScreen /></PreferencesProvider>);
 
-    expect(screen.getByText("Exact experiment loaded")).toBeInTheDocument();
+    expect(screen.getByTestId("playground-result-meta")).toHaveTextContent("Reused");
+    expect(screen.getByTestId("playground-result-meta")).toHaveTextContent("A saved experiment with identical settings was loaded instead of running again.");
     expect(screen.getByTestId("stage-reuse-retrieval")).toHaveTextContent("Reused");
-    await user.click(screen.getByRole("button", { name: /Answer/ }));
-    expect(screen.getByTestId("stage-reuse-generation")).toHaveTextContent("Executed");
-    await user.click(screen.getByRole("button", { name: "Run generation again" }));
+    await user.click(screen.getByRole("button", { name: /^Answer/ }));
+    // Executing is the default: not shown on the stage, only in Details.
+    expect(screen.queryByTestId("stage-reuse-generation")).not.toBeInTheDocument();
+    expect(screen.queryByText("Executed")).not.toBeInTheDocument();
+    expect(screen.getByTestId("playground-details")).toHaveTextContent("Reuse");
+    await user.click(screen.getByRole("button", { name: "Regenerate answer" }));
     expect(pipeline.runAgain).toHaveBeenCalledTimes(1);
   });
 });

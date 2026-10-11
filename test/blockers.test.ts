@@ -77,7 +77,7 @@ describe("pipeline availability contract", () => {
 
   it("names the missing dataset name and links Playground blockers to the current route", () => {
     expect(blocker("en", "missing_dataset_name")).toEqual({ code: "missing_dataset_name", message: "Enter a dataset name." });
-    expect(blocker("tr", "missing_dataset_name").message).toBe("Bir dataset adı girin.");
+    expect(blocker("tr", "missing_dataset_name").message).toBe("Bir veri seti adı girin.");
     expect(getPipelineAvailability("en", "retrieval", {
       document: { id: "document-1" },
       selection: { selectedParseRunId: "parse-1", selectedChunkRunId: "chunk-1", selectedEmbeddingRunId: null },

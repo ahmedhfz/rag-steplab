@@ -34,6 +34,7 @@ vi.mock("@/components/document-pipeline-provider", () => ({
 }));
 
 import { ChunksPipeline } from "@/components/chunks-pipeline";
+import { PreferencesProvider } from "@/components/preferences-provider";
 
 describe("artifact reuse UX contract", () => {
   afterEach(() => {
@@ -45,7 +46,7 @@ describe("artifact reuse UX contract", () => {
     pipeline.value.runChunking.mockResolvedValue({ reusedArtifact: true });
     const user = userEvent.setup();
 
-    render(<ChunksPipeline locale="en" stage="chunking" />);
+    render(<PreferencesProvider><ChunksPipeline stage="chunking" /></PreferencesProvider>);
     await user.click(screen.getByRole("button", { name: "Run chunking" }));
 
     expect(await screen.findByTestId("chunk-reuse-notice")).toHaveTextContent("Previous output was reused.");
@@ -55,7 +56,7 @@ describe("artifact reuse UX contract", () => {
     pipeline.value.runChunking.mockResolvedValue({ reusedArtifact: false });
     const user = userEvent.setup();
 
-    render(<ChunksPipeline locale="en" stage="chunking" />);
+    render(<PreferencesProvider><ChunksPipeline stage="chunking" /></PreferencesProvider>);
     await user.click(screen.getByRole("button", { name: "Run chunking" }));
 
     expect(screen.queryByTestId("chunk-reuse-notice")).not.toBeInTheDocument();
@@ -65,7 +66,7 @@ describe("artifact reuse UX contract", () => {
     pipeline.value.runEmbedding.mockResolvedValue({ reusedArtifact: true });
     const user = userEvent.setup();
 
-    render(<ChunksPipeline locale="en" stage="embeddings" />);
+    render(<PreferencesProvider><ChunksPipeline stage="embeddings" /></PreferencesProvider>);
     await user.click(screen.getByRole("button", { name: "Create embeddings" }));
 
     expect(await screen.findByTestId("embedding-reuse-notice")).toHaveTextContent("Previous output was reused.");

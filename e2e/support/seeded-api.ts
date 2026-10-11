@@ -181,7 +181,8 @@ const candidate = {
 };
 
 const fullStageResults = {
-  retrieval: { candidates: [candidate], durationMs: 12, reuse: { reused: true, executed: false, sourceExperimentId: experimentId, sourceDurationMs: 12 } },
+  // `candidates` is the pool, `results` the top-K list; both carry the additive #127 score/timing contract.
+  retrieval: { candidates: [candidate], results: [candidate], scoreSemantics: "relative_min_max_fusion_within_candidate_pool", timings: { queryEmbeddingMs: 8, candidateQueryMs: 3, assemblyMs: 1 }, durationMs: 12, reuse: { reused: true, executed: false, sourceExperimentId: experimentId, sourceDurationMs: 12 } },
   reranking: { status: "skipped", candidates: [{ ...candidate, originalRank: 1, rerankRank: null, rerankScore: null }], durationMs: 0, method: null, reuse: { reused: false, executed: false, sourceExperimentId: null, sourceDurationMs: null } },
   context: {
     candidates: [{ chunkId: candidate.chunkId, selected: true, reason: "highest hybrid score", tokenCount: 11, text: candidate.text, pageNumbers: [1], sourceElementIds: ["element-fact"] }],
@@ -192,8 +193,10 @@ const fullStageResults = {
     reuse: { reused: true, executed: false, sourceExperimentId: experimentId, sourceDurationMs: 4 },
   },
   generation: {
-    answer: "The laboratory beacon code is ORBIT-731 [S1].",
-    citations: [{ citationId: "S1", documentId, chunkId: candidate.chunkId, pageNumbers: [1], quote: "laboratory beacon code is ORBIT-731", valid: true, sourceElementIds: ["element-fact"] }],
+    answer: "The laboratory beacon code is ORBIT-731.",
+    outcome: "answered",
+    segments: [{ text: "The laboratory beacon code is ORBIT-731.", citationIds: ["C1"] }],
+    citations: [{ citationId: "C1", documentId, chunkId: candidate.chunkId, pageNumbers: [1], quote: "laboratory beacon code is ORBIT-731", valid: true, sourceElementIds: ["element-fact"] }],
     model: "gemini-flash-lite-latest",
     inputTokens: 42,
     outputTokens: 14,
@@ -205,7 +208,7 @@ const fullStageResults = {
 
 const rerankingStageResults = {
   retrieval: fullStageResults.retrieval,
-  reranking: { status: "completed", candidates: [{ ...candidate, originalRank: 1, rank: 1, rerankRank: 1, rerankScore: 1 }], durationMs: 18, method: "gemini-flash-lite-latest", rerankScoreSemantics: "deprecated_ordinal_not_confidence", reuse: { reused: false, executed: true, sourceExperimentId: null, sourceDurationMs: null } },
+  reranking: { status: "completed", candidates: [{ ...candidate, originalRank: 1, rank: 1, rerankRank: 1, rerankScore: 1, rankedBy: "model", rerankInputTruncated: false }], inputCandidates: [candidate], durationMs: 18, method: "gemini-flash-lite-latest", rerankScoreSemantics: "deprecated_ordinal_not_confidence", reuse: { reused: false, executed: true, sourceExperimentId: null, sourceDurationMs: null } },
   context: null,
   generation: null,
 };
@@ -240,6 +243,8 @@ const experiment = {
   reusedExperiment: true,
   continuedFromExperimentId: null,
   generationRerun: false,
+  // Additive backend-platform field (dispatch + queue + cold start); the trace shows it as its own row.
+  queueDurationMs: 940,
 };
 
 const dataset = {
@@ -276,23 +281,26 @@ const evaluation = {
     judge: false,
   },
   results: {
-    aggregate: { hitAtK: 1, recallAtK: 1, precisionAtK: 1, mrr: 1, citationValidity: 1, groundedness: 1, judgeModel: "gemini-flash-lite-latest", caseCount: 2, retrievalEligibleCaseCount: 1, abstentionEligibleCaseCount: 1, abstentionAccuracy: 1, generationMetrics: { faithfulness: 1, answerRelevance: null, answerCorrectness: null, eligibleCaseCount: 0, scoredCaseCount: 2 } },
+    // Judge off: faithfulness is not measured; the lexical diagnostic carries the answer signal.
+    aggregate: { hitAtK: 1, recallAtK: 1, precisionAtK: 1, mrr: 1, citationValidity: 1, citationValidityEligibleCaseCount: 1, groundedness: 0.83, judgeModel: null as string | null, caseCount: 2, completedCaseCount: 2, failedCaseCount: 0, failedCaseCodes: [], retrievalEligibleCaseCount: 1, abstentionEligibleCaseCount: 1, abstentionAccuracy: 1, answerableCaseCount: 1, falseAbstentionRate: 0, groundingRejectedCaseCount: 0, retrievalMetricsStage: "retrieval", stageRetrievalMetrics: { retrieval: { hitAtK: 1, precisionAtK: 1, recallAtK: 1, mrr: 1, eligibleCaseCount: 1 }, reranking: { hitAtK: 1, precisionAtK: 1, recallAtK: 1, mrr: 1, eligibleCaseCount: 1 }, context: { hitAtK: 1, precisionAtK: 1, recallAtK: 1, mrr: 1, eligibleCaseCount: 1 } }, generationMetrics: { faithfulness: null as number | null, answerRelevance: null as number | null, answerCorrectness: null as number | null, lexicalOverlap: 0.83, method: "citation_token_overlap_v1", metricVersion: "generation-metrics-v2", eligibleCaseCount: 0, scoredCaseCount: 0, lexicalScoredCaseCount: 1, skippedCaseCount: 1 } },
     caseResults: [{
       question: "What is the laboratory beacon code?",
       expectedElementIds: ["element-fact"],
       retrievedElementIds: ["element-fact"],
       referenceAnswer: "ORBIT-731",
-      answer: "The laboratory beacon code is ORBIT-731 [S1].",
+      answer: "The laboratory beacon code is ORBIT-731.",
       citations: fullStageResults.generation.citations,
       hitAtK: 1,
       precisionAtK: 1,
       recallAtK: 1,
       mrr: 1,
-      citationValidity: 1,
-      groundedness: 1,
+      citationValidity: 1 as number | null,
+      groundedness: 0.83 as number | null,
       groundednessDetail: {},
-      generationMetrics: { faithfulness: 1, answerRelevance: null, answerCorrectness: null, eligibleCaseCount: 0, scoredCaseCount: 1 },
+      generationMetrics: { faithfulness: null as number | null, answerRelevance: null as number | null, answerCorrectness: null as number | null, lexicalOverlap: 0.83 as number | null, method: "citation_token_overlap_v1", metricVersion: "generation-metrics-v2", skippedReason: null as string | null },
       experimentId,
+      status: "completed",
+      generationOutcome: "answered",
       expectedOutcome: "answer",
       insufficientContext: false,
       retrievalEligible: true,
@@ -308,11 +316,14 @@ const evaluation = {
       precisionAtK: null,
       recallAtK: null,
       mrr: null,
-      citationValidity: 1,
-      groundedness: 1,
+      // Nothing was answered, so citation and answer metrics are not measured (null, not 0).
+      citationValidity: null,
+      groundedness: null,
       groundednessDetail: {},
-      generationMetrics: { faithfulness: 1, answerRelevance: null, answerCorrectness: null, eligibleCaseCount: 0, scoredCaseCount: 1 },
+      generationMetrics: { faithfulness: null, answerRelevance: null, answerCorrectness: null, lexicalOverlap: null, method: "citation_token_overlap_v1", metricVersion: "generation-metrics-v2", skippedReason: "no_answer_segments" },
       experimentId: "e2e-seeded-no-answer-experiment",
+      status: "completed",
+      generationOutcome: "insufficient_context",
       expectedOutcome: "insufficient_context",
       insufficientContext: true,
       retrievalEligible: false,
@@ -334,7 +345,8 @@ const evaluationB = {
     judge: true,
   },
   results: {
-    aggregate: { hitAtK: 0.9, recallAtK: 0.8, precisionAtK: 0.9, mrr: 0.8, citationValidity: 0.95, groundedness: 0.9, judgeModel: "gemini-2.5-flash", caseCount: 2, retrievalEligibleCaseCount: 1, abstentionEligibleCaseCount: 1, abstentionAccuracy: 1, generationMetrics: { faithfulness: 0.9, answerRelevance: 0.85, answerCorrectness: 0.8, eligibleCaseCount: 1, scoredCaseCount: 1 } },
+    // Judge on: a different answer-metric method, so only lexicalOverlap compares with run A.
+    aggregate: { ...evaluation.results.aggregate, hitAtK: 0.9, recallAtK: 0.8, precisionAtK: 0.9, mrr: 0.8, citationValidity: 0.95, groundedness: 0.9, judgeModel: "gemini-2.5-flash", generationMetrics: { faithfulness: 0.9, answerRelevance: 0.85, answerCorrectness: 0.8, lexicalOverlap: 0.8, method: "gemini_generation_metrics_v2", metricVersion: "generation-metrics-v2", eligibleCaseCount: 1, scoredCaseCount: 1, lexicalScoredCaseCount: 1, skippedCaseCount: 1 } },
     caseResults: [{
       ...evaluation.results.caseResults[0],
       hitAtK: 0.9,
@@ -343,8 +355,8 @@ const evaluationB = {
       mrr: 0.8,
       citationValidity: 0.95,
       groundedness: 0.9,
-      generationMetrics: { faithfulness: 0.9, answerRelevance: 0.85, answerCorrectness: 0.8, eligibleCaseCount: 1, scoredCaseCount: 1 },
-    }, evaluation.results.caseResults[1]],
+      generationMetrics: { faithfulness: 0.9, answerRelevance: 0.85, answerCorrectness: 0.8, lexicalOverlap: 0.8, method: "gemini_generation_metrics_v2", metricVersion: "generation-metrics-v2", skippedReason: null },
+    }, { ...evaluation.results.caseResults[1], generationMetrics: { ...evaluation.results.caseResults[1].generationMetrics, method: "gemini_generation_metrics_v2" } }],
   },
 };
 

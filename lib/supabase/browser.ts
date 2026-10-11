@@ -1,5 +1,6 @@
 import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { type AppLocale, UI_COPY } from "@/lib/copy";
 
 let browserClient: SupabaseClient | null = null;
 
@@ -26,9 +27,10 @@ export async function getSupabaseAccessToken(): Promise<string | null> {
   return data.session?.access_token ?? null;
 }
 
-export function supabaseAuthErrorMessage(error: unknown, locale: "en" | "tr" = "tr"): string {
+export function supabaseAuthErrorMessage(error: unknown, locale: AppLocale = "tr"): string {
   const value = error instanceof Error ? error.message.toLowerCase() : "";
-  if (value.includes("configuration_missing")) return locale === "tr" ? "Kimlik doğrulama yapılandırması eksik." : "Authentication is not configured.";
-  if (value.includes("session_unavailable")) return locale === "tr" ? "Oturum doğrulanamadı. Lütfen tekrar deneyin." : "Your session could not be verified. Please try again.";
-  return locale === "tr" ? "İşlem tamamlanamadı. Lütfen tekrar deneyin." : "The request could not be completed. Please try again.";
+  const messages = UI_COPY[locale].auth.serviceErrors;
+  if (value.includes("configuration_missing")) return messages.configurationMissing;
+  if (value.includes("session_unavailable")) return messages.sessionUnavailable;
+  return messages.generic;
 }

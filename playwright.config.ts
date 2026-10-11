@@ -58,8 +58,8 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: vercelBypassState },
     },
     {
-      name: "figma-production",
-      testMatch: /visual\/figma-production\.spec\.ts/,
+      name: "production-visual",
+      testMatch: /visual\/production-visual\.spec\.ts/,
       dependencies: ["auth-setup"],
       fullyParallel: false,
       use: { ...devices["Desktop Chrome"], storageState: authState, viewport: { width: 1441, height: 1041 } },

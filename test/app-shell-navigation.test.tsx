@@ -46,7 +46,16 @@ function renderShell(pathname: string) {
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  document.title = "";
 });
+
+function shellTree(content: string) {
+  return (
+    <PreferencesProvider>
+      <AuthProvider><AppShell><p>{content}</p></AppShell></AuthProvider>
+    </PreferencesProvider>
+  );
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -66,7 +75,8 @@ describe("AppShell navigation contract", () => {
   it("renders the grouped navigation in order", () => {
     renderShell("/documents");
     const navigation = screen.getByRole("navigation", { name: "Primary navigation" });
-    expect(navigation).toHaveTextContent(/Overview[\s\S]*Build[\s\S]*Documents[\s\S]*Parsing[\s\S]*Chunking[\s\S]*Embeddings[\s\S]*Test[\s\S]*Playground[\s\S]*Evaluation[\s\S]*Settings/);
+    // One taxonomy everywhere: Prepare · Test · Measure (Evaluation measures).
+    expect(navigation).toHaveTextContent(/Overview[\s\S]*Prepare[\s\S]*Documents[\s\S]*Parsing[\s\S]*Chunking[\s\S]*Embeddings[\s\S]*Test[\s\S]*Playground[\s\S]*Measure[\s\S]*Evaluation[\s\S]*Settings/);
     expect(within(navigation).getByRole("link", { name: "Documents" })).toHaveAttribute("href", "/documents");
     expect(within(navigation).getByRole("link", { name: "Playground" })).toHaveAttribute("href", "/playground");
     expect(within(navigation).getAllByRole("link").every((link) => link.dataset.prefetch === "false")).toBe(true);
@@ -126,14 +136,104 @@ describe("AppShell navigation contract", () => {
     expect(screen.getByText("AH")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Ahmed Hafızoğlu — Account menu" }));
-    const menu = screen.getByRole("dialog", { name: "Account menu" });
+    const menu = screen.getByRole("group", { name: "Account menu" });
 
-    await waitFor(() => expect(within(menu).getByRole("button", { name: "Guides" })).toBeVisible());
-    expect(within(menu).getByRole("button", { name: "Help" })).toBeVisible();
+    await waitFor(() => expect(within(menu).getByRole("button", { name: "Help" })).toBeVisible());
+    // The Guides panel only repeated three nav links; Help no longer repeats Settings (N-4).
+    expect(within(menu).queryByRole("button", { name: "Guides" })).not.toBeInTheDocument();
     expect(within(menu).getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
     expect(within(menu).getByRole("button", { name: "Sign out" })).toBeVisible();
 
-    await user.click(within(menu).getByRole("button", { name: "Guides" }));
-    expect(within(menu).getByText("Learn the RAG flow")).toBeVisible();
+    await user.click(within(menu).getByRole("button", { name: "Help" }));
+    expect(within(menu).getByText("About RAG StepLab")).toBeVisible();
+    expect(within(menu).queryByText("Open settings")).not.toBeInTheDocument();
+  });
+
+  it("uses disclosure semantics for the account menu and keeps focus across its views", async () => {
+    const user = userEvent.setup();
+    renderShell("/");
+    await waitFor(() => expect(screen.getByText("Ahmed Hafızoğlu")).toBeVisible());
+
+    const trigger = screen.getByRole("button", { name: "Ahmed Hafızoğlu — Account menu" });
+    expect(trigger).not.toHaveAttribute("aria-haspopup");
+    expect(trigger).not.toHaveAttribute("aria-controls");
+    await user.click(trigger);
+    expect(screen.queryByRole("dialog", { name: "Account menu" })).not.toBeInTheDocument();
+    const menu = screen.getByRole("group", { name: "Account menu" });
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(trigger).toHaveAttribute("aria-controls", menu.id);
+
+    // Switching views unmounts the focused control; focus follows to its counterpart.
+    await user.click(within(menu).getByRole("button", { name: "Help" }));
+    expect(within(menu).getByRole("button", { name: "Back" })).toHaveFocus();
+    await user.click(within(menu).getByRole("button", { name: "Back" }));
+    expect(within(menu).getByRole("button", { name: "Help" })).toHaveFocus();
+
+    await user.click(within(menu).getByRole("button", { name: "Help" }));
+    await user.keyboard("{Escape}");
+    expect(within(menu).getByRole("button", { name: "Help" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("offers a skip link to the main landmark", async () => {
+    const user = userEvent.setup();
+    renderShell("/documents");
+
+    const main = screen.getByRole("main");
+    expect(main).toHaveAttribute("id", "main-content");
+    expect(main).toHaveAttribute("tabindex", "-1");
+    const skip = screen.getByRole("link", { name: "Skip to content" });
+    expect(skip).toHaveAttribute("href", "#main-content");
+
+    await user.click(skip);
+    expect(main).toHaveFocus();
+  });
+
+  it("moves focus to the main landmark after a client route change, not on first load", () => {
+    navigationState.pathname = "/documents";
+    const { rerender } = render(shellTree("Documents page"));
+    expect(screen.getByRole("main")).not.toHaveFocus();
+
+    navigationState.pathname = "/parse";
+    rerender(shellTree("Parsing page"));
+    expect(screen.getByRole("main")).toHaveFocus();
+  });
+
+  it("makes the page behind the open mobile navigation inert", async () => {
+    const user = userEvent.setup();
+    renderShell("/");
+    const main = screen.getByRole("main");
+    expect(main.closest("[inert]")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Open navigation" }));
+    expect(main.closest("[inert]")).not.toBeNull();
+    expect(screen.getByTestId("app-shell-sidebar")).toHaveAttribute("inert");
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(main.closest("[inert]")).toBeNull());
+    expect(screen.getByRole("button", { name: "Open navigation" })).toHaveFocus();
+  });
+
+  it("names the tab after the page in the interface locale and keeps it after metadata rewrites", async () => {
+    localStorage.setItem("rag-steplab.preferences.v3", JSON.stringify({ locale: "tr", showLearningHints: true, theme: "system" }));
+    renderShell("/parse");
+
+    await waitFor(() => expect(document.title).toBe("Ayrıştırma · RAG StepLab"));
+    // Streamed route metadata (English) rewrites <title>; the localized name returns.
+    document.title = "Parsing · RAG StepLab";
+    await waitFor(() => expect(document.title).toBe("Ayrıştırma · RAG StepLab"));
+  });
+
+  it("keeps the English route title for English and leaves unknown routes alone", async () => {
+    renderShell("/evaluation");
+    await waitFor(() => expect(document.title).toBe("Evaluation · RAG StepLab"));
+    cleanup();
+
+    document.title = "404: This page could not be found.";
+    renderShell("/missing");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.title).toBe("404: This page could not be found.");
   });
 });

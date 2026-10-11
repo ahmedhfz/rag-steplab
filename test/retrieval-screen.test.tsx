@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -63,7 +63,7 @@ afterEach(() => {
 });
 
 describe("RetrievalScreen", () => {
-  it("shows no blocker while the workspace loads, then one truthful blocker", async () => {
+  it("shows a neutral skeleton while the workspace loads, then one truthful blocker", async () => {
     let finishDocuments!: (response: Response) => void;
     vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
       if (url.endsWith("/capabilities")) return json(capabilities);
@@ -74,29 +74,30 @@ describe("RetrievalScreen", () => {
 
     const run = screen.getByRole("button", { name: "Run experiment" });
     expect(run).toBeDisabled();
+    // Loading is never presented as a lock or a missing document (live audit L1).
+    expect(screen.getByTestId("skeleton")).toBeInTheDocument();
     expect(screen.queryByTestId("playground-blocker")).not.toBeInTheDocument();
-    expect(screen.queryByText("Select a document")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Select a document/)).not.toBeInTheDocument();
 
     await waitFor(() => expect(finishDocuments).toBeTypeOf("function"));
     finishDocuments(new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
 
-    await waitFor(() => expect(screen.getByTestId("playground-blocker")).toHaveTextContent("Action blocked"));
+    const blocker = await screen.findByTestId("playground-blocker");
+    expect(blocker).toHaveTextContent("Select a document to continue.");
+    expect(blocker).not.toHaveTextContent("Action blocked");
+    expect(within(blocker).getByRole("link", { name: "Go to Documents" })).toHaveAttribute("href", "/documents");
+    expect(screen.queryByTestId("skeleton")).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Question" })).toHaveAccessibleName("Question");
-    expect(run).toHaveAccessibleDescription("Select a document and complete indexing setup first.");
-    expect(screen.getByTestId("playground-blocker")).toHaveTextContent("Go to Documents");
+    expect(run).toHaveAccessibleDescription("Select a document to continue.");
     expect(screen.getByRole("button", { name: "Hybrid" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("switch", { name: "Reranker" })).toHaveAttribute("aria-checked", "false");
     expect(screen.getByText("Advanced settings")).toBeInTheDocument();
-    expect(screen.queryByTestId("playground-draft-configuration")).not.toBeInTheDocument();
     expect(screen.queryByText(/persisted backend|upstream artifact|reranker score/i)).not.toBeInTheDocument();
-
     expect(screen.queryByRole("button", { name: "Copy trace" })).not.toBeInTheDocument();
 
     const reset = screen.getByRole("button", { name: "Reset" });
     expect(reset).toBeDisabled();
     expect(reset).toHaveAccessibleDescription("No query settings have changed.");
-    expect(screen.getByTestId("playground-blocker")).toHaveTextContent("Select a document");
-    expect(screen.queryByText("No trace data is available yet.")).not.toBeInTheDocument();
   });
 
   it("treats an empty question with a complete lineage as ready, not blocked", async () => {
@@ -115,13 +116,14 @@ describe("RetrievalScreen", () => {
     const run = screen.getByRole("button", { name: "Run experiment" });
     await waitFor(() => expect(run).toHaveAccessibleDescription("Enter a question to run an experiment."));
     expect(screen.queryByTestId("playground-blocker")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Ask your document a question", level: 2 })).toBeInTheDocument();
     expect(run).toBeDisabled();
 
     await user.type(screen.getByRole("textbox", { name: "Question" }), "What is RAG?");
     expect(run).toBeEnabled();
   });
 
-  it("allows request parameters to be prepared and reset without running fake retrieval", async () => {
+  it("prepares and resets request parameters, keeps focus after clearing and shows the candidate count only with the reranker", async () => {
     const user = userEvent.setup();
     stubEmptyWorkspace();
     renderRetrieval();
@@ -129,23 +131,26 @@ describe("RetrievalScreen", () => {
 
     const question = screen.getByRole("textbox", { name: "Question" });
     await user.type(question, "What is RAG?");
-    expect(screen.getByRole("button", { name: "Clear question" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Clear question" }));
     expect(question).toHaveValue("");
+    // The clear button unmounts; focus returns to the field instead of the body (a11y A6).
+    expect(question).toHaveFocus();
 
     await user.click(screen.getByText("Advanced settings"));
-    expect(screen.getByRole("switch", { name: "Reranker" })).toBeEnabled();
+    expect(screen.queryByLabelText("Rerank candidate count")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("switch", { name: "Reranker" }));
+    expect(screen.getByLabelText("Rerank candidate count")).toBeInTheDocument();
+    await user.click(screen.getByRole("switch", { name: "Reranker" }));
+    expect(screen.queryByLabelText("Rerank candidate count")).not.toBeInTheDocument();
+
     await user.click(screen.getByRole("combobox", { name: "Top-K" }));
     await user.click(screen.getByRole("option", { name: "10" }));
-    await user.click(screen.getByRole("button", { name: "Hybrid" }));
     const reset = screen.getByRole("button", { name: "Reset" });
     expect(reset).toBeEnabled();
 
     await user.click(reset);
-    expect(question).toHaveValue("");
     expect(screen.getByRole("combobox", { name: "Top-K" })).toHaveTextContent("5");
     expect(screen.getByRole("button", { name: "Hybrid" })).toHaveAttribute("aria-pressed", "true");
     expect(reset).toBeDisabled();
-    expect(screen.getByTestId("playground-blocker")).toHaveTextContent("Select a document");
   });
 });

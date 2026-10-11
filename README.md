@@ -10,6 +10,16 @@ Laboratuvar; doküman alımı ve parsing, chunking ve embedding, dense/keyword/
 hybrid retrieval, isteğe bağlı reranking, grounded generation, citations,
 evaluation ve run karşılaştırmasını kapsar.
 
+## Ekran görüntüleri
+
+![Overview: seçili doküman ve pipeline, sıradaki adım ve pipeline yolculuğu](docs/images/overview.png)
+
+![Playground (Dark): kaynak atıflı cevap ve retrieval → reranking → context → cevap izi](docs/images/playground-dark.png)
+
+Görüntüler, CI ile aynı Linux ortamında üretilen görsel regresyon referanslarından
+(`e2e/visual/reference/production/overview.png`, `playground-answer-dark.png`)
+seçilir ve seeded demo verisini gösterir.
+
 ## Ne görürsünüz
 
 Sol menüdeki aşamalar gerçek bir PDF üzerinde sırayla ilerler; her aşama bir

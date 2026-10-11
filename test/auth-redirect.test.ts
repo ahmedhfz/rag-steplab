@@ -79,6 +79,16 @@ describe("proxy deep links", () => {
     const hostile = await proxy(new NextRequest("https://app.example/login?next=%2F%2Fevil.example"));
     expect(hostile.headers.get("location")).toBe("https://app.example/");
   });
+
+  it("serves metadata images to anonymous link-preview crawlers", async () => {
+    for (const url of ["https://app.example/opengraph-image?4f1c", "https://app.example/apple-icon?9a2b"]) {
+      expect((await proxy(new NextRequest(url))).headers.get("location"), url).toBeNull();
+    }
+    // Prefix lookalikes stay protected routes.
+    for (const url of ["https://app.example/opengraph-image-admin", "https://app.example/apple-icons"]) {
+      expect((await proxy(new NextRequest(url))).headers.get("location"), url).toContain("/login");
+    }
+  });
 });
 
 describe("Google OAuth next path", () => {
