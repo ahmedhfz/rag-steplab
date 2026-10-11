@@ -205,6 +205,7 @@ function Probe() {
       <output data-testid="evaluation-run-id">{evaluationRun?.id ?? "none"}</output>
       <output data-testid="evaluation-case-count">{evaluationRun?.caseResults?.length ?? 0}</output>
       <output data-testid="artifact-count">{activeDocument?.chunkRuns.length ?? 0}</output>
+      <output data-testid="historical-chunks">{activeDocument?.chunkRuns.filter((run) => run.historicalLineage).map((run) => run.id).join(",") || "none"}</output>
       <output data-testid="persistence-error">{persistenceError?.code ?? "none"}</output>
       <output data-testid="viewed-parse-result">{viewedParseResult?.parseRunId ?? "none"}</output>
       <output data-testid="selected-parse-result">{selectedParseResult?.parseRunId ?? "none"}</output>
@@ -865,6 +866,72 @@ describe("Document pipeline committed state", () => {
       chunkRunId: null,
       embeddingRunId: null,
     });
+  });
+
+  it("refreshes only lineage flags after a cached pipeline switch, keeping an inspection started meanwhile", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
+    const detail = selectableLineageSummary();
+    const pipelines = [namedPipeline("pipeline-1"), namedPipeline("pipeline-2", { chunkRunId: "chunk-alt", embeddingRunId: "embedding-alt" })];
+    let resolveRefresh!: (response: Response) => void;
+    const refresh = new Promise<Response>((resolve) => { resolveRefresh = resolve; });
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const respond = (payload: unknown) => Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/pipelines")) return respond(pipelines);
+      if (url.endsWith("/documents/document-old/summary?pipelineId=pipeline-2")) return refresh;
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.endsWith("/parse-runs/parse-old")) return respond(parseResult("document-old", "parse-old", "lesson.pdf", "Historical parse"));
+      if (url.includes("/chunk-runs/") || url.includes("/embedding-runs/")) return new Promise<Response>(() => undefined);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-1"));
+    fireEvent.click(screen.getByRole("button", { name: "Select pipeline two" }));
+    expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2");
+    fireEvent.click(screen.getByRole("button", { name: "Select historical parse" }));
+    await waitFor(() => expect(screen.getByTestId("inspected-parse")).toHaveTextContent("parse-old"));
+
+    resolveRefresh(new Response(JSON.stringify({
+      ...detail,
+      chunkRuns: [
+        { ...detail.chunkRuns[0], historicalLineage: true },
+        { ...detail.chunkRuns[1], historicalLineage: false },
+      ],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    await waitFor(() => expect(screen.getByTestId("historical-chunks")).toHaveTextContent("chunk-new"));
+    expect(screen.getByTestId("inspected-parse")).toHaveTextContent("parse-old");
+    expect(screen.getByTestId("active-pipeline")).toHaveTextContent("pipeline-2");
+  });
+
+  it("derives scratch historical flags from the scratch selection, not the default pipeline", async () => {
+    localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
+    // A remembered scratch selection that differs from the document defaults.
+    localStorage.setItem("rag-steplab-lineage-selections-v1:test-user", JSON.stringify({
+      "document-old": { selectedParseRunId: "document-old-parse", selectedChunkRunId: "chunk-alt", selectedEmbeddingRunId: null },
+    }));
+    // Server flags are relative to the Default Pipeline/defaults (chunk-alt historical).
+    const detail = selectableLineageSummary();
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const respond = (payload: unknown) => Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+      if (url.endsWith("/capabilities")) return respond(capabilities);
+      if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
+      if (url.endsWith("/documents/document-old/pipelines")) return respond([]);
+      if (url.split("?")[0].endsWith("/documents/document-old/summary")) return respond(detail);
+      if (url.includes("/chunk-runs/") || url.includes("/embedding-runs/")) return new Promise<Response>(() => undefined);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-alt"));
+    expect(screen.getByTestId("active-pipeline")).toHaveTextContent("none");
+    expect(screen.getByTestId("historical-chunks")).toHaveTextContent("chunk-new");
+    expect(screen.getByTestId("historical-chunks")).not.toHaveTextContent("chunk-alt");
   });
 
   it("refetches a stale summary for the selected pipeline after 60 seconds", async () => {
