@@ -1,6 +1,6 @@
 begin;
 
-select plan(60);
+select plan(66);
 
 select ok(to_regnamespace('rag_lab') is not null, 'rag_lab schema exists');
 
@@ -234,7 +234,7 @@ select ok(
   'documents owner references auth users'
 );
 
-select ok(to_regclass('rag_lab.ix_documents_owner_user_id') is not null, 'owner lookup index exists');
+select ok(to_regclass('rag_lab.uq_documents_owner_sha256') is not null, 'owner lookup is served by the owner+sha256 index');
 
 select ok(
   not exists (
@@ -451,6 +451,64 @@ select ok(
 select ok(
   exists (select 1 from pg_constraint where conrelid = 'rag_lab.documents'::regclass and conname = 'ck_documents_active_lineage_shape'),
   'a default descendant requires its default parent'
+);
+
+select is(
+  (select count(*)::int
+   from pg_class c
+   join pg_namespace n on n.oid = c.relnamespace,
+   unnest(array['anon', 'authenticated', 'public']) as r(role_name),
+   unnest(array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) as p(privilege)
+   where n.nspname = 'rag_lab'
+     and c.relkind in ('r', 'p', 'v', 'm', 'S')
+     and has_table_privilege(r.role_name, c.oid, p.privilege)),
+  0,
+  'client roles have no privilege on any rag_lab table, view or sequence'
+);
+
+select ok(
+  not has_schema_privilege('anon', 'rag_lab', 'USAGE')
+  and not has_schema_privilege('authenticated', 'rag_lab', 'USAGE')
+  and not has_schema_privilege('public', 'rag_lab', 'USAGE'),
+  'client roles cannot use the private rag_lab schema'
+);
+
+select is(
+  (select count(*)::int
+   from pg_proc p
+   join pg_namespace n on n.oid = p.pronamespace,
+   unnest(array['anon', 'authenticated', 'public']) as r(role_name)
+   where n.nspname = 'rag_lab'
+     and has_function_privilege(r.role_name, p.oid, 'EXECUTE')),
+  0,
+  'client roles cannot execute rag_lab functions'
+);
+
+select ok(
+  (select rolconfig @> array['statement_timeout=30s', 'lock_timeout=5s', 'idle_in_transaction_session_timeout=60s']
+   from pg_roles where rolname = 'rag_steplab_app'),
+  'runtime role sessions are time bounded'
+);
+
+select ok(
+  not exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'extensions'
+      and p.proname = 'pg_stat_statements_reset'
+      and has_function_privilege('rag_steplab_app', p.oid, 'EXECUTE')
+  ),
+  'runtime role has no administrative extension functions'
+);
+
+select ok(
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'rag_lab' and table_name = 'storage_cleanups' and column_name = 'size_bytes'
+  )
+  and to_regclass('rag_lab.ix_storage_cleanups_owner_outstanding') is not null,
+  'cleanup outbox records object size for the owner storage quota'
 );
 
 select * from finish();

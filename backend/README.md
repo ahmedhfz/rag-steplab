@@ -8,6 +8,23 @@ PDF → private Storage → 202 parse run → Modal API/worker → full Docling
 → grounded generation/citations → evaluation
 ```
 
+## Yükleme sınırları
+
+`POST /documents` ve `POST /documents/parse` için bir ASGI guard, multipart gövde
+okunmadan önce bearer token'ı doğrular ve `Content-Length`'i (chunked gövdede akan
+bayt sayısını) `MAX_FILE_SIZE_BYTES` + 1 MiB ile sınırlar. `%PDF-` imzası yalnız
+dosya başında kabul edilir (önünde en çok 8 bayt BOM/boşluk); gzip/zip/bzip2/xz/7z
+imzaları reddedilir, çünkü Docling format tespiti PDF allowlist'inden önce çalışır.
+Dosya adı en çok 255 karakterdir. Kullanıcı başına `MAX_DOCUMENTS_PER_USER`
+(varsayılan 200) ve `MAX_STORAGE_BYTES_PER_USER` (varsayılan 2 GiB) kotası vardır
+(0 kapatır). Kota, owner başına advisory lock altında doküman insert'i ile atomik
+kontrol edilir; silinmiş dokümanların Storage cleanup'ı tamamlanmamış (pending/dead)
+objeleri bayt kotasına dahildir. JWKS anahtarları 300 sn önbellekte tutulur; JWKS
+isteği süreç başına tek uçuşludur (single-flight) ve uç nokta hata verse de en çok
+5 sn'de bir yapılır. Bilinmeyen `kid` 60 sn negatif cache'lenir (önbellekteki bir
+`kid` her zaman kabul edilir); `ES256`/`RS256` dışı algoritmalar anahtar çekilmeden
+reddedilir.
+
 ## Async parse sözleşmesi
 
 `POST /documents/parse` ve persisted doküman için `POST
@@ -125,6 +142,15 @@ production baseline [docs/architecture/migrations.md](../docs/architecture/migra
 içinde tanımlıdır. Uygulamanın local `DATABASE_URL` fallback'i korunur; Supabase
 CLI local stack'i uygulamanın zorunlu runtime dependency'si değildir. Production
 migration'ları release workflow'u veya açık operasyon yetkisiyle uygulanır.
+
+Runtime rolü `rag_steplab_app` oturumları `statement_timeout=30s`,
+`lock_timeout=5s` ve `idle_in_transaction_session_timeout=60s` ile sınırlıdır;
+repository transaction'ları sağlayıcı çağrısı kapsamaz. `extensions` şemasında
+bu role ayrı EXECUTE verilmez (pgvector PUBLIC ile çalışır).
+
+`GET /documents/{id}/workspace?pipelineId=` summary, pipeline'lar ve kullanımdaki
+parse çıktısını tek çağrıda döndürür; chunk/embedding gövdeleri kendi
+endpoint'lerinde kalır.
 
 ## RAG kalite sözleşmesi
 

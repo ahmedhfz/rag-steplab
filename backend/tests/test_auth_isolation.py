@@ -75,6 +75,7 @@ def test_valid_supabase_claims_are_accepted(monkeypatch):
         },
         private_key,
         algorithm="ES256",
+        headers={"kid": "test-key"},
     )
 
     class FakeKey:

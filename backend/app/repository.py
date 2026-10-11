@@ -187,6 +187,21 @@ def _completion_replay(status: str | None, lease_token: str | None) -> bool:
     return status == "completed" and lease_token is not None
 
 
+def upload_quota_problem(
+    count: int, stored_bytes: int, size_bytes: int, quota: tuple[int, int] | None
+) -> ApiProblem | None:
+    """The per-owner upload quota decision (``quota`` = (max documents, max bytes), 0 disables)."""
+
+    if not quota:
+        return None
+    max_documents, max_bytes = quota
+    if max_documents and count >= max_documents:
+        return ApiProblem(403, "document_quota_exceeded", "The document limit for this account has been reached.")
+    if max_bytes and stored_bytes + size_bytes > max_bytes:
+        return ApiProblem(403, "storage_quota_exceeded", "The storage limit for this account has been reached.")
+    return None
+
+
 def _embedding_advances_default(
     active_parse_id: str | None,
     active_chunk_id: str | None,
@@ -226,6 +241,11 @@ def _expired_run_update(row: dict[str, Any], *, parse: bool = False, now: dateti
     if not parse:
         values.update(identity_claimed=None, lease_token=None, lease_expires_at=None)
     return values
+
+
+def _violated_constraint(exc: IntegrityError) -> str | None:
+    diag = getattr(getattr(exc, "orig", None), "diag", None)
+    return getattr(diag, "constraint_name", None)
 
 
 def simple_fts_terms(query: str) -> list[str]:
@@ -452,6 +472,9 @@ def _summary_evaluation_row(row: dict[str, Any]) -> dict[str, Any]:
         "kind": "evaluation",
         "id": row["id"],
         "dataset_id": row.get("dataset_id"),
+        "parse_run_id": row.get("parse_run_id"),
+        "chunk_run_id": row.get("chunk_run_id") or (row.get("config") or {}).get("chunk_run_id"),
+        "embedding_run_id": row.get("embedding_run_id") or (row.get("config") or {}).get("embedding_run_id"),
         "config": copy.deepcopy(row.get("config") or {}),
         "status": row.get("status", "completed"),
         "error_code": row.get("error_code"),
@@ -490,7 +513,16 @@ class Repository:
     def scoped(self, owner_user_id: uuid.UUID) -> "ScopedRepository":
         return ScopedRepository(self, owner_user_id)
 
-    def create_document(self, metadata: dict[str, Any], storage_bucket: str, storage_path: str, sha256: str) -> dict[str, Any]:
+    def create_document(
+        self,
+        metadata: dict[str, Any],
+        storage_bucket: str,
+        storage_path: str,
+        sha256: str,
+        *,
+        quota: tuple[int, int] | None = None,
+    ) -> dict[str, Any]:
+        """Insert a document; ``quota`` is enforced atomically with the insert."""
         raise NotImplementedError
 
     def save_parse(self, document_id: str, parsed: ParseResponse, *, run_id: str | None = None) -> dict[str, Any]:
@@ -553,6 +585,21 @@ class Repository:
         raise NotImplementedError
 
     def get_document_row(self, document_id: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def owns_run(self, kind: str, run_id: str, owner_user_id: uuid.UUID | str) -> bool:
+        """Cheap ownership probe that never loads artifact bodies."""
+        raise NotImplementedError
+
+    def owner_document_usage(self, owner_user_id: uuid.UUID | str) -> tuple[int, int]:
+        """(document count, stored bytes) for one owner.
+
+        Stored bytes include objects of deleted documents whose Storage cleanup
+        has not completed yet (pending or dead outbox rows).
+        """
+        raise NotImplementedError
+
+    def get_dataset_case_count(self, dataset_id: str) -> int:
         raise NotImplementedError
 
     def get_document_by_sha256(
@@ -625,6 +672,11 @@ class Repository:
 
     def get_parse_row(self, run_id: str) -> dict[str, Any] | None:
         raise NotImplementedError
+
+    def get_parse_lineage_row(self, run_id: str) -> dict[str, Any] | None:
+        """Parse identity/status without the normalized document body."""
+        row = self.get_parse_row(run_id)
+        return None if row is None else {key: row.get(key) for key in ("id", "document_id", "status")}
 
     def list_parse_rows(self, document_id: str) -> list[dict[str, Any]]:
         raise NotImplementedError
@@ -963,42 +1015,50 @@ class InMemoryRepository(Repository):
         self._run_number_counters[key] = value
         return value
 
-    def create_document(self, metadata, storage_bucket, storage_path, sha256):
+    def create_document(self, metadata, storage_bucket, storage_path, sha256, *, quota=None):
         document_id = new_id()
         owner_user_id = metadata.get("owner_user_id")
         with self._lock:
             if self.get_document_by_sha256(sha256, owner_user_id=owner_user_id) is not None:
                 raise ApiProblem(409, "duplicate_document", "A document with this SHA256 already exists for this user.")
-        row = {
-            "id": document_id,
-            **metadata,
-            "storage_bucket": storage_bucket,
-            "storage_path": storage_path,
-            "sha256": sha256,
-            "owner_user_id": metadata.get("owner_user_id"),
-            "active_parse_run_id": None,
-            "active_chunk_run_id": None,
-            "active_embedding_run_id": None,
-            "created_at": now_utc(),
-            "updated_at": now_utc(),
-        }
-        self.documents[document_id] = row
-        # Every document starts with one explicit lineage container.  This
-        # keeps downstream actions deterministic even before the first parse.
-        default_pipeline_id = new_id()
-        self.document_pipelines[default_pipeline_id] = {
-            "id": default_pipeline_id,
-            "owner_user_id": row.get("owner_user_id"),
-            "document_id": document_id,
-            "name": "Default Pipeline",
-            "parse_run_id": None,
-            "chunk_run_id": None,
-            "embedding_run_id": None,
-            "revision": 1,
-            "created_at": row["created_at"],
-            "updated_at": row["updated_at"],
-        }
-        return copy.deepcopy(row)
+            if quota and owner_user_id is not None:
+                problem = upload_quota_problem(
+                    *self.owner_document_usage(owner_user_id), int(metadata.get("size_bytes") or 0), quota
+                )
+                if problem is not None:
+                    raise problem
+            # Insert inside the same critical section as the duplicate and quota
+            # checks, so two concurrent uploads cannot both pass them.
+            row = {
+                "id": document_id,
+                **metadata,
+                "storage_bucket": storage_bucket,
+                "storage_path": storage_path,
+                "sha256": sha256,
+                "owner_user_id": metadata.get("owner_user_id"),
+                "active_parse_run_id": None,
+                "active_chunk_run_id": None,
+                "active_embedding_run_id": None,
+                "created_at": now_utc(),
+                "updated_at": now_utc(),
+            }
+            self.documents[document_id] = row
+            # Every document starts with one explicit lineage container.  This
+            # keeps downstream actions deterministic even before the first parse.
+            default_pipeline_id = new_id()
+            self.document_pipelines[default_pipeline_id] = {
+                "id": default_pipeline_id,
+                "owner_user_id": row.get("owner_user_id"),
+                "document_id": document_id,
+                "name": "Default Pipeline",
+                "parse_run_id": None,
+                "chunk_run_id": None,
+                "embedding_run_id": None,
+                "revision": 1,
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            return copy.deepcopy(row)
 
     def save_parse(self, document_id, parsed, *, run_id=None):
         queued = self.create_parse_run(document_id, parser_version="unknown", run_id=run_id)
@@ -1167,6 +1227,33 @@ class InMemoryRepository(Repository):
     def get_document_row(self, document_id):
         return copy.deepcopy(self.documents.get(document_id))
 
+    def owns_run(self, kind, run_id, owner_user_id):
+        store = {
+            "parse": self.parses, "chunk": self.chunk_runs, "embedding": self.embedding_runs,
+            "experiment": self.experiments, "evaluation": self.evaluations, "dataset": self.datasets,
+        }[kind]
+        row = store.get(run_id)
+        if row is None:
+            return False
+        if kind == "evaluation":
+            row = self.datasets.get(row.get("dataset_id"), {})
+        document = self.documents.get(row.get("document_id"))
+        return document is not None and document.get("owner_user_id") == uuid.UUID(str(owner_user_id))
+
+    def get_dataset_case_count(self, dataset_id):
+        cases = (self.datasets.get(dataset_id) or {}).get("cases")
+        return len(cases) if isinstance(cases, list) else 0
+
+    def owner_document_usage(self, owner_user_id):
+        owner = uuid.UUID(str(owner_user_id))
+        rows = [row for row in self.documents.values() if row.get("owner_user_id") == owner]
+        outstanding = sum(
+            int(row.get("size_bytes") or 0)
+            for row in self.storage_cleanups.values()
+            if row.get("owner_user_id") == owner and row.get("status") in {"pending", "dead"}
+        )
+        return len(rows), sum(int(row.get("size_bytes") or 0) for row in rows) + outstanding
+
     def get_document_by_sha256(self, sha256, *, owner_user_id=None):
         owner = owner_user_id
         if owner is not None and not isinstance(owner, uuid.UUID):
@@ -1237,6 +1324,7 @@ class InMemoryRepository(Repository):
                 "owner_user_id": document["owner_user_id"],
                 "storage_bucket": document["storage_bucket"],
                 "storage_path": document["storage_path"],
+                "size_bytes": document.get("size_bytes"),
                 "status": "pending",
                 "attempt_count": 0,
                 "last_error_code": None,
@@ -2259,7 +2347,10 @@ class InMemoryRepository(Repository):
             )
         ]
         rows.sort(key=lambda row: row.get("created_at") or now_utc(), reverse=True)
-        return [_summary_evaluation_row(row) for row in copy.deepcopy(rows)]
+        return [
+            _summary_evaluation_row({**row, "parse_run_id": self.datasets.get(row.get("dataset_id"), {}).get("parse_run_id")})
+            for row in copy.deepcopy(rows)
+        ]
 
 
 def _orm_dict(row: Any, fields: Iterable[str]) -> dict[str, Any]:
@@ -2329,7 +2420,7 @@ class SqlAlchemyRepository(Repository):
                 "Another expensive operation is already queued or running for this user.",
             )
 
-    def create_document(self, metadata, storage_bucket, storage_path, sha256):
+    def create_document(self, metadata, storage_bucket, storage_path, sha256, *, quota=None):
         row = Document(
             id=new_id(),
             file_name=metadata["file_name"],
@@ -2342,6 +2433,19 @@ class SqlAlchemyRepository(Repository):
             storage_path=storage_path,
         )
         with session_scope() as session:
+            if quota and row.owner_user_id is not None:
+                # One owner's quota check and insert are serialized by a
+                # transaction-scoped lock, so concurrent uploads cannot all read
+                # the same usage and overshoot the quota together.
+                session.execute(
+                    text("select pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+                    {"key": f"upload-quota:{row.owner_user_id}"},
+                )
+                problem = upload_quota_problem(
+                    *self._owner_usage(session, row.owner_user_id), int(row.size_bytes or 0), quota
+                )
+                if problem is not None:
+                    raise problem
             session.add(row)
             session.flush()
             if row.owner_user_id is not None:
@@ -2456,6 +2560,10 @@ class SqlAlchemyRepository(Repository):
                 session.flush()
                 return self._parse_dict(row)
         except IntegrityError as exc:
+            # Only the single-inflight-parse index means "already in progress";
+            # FK/check/run-number violations are real errors, not a 409.
+            if _violated_constraint(exc) != "uq_parse_runs_document_inflight":
+                raise
             raise ApiProblem(
                 409,
                 "parse_already_in_progress",
@@ -2638,6 +2746,50 @@ class SqlAlchemyRepository(Repository):
             row = session.get(Document, document_id)
             return self._document_dict(row) if row else None
 
+    def owns_run(self, kind, run_id, owner_user_id):
+        model = {
+            "parse": ParseRun, "chunk": ChunkRun, "embedding": EmbeddingRun,
+            "experiment": ExperimentRun, "evaluation": EvaluationRun, "dataset": EvaluationDataset,
+        }[kind]
+        query = select(model.id).where(model.id == run_id)
+        if model is EvaluationRun:
+            query = query.join(EvaluationDataset, EvaluationDataset.id == model.dataset_id).join(
+                Document, Document.id == EvaluationDataset.document_id
+            )
+        else:
+            query = query.join(Document, Document.id == model.document_id)
+        query = query.where(Document.owner_user_id == self._owner_uuid(owner_user_id))
+        with session_scope() as session:
+            return session.scalar(select(query.exists())) is True
+
+    def _owner_usage(self, session, owner_user_id) -> tuple[int, int]:
+        owner = self._owner_uuid(owner_user_id)
+        # One statement = one READ COMMITTED snapshot. With two statements a
+        # concurrent delete (document row -> pending cleanup, one commit) could
+        # be seen half-applied and the same bytes counted twice.
+        document_count = select(func.count(Document.id)).where(Document.owner_user_id == owner).scalar_subquery()
+        document_bytes = (
+            select(func.coalesce(func.sum(Document.size_bytes), 0)).where(Document.owner_user_id == owner).scalar_subquery()
+        )
+        outstanding = (
+            select(func.coalesce(func.sum(StorageCleanup.size_bytes), 0))
+            .where(StorageCleanup.owner_user_id == owner, StorageCleanup.status.in_(["pending", "dead"]))
+            .scalar_subquery()
+        )
+        count, total, pending = session.execute(select(document_count, document_bytes, outstanding)).one()
+        return int(count), int(total) + int(pending or 0)
+
+    def owner_document_usage(self, owner_user_id):
+        with session_scope() as session:
+            return self._owner_usage(session, owner_user_id)
+
+    def get_dataset_case_count(self, dataset_id):
+        with session_scope() as session:
+            value = session.scalar(
+                select(func.jsonb_array_length(EvaluationDataset.cases)).where(EvaluationDataset.id == dataset_id)
+            )
+            return int(value or 0)
+
     def get_document_by_sha256(self, sha256, *, owner_user_id=None):
         with session_scope() as session:
             query = select(Document).where(Document.sha256 == sha256)
@@ -2689,6 +2841,7 @@ class SqlAlchemyRepository(Repository):
             "status": row.status,
             "attempt_count": row.attempt_count,
             "last_error_code": row.last_error_code,
+            "size_bytes": row.size_bytes,
             "next_attempt_at": row.next_attempt_at,
             "created_at": row.created_at,
             "completed_at": row.completed_at,
@@ -2710,6 +2863,7 @@ class SqlAlchemyRepository(Repository):
                     owner_user_id=document.owner_user_id,
                     storage_bucket=document.storage_bucket,
                     storage_path=document.storage_path,
+                    size_bytes=document.size_bytes,
                     status="pending",
                     attempt_count=0,
                 )
@@ -2904,6 +3058,13 @@ class SqlAlchemyRepository(Repository):
             row = session.get(ParseRun, run_id)
             return self._parse_dict(row) if row else None
 
+    def get_parse_lineage_row(self, run_id):
+        with session_scope() as session:
+            row = session.execute(
+                select(ParseRun.id, ParseRun.document_id, ParseRun.status).where(ParseRun.id == run_id)
+            ).mappings().first()
+            return dict(row) if row else None
+
     def list_parse_rows(self, document_id):
         with session_scope() as session:
             return [self._parse_dict(row) for row in session.scalars(select(ParseRun).where(ParseRun.document_id == document_id).order_by(ParseRun.created_at.desc()))]
@@ -3065,22 +3226,24 @@ class SqlAlchemyRepository(Repository):
         query = select(
             EvaluationRun.id,
             EvaluationRun.dataset_id,
+            EvaluationDataset.parse_run_id,
             EvaluationRun.config,
             EvaluationRun.status,
             EvaluationRun.error_code,
             EvaluationRun.error_message,
             EvaluationRun.results["aggregate"].label("aggregate"),
             EvaluationRun.started_at,
+            EvaluationRun.worker_started_at,
             EvaluationRun.completed_at,
             EvaluationRun.duration_ms,
             EvaluationRun.created_at,
-        ).order_by(EvaluationRun.created_at.desc())
+        ).join(EvaluationDataset, EvaluationDataset.id == EvaluationRun.dataset_id).order_by(EvaluationRun.created_at.desc())
         if dataset_id is not None:
             query = query.where(EvaluationRun.dataset_id == dataset_id)
         if owner_user_id is not None:
-            query = query.join(EvaluationDataset, EvaluationDataset.id == EvaluationRun.dataset_id).join(
-                Document, Document.id == EvaluationDataset.document_id
-            ).where(Document.owner_user_id == self._owner_uuid(owner_user_id))
+            query = query.join(Document, Document.id == EvaluationDataset.document_id).where(
+                Document.owner_user_id == self._owner_uuid(owner_user_id)
+            )
         rows = []
         for row in session.execute(query).mappings().all():
             value = dict(row)
@@ -4052,20 +4215,24 @@ class SqlAlchemyRepository(Repository):
             return self._exp_dict(row)
 
     def find_stage_result(self, document_id, stage, fingerprint):
+        # The fingerprint match runs in PostgreSQL and only the matching stage
+        # object is transferred, instead of every experiment's stage_results.
+        stage_value = ExperimentRun.stage_results[stage]
         with session_scope() as session:
-            rows = session.scalars(
-                select(ExperimentRun)
+            row = session.execute(
+                select(ExperimentRun.id, stage_value.label("stage_value"))
                 .where(
                     ExperimentRun.document_id == document_id,
                     ExperimentRun.status.in_(["completed", "failed"]),
+                    func.jsonb_typeof(stage_value) == "object",
+                    stage_value["fingerprint"].astext == fingerprint,
                 )
                 .order_by(ExperimentRun.created_at.desc(), ExperimentRun.id.desc())
-            ).all()
-            for row in rows:
-                value = (row.stage_results or {}).get(stage)
-                if isinstance(value, dict) and value.get("fingerprint") == fingerprint:
-                    return copy.deepcopy(value), row.id
-            return None
+                .limit(1)
+            ).first()
+            if row is None:
+                return None
+            return copy.deepcopy(row.stage_value), row.id
 
     def get_experiment_row(self, experiment_id):
         with session_scope() as session:
@@ -4097,6 +4264,17 @@ class SqlAlchemyRepository(Repository):
         }
 
     def save_dataset(self, request, parse_run_id):
+        # Concurrent saves of one series race on max(version)+1; the unique
+        # (series_id, version) constraint decides and the loser retries.
+        for attempt in range(3):
+            try:
+                return self._save_dataset_once(request, parse_run_id)
+            except IntegrityError as exc:
+                if _violated_constraint(exc) != "uq_evaluation_datasets_series_version" or attempt == 2:
+                    raise
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    def _save_dataset_once(self, request, parse_run_id):
         with session_scope() as session:
             base = session.get(EvaluationDataset, request.base_dataset_id) if getattr(request, "base_dataset_id", None) else None
             if request.base_dataset_id and (base is None or base.document_id != request.document_id):
@@ -4543,10 +4721,22 @@ class ScopedRepository(Repository):
     def _owned_document_for_row(self, row: dict[str, Any] | None) -> dict[str, Any] | None:
         return self._owned_document(row["document_id"]) if row and row.get("document_id") else None
 
-    def create_document(self, metadata, storage_bucket, storage_path, sha256):
+    def _owns(self, kind: str, run_id: str | None) -> bool:
+        return bool(run_id) and self._repository.owns_run(kind, run_id, self.owner_user_id)
+
+    def owns_run(self, kind, run_id, owner_user_id=None):
+        return self._owns(kind, run_id)
+
+    def owner_document_usage(self, owner_user_id=None):
+        return self._repository.owner_document_usage(self.owner_user_id)
+
+    def get_dataset_case_count(self, dataset_id):
+        return self._repository.get_dataset_case_count(dataset_id) if self._owns("dataset", dataset_id) else 0
+
+    def create_document(self, metadata, storage_bucket, storage_path, sha256, *, quota=None):
         payload = dict(metadata)
         payload["owner_user_id"] = self.owner_user_id
-        return self._repository.create_document(payload, storage_bucket, storage_path, sha256)
+        return self._repository.create_document(payload, storage_bucket, storage_path, sha256, quota=quota)
 
     def save_parse(self, document_id, parsed, *, run_id=None):
         if self._owned_document(document_id) is None:
@@ -4568,7 +4758,7 @@ class ScopedRepository(Repository):
         return self.create_parse_run(document_id, parser_version=parser_version, config=config, run_id=run_id)
 
     def set_parse_dispatch(self, run_id, dispatch_id):
-        if self.get_parse_row(run_id) is None:
+        if not self._owns("parse", run_id):
             return None
         return self._repository.set_parse_dispatch(run_id, dispatch_id)
 
@@ -4578,22 +4768,22 @@ class ScopedRepository(Repository):
         return self._repository.find_inflight_parse(document_id)
 
     def mark_parse_running(self, run_id):
-        if self.get_parse_row(run_id) is None:
+        if not self._owns("parse", run_id):
             return None
         return self._repository.mark_parse_running(run_id)
 
     def update_parse_progress(self, run_id, progress, phase):
-        if self.get_parse_row(run_id) is None:
+        if not self._owns("parse", run_id):
             return None
         return self._repository.update_parse_progress(run_id, progress, phase)
 
     def complete_parse(self, run_id, parsed, *, parser_version="unknown", execution_metadata=None, duration_ms=None):
-        if self.get_parse_row(run_id) is None:
+        if not self._owns("parse", run_id):
             return None
         return self._repository.complete_parse(run_id, parsed, parser_version=parser_version, execution_metadata=execution_metadata, duration_ms=duration_ms)
 
     def fail_parse(self, run_id, code, message, *, status="failed", execution_metadata=None, duration_ms=None):
-        if self.get_parse_row(run_id) is None:
+        if not self._owns("parse", run_id):
             return None
         return self._repository.fail_parse(run_id, code, message, status=status, execution_metadata=execution_metadata, duration_ms=duration_ms)
 
@@ -4682,14 +4872,14 @@ class ScopedRepository(Repository):
 
     def save_chunk_run(self, document_id, parse_run_id, request, drafts):
         document = self._owned_document(document_id)
-        parse = self.get_parse_row(parse_run_id)
+        parse = self._repository.get_parse_lineage_row(parse_run_id) if self._owns("parse", parse_run_id) else None
         if document is None or parse is None or parse.get("document_id") != document_id:
             raise ApiProblem(404, "chunk_run_not_found", "The requested document lineage was not found.")
         return self._repository.save_chunk_run(document_id, parse_run_id, request, drafts)
 
     def claim_chunk_run(self, document_id, parse_run_id, strategy, config, config_hash_value, tokenizer_version, chunker_version):
         document = self._owned_document(document_id)
-        parse = self.get_parse_row(parse_run_id)
+        parse = self._repository.get_parse_lineage_row(parse_run_id) if self._owns("parse", parse_run_id) else None
         if document is None or parse is None or parse.get("document_id") != document_id:
             raise ApiProblem(404, "chunk_run_not_found", "The requested document lineage was not found.")
         return self._repository.claim_chunk_run(
@@ -4703,12 +4893,12 @@ class ScopedRepository(Repository):
         )
 
     def complete_chunk_run(self, run_id, drafts, lease_token=None, *, unfenced=False):
-        if self.get_chunk_row(run_id) is None:
+        if not self._owns("chunk", run_id):
             return None
         return self._repository.complete_chunk_run(run_id, drafts, lease_token, unfenced=unfenced)
 
     def fail_chunk_run(self, run_id, code, message, lease_token=None, *, unfenced=False):
-        if self.get_chunk_row(run_id) is None:
+        if not self._owns("chunk", run_id):
             return None
         return self._repository.fail_chunk_run(run_id, code, message, lease_token, unfenced=unfenced)
 
@@ -4721,12 +4911,12 @@ class ScopedRepository(Repository):
         return self._repository.list_chunk_rows(document_id)
 
     def save_embedding_run(self, document_id, chunk_run_id, model, dimensions, format_version, values, input_hashes=None):
-        if self._owned_document(document_id) is None or self.get_chunk_row(chunk_run_id) is None:
+        if self._owned_document(document_id) is None or not self._owns("chunk", chunk_run_id):
             raise ApiProblem(404, "embedding_run_not_found", "The requested document lineage was not found.")
         return self._repository.save_embedding_run(document_id, chunk_run_id, model, dimensions, format_version, values, input_hashes)
 
     def claim_embedding_run(self, document_id, chunk_run_id, model, dimensions, format_version):
-        if self._owned_document(document_id) is None or self.get_chunk_row(chunk_run_id) is None:
+        if self._owned_document(document_id) is None or not self._owns("chunk", chunk_run_id):
             raise ApiProblem(404, "embedding_run_not_found", "The requested document lineage was not found.")
         return self._repository.claim_embedding_run(
             document_id,
@@ -4738,12 +4928,12 @@ class ScopedRepository(Repository):
         )
 
     def complete_embedding_run(self, run_id, values, input_hashes=None, effective_model=None, lease_token=None, *, unfenced=False):
-        if self.get_embedding_row(run_id) is None:
+        if not self._owns("embedding", run_id):
             return None
         return self._repository.complete_embedding_run(run_id, values, input_hashes, effective_model, lease_token, unfenced=unfenced)
 
     def fail_embedding_run(self, run_id, code, message, lease_token=None, *, unfenced=False):
-        if self.get_embedding_row(run_id) is None:
+        if not self._owns("embedding", run_id):
             return None
         return self._repository.fail_embedding_run(run_id, code, message, lease_token, unfenced=unfenced)
 
@@ -4756,15 +4946,14 @@ class ScopedRepository(Repository):
         return self._repository.list_embedding_rows(document_id)
 
     def get_chunks_for_embedding(self, chunk_run_id, embedding_run_id=None):
-        row = self.get_chunk_row(chunk_run_id)
-        if row is None:
+        if not self._owns("chunk", chunk_run_id):
             return []
         return self._repository.get_chunks_for_embedding(chunk_run_id, embedding_run_id)
 
     def retrieve_candidates(self, chunk_run_id, embedding_run_id, query, query_vector, mode, candidate_k):
-        if self.get_chunk_row(chunk_run_id) is None:
+        if not self._owns("chunk", chunk_run_id):
             raise ApiProblem(404, "chunk_run_not_found", "The chunk run was not found.")
-        if embedding_run_id is not None and self.get_embedding_row(embedding_run_id) is None:
+        if embedding_run_id is not None and not self._owns("embedding", embedding_run_id):
             raise ApiProblem(404, "embedding_run_not_found", "The embedding run was not found.")
         return self._repository.retrieve_candidates(chunk_run_id, embedding_run_id, query, query_vector, mode, candidate_k)
 
@@ -4788,26 +4977,24 @@ class ScopedRepository(Repository):
         )
 
     def update_experiment_stage(self, experiment_id, stage, result, lease_token=None):
-        if self.get_experiment_row(experiment_id) is None:
+        if not self._owns("experiment", experiment_id):
             return None
         return self._repository.update_experiment_stage(experiment_id, stage, result, lease_token)
 
     def complete_experiment(self, experiment_id, lease_token=None):
-        if self.get_experiment_row(experiment_id) is None:
+        if not self._owns("experiment", experiment_id):
             return None
         return self._repository.complete_experiment(experiment_id, lease_token)
 
     def fail_experiment(self, experiment_id, code, message, lease_token=None):
-        if self.get_experiment_row(experiment_id) is None:
+        if not self._owns("experiment", experiment_id):
             return None
         return self._repository.fail_experiment(experiment_id, code, message, lease_token)
 
     def _owned_pipeline_row(self, kind, run_id):
-        if kind == "experiment":
-            return self.get_experiment_row(run_id)
-        if kind == "embedding":
-            return self.get_embedding_row(run_id)
-        return self.get_evaluation_row(run_id)
+        """Truthy when the run is owned; a cheap probe, not the artifact body."""
+
+        return {"id": run_id} if self._owns(kind, run_id) else None
 
     def set_pipeline_dispatch(self, kind, run_id, dispatch_id, lease_token=None, expected_dispatch_id=None):
         row = self._owned_pipeline_row(kind, run_id)
@@ -4894,7 +5081,7 @@ class ScopedRepository(Repository):
         return self._repository.list_experiment_summary_rows(document_id, owner_user_id=self.owner_user_id)
 
     def save_dataset(self, request, parse_run_id):
-        if self._owned_document(request.document_id) is None or self.get_parse_row(parse_run_id) is None:
+        if self._owned_document(request.document_id) is None or not self._owns("parse", parse_run_id):
             raise ApiProblem(404, "dataset_not_found", "The evaluation dataset lineage was not found.")
         return self._repository.save_dataset(request, parse_run_id)
 
@@ -4935,15 +5122,14 @@ class ScopedRepository(Repository):
         return self._repository.get_evaluation_by_fingerprint(dataset_id, evaluation_fingerprint)
 
     def update_evaluation(self, run_id, changes, lease_token=None):
-        if self.get_evaluation_row(run_id) is None:
+        if not self._owns("evaluation", run_id):
             return None
         return self._repository.update_evaluation(run_id, changes, lease_token)
 
     def get_evaluation_row(self, run_id):
-        row = self._repository.get_evaluation_row(run_id)
-        if row is None:
+        if not self._owns("evaluation", run_id):
             return None
-        return row if self.get_dataset_row(row.get("dataset_id", "")) is not None else None
+        return self._repository.get_evaluation_row(run_id)
 
     def list_evaluation_rows(self, dataset_id=None):
         if dataset_id is not None:
