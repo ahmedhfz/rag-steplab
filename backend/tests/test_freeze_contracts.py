@@ -105,9 +105,10 @@ def test_pipeline_lease_budget_includes_worker_startup_provider_and_grace():
         gemini_timeout_seconds=5,
         gemini_max_retries=1,
     )
-    # Conservative nested provider envelope is 5 * (1 + 1)^3 + 2 * 8 = 56,
-    # so the worker timeout wins.
-    assert pipeline_lease_duration_seconds(settings) == 140
+    # Nested provider envelope: (1 + 1)^3 = 8 attempts, each up to the 5 s
+    # timeout plus the client's 20 s maximum backoff = 200 s, which exceeds
+    # the 100 s worker timeout: 30 + 200 + 10.
+    assert pipeline_lease_duration_seconds(settings) == 240
 
 
 def test_fencing_token_blocks_reclaimed_worker_and_dispatch_reservation_is_atomic():
@@ -137,7 +138,9 @@ def test_fencing_token_blocks_reclaimed_worker_and_dispatch_reservation_is_atomi
     assert reserved["dispatch_id"] == "dispatch-1"
     assert duplicate_reservation["dispatch_id"] == "dispatch-1"
 
+    # The worker started and then stopped renewing its lease.
     repository.experiments[first["id"]]["status"] = "running"
+    repository.experiments[first["id"]]["worker_started_at"] = now_utc() - timedelta(seconds=60)
     repository.experiments[first["id"]]["lease_expires_at"] = now_utc() - timedelta(seconds=1)
     reclaimed, reclaimed_owner = repository.claim_experiment(
         {

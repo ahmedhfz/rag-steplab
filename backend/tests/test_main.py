@@ -95,12 +95,12 @@ def test_delete_document_retries_temporary_storage_failure_on_later_mutation(mon
     original_remove = storage.remove
     attempts = 0
 
-    def flaky_remove(path):
+    def flaky_remove(path, bucket=None):
         nonlocal attempts
         attempts += 1
         if attempts == 1:
             raise ApiProblem(503, "storage_delete_failed", "temporary")
-        original_remove(path)
+        original_remove(path, bucket)
 
     monkeypatch.setattr(storage, "remove", flaky_remove)
     deleted = client.delete(f"/documents/{document_id}")
@@ -111,6 +111,14 @@ def test_delete_document_retries_temporary_storage_failure_on_later_mutation(mon
     # Listing is a read-only projection and must not mutate the cleanup outbox.
     assert storage_path in storage.objects
     assert attempts == 1
+
+    # A failed cleanup backs off; a mutation inside the backoff window does not hammer storage.
+    from app.repository import get_repository, now_utc
+
+    pending = next(iter(get_repository().storage_cleanups.values()))
+    assert pending["status"] == "pending" and pending["attempt_count"] == 1
+    assert pending["next_attempt_at"] > now_utc()
+    pending["next_attempt_at"] = now_utc()
 
     trigger = client.post("/documents", files={"file": ("retry-trigger.pdf", b"%PDF-1.8", "application/pdf")})
     assert trigger.status_code == 201
@@ -231,9 +239,6 @@ def test_returns_safe_error_when_docling_cannot_parse(monkeypatch):
 
 
 def test_async_experiment_queues_json_serializable_lifecycle(monkeypatch):
-    import importlib
-
-    main_module = importlib.import_module("app.main")
     started_at = datetime(2026, 8, 23, 20, 0, tzinfo=timezone.utc)
     monkeypatch.setattr(
         "app.main.queue_experiment",
@@ -253,7 +258,7 @@ def test_async_experiment_queues_json_serializable_lifecycle(monkeypatch):
     )
     monkeypatch.setattr(
         "app.main._run_queued_experiment_and_release",
-        lambda *_args: main_module._pipeline_semaphore.release(),
+        lambda *args: args[-1].release(),
     )
 
     response = client.post(
@@ -273,9 +278,6 @@ def test_async_experiment_queues_json_serializable_lifecycle(monkeypatch):
 
 
 def test_async_evaluation_returns_real_queued_case_lifecycle(monkeypatch):
-    import importlib
-
-    main_module = importlib.import_module("app.main")
     monkeypatch.setattr(
         "app.main.queue_evaluation",
         lambda *_args, **_kwargs: {
@@ -292,7 +294,7 @@ def test_async_evaluation_returns_real_queued_case_lifecycle(monkeypatch):
     )
     monkeypatch.setattr(
         "app.main._run_queued_evaluation_and_release",
-        lambda *_args: main_module._pipeline_semaphore.release(),
+        lambda *args: args[-1].release(),
     )
 
     response = client.post(

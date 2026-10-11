@@ -35,18 +35,20 @@ işaretlenen ve bir sonraki checkpoint'i geçmeyen görsel ilerleme gösterebili
 
 ## Modal App
 
-Tek `rag-steplab-api` Modal App üç farklı compute profili kullanır
+Tek `rag-steplab-api` Modal App dört farklı compute profili kullanır
 (`backend/modal_app.py`):
 
 | Bileşen | Function | CPU | Bellek | Timeout | Min/Max |
 | --- | --- | ---: | ---: | ---: | ---: |
 | FastAPI ASGI | `api_eu` | 0.5 | 1024 MiB | 300 s | 1 / 2 |
 | Full Docling parse worker | `parse_worker` (`benchmark_parse` aynı profili kullanır) | 2.0 | 4096 MiB | 900 s | 0 / 1 |
-| Pipeline worker (experiment, evaluation) | `pipeline_worker` | 1.0 | 2048 MiB | 1800 s | 0 / 1 |
+| Pipeline worker (embedding, experiment, evaluation) | `pipeline_worker` | 1.0 | 2048 MiB | 1800 s | 0 / 1 |
+| Bakım tarayıcısı (10 dakikada bir, Modal schedule) | `maintenance_sweeper` | 0.25 | 512 MiB | 300 s | 0 / 1 |
 
-Pipeline worker API image'ını kullanır (Docling taşımaz). Embedding run'ları
-şu an API isteği içinde senkron çalışır; lease süreleri aynı pipeline bütçesini
-kullanır. Pipeline worker timeout ve startup
+Pipeline worker ve bakım tarayıcısı API image'ını kullanır (Docling taşımaz).
+Hosted ortamda embedding run'ları durable `pipeline_worker` üzerinde çalışır;
+lease her sağlayıcı batch'inden önce yenilenir. `maintenance_sweeper` storage
+cleanup outbox'ını boşaltır ve worker'ı ölmüş run'ları kapatır. Pipeline worker timeout ve startup
 timeout `PIPELINE_WORKER_TIMEOUT_SECONDS` / `PIPELINE_WORKER_STARTUP_TIMEOUT_SECONDS`
 ile ayarlanır (varsayılan 1800 s / 300 s); backend lease/timeout hesabı aynı
 değişkenleri okur, bu yüzden Modal deploy'u ile API secret'ında aynı değer

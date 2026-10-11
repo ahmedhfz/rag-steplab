@@ -14,6 +14,8 @@ import math
 import re
 import threading
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
@@ -23,7 +25,13 @@ from sqlalchemy.exc import IntegrityError
 
 from .chunking import TOKENIZER_VERSION, chunker_version_for_strategy, config_hash
 from .keyword_search import keyword_terms, ts_rank_score
-from .config import PARSE_RUN_TIMEOUT_SECONDS, get_settings, pipeline_lease_duration_seconds
+from .config import (
+    PARSE_RUN_TIMEOUT_SECONDS,
+    chunk_lease_duration_seconds,
+    embedding_claim_lease_seconds,
+    get_settings,
+    pipeline_lease_duration_seconds,
+)
 from .db import session_scope
 from .errors import ApiProblem
 from .models import (
@@ -63,8 +71,31 @@ def new_id() -> str:
     return str(uuid.uuid4())
 
 
+_db_clock: ContextVar[datetime | None] = ContextVar("rag_lab_db_clock", default=None)
+
+
 def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    """Wall clock, or the database transaction clock inside a lease-aware session."""
+
+    value = _db_clock.get()
+    return value if value is not None else datetime.now(timezone.utc)
+
+
+@contextmanager
+def _clocked_session():
+    """A session whose ``now_utc()`` is PostgreSQL ``now()``.
+
+    Lease expiry is written and compared with one clock (the database's), so
+    API and worker containers with skewed clocks cannot shift fencing windows.
+    """
+
+    with session_scope() as session:
+        current = session.execute(text("select now()")).scalar()
+        token = _db_clock.set(current if isinstance(current, datetime) else None)
+        try:
+            yield session
+        finally:
+            _db_clock.reset(token)
 
 
 def duration_ms_between(started_at: datetime | None, completed_at: datetime | None) -> int | None:
@@ -79,10 +110,32 @@ def duration_ms_between(started_at: datetime | None, completed_at: datetime | No
     return max(1, math.ceil((completed_at - started_at).total_seconds() * 1000))
 
 
+def _awaiting_worker(row: dict[str, Any]) -> bool:
+    """Dispatched to a real worker call that has not started yet."""
+
+    dispatch_id = row.get("dispatch_id")
+    return (
+        row.get("status") in {"queued", "running"}
+        and row.get("worker_started_at") is None
+        and bool(dispatch_id)
+        and not str(dispatch_id).startswith("dispatching-")
+    )
+
+
 def _lease_expired(row: dict[str, Any], now: datetime | None = None) -> bool:
-    """Treat a legacy active row as expired only after its derived budget."""
+    """Treat a legacy active row as expired only after its derived budget.
+
+    A dispatched run still waiting for its worker is bounded by the queue
+    timeout, not the execution lease: the single worker may be busy with
+    several other users' jobs. Its lease starts when the worker starts.
+    """
 
     current = now or now_utc()
+    if _awaiting_worker(row):
+        queued = row.get("started_at") or row.get("created_at")
+        if not isinstance(queued, datetime):
+            return False
+        return queued + timedelta(seconds=get_settings().pipeline_queue_timeout_seconds) <= current
     expiry = row.get("lease_expires_at")
     if isinstance(expiry, datetime):
         return expiry <= current
@@ -105,6 +158,19 @@ def _artifact_fence_allows(row: dict[str, Any], lease_token: str | None, unfence
     if lease_token is None or row.get("lease_token") is None:
         return False
     return str(row["lease_token"]) == str(lease_token) and not _lease_expired(row)
+
+
+def storage_cleanup_retry(attempt_count: int, now: datetime) -> tuple[str, datetime]:
+    """Exponential backoff for the cleanup outbox; terminal 'dead' after the limit."""
+
+    settings = get_settings()
+    if attempt_count >= settings.storage_cleanup_max_attempts:
+        return "dead", now
+    delay = min(
+        settings.storage_cleanup_backoff_base_seconds * (2 ** max(0, attempt_count - 1)),
+        settings.storage_cleanup_backoff_max_seconds,
+    )
+    return "pending", now + timedelta(seconds=delay)
 
 
 def _completion_replay(status: str | None, lease_token: str | None) -> bool:
@@ -148,7 +214,9 @@ def _expired_run_update(row: dict[str, Any], *, parse: bool = False, now: dateti
         return {}
     values = {
         "status": "interrupted",
-        "error_code": "parse_timeout" if parse else "worker_lease_expired",
+        "error_code": "parse_timeout" if parse else (
+            "worker_queue_timeout" if _awaiting_worker(row) else "worker_lease_expired"
+        ),
         "error_message": "The run exceeded its execution deadline before completion.",
         "completed_at": current,
         # The worker's actual stop time is unknown; wall time since creation
@@ -293,6 +361,7 @@ def _summary_embedding_row(row: dict[str, Any]) -> dict[str, Any]:
         "effective_model": row.get("effective_model"),
         "status": row.get("status", "completed"),
         "embedding_count": row.get("embedding_count", 0),
+        "worker_started_at": row.get("worker_started_at"),
         "error_code": row.get("error_code"),
         "error_message": row.get("error_message"),
         "started_at": row.get("started_at"),
@@ -327,6 +396,7 @@ def _summary_experiment_row(row: dict[str, Any]) -> dict[str, Any]:
         "candidate_count": len(candidates) if isinstance(candidates, list) else row.get("candidate_count"),
         "stage_statuses": {stage: status for stage, status in stage_statuses.items() if status},
         "status": row.get("status", "completed"),
+        "worker_started_at": row.get("worker_started_at"),
         "error_code": row.get("error_code"),
         "error_message": row.get("error_message"),
         "started_at": row.get("started_at"),
@@ -510,10 +580,19 @@ class Repository:
     ) -> list[dict[str, Any]]:
         raise NotImplementedError
 
-    def complete_storage_cleanup(self, cleanup_id: str) -> None:
+    def complete_storage_cleanup(self, cleanup_id: str, *, owner_user_id: uuid.UUID | str | None = None) -> None:
         raise NotImplementedError
 
-    def fail_storage_cleanup(self, cleanup_id: str, code: str) -> None:
+    def fail_storage_cleanup(
+        self, cleanup_id: str, code: str, *, owner_user_id: uuid.UUID | str | None = None
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def claim_due_storage_cleanups(self, *, limit: int = 25, lease_seconds: int = 300) -> list[dict[str, Any]]:
+        """Owner-independent sweeper claim; concurrent sweepers never share a row."""
+        raise NotImplementedError
+
+    def purge_completed_storage_cleanups(self, *, older_than: timedelta) -> int:
         raise NotImplementedError
 
     def create_document_pipeline(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -703,9 +782,31 @@ class Repository:
         raise NotImplementedError
 
     def claim_pipeline_dispatch(
-        self, kind: str, run_id: str, dispatch_id: str, lease_token: str | None = None
+        self,
+        kind: str,
+        run_id: str,
+        dispatch_id: str,
+        lease_token: str | None = None,
+        *,
+        stale_reservation: str | None = None,
+        new_lease_token: str | None = None,
     ) -> dict[str, Any] | None:
-        """Atomically reserve the first dispatch slot for an active run."""
+        """Atomically reserve the first dispatch slot for an active run.
+
+        ``stale_reservation`` replaces exactly that abandoned reservation and
+        rotates the fencing token to ``new_lease_token``.
+        """
+        raise NotImplementedError
+
+    def interrupt_pipeline_run(
+        self, kind: str, run_id: str, dispatch_id: str, code: str, message: str, *, only_if_unstarted: bool = False
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def list_active_dispatches(
+        self, *, owner_user_id: uuid.UUID | str | None = None, limit: int = 100, include_undispatched: bool = False
+    ) -> list[dict[str, Any]]:
+        """Active durable runs; ``include_undispatched`` adds runs never dispatched."""
         raise NotImplementedError
 
     def start_pipeline_worker(
@@ -1139,6 +1240,7 @@ class InMemoryRepository(Repository):
                 "status": "pending",
                 "attempt_count": 0,
                 "last_error_code": None,
+                "next_attempt_at": now_utc(),
                 "created_at": now_utc(),
                 "completed_at": None,
             }
@@ -1148,25 +1250,55 @@ class InMemoryRepository(Repository):
 
     def list_pending_storage_cleanups(self, *, limit=3, owner_user_id=None):
         owner = None if owner_user_id is None else uuid.UUID(str(owner_user_id))
+        current = now_utc()
         rows = [
             row for row in self.storage_cleanups.values()
-            if row["status"] == "pending" and (owner is None or row["owner_user_id"] == owner)
+            if row["status"] == "pending"
+            and row.get("next_attempt_at", current) <= current
+            and (owner is None or row["owner_user_id"] == owner)
         ]
-        rows.sort(key=lambda row: (row["created_at"], row["id"]))
+        rows.sort(key=lambda row: (row.get("next_attempt_at", current), row["id"]))
         return copy.deepcopy(rows[: max(0, limit)])
 
-    def complete_storage_cleanup(self, cleanup_id):
+    def _owned_cleanup(self, cleanup_id, owner_user_id):
+        row = self.storage_cleanups.get(cleanup_id)
+        if row is None or (owner_user_id is not None and row["owner_user_id"] != uuid.UUID(str(owner_user_id))):
+            return None
+        return row
+
+    def complete_storage_cleanup(self, cleanup_id, *, owner_user_id=None):
         with self._lock:
-            row = self.storage_cleanups.get(cleanup_id)
-            if row is not None:
+            row = self._owned_cleanup(cleanup_id, owner_user_id)
+            if row is not None and row["status"] != "completed":
                 row.update({"status": "completed", "last_error_code": None, "completed_at": now_utc()})
 
-    def fail_storage_cleanup(self, cleanup_id, code):
+    def fail_storage_cleanup(self, cleanup_id, code, *, owner_user_id=None):
         with self._lock:
-            row = self.storage_cleanups.get(cleanup_id)
-            if row is not None and row["status"] == "pending":
-                row["attempt_count"] += 1
-                row["last_error_code"] = code
+            row = self._owned_cleanup(cleanup_id, owner_user_id)
+            if row is None or row["status"] != "pending":
+                return copy.deepcopy(row) if row else None
+            row["attempt_count"] += 1
+            row["last_error_code"] = code
+            row["status"], row["next_attempt_at"] = storage_cleanup_retry(row["attempt_count"], now_utc())
+            return copy.deepcopy(row)
+
+    def claim_due_storage_cleanups(self, *, limit=25, lease_seconds=300):
+        with self._lock:
+            rows = self.list_pending_storage_cleanups(limit=limit)
+            for row in rows:
+                self.storage_cleanups[row["id"]]["next_attempt_at"] = now_utc() + timedelta(seconds=lease_seconds)
+            return rows
+
+    def purge_completed_storage_cleanups(self, *, older_than):
+        cutoff = now_utc() - older_than
+        with self._lock:
+            stale = [
+                key for key, row in self.storage_cleanups.items()
+                if row["status"] == "completed" and row.get("completed_at") and row["completed_at"] <= cutoff
+            ]
+            for key in stale:
+                self.storage_cleanups.pop(key, None)
+            return len(stale)
 
     def _ensure_unique_pipeline_name(self, document_id, name, *, exclude_id=None):
         normalized = name.casefold()
@@ -1313,7 +1445,7 @@ class InMemoryRepository(Repository):
                     existing.update(
                         {
                             "lease_token": str(uuid.uuid4()),
-                            "lease_expires_at": started_at + timedelta(seconds=pipeline_lease_duration_seconds(get_settings())),
+                            "lease_expires_at": started_at + timedelta(seconds=chunk_lease_duration_seconds(get_settings())),
                             "started_at": started_at,
                             "completed_at": None,
                             "error_code": None,
@@ -1337,7 +1469,7 @@ class InMemoryRepository(Repository):
                 "chunker_version": chunker_version,
                 "identity_claimed": True,
                 "lease_token": str(uuid.uuid4()),
-                "lease_expires_at": started_at + timedelta(seconds=pipeline_lease_duration_seconds(get_settings())),
+                "lease_expires_at": started_at + timedelta(seconds=chunk_lease_duration_seconds(get_settings())),
                 "status": "running",
                 "chunk_count": 0,
                 "error_code": None,
@@ -1490,7 +1622,10 @@ class InMemoryRepository(Repository):
                     existing.update(
                         {
                             "lease_token": str(uuid.uuid4()),
-                            "lease_expires_at": started_at + timedelta(seconds=pipeline_lease_duration_seconds(get_settings())),
+                            "lease_expires_at": started_at + timedelta(seconds=embedding_claim_lease_seconds(get_settings())),
+                            "dispatch_id": None,
+                            "worker_started_at": None,
+                            "attempt_count": int(existing.get("attempt_count") or 0) + 1,
                             "started_at": started_at,
                             "completed_at": None,
                             "error_code": None,
@@ -1514,7 +1649,10 @@ class InMemoryRepository(Repository):
                 "embedding_format_version": format_version,
                 "identity_claimed": True,
                 "lease_token": str(uuid.uuid4()),
-                "lease_expires_at": started_at + timedelta(seconds=pipeline_lease_duration_seconds(get_settings())),
+                "lease_expires_at": started_at + timedelta(seconds=embedding_claim_lease_seconds(get_settings())),
+                "dispatch_id": None,
+                "attempt_count": 1,
+                "worker_started_at": None,
                 "effective_model": None,
                 "status": "running",
                 "embedding_count": 0,
@@ -1683,7 +1821,16 @@ class InMemoryRepository(Repository):
             rows.sort(key=lambda row: (row.get("created_at") or now_utc(), row.get("id", "")), reverse=True)
             return copy.deepcopy(rows[0]) if rows else None
 
+    @staticmethod
+    def _with_lease_duration(row):
+        row = copy.deepcopy(row)
+        duration = row.pop("lease_duration_seconds", None)
+        if row.get("lease_token") is not None and duration:
+            row["lease_expires_at"] = now_utc() + timedelta(seconds=int(duration))
+        return row
+
     def claim_experiment(self, row, *, admission_owner_user_id=None, bypass_user_admission=False):
+        row = self._with_lease_duration(row)
         with self._lock:
             requested_status = row.get("status", "running")
             durable = requested_status in {"queued", "running"} and row.get("lease_token") is not None
@@ -1875,6 +2022,7 @@ class InMemoryRepository(Repository):
         return copy.deepcopy(payload)
 
     def claim_evaluation(self, row, *, admission_owner_user_id=None):
+        row = self._with_lease_duration(row)
         with self._lock:
             requested_status = row.get("status", "queued")
             durable = requested_status in {"queued", "running"} and row.get("lease_token") is not None
@@ -1944,9 +2092,12 @@ class InMemoryRepository(Repository):
             row.update(copy.deepcopy(changes))
             return copy.deepcopy(row)
 
+    def _pipeline_store(self, kind):
+        return {"experiment": self.experiments, "evaluation": self.evaluations, "embedding": self.embedding_runs}[kind]
+
     def set_pipeline_dispatch(self, kind, run_id, dispatch_id, lease_token=None, expected_dispatch_id=None):
         with self._lock:
-            store = self.experiments if kind == "experiment" else self.evaluations
+            store = self._pipeline_store(kind)
             row = store.get(run_id)
             if (
                 row is None
@@ -1961,9 +2112,11 @@ class InMemoryRepository(Repository):
             row["dispatch_id"] = dispatch_id
             return copy.deepcopy(row)
 
-    def claim_pipeline_dispatch(self, kind, run_id, dispatch_id, lease_token=None):
+    def claim_pipeline_dispatch(
+        self, kind, run_id, dispatch_id, lease_token=None, *, stale_reservation=None, new_lease_token=None
+    ):
         with self._lock:
-            store = self.experiments if kind == "experiment" else self.evaluations
+            store = self._pipeline_store(kind)
             row = store.get(run_id)
             if (
                 row is None
@@ -1976,11 +2129,20 @@ class InMemoryRepository(Repository):
                 return None
             if row.get("dispatch_id") is None:
                 row["dispatch_id"] = dispatch_id
+            elif (
+                stale_reservation is not None
+                and row.get("dispatch_id") == stale_reservation
+                and new_lease_token
+                and row.get("worker_started_at") is None
+            ):
+                row["dispatch_id"] = dispatch_id
+                row["lease_token"] = str(new_lease_token)
+                row["attempt_count"] = int(row.get("attempt_count") or 0) + 1
             return copy.deepcopy(row)
 
     def start_pipeline_worker(self, kind, run_id, lease_token, lease_duration_seconds):
         with self._lock:
-            store = self.experiments if kind == "experiment" else self.evaluations
+            store = self._pipeline_store(kind)
             row = store.get(run_id)
             if row is None or str(row.get("lease_token")) != str(lease_token) or _lease_expired(row):
                 return None
@@ -1994,7 +2156,7 @@ class InMemoryRepository(Repository):
 
     def renew_pipeline_lease(self, kind, run_id, lease_token, lease_duration_seconds):
         with self._lock:
-            store = self.experiments if kind == "experiment" else self.evaluations
+            store = self._pipeline_store(kind)
             row = store.get(run_id)
             if row is None or str(row.get("lease_token")) != str(lease_token) or row.get("status") != "running" or _lease_expired(row):
                 return None
@@ -2015,6 +2177,8 @@ class InMemoryRepository(Repository):
         )
 
     def fail_pipeline_worker(self, kind, run_id, lease_token, code, message):
+        if kind == "embedding":
+            return self.fail_embedding_run(run_id, code, message, lease_token)
         return self.fail_experiment(run_id, code, message, lease_token) if kind == "experiment" else self.update_evaluation(
             run_id,
             {
@@ -2031,12 +2195,49 @@ class InMemoryRepository(Repository):
 
     def reconcile_pipeline_lease(self, kind, run_id):
         with self._lock:
-            store = self.experiments if kind == "experiment" else self.evaluations
+            store = self._pipeline_store(kind)
             row = store.get(run_id)
             if row is None:
                 return None
             row.update(_expired_run_update(row))
             return copy.deepcopy(row)
+
+    def interrupt_pipeline_run(self, kind, run_id, dispatch_id, code, message, *, only_if_unstarted=False):
+        with self._lock:
+            row = self._pipeline_store(kind).get(run_id)
+            if row is None:
+                return None
+            if (
+                row.get("status") in {"queued", "running"}
+                and row.get("dispatch_id") == dispatch_id
+                and not (only_if_unstarted and row.get("worker_started_at") is not None)
+            ):
+                row.update({
+                    "status": "interrupted", "error_code": code, "error_message": message,
+                    "completed_at": now_utc(), "duration_ms": None, "identity_claimed": None,
+                    "lease_token": None, "lease_expires_at": None,
+                })
+            return copy.deepcopy(row)
+
+    def list_active_dispatches(self, *, owner_user_id=None, limit=100, include_undispatched=False):
+        owner = None if owner_user_id is None else uuid.UUID(str(owner_user_id))
+        rows = []
+        with self._lock:
+            for kind in ("experiment", "evaluation", "embedding"):
+                for row in self._pipeline_store(kind).values():
+                    if row.get("status") not in {"queued", "running"}:
+                        continue
+                    if not row.get("dispatch_id") and not include_undispatched:
+                        continue
+                    document_id = row.get("document_id") or self.datasets.get(row.get("dataset_id"), {}).get("document_id")
+                    if owner is not None and self.documents.get(document_id, {}).get("owner_user_id") != owner:
+                        continue
+                    rows.append({
+                        "kind": kind, "id": row["id"], "dispatch_id": row["dispatch_id"], "status": row["status"],
+                        "started_at": row.get("started_at"), "lease_expires_at": row.get("lease_expires_at"),
+                        "worker_started_at": row.get("worker_started_at"),
+                    })
+        return rows[:limit]
 
     def get_evaluation_row(self, run_id):
         return copy.deepcopy(self.evaluations.get(run_id))
@@ -2067,6 +2268,14 @@ def _orm_dict(row: Any, fields: Iterable[str]) -> dict[str, Any]:
 
 class SqlAlchemyRepository(Repository):
     persistent = True
+
+    @staticmethod
+    def _apply_lease_duration(row: dict[str, Any], values: dict[str, Any]) -> None:
+        """Compute a requested lease from the transaction (database) clock."""
+
+        duration = row.get("lease_duration_seconds")
+        if values.get("lease_token") is not None and duration:
+            values["lease_expires_at"] = now_utc() + timedelta(seconds=int(duration))
 
     @staticmethod
     def _lock_user_admission(session, owner_user_id: uuid.UUID | str | None) -> None:
@@ -2106,6 +2315,8 @@ class SqlAlchemyRepository(Repository):
                     "started_at": row.started_at,
                     "created_at": row.created_at,
                     "lease_expires_at": getattr(row, "lease_expires_at", None),
+                    "dispatch_id": getattr(row, "dispatch_id", None),
+                    "worker_started_at": getattr(row, "worker_started_at", None),
                 }
                 for key, value in _expired_run_update(payload, parse=model is ParseRun, now=current).items():
                     setattr(row, key, value)
@@ -2202,7 +2413,7 @@ class SqlAlchemyRepository(Repository):
     ):
         identifier = run_id or new_id()
         try:
-            with session_scope() as session:
+            with _clocked_session() as session:
                 self._lock_user_admission(session, admission_owner_user_id)
                 document = session.get(Document, document_id)
                 if document is None:
@@ -2252,7 +2463,7 @@ class SqlAlchemyRepository(Repository):
             ) from exc
 
     def find_inflight_parse(self, document_id):
-        with session_scope() as session:
+        with _clocked_session() as session:
             row = session.scalars(
                 select(ParseRun)
                 .where(ParseRun.document_id == document_id, ParseRun.status.in_(["queued", "running"]))
@@ -2379,7 +2590,7 @@ class SqlAlchemyRepository(Repository):
     def fail_parse(self, run_id, code, message, *, status="failed", execution_metadata=None, duration_ms=None):
         if status not in {"failed", "interrupted"}:
             raise ValueError("parse failure status must be failed or interrupted")
-        with session_scope() as session:
+        with _clocked_session() as session:
             row = session.get(ParseRun, run_id, with_for_update=True)
             if row is None:
                 return None
@@ -2478,6 +2689,7 @@ class SqlAlchemyRepository(Repository):
             "status": row.status,
             "attempt_count": row.attempt_count,
             "last_error_code": row.last_error_code,
+            "next_attempt_at": row.next_attempt_at,
             "created_at": row.created_at,
             "completed_at": row.completed_at,
         }
@@ -2510,26 +2722,67 @@ class SqlAlchemyRepository(Repository):
 
     def list_pending_storage_cleanups(self, *, limit=3, owner_user_id=None):
         with session_scope() as session:
-            query = select(StorageCleanup).where(StorageCleanup.status == "pending")
+            query = select(StorageCleanup).where(
+                StorageCleanup.status == "pending", StorageCleanup.next_attempt_at <= func.now()
+            )
             if owner_user_id is not None:
                 query = query.where(StorageCleanup.owner_user_id == self._owner_uuid(owner_user_id))
-            rows = session.scalars(query.order_by(StorageCleanup.created_at, StorageCleanup.id).limit(max(0, limit))).all()
+            rows = session.scalars(
+                query.order_by(StorageCleanup.next_attempt_at, StorageCleanup.id).limit(max(0, limit))
+            ).all()
             return [self._storage_cleanup_dict(row) for row in rows]
 
-    def complete_storage_cleanup(self, cleanup_id):
+    def _locked_cleanup(self, session, cleanup_id, owner_user_id):
+        query = select(StorageCleanup).where(StorageCleanup.id == cleanup_id)
+        if owner_user_id is not None:
+            query = query.where(StorageCleanup.owner_user_id == self._owner_uuid(owner_user_id))
+        return session.scalars(query.with_for_update()).first()
+
+    def complete_storage_cleanup(self, cleanup_id, *, owner_user_id=None):
         with session_scope() as session:
-            row = session.get(StorageCleanup, cleanup_id)
-            if row is not None:
+            row = self._locked_cleanup(session, cleanup_id, owner_user_id)
+            if row is not None and row.status != "completed":
                 row.status = "completed"
                 row.last_error_code = None
                 row.completed_at = now_utc()
 
-    def fail_storage_cleanup(self, cleanup_id, code):
-        with session_scope() as session:
-            row = session.get(StorageCleanup, cleanup_id)
-            if row is not None and row.status == "pending":
-                row.attempt_count += 1
-                row.last_error_code = code
+    def fail_storage_cleanup(self, cleanup_id, code, *, owner_user_id=None):
+        with _clocked_session() as session:
+            row = self._locked_cleanup(session, cleanup_id, owner_user_id)
+            if row is None or row.status != "pending":
+                return self._storage_cleanup_dict(row) if row is not None else None
+            row.attempt_count += 1
+            row.last_error_code = code
+            row.status, row.next_attempt_at = storage_cleanup_retry(row.attempt_count, now_utc())
+            session.flush()
+            return self._storage_cleanup_dict(row)
+
+    def claim_due_storage_cleanups(self, *, limit=25, lease_seconds=300):
+        with _clocked_session() as session:
+            rows = session.scalars(
+                select(StorageCleanup)
+                .where(StorageCleanup.status == "pending", StorageCleanup.next_attempt_at <= func.now())
+                .order_by(StorageCleanup.next_attempt_at, StorageCleanup.id)
+                .limit(max(0, limit))
+                .with_for_update(skip_locked=True)
+            ).all()
+            claimed = [self._storage_cleanup_dict(row) for row in rows]
+            # Pushing the due time forward is the claim: a concurrent sweeper
+            # skips these rows now and after this transaction commits.
+            for row in rows:
+                row.next_attempt_at = now_utc() + timedelta(seconds=lease_seconds)
+            session.flush()
+            return claimed
+
+    def purge_completed_storage_cleanups(self, *, older_than):
+        with _clocked_session() as session:
+            result = session.execute(
+                delete(StorageCleanup).where(
+                    StorageCleanup.status == "completed",
+                    StorageCleanup.completed_at <= now_utc() - older_than,
+                )
+            )
+            return int(result.rowcount or 0)
 
     @staticmethod
     def _document_pipeline_dict(row: DocumentPipeline) -> dict[str, Any]:
@@ -2719,6 +2972,7 @@ class SqlAlchemyRepository(Repository):
             EmbeddingRun.error_code,
             EmbeddingRun.error_message,
             EmbeddingRun.started_at,
+            EmbeddingRun.worker_started_at,
             EmbeddingRun.completed_at,
             EmbeddingRun.duration_ms,
             EmbeddingRun.created_at,
@@ -2750,6 +3004,7 @@ class SqlAlchemyRepository(Repository):
             ExperimentRun.error_code,
             ExperimentRun.error_message,
             ExperimentRun.started_at,
+            ExperimentRun.worker_started_at,
             ExperimentRun.completed_at,
             ExperimentRun.duration_ms,
             ExperimentRun.created_at,
@@ -2919,6 +3174,7 @@ class SqlAlchemyRepository(Repository):
                                    'dimensions', e.dimensions,
                                    'embedding_format_version', e.embedding_format_version,
                                    'effective_model', e.effective_model, 'status', e.status,
+                                   'worker_started_at', e.worker_started_at,
                                    'embedding_count', e.embedding_count,
                                    'error_code', e.error_code, 'error_message', e.error_message,
                                    'started_at', e.started_at, 'completed_at', e.completed_at,
@@ -2949,6 +3205,7 @@ class SqlAlchemyRepository(Repository):
                                    'generation_status', x.stage_results #>> '{generation,status}',
                                    'status', x.status, 'error_code', x.error_code,
                                    'error_message', x.error_message, 'started_at', x.started_at,
+                                   'worker_started_at', x.worker_started_at,
                                    'completed_at', x.completed_at, 'duration_ms', x.duration_ms,
                                    'created_at', x.created_at
                                )
@@ -3034,7 +3291,6 @@ class SqlAlchemyRepository(Repository):
         chunker_version,
     ):
         identifier = new_id()
-        started_at = now_utc()
         values = {
             "id": identifier,
             "document_id": document_id,
@@ -3046,14 +3302,15 @@ class SqlAlchemyRepository(Repository):
             "chunker_version": chunker_version,
             "identity_claimed": True,
             "lease_token": uuid.uuid4(),
-            "lease_expires_at": started_at + timedelta(seconds=pipeline_lease_duration_seconds(get_settings())),
             "status": "running",
             "chunk_count": 0,
-            "started_at": started_at,
             "completed_at": None,
             "duration_ms": None,
         }
-        with session_scope() as session:
+        lease_seconds = chunk_lease_duration_seconds(get_settings())
+        with _clocked_session() as session:
+            started_at = now_utc()
+            values.update(started_at=started_at, lease_expires_at=started_at + timedelta(seconds=lease_seconds))
             result = session.execute(
                 pg_insert(ChunkRun)
                 .values(**values)
@@ -3093,7 +3350,7 @@ class SqlAlchemyRepository(Repository):
             if run.status == "running" and _lease_expired(payload):
                 renewed_at = now_utc()
                 run.lease_token = uuid.uuid4()
-                run.lease_expires_at = renewed_at + timedelta(seconds=pipeline_lease_duration_seconds(get_settings()))
+                run.lease_expires_at = renewed_at + timedelta(seconds=lease_seconds)
                 run.started_at = renewed_at
                 run.completed_at = None
                 run.error_code = None
@@ -3103,7 +3360,7 @@ class SqlAlchemyRepository(Repository):
             return payload, False
 
     def complete_chunk_run(self, run_id, drafts, lease_token=None, *, unfenced=False):
-        with session_scope() as session:
+        with _clocked_session() as session:
             document, run = self._lock_run_document(session, ChunkRun, run_id)
             if run is None:
                 return None
@@ -3149,7 +3406,7 @@ class SqlAlchemyRepository(Repository):
             return self._chunk_dict(run, session)
 
     def fail_chunk_run(self, run_id, code, message, lease_token=None, *, unfenced=False):
-        with session_scope() as session:
+        with _clocked_session() as session:
             document, run = self._lock_run_document(session, ChunkRun, run_id)
             if run is None:
                 return None
@@ -3218,9 +3475,12 @@ class SqlAlchemyRepository(Repository):
             "lease_expires_at": row.lease_expires_at,
             "status": row.status,
             "chunk_count": row.chunk_count,
+            "error_code": row.error_code,
+            "error_message": row.error_message,
             "started_at": row.started_at,
             "completed_at": row.completed_at,
             "duration_ms": row.duration_ms,
+            "created_at": row.created_at,
             "chunks": [self._chunk_item(chunk) for chunk in chunks],
         }
         payload["lineage_fingerprint"] = chunk_lineage_fingerprint(payload)
@@ -3275,7 +3535,6 @@ class SqlAlchemyRepository(Repository):
         admission_owner_user_id=None,
     ):
         identifier = new_id()
-        started_at = now_utc()
         values = {
             "id": identifier,
             "document_id": document_id,
@@ -3285,14 +3544,16 @@ class SqlAlchemyRepository(Repository):
             "embedding_format_version": format_version,
             "identity_claimed": True,
             "lease_token": uuid.uuid4(),
-            "lease_expires_at": started_at + timedelta(seconds=pipeline_lease_duration_seconds(get_settings())),
             "status": "running",
             "embedding_count": 0,
-            "started_at": started_at,
+            "attempt_count": 1,
             "completed_at": None,
             "duration_ms": None,
         }
-        with session_scope() as session:
+        lease_seconds = embedding_claim_lease_seconds(get_settings())
+        with _clocked_session() as session:
+            started_at = now_utc()
+            values.update(started_at=started_at, lease_expires_at=started_at + timedelta(seconds=lease_seconds))
             self._lock_user_admission(session, admission_owner_user_id)
             existing = session.scalars(
                 select(EmbeddingRun)
@@ -3315,7 +3576,10 @@ class SqlAlchemyRepository(Repository):
                     existing.status = "running"
                     renewed_at = now_utc()
                     existing.lease_token = uuid.uuid4()
-                    existing.lease_expires_at = renewed_at + timedelta(seconds=pipeline_lease_duration_seconds(get_settings()))
+                    existing.lease_expires_at = renewed_at + timedelta(seconds=lease_seconds)
+                    existing.dispatch_id = None
+                    existing.worker_started_at = None
+                    existing.attempt_count = (existing.attempt_count or 0) + 1
                     existing.started_at = renewed_at
                     existing.completed_at = None
                     existing.error_code = None
@@ -3364,7 +3628,10 @@ class SqlAlchemyRepository(Repository):
                 run.status = "running"
                 renewed_at = now_utc()
                 run.lease_token = uuid.uuid4()
-                run.lease_expires_at = renewed_at + timedelta(seconds=pipeline_lease_duration_seconds(get_settings()))
+                run.lease_expires_at = renewed_at + timedelta(seconds=lease_seconds)
+                run.dispatch_id = None
+                run.worker_started_at = None
+                run.attempt_count = (run.attempt_count or 0) + 1
                 run.started_at = renewed_at
                 run.completed_at = None
                 run.error_code = None
@@ -3374,7 +3641,7 @@ class SqlAlchemyRepository(Repository):
             return payload, False
 
     def complete_embedding_run(self, run_id, values, input_hashes=None, effective_model=None, lease_token=None, *, unfenced=False):
-        with session_scope() as session:
+        with _clocked_session() as session:
             document, run = self._lock_run_document(session, EmbeddingRun, run_id)
             if run is None:
                 return None
@@ -3418,7 +3685,7 @@ class SqlAlchemyRepository(Repository):
             return self._embedding_dict(run)
 
     def fail_embedding_run(self, run_id, code, message, lease_token=None, *, unfenced=False):
-        with session_scope() as session:
+        with _clocked_session() as session:
             document, run = self._lock_run_document(session, EmbeddingRun, run_id)
             if run is None:
                 return None
@@ -3461,11 +3728,17 @@ class SqlAlchemyRepository(Repository):
             "lease_token": str(row.lease_token) if row.lease_token else None,
             "lease_expires_at": row.lease_expires_at,
             "effective_model": row.effective_model,
+            "dispatch_id": row.dispatch_id,
+            "attempt_count": row.attempt_count,
+            "worker_started_at": row.worker_started_at,
             "status": row.status,
             "embedding_count": row.embedding_count,
+            "error_code": row.error_code,
+            "error_message": row.error_message,
             "started_at": row.started_at,
             "completed_at": row.completed_at,
             "duration_ms": row.duration_ms,
+            "created_at": row.created_at,
         }
 
     def get_embedding_row(self, run_id, *, owner_user_id=None):
@@ -3627,7 +3900,8 @@ class SqlAlchemyRepository(Repository):
             "lease_expires_at": row.get("lease_expires_at"),
             "worker_started_at": row.get("worker_started_at"),
         }
-        with session_scope() as session:
+        with _clocked_session() as session:
+            self._apply_lease_duration(row, values)
             self._lock_user_admission(session, admission_owner_user_id)
             existing = session.scalars(
                 select(ExperimentRun)
@@ -3648,7 +3922,7 @@ class SqlAlchemyRepository(Repository):
                     existing.identity_claimed = True
                     existing.status = requested_status
                     existing.lease_token = lease_token_value
-                    existing.lease_expires_at = row.get("lease_expires_at")
+                    existing.lease_expires_at = values["lease_expires_at"]
                     existing.dispatch_id = None
                     existing.worker_started_at = None
                     existing.attempt_count = (existing.attempt_count or 0) + 1
@@ -3694,7 +3968,7 @@ class SqlAlchemyRepository(Repository):
                 existing.identity_claimed = True
                 existing.status = requested_status
                 existing.lease_token = lease_token_value
-                existing.lease_expires_at = row.get("lease_expires_at")
+                existing.lease_expires_at = values["lease_expires_at"]
                 existing.dispatch_id = None
                 existing.worker_started_at = None
                 existing.attempt_count = (existing.attempt_count or 0) + 1
@@ -3707,7 +3981,7 @@ class SqlAlchemyRepository(Repository):
             return existing_payload, False
 
     def update_experiment_stage(self, experiment_id, stage, result, lease_token=None):
-        with session_scope() as session:
+        with _clocked_session() as session:
             row = session.scalars(
                 select(ExperimentRun).where(ExperimentRun.id == experiment_id).with_for_update()
             ).first()
@@ -3726,7 +4000,7 @@ class SqlAlchemyRepository(Repository):
             return self._exp_dict(row)
 
     def complete_experiment(self, experiment_id, lease_token=None):
-        with session_scope() as session:
+        with _clocked_session() as session:
             row = session.scalars(
                 select(ExperimentRun).where(ExperimentRun.id == experiment_id).with_for_update()
             ).first()
@@ -3751,7 +4025,7 @@ class SqlAlchemyRepository(Repository):
             return self._exp_dict(row)
 
     def fail_experiment(self, experiment_id, code, message, lease_token=None):
-        with session_scope() as session:
+        with _clocked_session() as session:
             row = session.scalars(
                 select(ExperimentRun).where(ExperimentRun.id == experiment_id).with_for_update()
             ).first()
@@ -3901,7 +4175,7 @@ class SqlAlchemyRepository(Repository):
             return self._eval_dict(entity)
 
     def update_evaluation(self, run_id, changes, lease_token=None):
-        with session_scope() as session:
+        with _clocked_session() as session:
             entity = session.scalars(
                 select(EvaluationRun).where(EvaluationRun.id == run_id).with_for_update()
             ).first()
@@ -3944,7 +4218,8 @@ class SqlAlchemyRepository(Repository):
             "completed_at": row.get("completed_at"),
             "duration_ms": row.get("duration_ms"),
         }
-        with session_scope() as session:
+        with _clocked_session() as session:
+            self._apply_lease_duration(row, values)
             self._lock_user_admission(session, admission_owner_user_id)
             existing = session.scalars(
                 select(EvaluationRun)
@@ -3964,7 +4239,7 @@ class SqlAlchemyRepository(Repository):
                     existing.identity_claimed = True
                     existing.status = requested_status
                     existing.lease_token = lease_token_value
-                    existing.lease_expires_at = row.get("lease_expires_at")
+                    existing.lease_expires_at = values["lease_expires_at"]
                     existing.dispatch_id = None
                     existing.worker_started_at = None
                     existing.attempt_count = (existing.attempt_count or 0) + 1
@@ -4008,7 +4283,7 @@ class SqlAlchemyRepository(Repository):
                 existing.identity_claimed = True
                 existing.status = requested_status
                 existing.lease_token = lease_token_value
-                existing.lease_expires_at = row.get("lease_expires_at")
+                existing.lease_expires_at = values["lease_expires_at"]
                 existing.dispatch_id = None
                 existing.worker_started_at = None
                 existing.attempt_count = (existing.attempt_count or 0) + 1
@@ -4033,57 +4308,81 @@ class SqlAlchemyRepository(Repository):
             ).first()
             return self._eval_dict(row) if row else None
 
+    _PIPELINE_MODELS = {"experiment": ExperimentRun, "evaluation": EvaluationRun, "embedding": EmbeddingRun}
+
     def _pipeline_entity(self, session, kind, run_id, *, for_update=False):
-        model = ExperimentRun if kind == "experiment" else EvaluationRun
+        model = self._PIPELINE_MODELS[kind]
         if for_update:
             return session.scalars(
                 select(model).where(model.id == run_id).with_for_update()
             ).first()
         return session.get(model, run_id)
 
+    def _pipeline_dict(self, kind, entity) -> dict[str, Any]:
+        if kind == "experiment":
+            return self._exp_dict(entity)
+        if kind == "evaluation":
+            return self._eval_dict(entity)
+        return self._embedding_dict(entity)
+
+    def _pipeline_fenced(self, kind, entity, lease_token) -> bool:
+        """True when ``lease_token`` is absent or is the live, unexpired lease."""
+
+        if lease_token is None:
+            return True
+        return str(entity.lease_token) == str(lease_token) and not _lease_expired(self._pipeline_dict(kind, entity))
+
     def set_pipeline_dispatch(self, kind, run_id, dispatch_id, lease_token=None, expected_dispatch_id=None):
-        with session_scope() as session:
+        with _clocked_session() as session:
             entity = self._pipeline_entity(session, kind, run_id, for_update=True)
             if (
                 entity is None
                 or entity.status not in {"queued", "running"}
-                or (
-                    lease_token is not None
-                    and (str(entity.lease_token) != str(lease_token) or _lease_expired(
-                        self._exp_dict(entity) if kind == "experiment" else self._eval_dict(entity)
-                    ))
-                )
+                or not self._pipeline_fenced(kind, entity, lease_token)
                 or (expected_dispatch_id is not None and entity.dispatch_id != expected_dispatch_id)
             ):
                 return None
             entity.dispatch_id = dispatch_id
             session.flush()
-            return self._exp_dict(entity) if kind == "experiment" else self._eval_dict(entity)
+            return self._pipeline_dict(kind, entity)
 
-    def claim_pipeline_dispatch(self, kind, run_id, dispatch_id, lease_token=None):
-        with session_scope() as session:
+    def claim_pipeline_dispatch(
+        self, kind, run_id, dispatch_id, lease_token=None, *, stale_reservation=None, new_lease_token=None
+    ):
+        with _clocked_session() as session:
             entity = self._pipeline_entity(session, kind, run_id, for_update=True)
             if (
                 entity is None
                 or entity.status not in {"queued", "running"}
-                or (
-                    lease_token is not None
-                    and (str(entity.lease_token) != str(lease_token) or _lease_expired(
-                        self._exp_dict(entity) if kind == "experiment" else self._eval_dict(entity)
-                    ))
-                )
+                or not self._pipeline_fenced(kind, entity, lease_token)
             ):
                 return None
             if entity.dispatch_id is None:
                 entity.dispatch_id = dispatch_id
                 session.flush()
-            return self._exp_dict(entity) if kind == "experiment" else self._eval_dict(entity)
+            elif (
+                stale_reservation is not None
+                and entity.dispatch_id == stale_reservation
+                and new_lease_token
+                and entity.worker_started_at is None
+            ):
+                # The previous reservation's dispatcher is presumed dead. Rotate
+                # the fencing token so a late spawn from it cannot start work.
+                entity.dispatch_id = dispatch_id
+                entity.lease_token = uuid.UUID(str(new_lease_token))
+                entity.attempt_count = (entity.attempt_count or 0) + 1
+                session.flush()
+            return self._pipeline_dict(kind, entity)
 
     def start_pipeline_worker(self, kind, run_id, lease_token, lease_duration_seconds):
-        with session_scope() as session:
+        with _clocked_session() as session:
             entity = self._pipeline_entity(session, kind, run_id, for_update=True)
-            payload = self._exp_dict(entity) if entity is not None and kind == "experiment" else self._eval_dict(entity) if entity is not None else None
-            if entity is None or str(entity.lease_token) != str(lease_token) or entity.status not in {"queued", "running"} or _lease_expired(payload or {}):
+            if (
+                entity is None
+                or lease_token is None
+                or entity.status not in {"queued", "running"}
+                or not self._pipeline_fenced(kind, entity, lease_token)
+            ):
                 return None
             current = now_utc()
             entity.status = "running"
@@ -4091,17 +4390,21 @@ class SqlAlchemyRepository(Repository):
             entity.lease_expires_at = current + timedelta(seconds=lease_duration_seconds)
             entity.started_at = entity.started_at or current
             session.flush()
-            return self._exp_dict(entity) if kind == "experiment" else self._eval_dict(entity)
+            return self._pipeline_dict(kind, entity)
 
     def renew_pipeline_lease(self, kind, run_id, lease_token, lease_duration_seconds):
-        with session_scope() as session:
+        with _clocked_session() as session:
             entity = self._pipeline_entity(session, kind, run_id, for_update=True)
-            payload = self._exp_dict(entity) if entity is not None and kind == "experiment" else self._eval_dict(entity) if entity is not None else None
-            if entity is None or str(entity.lease_token) != str(lease_token) or entity.status != "running" or _lease_expired(payload or {}):
+            if (
+                entity is None
+                or lease_token is None
+                or entity.status != "running"
+                or not self._pipeline_fenced(kind, entity, lease_token)
+            ):
                 return None
             entity.lease_expires_at = now_utc() + timedelta(seconds=lease_duration_seconds)
             session.flush()
-            return self._exp_dict(entity) if kind == "experiment" else self._eval_dict(entity)
+            return self._pipeline_dict(kind, entity)
 
     def complete_pipeline_worker(self, kind, run_id, lease_token):
         if kind == "experiment":
@@ -4121,6 +4424,8 @@ class SqlAlchemyRepository(Repository):
     def fail_pipeline_worker(self, kind, run_id, lease_token, code, message):
         if kind == "experiment":
             return self.fail_experiment(run_id, code, message, lease_token)
+        if kind == "embedding":
+            return self.fail_embedding_run(run_id, code, message, lease_token)
         return self.update_evaluation(
             run_id,
             {
@@ -4136,15 +4441,67 @@ class SqlAlchemyRepository(Repository):
         )
 
     def reconcile_pipeline_lease(self, kind, run_id):
-        with session_scope() as session:
+        with _clocked_session() as session:
             entity = self._pipeline_entity(session, kind, run_id, for_update=True)
             if entity is None:
                 return None
-            payload = self._exp_dict(entity) if kind == "experiment" else self._eval_dict(entity)
-            for key, value in _expired_run_update(payload).items():
+            for key, value in _expired_run_update(self._pipeline_dict(kind, entity)).items():
                 setattr(entity, key, value)
             session.flush()
-            return self._exp_dict(entity) if kind == "experiment" else self._eval_dict(entity)
+            return self._pipeline_dict(kind, entity)
+
+    def interrupt_pipeline_run(self, kind, run_id, dispatch_id, code, message, *, only_if_unstarted=False):
+        """Terminalize an active run whose recorded dispatch is known dead.
+
+        The dispatch id is compared-and-set so a newer attempt (new dispatch)
+        is never interrupted by a stale observation of an older call.
+        """
+
+        with _clocked_session() as session:
+            entity = self._pipeline_entity(session, kind, run_id, for_update=True)
+            if (
+                entity is None
+                or entity.status not in {"queued", "running"}
+                or entity.dispatch_id != dispatch_id
+                or (only_if_unstarted and entity.worker_started_at is not None)
+            ):
+                return self._pipeline_dict(kind, entity) if entity is not None else None
+            entity.status = "interrupted"
+            entity.error_code = code
+            entity.error_message = message
+            entity.completed_at = now_utc()
+            entity.duration_ms = None
+            entity.identity_claimed = None
+            entity.lease_token = None
+            entity.lease_expires_at = None
+            session.flush()
+            return self._pipeline_dict(kind, entity)
+
+    def list_active_dispatches(self, *, owner_user_id=None, limit=100, include_undispatched=False):
+        """Active durable runs (all kinds) with their dispatch identity."""
+
+        rows: list[dict[str, Any]] = []
+        owner = self._owner_uuid(owner_user_id)
+        with session_scope() as session:
+            for kind, model in self._PIPELINE_MODELS.items():
+                query = select(
+                    model.id, model.dispatch_id, model.status, model.started_at, model.lease_expires_at,
+                    model.worker_started_at,
+                )
+                if model is EvaluationRun:
+                    query = query.join(EvaluationDataset, EvaluationDataset.id == model.dataset_id).join(
+                        Document, Document.id == EvaluationDataset.document_id
+                    )
+                else:
+                    query = query.join(Document, Document.id == model.document_id)
+                query = query.where(model.status.in_(["queued", "running"]))
+                if not include_undispatched:
+                    query = query.where(model.dispatch_id.is_not(None))
+                if owner is not None:
+                    query = query.where(Document.owner_user_id == owner)
+                for row in session.execute(query.order_by(model.started_at).limit(limit)).mappings():
+                    rows.append({"kind": kind, **dict(row)})
+        return rows
 
     def get_evaluation_row(self, run_id):
         with session_scope() as session:
@@ -4280,15 +4637,11 @@ class ScopedRepository(Repository):
             owner_user_id=self.owner_user_id,
         )
 
-    def complete_storage_cleanup(self, cleanup_id):
-        owned = {row["id"] for row in self.list_pending_storage_cleanups(limit=100)}
-        if cleanup_id in owned:
-            self._repository.complete_storage_cleanup(cleanup_id)
+    def complete_storage_cleanup(self, cleanup_id, *, owner_user_id=None):
+        self._repository.complete_storage_cleanup(cleanup_id, owner_user_id=self.owner_user_id)
 
-    def fail_storage_cleanup(self, cleanup_id, code):
-        owned = {row["id"] for row in self.list_pending_storage_cleanups(limit=100)}
-        if cleanup_id in owned:
-            self._repository.fail_storage_cleanup(cleanup_id, code)
+    def fail_storage_cleanup(self, cleanup_id, code, *, owner_user_id=None):
+        return self._repository.fail_storage_cleanup(cleanup_id, code, owner_user_id=self.owner_user_id)
 
     def create_document_pipeline(self, row):
         payload = dict(row)
@@ -4449,8 +4802,15 @@ class ScopedRepository(Repository):
             return None
         return self._repository.fail_experiment(experiment_id, code, message, lease_token)
 
+    def _owned_pipeline_row(self, kind, run_id):
+        if kind == "experiment":
+            return self.get_experiment_row(run_id)
+        if kind == "embedding":
+            return self.get_embedding_row(run_id)
+        return self.get_evaluation_row(run_id)
+
     def set_pipeline_dispatch(self, kind, run_id, dispatch_id, lease_token=None, expected_dispatch_id=None):
-        row = self.get_experiment_row(run_id) if kind == "experiment" else self.get_evaluation_row(run_id)
+        row = self._owned_pipeline_row(kind, run_id)
         if row is None:
             return None
         return self._repository.set_pipeline_dispatch(
@@ -4461,38 +4821,54 @@ class ScopedRepository(Repository):
             expected_dispatch_id,
         )
 
-    def claim_pipeline_dispatch(self, kind, run_id, dispatch_id, lease_token=None):
-        row = self.get_experiment_row(run_id) if kind == "experiment" else self.get_evaluation_row(run_id)
-        if row is None:
+    def claim_pipeline_dispatch(
+        self, kind, run_id, dispatch_id, lease_token=None, *, stale_reservation=None, new_lease_token=None
+    ):
+        if self._owned_pipeline_row(kind, run_id) is None:
             return None
-        return self._repository.claim_pipeline_dispatch(kind, run_id, dispatch_id, lease_token)
+        return self._repository.claim_pipeline_dispatch(
+            kind, run_id, dispatch_id, lease_token,
+            stale_reservation=stale_reservation, new_lease_token=new_lease_token,
+        )
+
+    def interrupt_pipeline_run(self, kind, run_id, dispatch_id, code, message, *, only_if_unstarted=False):
+        if self._owned_pipeline_row(kind, run_id) is None:
+            return None
+        return self._repository.interrupt_pipeline_run(
+            kind, run_id, dispatch_id, code, message, only_if_unstarted=only_if_unstarted
+        )
+
+    def list_active_dispatches(self, *, owner_user_id=None, limit=100, include_undispatched=False):
+        return self._repository.list_active_dispatches(
+            owner_user_id=self.owner_user_id, limit=limit, include_undispatched=include_undispatched
+        )
 
     def start_pipeline_worker(self, kind, run_id, lease_token, lease_duration_seconds):
-        row = self.get_experiment_row(run_id) if kind == "experiment" else self.get_evaluation_row(run_id)
+        row = self._owned_pipeline_row(kind, run_id)
         if row is None:
             return None
         return self._repository.start_pipeline_worker(kind, run_id, lease_token, lease_duration_seconds)
 
     def renew_pipeline_lease(self, kind, run_id, lease_token, lease_duration_seconds):
-        row = self.get_experiment_row(run_id) if kind == "experiment" else self.get_evaluation_row(run_id)
+        row = self._owned_pipeline_row(kind, run_id)
         if row is None:
             return None
         return self._repository.renew_pipeline_lease(kind, run_id, lease_token, lease_duration_seconds)
 
     def complete_pipeline_worker(self, kind, run_id, lease_token):
-        row = self.get_experiment_row(run_id) if kind == "experiment" else self.get_evaluation_row(run_id)
+        row = self._owned_pipeline_row(kind, run_id)
         if row is None:
             return None
         return self._repository.complete_pipeline_worker(kind, run_id, lease_token)
 
     def fail_pipeline_worker(self, kind, run_id, lease_token, code, message):
-        row = self.get_experiment_row(run_id) if kind == "experiment" else self.get_evaluation_row(run_id)
+        row = self._owned_pipeline_row(kind, run_id)
         if row is None:
             return None
         return self._repository.fail_pipeline_worker(kind, run_id, lease_token, code, message)
 
     def reconcile_pipeline_lease(self, kind, run_id):
-        row = self.get_experiment_row(run_id) if kind == "experiment" else self.get_evaluation_row(run_id)
+        row = self._owned_pipeline_row(kind, run_id)
         if row is None:
             return None
         return self._repository.reconcile_pipeline_lease(kind, run_id)

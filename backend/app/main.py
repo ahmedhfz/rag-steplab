@@ -30,6 +30,7 @@ from .pipeline import (
     create_chunk_run,
     create_dataset,
     create_embedding_run,
+    queue_embedding_run,
     create_evaluation,
     queue_evaluation,
     run_queued_evaluation,
@@ -51,6 +52,13 @@ from .document_pipelines import (
 )
 from .gemini import EMBEDDING_FORMAT_VERSION
 from .lineage import is_historical, resolve_from_rows, select_pipeline
+from .maintenance import (
+    new_reservation_id,
+    reconcile_active_run,
+    reconcile_user_runs,
+    reservation_is_stale,
+    retry_storage_cleanups,
+)
 from .repository import _expired_run_update, get_repository
 from .storage import get_storage
 from .schemas import (
@@ -106,7 +114,6 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Server-Timing"],
 )
-_pipeline_semaphore = threading.BoundedSemaphore(max(1, settings.max_concurrent_pipeline_runs))
 
 
 @app.middleware("http")
@@ -237,22 +244,122 @@ def _public_run_row(
                 result["generation_rerun"] = bool(execution.get("forceGeneration", False))
     result["error_code"], result["error_message"] = _public_error(row, kind)
     result["status"] = _public_status(row.get("status"))
+    result["queue_duration_ms"] = _queue_duration_ms(row)
     if kind == "experiment":
         result["reused_experiment"] = bool(result.get("reused_experiment", False))
     return result
 
 
-def _public_artifact_row(row: dict[str, Any]) -> dict[str, Any]:
+def _queue_duration_ms(row: dict[str, Any]) -> int | None:
+    """Accepted-to-worker-start time: dispatch, queueing and cold start.
+
+    Stage traces only time work inside the worker; this exposes the rest of
+    the wall-clock duration instead of hiding it.
+    """
+
+    started = row.get("started_at")
+    worker_started = row.get("worker_started_at")
+    if isinstance(started, str) or isinstance(worker_started, str):
+        try:
+            started = datetime.fromisoformat(str(started)) if started else None
+            worker_started = datetime.fromisoformat(str(worker_started)) if worker_started else None
+        except ValueError:
+            return None
+    if not isinstance(started, datetime) or not isinstance(worker_started, datetime) or worker_started < started:
+        return None
+    return int((worker_started - started).total_seconds() * 1000)
+
+
+def _run_timing(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "startedAt": row.get("started_at"),
+        "completedAt": row.get("completed_at"),
+        "durationMs": None if row.get("duration_ms") == 0 else row.get("duration_ms"),
+        "workerStartedAt": row.get("worker_started_at"),
+        "queueDurationMs": _queue_duration_ms(row),
+    }
+
+
+def _error_object(row: dict[str, Any], kind: str) -> dict[str, str] | None:
+    code, message = _public_error(row, kind)
+    return {"code": code, "message": message} if code and message else None
+
+
+def _public_artifact_row(row: dict[str, Any], *, kind: str | None = None) -> dict[str, Any]:
     result = copy.deepcopy(row)
     result.pop("lease_token", None)
+    if kind is not None:
+        result["error_code"], result["error_message"] = _public_error(row, kind)
+        result["status"] = _public_status(row.get("status"))
+        result["queue_duration_ms"] = _queue_duration_ms(row)
     return result
+
+
+def _hosted() -> bool:
+    return get_settings().app_env in {"production", "staging"}
+
+
+def _get_pipeline_row(repository, kind: str, run_id: str) -> dict[str, Any] | None:
+    if kind == "experiment":
+        return repository.get_experiment_row(run_id)
+    if kind == "embedding":
+        return repository.get_embedding_row(run_id)
+    return repository.get_evaluation_row(run_id)
+
+
+def _dispatch_durable(kind: str, row: dict[str, Any], repository) -> dict[str, Any]:
+    """Dispatch a persisted run exactly once and return its latest persisted row.
+
+    A ``dispatching-*`` reservation left behind by an API container that died
+    between reserving and spawning is replaced after its TTL; the fencing token
+    rotates so a late spawn from the dead reservation cannot start work.
+    """
+
+    current = _get_pipeline_row(repository, kind, row["id"]) or row
+    if current.get("status") not in {"queued", "running"}:
+        return current
+    stale_reservation = None
+    if current.get("dispatch_id"):
+        if not reservation_is_stale(current["dispatch_id"], current.get("started_at")):
+            return current
+        stale_reservation = current["dispatch_id"]
+    lease_token = current.get("lease_token")
+    if not lease_token:
+        raise ApiProblem(409, "worker_lease_missing", "The queued pipeline run has no fencing lease.")
+    reservation_id = new_reservation_id()
+    rotated_token = str(uuid.uuid4()) if stale_reservation else None
+    reserved = repository.claim_pipeline_dispatch(
+        kind,
+        current["id"],
+        reservation_id,
+        str(lease_token),
+        stale_reservation=stale_reservation,
+        new_lease_token=rotated_token,
+    )
+    if reserved is None:
+        raise ApiProblem(409, "worker_lease_lost", "The pipeline run lease was lost before dispatch reservation.")
+    if reserved.get("dispatch_id") != reservation_id:
+        return reserved
+    token = rotated_token or str(lease_token)
+    try:
+        dispatch_id = dispatch_pipeline_run(kind, current["id"], token, settings=get_settings())
+    except ModalDispatchError as exc:
+        repository.fail_pipeline_worker(
+            kind, current["id"], token, "pipeline_dispatch_failed", "The pipeline worker could not be started."
+        )
+        raise ApiProblem(503, "pipeline_dispatch_failed", "The pipeline worker could not be started.") from exc
+    dispatched = repository.set_pipeline_dispatch(kind, current["id"], dispatch_id, token, reservation_id)
+    if dispatched is None:
+        latest = _get_pipeline_row(repository, kind, current["id"])
+        if latest is not None and latest.get("status") in {"queued", "running", "completed"}:
+            return latest
+        raise ApiProblem(409, "worker_lease_lost", "The pipeline run lease was lost before dispatch was recorded.")
+    return dispatched
 
 
 def _durable_pipeline_response(kind: str, row: dict[str, Any], repository) -> JSONResponse:
     """Dispatch a persisted run exactly once and return its state-machine DTO."""
 
-    current = repository.get_experiment_row(row["id"]) if kind == "experiment" else repository.get_evaluation_row(row["id"])
-    current = current or row
     # Reuse/continuation is request-level provenance, not a column of the
     # persisted row; the queue response carries it and it must survive here.
     request_flags = {
@@ -260,60 +367,69 @@ def _durable_pipeline_response(kind: str, row: dict[str, Any], repository) -> JS
         for key in ("reused_experiment", "continued_from_experiment_id", "generation_rerun")
         if row.get(key) is not None
     }
-
-    def respond(status_code: int, value: dict[str, Any]) -> JSONResponse:
-        payload = _public_run_row({**value, **request_flags}, kind=kind)
-        return JSONResponse(status_code=status_code, content=jsonable_encoder(_camelize(payload)))
-
-    status = current.get("status")
-    if status not in {"queued", "running"}:
-        return respond(200, current)
-    if current.get("dispatch_id"):
-        return respond(202, current)
-    lease_token = current.get("lease_token")
-    if not lease_token:
-        raise ApiProblem(409, "worker_lease_missing", "The queued pipeline run has no fencing lease.")
-    reservation_id = f"dispatching-{uuid.uuid4()}"
-    reserved = repository.claim_pipeline_dispatch(kind, current["id"], reservation_id, str(lease_token))
-    if reserved is None:
-        raise ApiProblem(409, "worker_lease_lost", "The pipeline run lease was lost before dispatch reservation.")
-    if reserved.get("dispatch_id") != reservation_id:
-        return respond(202, reserved)
-    try:
-        dispatch_id = dispatch_pipeline_run(kind, current["id"], str(lease_token), settings=get_settings())
-        dispatched = repository.set_pipeline_dispatch(
-            kind,
-            current["id"],
-            dispatch_id,
-            str(lease_token),
-            reservation_id,
-        )
-        if dispatched is None:
-            latest = repository.get_experiment_row(current["id"]) if kind == "experiment" else repository.get_evaluation_row(current["id"])
-            if latest is not None and latest.get("status") in {"queued", "running", "completed"}:
-                return respond(200 if latest.get("status") == "completed" else 202, latest)
-            raise ApiProblem(409, "worker_lease_lost", "The pipeline run lease was lost before dispatch was recorded.")
-    except ApiProblem:
-        raise
-    except ModalDispatchError as exc:
-        repository.fail_pipeline_worker(
-            kind,
-            current["id"],
-            str(lease_token),
-            "pipeline_dispatch_failed",
-            "The pipeline worker could not be started.",
-        )
-        raise ApiProblem(503, "pipeline_dispatch_failed", "The pipeline worker could not be started.") from exc
-    return respond(202, dispatched)
+    current = _dispatch_durable(kind, row, repository)
+    status_code = 202 if current.get("status") in {"queued", "running"} else 200
+    payload = _public_run_row({**current, **request_flags}, kind=kind)
+    return JSONResponse(status_code=status_code, content=jsonable_encoder(_camelize(payload)))
 
 
-def _guarded(function, *args, **kwargs):
-    if not _pipeline_semaphore.acquire(blocking=False):
-        raise ApiProblem(429, "pipeline_busy", "Another pipeline run is currently in progress.")
+def _await_terminal(repository, kind: str, run_id: str, timeout_seconds: float) -> dict[str, Any] | None:
+    """Poll durable state for a bounded time; the run continues either way."""
+
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    delay = 0.5
+    row = None
+    while time.monotonic() < deadline:
+        time.sleep(min(delay, max(0.0, deadline - time.monotonic())))
+        row = _get_pipeline_row(repository, kind, run_id)
+        if row is None or row.get("status") not in {"queued", "running"}:
+            return row
+        delay = min(delay * 1.5, 3.0)
+    return row
+
+
+def _reconciled_run(repository, kind: str, run_id: str) -> dict[str, Any] | None:
+    """Lease-expiry plus (hosted) Modal terminal-failure reconciliation for polls."""
+
+    row = repository.reconcile_pipeline_lease(kind, run_id)
+    if row is not None and _hosted():
+        row = reconcile_active_run(repository, kind, row, check_modal=True)
+    return row
+
+
+_user_slots: dict[uuid.UUID, threading.BoundedSemaphore] = {}
+_user_slots_lock = threading.Lock()
+
+
+def _user_slot(user: CurrentUser) -> threading.BoundedSemaphore:
+    """Per-user, process-local guard for in-request (development) execution.
+
+    Admission across containers is the database's job; this only prevents one
+    user from stacking synchronous runs in one process and never makes one
+    user's work return 429 for another user.
+    """
+
+    with _user_slots_lock:
+        slot = _user_slots.get(user.id)
+        if slot is None:
+            slot = threading.BoundedSemaphore(max(1, get_settings().max_concurrent_pipeline_runs))
+            _user_slots[user.id] = slot
+        return slot
+
+
+def _acquire_user_slot(user: CurrentUser) -> threading.BoundedSemaphore:
+    slot = _user_slot(user)
+    if not slot.acquire(blocking=False):
+        raise ApiProblem(429, "pipeline_busy", "Another of your pipeline runs is currently in progress.")
+    return slot
+
+
+def _guarded(user: CurrentUser, function, *args, **kwargs):
+    slot = _acquire_user_slot(user)
     try:
         return function(*args, **kwargs)
     finally:
-        _pipeline_semaphore.release()
+        slot.release()
 
 
 def _document_metadata(row: dict[str, Any]) -> DocumentMetadata:
@@ -459,22 +575,8 @@ def _user_repository(user: CurrentUser):
     return get_repository().scoped(user.id)
 
 
-def _retry_pending_storage_cleanups(repository, *, limit: int = 3) -> dict[str, int]:
-    attempted = completed = failed = 0
-    for cleanup in repository.list_pending_storage_cleanups(limit=limit):
-        attempted += 1
-        try:
-            get_storage().remove(cleanup["storage_path"])
-        except ApiProblem as exc:
-            repository.fail_storage_cleanup(cleanup["id"], exc.code)
-            failed += 1
-        except Exception:
-            repository.fail_storage_cleanup(cleanup["id"], "storage_delete_failed")
-            failed += 1
-        else:
-            repository.complete_storage_cleanup(cleanup["id"])
-            completed += 1
-    return {"attempted": attempted, "completed": completed, "failed": failed}
+def _retry_pending_storage_cleanups(repository, *, limit: int = 3, first: dict[str, Any] | None = None) -> dict[str, int]:
+    return retry_storage_cleanups(repository, limit=limit, first=first)
 
 
 @app.get("/capabilities", response_model=CapabilitiesResponse)
@@ -512,6 +614,7 @@ async def parse_document(
     finally:
         await file.close()
     _ensure_file(content, file_name, content_type)
+    await run_in_threadpool(reconcile_user_runs, _user_repository(user))
     document, queued, reused_document, dispatch_required = await run_in_threadpool(
         queue_parse_upload,
         content,
@@ -568,6 +671,7 @@ async def upload_document(
 @app.post("/documents/{document_id}/parse", response_model=ParseResponse, status_code=202)
 @app.post("/documents/{document_id}/reparse", response_model=ParseResponse, status_code=202, include_in_schema=False)
 async def reparse(document_id: str, user: CurrentUser = Depends(get_current_user)) -> JSONResponse:
+    await run_in_threadpool(reconcile_user_runs, _user_repository(user))
     document, queued = await run_in_threadpool(
         queue_reparse_document,
         document_id,
@@ -727,11 +831,7 @@ def _summary_run_dict(
             "embeddingRunId": row.get("embedding_run_id"),
         },
         "config": row.get("config", {}),
-        "timing": {
-            "startedAt": row.get("started_at"),
-            "completedAt": row.get("completed_at"),
-            "durationMs": public_duration,
-        },
+        "timing": {**_run_timing(row), "durationMs": public_duration},
         "error": {"code": error_code, "message": error_message} if error_code and error_message else None,
     }
     if kind == "chunk":
@@ -913,7 +1013,7 @@ def delete_document(document_id: str, user: CurrentUser = Depends(get_current_us
     cleanup = repository.delete_document_with_cleanup(document_id)
     if cleanup is None:
         raise ApiProblem(404, "document_not_found", "The document was not found.")
-    _retry_pending_storage_cleanups(repository)
+    _retry_pending_storage_cleanups(repository, first=cleanup)
     return Response(status_code=204)
 
 
@@ -1039,7 +1139,7 @@ def delete_document_pipeline_route(
 
 @app.post("/documents/{document_id}/chunks", response_model=ChunkRunResponse)
 def chunks(document_id: str, request: ChunkRunRequest, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    return _camelize(_public_artifact_row(_guarded(create_chunk_run, document_id, request, repository=_user_repository(user))))
+    return _camelize(_public_artifact_row(_guarded(user, create_chunk_run, document_id, request, repository=_user_repository(user))))
 
 
 @app.get("/chunk-runs/{run_id}")
@@ -1051,16 +1151,47 @@ def chunk_run(run_id: str, user: CurrentUser = Depends(get_current_user)) -> dic
 
 
 @app.post("/documents/{document_id}/embeddings", response_model=EmbeddingRunResponse)
-def embeddings(document_id: str, request: dict[str, str] | None = None, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    return _camelize(_public_artifact_row(_guarded(create_embedding_run, document_id, (request or {}).get("chunkRunId"), repository=_user_repository(user))))
+def embeddings(
+    document_id: str,
+    request: dict[str, str] | None = None,
+    async_run: bool = Query(default=False, alias="async"),
+    user: CurrentUser = Depends(get_current_user),
+) -> Any:
+    """Create (or reuse) one embedding artifact.
+
+    Hosted: the durable pipeline worker computes it. Without ``?async=true``
+    the request waits a bounded time and keeps the previous 200-with-completed
+    contract when the run finishes in time; otherwise 202 with the running run
+    (poll ``GET /embedding-runs/{id}``).
+    """
+
+    repository = _user_repository(user)
+    chunk_run_id = (request or {}).get("chunkRunId")
+    if not _hosted():
+        return _camelize(_public_artifact_row(_guarded(user, create_embedding_run, document_id, chunk_run_id, repository=repository)))
+    reconcile_user_runs(repository)
+    queued = queue_embedding_run(document_id, chunk_run_id, repository=repository)
+    reused = bool(queued.get("reused_artifact"))
+    current = queued if reused else _dispatch_durable("embedding", queued, repository)
+    if not async_run and current.get("status") in {"queued", "running"}:
+        current = _await_terminal(repository, "embedding", current["id"], get_settings().embedding_sync_wait_seconds) or current
+    status = current.get("status")
+    if status in {"queued", "running", "completed"}:
+        payload = _public_artifact_row({**current, "reused_artifact": reused}, kind="embedding")
+        return JSONResponse(
+            status_code=200 if status == "completed" else 202,
+            content=jsonable_encoder(_camelize(payload)),
+        )
+    code, message = _public_error(current, "embedding")
+    raise ApiProblem(502, code or "embedding_run_failed", message or "The embedding run failed.")
 
 
 @app.get("/embedding-runs/{run_id}")
 def embedding_run(run_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    row = _user_repository(user).get_embedding_row(run_id)
+    row = _reconciled_run(_user_repository(user), "embedding", run_id)
     if row is None:
         raise ApiProblem(404, "embedding_run_not_found", "The embedding run was not found.")
-    return _camelize(_public_artifact_row(row))
+    return _camelize(_public_artifact_row(row, kind="embedding"))
 
 
 @app.post("/experiments", response_model=None)
@@ -1073,30 +1204,30 @@ def experiments(
     repository = _user_repository(user)
     # Hosted execution is always durable async. The query flag remains a
     # development/test convenience for the existing synchronous contract.
-    if get_settings().app_env in {"production", "staging"}:
+    if _hosted():
+        reconcile_user_runs(repository)
         queued = queue_experiment(request, repository=repository)
         return _durable_pipeline_response("experiment", queued, repository)
     if not async_run:
-        return _camelize(_guarded(create_experiment, request, repository=repository))
-    if not _pipeline_semaphore.acquire(blocking=False):
-        raise ApiProblem(429, "pipeline_busy", "Another pipeline run is currently in progress.")
+        return _camelize(_guarded(user, create_experiment, request, repository=repository))
+    slot = _acquire_user_slot(user)
     try:
         queued = queue_experiment(request, repository=repository)
         if queued.get("status") == "completed":
-            _pipeline_semaphore.release()
+            slot.release()
             return _camelize(queued)
-        background_tasks.add_task(_run_queued_experiment_and_release, request, queued["id"], repository)
+        background_tasks.add_task(_run_queued_experiment_and_release, request, queued["id"], repository, slot)
         return JSONResponse(status_code=202, content=jsonable_encoder(_camelize(queued)))
     except Exception:
-        _pipeline_semaphore.release()
+        slot.release()
         raise
 
 
-def _run_queued_experiment_and_release(request: ExperimentCreateRequest, experiment_id: str, repository) -> None:
+def _run_queued_experiment_and_release(request: ExperimentCreateRequest, experiment_id: str, repository, slot) -> None:
     try:
         run_queued_experiment(request, experiment_id, repository=repository)
     finally:
-        _pipeline_semaphore.release()
+        slot.release()
 
 
 @app.get("/experiments")
@@ -1133,7 +1264,7 @@ def list_experiments(
 @app.get("/experiments/{experiment_id}")
 def get_experiment(experiment_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     repository = _user_repository(user)
-    row = repository.reconcile_pipeline_lease("experiment", experiment_id)
+    row = _reconciled_run(repository, "experiment", experiment_id)
     if row is None:
         raise ApiProblem(404, "experiment_not_found", "The experiment was not found.")
     return _camelize(_public_run_row(row))
@@ -1142,7 +1273,7 @@ def get_experiment(experiment_id: str, user: CurrentUser = Depends(get_current_u
 @app.get("/experiments/{experiment_id}/status")
 def get_experiment_status(experiment_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     repository = _user_repository(user)
-    row = repository.reconcile_pipeline_lease("experiment", experiment_id)
+    row = _reconciled_run(repository, "experiment", experiment_id)
     if row is None:
         raise ApiProblem(404, "experiment_not_found", "The experiment was not found.")
     stage_results = row.get("stage_results") or {}
@@ -1154,32 +1285,29 @@ def get_experiment_status(experiment_id: str, user: CurrentUser = Depends(get_cu
             for stage in ("retrieval", "reranking", "context", "generation")
             if isinstance(stage_results.get(stage), dict) and (stage_results.get(stage) or {}).get("status")
         },
-        "timing": {
-            "startedAt": row.get("started_at"),
-            "completedAt": row.get("completed_at"),
-            "durationMs": None if row.get("duration_ms") == 0 else row.get("duration_ms"),
-        },
-        "error": {"code": row.get("error_code"), "message": row.get("error_message")}
-        if row.get("error_code") and row.get("error_message") else None,
+        "timing": _run_timing(row),
+        "error": _error_object(row, "experiment"),
     })
 
 
 @app.post("/experiments/{experiment_id}/continue")
 def continue_run(experiment_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     repository = _user_repository(user)
-    if get_settings().app_env in {"production", "staging"}:
+    if _hosted():
+        reconcile_user_runs(repository)
         queued = queue_continue_experiment(experiment_id, repository=repository)
         return _durable_pipeline_response("experiment", queued, repository)
-    return _camelize(_guarded(continue_experiment, experiment_id, repository=_user_repository(user)))
+    return _camelize(_guarded(user, continue_experiment, experiment_id, repository=repository))
 
 
 @app.post("/experiments/{experiment_id}/rerun-generation")
 def rerun_generation_run(experiment_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     repository = _user_repository(user)
-    if get_settings().app_env in {"production", "staging"}:
+    if _hosted():
+        reconcile_user_runs(repository)
         queued = queue_rerun_generation(experiment_id, repository=repository)
         return _durable_pipeline_response("experiment", queued, repository)
-    return _camelize(_guarded(rerun_generation, experiment_id, repository=_user_repository(user)))
+    return _camelize(_guarded(user, rerun_generation, experiment_id, repository=repository))
 
 
 @app.post("/evaluation/datasets")
@@ -1214,30 +1342,30 @@ def evaluation_run(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any] | JSONResponse:
     repository = _user_repository(user)
-    if get_settings().app_env in {"production", "staging"}:
+    if _hosted():
+        reconcile_user_runs(repository)
         queued = queue_evaluation(request, repository=repository)
         return _durable_pipeline_response("evaluation", queued, repository)
     if not async_run:
-        return _camelize(_guarded(create_evaluation, request, repository=repository))
-    if not _pipeline_semaphore.acquire(blocking=False):
-        raise ApiProblem(429, "pipeline_busy", "Another pipeline run is currently in progress.")
+        return _camelize(_guarded(user, create_evaluation, request, repository=repository))
+    slot = _acquire_user_slot(user)
     try:
         queued = queue_evaluation(request, repository=repository)
         if queued.get("status") == "completed":
-            _pipeline_semaphore.release()
+            slot.release()
             return JSONResponse(status_code=200, content=jsonable_encoder(_camelize(queued)))
-        background_tasks.add_task(_run_queued_evaluation_and_release, request, queued["id"], repository)
+        background_tasks.add_task(_run_queued_evaluation_and_release, request, queued["id"], repository, slot)
         return JSONResponse(status_code=202, content=jsonable_encoder(_camelize(queued)))
     except Exception:
-        _pipeline_semaphore.release()
+        slot.release()
         raise
 
 
-def _run_queued_evaluation_and_release(request: EvaluationRunRequest, evaluation_id: str, repository) -> None:
+def _run_queued_evaluation_and_release(request: EvaluationRunRequest, evaluation_id: str, repository, slot) -> None:
     try:
         run_queued_evaluation(request, evaluation_id, repository=repository)
     finally:
-        _pipeline_semaphore.release()
+        slot.release()
 
 
 @app.get("/evaluation/runs")
@@ -1261,7 +1389,7 @@ def list_evaluation_runs(dataset_id: str | None = Query(default=None, alias="dat
 @app.get("/evaluation/runs/{run_id}")
 def get_evaluation_run(run_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     repository = _user_repository(user)
-    row = repository.reconcile_pipeline_lease("evaluation", run_id)
+    row = _reconciled_run(repository, "evaluation", run_id)
     if row is None:
         raise ApiProblem(404, "evaluation_run_not_found", "The evaluation run was not found.")
     return _camelize(_public_run_row(row, kind="evaluation"))
@@ -1270,7 +1398,7 @@ def get_evaluation_run(run_id: str, user: CurrentUser = Depends(get_current_user
 @app.get("/evaluation/runs/{run_id}/status")
 def get_evaluation_run_status(run_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     repository = _user_repository(user)
-    row = repository.reconcile_pipeline_lease("evaluation", run_id)
+    row = _reconciled_run(repository, "evaluation", run_id)
     if row is None:
         raise ApiProblem(404, "evaluation_run_not_found", "The evaluation run was not found.")
     results = row.get("results") or {}
@@ -1282,7 +1410,6 @@ def get_evaluation_run_status(run_id: str, user: CurrentUser = Depends(get_curre
         "completedCases": len(results.get("caseResults", [])) if isinstance(results, dict) and isinstance(results.get("caseResults"), list) else 0,
         "totalCases": len(dataset.get("cases", [])) if dataset else 0,
         "results": aggregate,
-        "timing": {"startedAt": row.get("started_at"), "completedAt": row.get("completed_at"), "durationMs": None if row.get("duration_ms") == 0 else row.get("duration_ms")},
-        "error": {"code": row.get("error_code"), "message": row.get("error_message")}
-        if row.get("error_code") and row.get("error_message") else None,
+        "timing": _run_timing(row),
+        "error": _error_object(row, "evaluation"),
     })

@@ -214,15 +214,44 @@ kayıtlarda `started_at`, yoksa `created_at` üzerine pipeline çalışma bütç
 (`PIPELINE_WORKER_TIMEOUT_SECONDS` 1800 s, `PIPELINE_WORKER_STARTUP_TIMEOUT_SECONDS`
 300 s, `PIPELINE_LEASE_GRACE_SECONDS` 120 s) uygulanır. Parse için Modal'ın 900 saniye execution + 300 saniye startup sınırı
 ve 120 saniye tolerans kullanılır. Parse polling/yeniden başlatma ve pipeline
-polling de aynı zaman aşımı kurallarını uygular. Temizlik yeni iş veya durum
-sorgusu sırasında yapılır; ayrı bir periyodik tarayıcı yoktur. Worker'ın gerçek
-bitiş anı bilinmeyen timeout kayıtlarında `duration_ms` boş bırakılır.
+polling de aynı zaman aşımı kurallarını uygular. Worker'ın gerçek bitiş anı
+bilinmeyen timeout kayıtlarında `duration_ms` boş bırakılır.
+
+Hosted ortamda embedding de experiment/evaluation gibi durable `pipeline_worker`
+üzerinde çalışır; API isteği yalnız claim + dispatch yapar. `?async=true` olmadan
+istek en fazla `EMBEDDING_SYNC_WAIT_SECONDS` (varsayılan 100) bekler ve run bu
+sürede biterse önceki 200 sözleşmesini korur, aksi halde 202 döner
+(`GET /embedding-runs/{id}` ile izlenir). Dispatch edilmiş ama worker'ı henüz
+başlamamış run'lar (tek `pipeline_worker` kuyruğunda diğer kullanıcıların işlerini
+bekleyenler) execution lease'iyle değil `PIPELINE_QUEUE_TIMEOUT_SECONDS` (varsayılan
+6 sa) ile sınırlanır; ölü kuyruk girdisi Modal call durumu üzerinden ayrıca yakalanır.
+Lease worker başladığında başlar ve her sağlayıcı batch'inden önce, deneme başına
+istek timeout'u + istemcinin en fazla 20 sn backoff'u üzerinden hesaplanan batch
+bütçesiyle yenilenir. Hiç dispatch edilmemiş run'ları da sweeper lease'e göre kapatır.
+Experiment/evaluation dahil tüm claim lease'leri DB saatiyle hesaplanır. Chunk lease'i API isteği bütçesine (300 sn + tolerans)
+bağlıdır. Lease süreleri ve süre dolumu PostgreSQL `now()` ile hesaplanır.
+Modal sert ölümü (OOM, timeout, preemption) polling'de ve yeni iş kabulünden önce
+Modal call durumu (run başına en çok 30 sn'de bir) sorgulanarak `worker_terminated`
+olarak, yerini gerçek call id'ye bırakmayan `dispatching-*` rezervasyonu
+`DISPATCH_RESERVATION_TTL_SECONDS` sonra, worker hiç başlamadıysa (satır kilidi
+altında doğrulanır) `pipeline_dispatch_lost` olarak kapatılır; başlamış worker'a
+dokunulmaz, lease reconciliation geçerlidir;
+aynı isteğin tekrarı rezervasyonu fencing token'ını döndürerek yeniden dispatch eder.
+Process-local guard yalnız development'taki istek içi çalıştırma için ve kullanıcı
+başınadır; kullanıcılar arası kabulün tek otoritesi veritabanıdır. Yanıtlardaki
+`queueDurationMs`, kabul ile worker başlangıcı arasındaki (dispatch, kuyruk, cold
+start) süredir.
 
 Doküman silme, source object bilgisini `rag_lab.storage_cleanups` private outbox'ına
 document cascade ile aynı transaction'da yazar. Storage silme geçici olarak
 başarısız olsa bile mantıksal silme tamamlanır; `DELETE` veya normal upload gibi
 mutasyonlar pending kaydı idempotent olarak yeniden dener (listeleme GET'leri
-özellikle yan etkisizdir). Outbox client rollerine açık değildir ve auth
+özellikle yan etkisizdir); `DELETE` önce kendi yeni kaydını dener. Başarısız
+denemeler `next_attempt_at` ile üstel geri çekilir ve `STORAGE_CLEANUP_MAX_ATTEMPTS`
+sonra `dead` olur. Kayıttaki bucket kullanılır. Owner'dan bağımsız
+`maintenance_sweeper` (Modal schedule, 10 dk) vadesi gelen kayıtları
+`FOR UPDATE SKIP LOCKED` ile boşaltır, 30 günden eski tamamlanmış kayıtları siler ve
+ölmüş worker'ların run'larını kapatır. Outbox client rollerine açık değildir ve auth
 kullanıcısı silinse de object cleanup tamamlanana kadar korunur.
 
 ## Test
