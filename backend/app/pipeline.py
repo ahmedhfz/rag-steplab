@@ -574,7 +574,15 @@ def persist_document_upload(
     quota = _upload_quota(repository, settings)
     # Cheap early rejection before the object is uploaded; the authoritative
     # check runs again atomically with the document insert.
-    _require_upload_quota(repository, quota, len(content))
+    try:
+        _require_upload_quota(repository, quota, len(content))
+    except ApiProblem as exc:
+        # A concurrent upload of the same PDF may have used the last quota
+        # slot after our first lookup: that is a reuse, not a new upload.
+        raced = repository.get_document_by_sha256(digest)
+        if exc.code in {"document_quota_exceeded", "storage_quota_exceeded"} and raced is not None:
+            return raced, True
+        raise
 
     storage_path = f"{new_id()}/{digest}.pdf"
     storage = get_storage()

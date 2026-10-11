@@ -208,3 +208,44 @@ def test_in_memory_quota_check_and_insert_are_one_critical_section(monkeypatch):
         thread.join()
     assert sorted(result if isinstance(result, str) else "created" for result in results) == ["created", "document_quota_exceeded"]
     assert len(repository.documents) == 1
+
+
+def test_concurrent_same_pdf_upload_is_a_reuse_even_when_it_took_the_last_quota_slot(monkeypatch):
+    """Codex #131-6: the early quota check must not turn a same-SHA race into a 403."""
+
+    import hashlib
+    import uuid as uuid_module
+
+    from app.pipeline import persist_document_upload
+    from app.repository import get_repository
+
+    owner = uuid_module.UUID("11111111-1111-4111-8111-111111111111")
+    repository = get_repository().scoped(owner)
+    content = b"%PDF-1.7 same bytes"
+    digest = hashlib.sha256(content).hexdigest()
+    settings = Settings(max_documents_per_user=1, max_storage_bytes_per_user=0)
+    # The concurrent request already stored this PDF and used the only slot.
+    winner = repository.create_document(
+        {"file_name": "winner.pdf", "media_type": "application/pdf", "size_bytes": len(content), "page_count": 0},
+        "rag-documents", f"winner/{digest}.pdf", digest,
+    )
+    lookups = []
+    original = repository.get_document_by_sha256
+
+    def first_lookup_misses(sha256, **kwargs):
+        lookups.append(sha256)
+        return None if len(lookups) == 1 else original(sha256, **kwargs)
+
+    monkeypatch.setattr(repository, "get_document_by_sha256", first_lookup_misses)
+
+    document, reused = persist_document_upload(content, "loser.pdf", repository=repository, settings=settings)
+
+    assert reused is True and document["id"] == winner["id"]
+    assert get_storage().objects == {}
+
+    # A genuinely new PDF is still rejected by the quota.
+    from app.errors import ApiProblem
+
+    with pytest.raises(ApiProblem) as rejected:
+        persist_document_upload(b"%PDF-1.7 different", "new.pdf", repository=repository, settings=settings)
+    assert rejected.value.code == "document_quota_exceeded"
