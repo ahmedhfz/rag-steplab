@@ -132,7 +132,7 @@ type EvaluationRunInput = {
   generation: ExperimentRequest["generation"];
 };
 
-type DocumentPipelineContextValue = {
+export type DocumentPipelineContextValue = {
   parseStatus: DocumentParseStatus;
   parseProgress: number;
   parseProgressEstimated: boolean;

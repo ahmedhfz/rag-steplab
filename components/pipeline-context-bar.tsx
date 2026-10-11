@@ -93,7 +93,7 @@ export function PipelineContextBar({ showLineage = true }: { showLineage?: boole
         <div className="flex min-w-0 items-center gap-1.5 sm:w-[14rem] sm:max-w-[14rem] sm:shrink-0">
           <AppIcon name="document" className="size-4 shrink-0 text-subtle-foreground" />
           <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
-            <SelectTrigger aria-label={labels.document} className={`h-8 w-full min-w-0 overflow-hidden border-0 px-1 text-xs font-medium text-foreground shadow-none sm:w-[12rem] sm:max-w-[12rem] ${triggerValueClass}`} data-testid="pipeline-context-document-selector" title={documentName ?? documentPlaceholder}>
+            <SelectTrigger aria-label={labels.document} className={`h-8 w-full min-w-0 overflow-hidden border-0 px-1 text-xs font-medium text-foreground shadow-none ring-0 sm:text-xs sm:w-[12rem] sm:max-w-[12rem] ${triggerValueClass}`} data-testid="pipeline-context-document-selector" title={documentName ?? documentPlaceholder}>
               <SelectValue placeholder={documentPlaceholder} />
             </SelectTrigger>
             <SelectContent>{documents.map((document) => <SelectItem className="h-auto min-h-8 whitespace-normal [overflow-wrap:anywhere]" key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
@@ -103,7 +103,7 @@ export function PipelineContextBar({ showLineage = true }: { showLineage?: boole
         <div className="flex min-w-0 items-center gap-1.5 sm:contents">
           <AppIcon name="embed" className="size-4 shrink-0 text-subtle-foreground sm:hidden" />
           <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value)} value={activePipelineId ?? ""}>
-            <SelectTrigger aria-label={labels.pipeline} className={`h-8 w-full min-w-0 overflow-hidden border-0 px-1 text-xs font-medium text-foreground shadow-none sm:w-[16rem] sm:max-w-[16rem] sm:shrink-0 ${triggerValueClass}`} data-testid="pipeline-context-pipeline-selector" title={activePipeline?.name ?? labels.choosePipeline}>
+            <SelectTrigger aria-label={labels.pipeline} className={`h-8 w-full min-w-0 overflow-hidden border-0 px-1 text-xs font-medium text-foreground shadow-none ring-0 sm:text-xs sm:w-[16rem] sm:max-w-[16rem] sm:shrink-0 ${triggerValueClass}`} data-testid="pipeline-context-pipeline-selector" title={activePipeline?.name ?? labels.choosePipeline}>
               {/* The trigger shows only the name; the "default" marker lives in the list. */}
               <SelectValue placeholder={labels.choosePipeline}>{activePipeline ? activePipeline.name : undefined}</SelectValue>
             </SelectTrigger>

@@ -5,11 +5,12 @@ import { useState } from "react";
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { AppIcon } from "@/components/ui/app-icon";
-import { Button } from "@/components/ui/button";
+import { Button, type ButtonSize } from "@/components/ui/button";
 import { useCopy } from "@/lib/copy";
 import { sampleForLocale } from "@/lib/sample-documents";
 
-export function SampleDocumentButton({ primary = false }: { primary?: boolean }) {
+/** `primary` is the hero/empty-state CTA (pearl); otherwise a quiet secondary action. */
+export function SampleDocumentButton({ primary = false, size = "md" }: { primary?: boolean; size?: ButtonSize }) {
   const { preferences } = usePreferences();
   const labels = useCopy().documents.sample;
   const { addDocument } = useDocumentPipeline();
@@ -34,12 +35,12 @@ export function SampleDocumentButton({ primary = false }: { primary?: boolean })
   }
 
   return (
-    <div>
-      <Button aria-busy={busy} data-testid="sample-document-button" disabled={busy} onClick={() => void addSample()} type="button" variant={primary ? "default" : "outline"}>
+    <div className="flex flex-col items-start gap-2">
+      <Button aria-busy={busy} data-testid="sample-document-button" disabled={busy} onClick={() => void addSample()} size={size} type="button" variant={primary ? "pearl" : "secondary"}>
         <AppIcon className={busy ? "size-4 animate-spin motion-reduce:animate-none" : "size-4"} name={busy ? "loading" : "document"} />
         {busy ? labels.adding : labels.action}
       </Button>
-      {error ? <p className="mt-2 text-sm text-destructive" role="alert">{error}</p> : null}
+      {error ? <p className="text-sm text-error-primary" role="alert">{error}</p> : null}
     </div>
   );
 }

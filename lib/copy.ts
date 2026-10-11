@@ -234,6 +234,9 @@ const en = {
       selectDocumentForPipeline: "Select a document before managing pipelines.",
       loading: "Loading your workspace…",
       unavailable: "The document service is unavailable.",
+      created: "Pipeline created.",
+      renamed: "Pipeline renamed.",
+      deleted: "Pipeline deleted.",
     },
     continuation: {
       checking: "Loading workspace…",
@@ -254,6 +257,7 @@ const en = {
     },
     journey: {
       title: "Pipeline journey",
+      progress: "Stages complete",
       steps: {
         document: "Document", parse: "Parsing", chunk: "Chunking", embed: "Embeddings", index: "Index",
         retrieve: "Retrieval", rerank: "Reranking", context: "Context", generate: "Answer", evaluate: "Evaluation",
@@ -906,6 +910,9 @@ const tr: AppCopy = {
       selectDocumentForPipeline: "Pipeline yönetmek için önce bir doküman seçin.",
       loading: "Çalışma alanı yükleniyor…",
       unavailable: "Doküman servisi kullanılamıyor.",
+      created: "Pipeline oluşturuldu.",
+      renamed: "Pipeline yeniden adlandırıldı.",
+      deleted: "Pipeline silindi.",
     },
     continuation: {
       checking: "Çalışma alanı yükleniyor…",
@@ -926,6 +933,7 @@ const tr: AppCopy = {
     },
     journey: {
       title: "Pipeline akışı",
+      progress: "Tamamlanan aşamalar",
       steps: {
         document: "Doküman", parse: "Ayrıştırma", chunk: "Chunking", embed: "Embedding", index: "İndeks",
         retrieve: "Retrieval", rerank: "Reranking", context: "Context", generate: "Cevap", evaluate: "Değerlendirme",

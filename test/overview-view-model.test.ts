@@ -7,6 +7,7 @@ import {
   operationToStepState,
   runToStepState,
 } from "@/lib/overview-view-model";
+import { countDoneJourneyStages } from "@/lib/workspace-overview";
 
 const completeRun = {
   status: "completed" as const,
@@ -191,5 +192,19 @@ describe("Overview view model", () => {
       evaluate: "Locked",
     });
     expect(embeddingsReady.continuation).toEqual({ href: "/embeddings", kind: "embedding", state: "Ready" });
+  });
+
+  it("counts only finished journey stages for the progress readout, skipped included", () => {
+    expect(countDoneJourneyStages(buildOverviewViewModel(overviewInput()).pipelineState)).toEqual({ done: 9, total: 9 });
+    const embeddingsReady = buildOverviewViewModel({
+      ...overviewInput(),
+      embedding: undefined,
+      evaluation: undefined,
+      experiment: undefined,
+      hasEvaluationDataset: false,
+      selectedEmbeddingRunId: null,
+    });
+    // Ready and Locked stages are not progress.
+    expect(countDoneJourneyStages(embeddingsReady.pipelineState)).toEqual({ done: 3, total: 9 });
   });
 });

@@ -507,7 +507,7 @@ function TopKControl({ copy, onChange, value }: { copy: RetrievalCopy; onChange:
     <div className="flex h-9 items-center rounded-md border border-input bg-card">
       <button aria-label={copy.decreaseTopK} className="grid h-full w-8 place-items-center text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:text-input" disabled={numericValue <= 3} onClick={() => onChange(String(Math.max(3, numericValue - 1)))} type="button"><AppIcon name="minus" className="size-3.5" /></button>
       <Select onValueChange={onChange} value={value}>
-        <SelectTrigger aria-label={copy.topK} className="h-8 w-8 justify-center border-0 bg-transparent px-0 text-sm shadow-none tabular-nums [&>svg]:hidden">
+        <SelectTrigger aria-label={copy.topK} className="h-8 w-8 justify-center border-0 bg-transparent px-0 text-sm shadow-none ring-0 tabular-nums [&>svg]:hidden">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

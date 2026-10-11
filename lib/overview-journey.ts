@@ -147,23 +147,26 @@ export type JourneyNodeVisual = {
 
 // Emphasis discipline: completed work is neutral, only the next step carries
 // the brand colour; amber/destructive are reserved for real exceptions.
-const CHERRY = "var(--brand)";
-const WARNING = "var(--warning)";
-const ERROR = "var(--destructive)";
-const MUTED = "var(--subtle-foreground)";
-const SUBTLE = "var(--muted-foreground)";
-const BORDER = "var(--border)";
-const LINE = "var(--input)";
+// Semantic tokens from app/theme.css (light and dark resolve through the same names).
+const CHERRY = "var(--color-text-brand-secondary)";
+const WARNING = "var(--color-text-warning-primary)";
+const ERROR = "var(--color-text-error-primary)";
+const MUTED = "var(--color-text-quaternary)";
+const SUBTLE = "var(--color-text-tertiary)";
+const BORDER = "var(--color-border-secondary)";
+const LINE = "var(--color-border-control)";
+const SURFACE = "var(--color-bg-primary)";
+const WELL = "var(--color-bg-secondary)";
 
 export const JOURNEY_NODE_VISUALS: Readonly<Record<PipelineStepState, JourneyNodeVisual>> = {
-  Completed: { borderColor: BORDER, backgroundColor: "var(--card)", iconColor: SUBTLE, opacity: 1 },
-  Ready: { borderColor: "var(--brand-subtle-border)", backgroundColor: "var(--brand-subtle)", iconColor: CHERRY, opacity: 1 },
-  Processing: { borderColor: "var(--warning-border)", backgroundColor: "var(--warning-subtle)", iconColor: WARNING, opacity: 1 },
-  Error: { borderColor: "var(--destructive-border)", backgroundColor: "var(--destructive-subtle)", iconColor: ERROR, opacity: 1 },
-  Stale: { borderColor: "var(--warning-border)", backgroundColor: "var(--warning-subtle)", iconColor: WARNING, opacity: 1 },
-  Skipped: { borderColor: BORDER, backgroundColor: "var(--muted)", iconColor: MUTED, opacity: 1 },
-  Locked: { borderColor: BORDER, backgroundColor: "var(--card)", iconColor: MUTED, opacity: 0.65 },
-  "Not started": { borderColor: BORDER, backgroundColor: "var(--secondary)", iconColor: SUBTLE, opacity: 1 },
+  Completed: { borderColor: BORDER, backgroundColor: SURFACE, iconColor: SUBTLE, opacity: 1 },
+  Ready: { borderColor: "var(--color-utility-brand-200)", backgroundColor: "var(--color-bg-brand-secondary)", iconColor: CHERRY, opacity: 1 },
+  Processing: { borderColor: "var(--color-utility-warning-200)", backgroundColor: "var(--color-bg-warning-primary)", iconColor: WARNING, opacity: 1 },
+  Error: { borderColor: "var(--color-utility-error-200)", backgroundColor: "var(--color-bg-error-primary)", iconColor: ERROR, opacity: 1 },
+  Stale: { borderColor: "var(--color-utility-warning-200)", backgroundColor: "var(--color-bg-warning-primary)", iconColor: WARNING, opacity: 1 },
+  Skipped: { borderColor: BORDER, backgroundColor: WELL, iconColor: MUTED, opacity: 1 },
+  Locked: { borderColor: BORDER, backgroundColor: SURFACE, iconColor: MUTED, opacity: 0.65 },
+  "Not started": { borderColor: BORDER, backgroundColor: WELL, iconColor: SUBTLE, opacity: 1 },
 };
 
 export function journeyNodeVisualForState(state: PipelineStepState): JourneyNodeVisual {

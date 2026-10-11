@@ -5,6 +5,7 @@ import { AppShell } from "@/components/app-shell";
 import { AuthProvider } from "@/components/auth-provider";
 import { DocumentPipelineProvider } from "@/components/document-pipeline-provider";
 import { PreferencesProvider } from "@/components/preferences-provider";
+import { UiProvider } from "@/components/ui/ui-provider";
 import { TITLE_TEMPLATE } from "@/lib/page-titles";
 import { DEFAULT_LOCALE, LOCALE_BOOTSTRAP_SCRIPT, THEME_BOOTSTRAP_SCRIPT } from "@/lib/theme";
 
@@ -61,11 +62,13 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <PreferencesProvider>
-          <AuthProvider>
-            <DocumentPipelineProvider>
-              <AppShell>{children}</AppShell>
-            </DocumentPipelineProvider>
-          </AuthProvider>
+          <UiProvider>
+            <AuthProvider>
+              <DocumentPipelineProvider>
+                <AppShell>{children}</AppShell>
+              </DocumentPipelineProvider>
+            </AuthProvider>
+          </UiProvider>
         </PreferencesProvider>
       </body>
     </html>
