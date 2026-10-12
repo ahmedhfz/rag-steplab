@@ -200,7 +200,7 @@ async function assertOverviewGeometry(page: Page, theme: "light" | "dark") {
   await expect(chunkGlyph).toHaveAttribute("data-state", "Completed");
   // Iconoir SVG'lerinde Journey state rengi currentColor/stroke üzerinden taşınır.
   // Tamamlanan aşama nötrdür (--muted-foreground); marka yalnız sıradaki adımda.
-  expect(await chunkGlyph.evaluate((element) => getComputedStyle(element).color)).toBe(theme === "dark" ? "rgb(176, 167, 171)" : "rgb(90, 83, 87)");
+  expect(await chunkGlyph.evaluate((element) => getComputedStyle(element).color)).toBe(theme === "dark" ? "rgb(146, 137, 142)" : "rgb(96, 87, 92)");
   const evaluation = nodeGeometry.at(-1);
   expect(evaluation).toBeDefined();
   expect(evaluation!.x + evaluation!.width / 2).toBeGreaterThanOrEqual(measure.x);

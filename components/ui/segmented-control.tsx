@@ -29,7 +29,7 @@ export type SegmentedControlProps<T extends string> = {
   defaultValue?: T;
   onChange?: (value: T) => void;
   size?: "sm" | "md";
-  /** Stretch to the container and split it evenly. */
+  /** Stretch to the container and split it evenly; segments stack below `sm`. */
   fullWidth?: boolean;
   isDisabled?: boolean;
   name?: string;
@@ -52,7 +52,8 @@ export function SegmentedControl<T extends string>({ options, value, defaultValu
       ref={containerRef}
       className={cn(
         "relative inline-flex max-w-full rounded-lg bg-tertiary p-0.5 ring-1 ring-secondary ring-inset dark:bg-secondary_alt",
-        fullWidth && "flex w-full",
+        // Long labels (e.g. "Structure-aware", "Özyinelemeli") cannot share a phone row: stack them.
+        fullWidth && "flex w-full max-sm:flex-col",
         isDisabled && "opacity-60",
         className,
       )}
@@ -66,7 +67,7 @@ export function SegmentedControl<T extends string>({ options, value, defaultValu
     >
       <span aria-hidden="true" className="pointer-events-none absolute top-0 left-0 rounded-md bg-primary opacity-0 shadow-sm ring-1 ring-secondary_alt transition-[translate,width,opacity] duration-(--tabs-dur) ease-(--tabs-ease) dark:bg-quaternary" ref={indicatorRef} />
       {options.map((option) => (
-        <RadioField className={cn("relative flex", fullWidth && "flex-1")} isDisabled={option.disabled} key={option.value} value={option.value}>
+        <RadioField className={cn("relative flex", fullWidth && "min-w-0 flex-1")} isDisabled={option.disabled} key={option.value} value={option.value}>
           <RadioButton
             className={cn(
               "relative z-10 inline-flex w-full cursor-pointer items-center justify-center rounded-md font-semibold whitespace-nowrap text-tertiary outline-none select-none",
