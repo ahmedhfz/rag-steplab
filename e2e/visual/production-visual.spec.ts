@@ -333,7 +333,8 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     const outputRect = await rect(page.getByTestId("embedding-output-result"));
     // Chunks (left) → model → vectors (right) across the card: output after input, on the same row.
     expect(outputRect.x, "embedding output right of input").toBeGreaterThan(inputRect.x + inputRect.width);
-    expect(Math.abs(outputRect.y + outputRect.height / 2 - (inputRect.y + inputRect.height / 2)), "embedding input/output share a row").toBeLessThanOrEqual(4);
+    // Same row = overlapping vertical spans; the pending output is one line while the input has two.
+    expect(outputRect.y < inputRect.y + inputRect.height && inputRect.y < outputRect.y + outputRect.height, "embedding input/output share a row").toBe(true);
   } else if (state.group === "playground") {
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: (await contentWidth(page)) - 248, height: 49 }, "playground-context-bar");
     await assertRect(page.getByTestId("playground-page-header"), { x: 288, y: 89, width: 1113, fluid: 1 }, "playground-header");
