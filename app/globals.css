@@ -374,8 +374,22 @@ body,
   }
 }
 
+/* Overview journey: the green completed connectors sweep in once, left to right, up to the last
+   completed stage; each completion badge pops when the sweep reaches its node (delay set inline). */
+.steplab-journey-fill {
+  clip-path: inset(-8px var(--journey-fill-to) -8px -8px);
+  animation: steplab-journey-fill var(--journey-fill-dur) linear both;
+}
+@keyframes steplab-journey-fill { from { clip-path: inset(-8px var(--journey-fill-from) -8px -8px); } }
+.steplab-journey-check { animation: steplab-journey-check 260ms cubic-bezier(0.34, 1.45, 0.64, 1) both; }
+@keyframes steplab-journey-check { from { opacity: 0; transform: scale(0.4); } }
+/* Overview "stages complete" bar fills from empty when it first appears. */
+.steplab-progress-grow [role="progressbar"] > div { animation: steplab-progress-grow 900ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes steplab-progress-grow { from { width: 0; } }
+
 @media (prefers-reduced-motion: reduce) {
   .page-transition { animation: none; }
+  .steplab-journey-fill, .steplab-journey-check, .steplab-progress-grow [role="progressbar"] > div { animation: none; }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
