@@ -60,12 +60,5 @@ describe("generated share images", () => {
     const requested = fetchSpy.mock.calls.map(([input]) => String(input instanceof Request ? input.url : input));
     expect(requested.filter((url) => !url.startsWith("data:"))).toEqual([]);
   });
-
-  it("renders the Apple touch icon from the same mark", async () => {
-    const icon = await import("@/app/apple-icon");
-    const bytes = new Uint8Array(await icon.default().arrayBuffer());
-
-    expect(new DataView(bytes.buffer).getUint32(16)).toBe(180);
-    expect(new DataView(bytes.buffer).getUint32(20)).toBe(180);
-  });
+  // The Apple touch icon is now a static app/apple-icon.png; test/brand-mark.test.tsx checks its size and opacity.
 });

@@ -1,47 +1,26 @@
+import Image from "next/image";
 import type { ComponentProps } from "react";
 
+import brandMark from "@/components/brand/rag-steplab-mark.png";
 import { cn } from "@/lib/utils";
 
-/** Flask geometry on a 28×28 grid; the single source for the UI mark and generated icons. */
-export const BRAND_MARK_VIEWBOX = "0 0 28 28";
+/** The product mark (glass flask with stepped chunks); one raster source for the UI, icons and the share card. */
+export const BRAND_MARK_SRC = brandMark;
 
-const FLASK_PATH =
-  "M11.37 3.5h5.24M11.8 3.5v5.42l-5.15 9.79a2.76 2.76 0 0 0 2.36 4.02h9.96a2.76 2.76 0 0 0 2.36-4.02L16.18 8.92V3.5";
-const LEVEL_PATH = "M9.27 16.18h9.44";
-const BUBBLES = [
-  { cx: 12.24, cy: 18.89, r: 1.01, opacity: 0.8 },
-  { cx: 15.74, cy: 19.76, r: 0.79, opacity: 0.6 },
-  { cx: 13.99, cy: 20.98, r: 0.66, opacity: 1 },
-] as const;
-
-/**
- * Plain SVG children in one color. Also used by `next/og` routes, which only
- * render intrinsic elements with explicit colors.
- */
-export function brandMarkShapes(color: string, strokeWidth = 1.5) {
-  return [
-    <path d={FLASK_PATH} key="flask" stroke={color} strokeLinecap="round" strokeLinejoin="round" strokeWidth={strokeWidth} />,
-    <path d={LEVEL_PATH} key="level" stroke={color} strokeLinecap="round" strokeWidth={strokeWidth} />,
-    ...BUBBLES.map(({ opacity, ...circle }) => (
-      <circle {...circle} fill={color} fillOpacity={opacity} key={`${circle.cx}-${circle.cy}`} />
-    )),
-  ];
-}
-
-/** Decorative product mark; color comes from `currentColor` (`text-fg-brand-primary` by default). */
-export function BrandMark({ className, ...props }: ComponentProps<"svg">) {
+/** Decorative product mark; size it with a `size-*` class (28px by default). */
+export function BrandMark({ className, ...props }: Omit<ComponentProps<typeof Image>, "src" | "alt">) {
   return (
-    <svg
+    <Image
+      alt=""
       aria-hidden="true"
-      className={cn("size-7 shrink-0 text-fg-brand-primary", className)}
+      className={cn("size-7 shrink-0 object-contain", className)}
       data-slot="brand-mark"
-      fill="none"
-      focusable="false"
-      viewBox={BRAND_MARK_VIEWBOX}
-      xmlns="http://www.w3.org/2000/svg"
+      draggable={false}
+      height={56}
+      priority
+      src={brandMark}
+      width={56}
       {...props}
-    >
-      {brandMarkShapes("currentColor")}
-    </svg>
+    />
   );
 }
