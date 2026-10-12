@@ -176,8 +176,9 @@ function Score({ animate = false, className, copy, value }: { animate?: boolean;
   const canRoll = useIsSupported();
   if (!isFiniteScore(value)) return <span className={cn("text-quaternary", className)} title={copy.notMeasured}>—<span className="sr-only"> {copy.notMeasured}</span></span>;
   if (!animate || !canRoll) return <span className={cn("tabular-nums", className)}>{formatScore(value)}</span>;
+  // Same box as MetricValue: absorb NumberFlow's 0.5em fade-mask spill so it is not a layout overflow.
   return (
-    <span className={cn("tabular-nums", className)}>
+    <span className={cn("-mx-[0.5em] px-[0.5em] tabular-nums", className)} data-overflow-intentional="">
       <span aria-hidden="true"><NumberFlow format={SCORE_FORMAT} locales="en-US" value={value} willChange /></span>
       <span className="sr-only">{formatScore(value)}</span>
     </span>
