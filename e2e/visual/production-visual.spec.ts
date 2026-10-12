@@ -138,7 +138,8 @@ async function assertInlineStageContext(header: Locator, label: string) {
   await expect(context, `${label} context sits in the header`).toBeVisible();
   const headerRect = await rect(header);
   const contextRect = await rect(context);
-  const titleRect = await rect(header.getByRole("heading", { level: 1 }));
+  // A plain h1 locator: an open Select marks the rest of the page aria-hidden, so role queries miss it.
+  const titleRect = await rect(header.locator("h1"));
   expect(contextRect.x, `${label} context starts in the header column`).toBeGreaterThanOrEqual(headerRect.x - 8);
   expect(contextRect.x + contextRect.width, `${label} context stays in the header`).toBeLessThanOrEqual(headerRect.x + headerRect.width + 1);
   expect(contextRect.y + contextRect.height, `${label} context above the title`).toBeLessThanOrEqual(titleRect.y + 1);
@@ -330,7 +331,9 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     expect((await rect(page.getByTestId("embedding-action-card"))).width).toBeLessThanOrEqual((await rect(embeddingWorkspace)).width + 1);
     const inputRect = await rect(page.getByTestId("embedding-primary-result"));
     const outputRect = await rect(page.getByTestId("embedding-output-result"));
-    expect(outputRect.x - inputRect.x - inputRect.width).toBeLessThan(80);
+    // Chunks (left) → model → vectors (right) across the card: output after input, on the same row.
+    expect(outputRect.x, "embedding output right of input").toBeGreaterThan(inputRect.x + inputRect.width);
+    expect(Math.abs(outputRect.y + outputRect.height / 2 - (inputRect.y + inputRect.height / 2)), "embedding input/output share a row").toBeLessThanOrEqual(4);
   } else if (state.group === "playground") {
     await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: (await contentWidth(page)) - 248, height: 49 }, "playground-context-bar");
     await assertRect(page.getByTestId("playground-page-header"), { x: 288, y: 89, width: 1113, fluid: 1 }, "playground-header");
@@ -606,7 +609,8 @@ test.describe("canonical desktop auth route inventory", () => {
         const password = page.getByLabel(labels.password, { exact: true });
         const confirmation = page.locator("#reset-password-confirmation");
         const submit = page.getByRole("button", { name: labels.submit });
-        const cardBounds = await rect(page.locator("main > div"));
+        // The split auth layout: the form column (<main>) is the card that must fit the viewport.
+        const cardBounds = await rect(page.locator("main"));
         const formBounds = await rect(form);
         const passwordBounds = await rect(password);
         const submitBounds = await rect(submit);
