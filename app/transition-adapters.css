@@ -7,10 +7,10 @@
   .steplab-tabs > .t-tab { height: auto; padding: 0; border-radius: 0; }
 }
 :root {
-  --tabs-text-muted: var(--muted-foreground);
-  --tabs-text-active: var(--foreground);
-  --tabs-bar-bg: var(--secondary);
-  --tabs-pill-bg: var(--card);
+  --tabs-text-muted: var(--color-text-tertiary);
+  --tabs-text-active: var(--color-text-primary);
+  --tabs-bar-bg: var(--color-bg-tertiary);
+  --tabs-pill-bg: var(--color-bg-primary);
   --think-base: currentColor;
   --think-highlight: var(--foreground);
 }
@@ -69,16 +69,24 @@
 @keyframes steplab-overlay-out { from { opacity: 1; } to { opacity: 0; } }
 .steplab-select { transform-origin: var(--radix-select-content-transform-origin); }
 .steplab-backdrop { --modal-scale: 1; --modal-scale-close: 1; }
+.steplab-hovercard { transform-origin: var(--radix-hover-card-content-transform-origin); }
+/* Drawer (sheet): Radix Presence waits for these animations; timing reuses the 07-panel-reveal tokens. */
+.steplab-drawer[data-state="open"] { animation: steplab-drawer-in var(--panel-open-dur) var(--panel-ease) both; }
+.steplab-drawer[data-state="closed"] { animation: steplab-drawer-out var(--modal-close-dur) var(--modal-ease) both; pointer-events: none; }
+.steplab-drawer[data-side="right"] { --drawer-from: translate3d(calc(100% + 1rem), 0, 0); }
+.steplab-drawer[data-side="left"] { --drawer-from: translate3d(calc(-100% - 1rem), 0, 0); }
+.steplab-drawer[data-side="bottom"] { --drawer-from: translate3d(0, calc(100% + 1rem), 0); }
+@keyframes steplab-drawer-in { from { transform: var(--drawer-from); } to { transform: none; } }
+@keyframes steplab-drawer-out { from { transform: none; opacity: 1; } to { transform: var(--drawer-from); opacity: 0.6; } }
 
 .steplab-page-slide > .t-page { position: relative; inset: auto; min-width: 0; }
 .steplab-page-slide { --page-blur: 0px; }
-.steplab-switch { --toggle-travel: 16px; }
 
 .steplab-checkbox { display: inline-grid; position: relative; width: 16px; height: 16px; flex-shrink: 0; }
 .steplab-checkbox-input { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
-.steplab-checkbox-mark { border: 1px solid var(--input); border-radius: 3px; color: var(--primary-foreground); background: var(--card); pointer-events: none; }
-.steplab-checkbox-mark[aria-checked="true"] { background: var(--brand); border-color: var(--brand); }
-.steplab-checkbox-input:focus-visible + .steplab-checkbox-mark { outline: 2px solid var(--ring); outline-offset: 2px; }
+.steplab-checkbox-mark { border: 1px solid var(--color-border-control); border-radius: 4px; color: var(--color-white); background: var(--color-bg-primary); pointer-events: none; transition: background-color 150ms ease-out, border-color 150ms ease-out; }
+.steplab-checkbox-mark[aria-checked="true"] { background: var(--color-bg-brand-solid); border-color: var(--color-bg-brand-solid); }
+.steplab-checkbox-input:focus-visible + .steplab-checkbox-mark { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
 .steplab-checkbox-input:disabled + .steplab-checkbox-mark { opacity: 0.5; }
 .steplab-checkbox-input:disabled { cursor: not-allowed; }
 .steplab-checkbox-mark svg { display: block; width: 100%; height: 100%; }

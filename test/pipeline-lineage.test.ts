@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   chunkFormConfigFromRun,
   chunkStageState,
+  currentExperimentSummary,
   describeReparseImpact,
   resolveLineageSelection,
 } from "@/lib/pipeline-lineage";
@@ -57,6 +58,26 @@ describe("lineage resolution", () => {
   it("never pairs a chunk run with a different parse run", () => {
     const stored = { selectedParseRunId: "parse-active", selectedChunkRunId: "chunk-old", selectedEmbeddingRunId: null };
     expect(resolveLineageSelection(summary(), stored, true).selectedChunkRunId).toBeNull();
+  });
+});
+
+describe("current experiment", () => {
+  const keyword = { ...run("experiment-keyword", { chunkRunId: "chunk-active" }), embeddingRunId: null };
+  const hybrid = { ...run("experiment-hybrid", { chunkRunId: "chunk-active" }), embeddingRunId: "embedding-1" };
+  const intact = { selectedParseRunId: "parse-active", selectedChunkRunId: "chunk-active", selectedEmbeddingRunId: "embedding-1" };
+
+  it("picks the newest compatible run of the working lineage, keyword runs included", () => {
+    expect(currentExperimentSummary([hybrid, keyword], intact, intact)).toBe(hybrid);
+    expect(currentExperimentSummary([keyword, hybrid], intact, null)).toBe(keyword);
+    expect(currentExperimentSummary([{ ...hybrid, isCompatible: false }], intact, intact)).toBeNull();
+  });
+
+  it("has no current experiment while the saved pipeline's lineage is not intact", () => {
+    // The pipeline's embedding became incompatible and was dropped from the working lineage.
+    const degraded = { ...intact, selectedEmbeddingRunId: null };
+    expect(currentExperimentSummary([keyword], degraded, intact)).toBeNull();
+    // Scratch mode has no saved reference: the working lineage itself is current.
+    expect(currentExperimentSummary([keyword], degraded, null)).toBe(keyword);
   });
 });
 

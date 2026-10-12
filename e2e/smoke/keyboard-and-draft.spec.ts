@@ -14,11 +14,12 @@ test("@critical desktop parse summary and strategy keyboard navigation", async (
   await page.goto("/chunking");
   const radios = page.getByRole("radiogroup").getByRole("radio");
   const selected = page.getByRole("radio", { checked: true });
-  const before = await selected.textContent();
+  // Native radios (SegmentedControl) carry the strategy in `value`, not in text content.
+  const before = await selected.getAttribute("value");
   await selected.focus();
   await page.keyboard.press("ArrowRight");
   await expect(page.getByRole("radio", { checked: true })).toBeFocused();
-  await expect(page.getByRole("radio", { checked: true })).not.toHaveText(before!);
+  await expect(page.getByRole("radio", { checked: true })).not.toHaveAttribute("value", before!);
   expect(await radios.evaluateAll((items) => items.filter((item) => (item as HTMLElement).tabIndex === 0).length)).toBe(1);
 });
 

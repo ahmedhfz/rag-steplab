@@ -203,19 +203,23 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(screen.queryByText("The RAG service is temporarily unavailable. Retry shortly.")).not.toBeInTheDocument();
     pipeline.value = { ...createPipelineValue(), persistenceStatus: "unavailable", workspaceStatus: "unavailable" };
     view.rerender(<PreferencesProvider><ParseScreen /></PreferencesProvider>);
-    expect(screen.getAllByText("The RAG service is temporarily unavailable. Retry shortly.")).toHaveLength(1);
-    expect(screen.getByTestId("parse-blocker")).toHaveClass("text-destructive");
+    // One visible copy; the blocked next step keeps the same sentence only as its sr-only description.
+    const outage = "The RAG service is temporarily unavailable. Retry shortly.";
+    expect(screen.getAllByText(outage).filter((element) => !element.classList.contains("sr-only"))).toHaveLength(1);
+    expect(screen.getByTestId("parse-next-action")).toBeDisabled();
+    expect(screen.getByTestId("parse-next-action")).toHaveAccessibleDescription(outage);
+    expect(screen.getByTestId("parse-blocker")).toHaveAttribute("data-tone", "error");
   });
 
   it("moves the strategy selection with arrow keys and keeps one tab stop", () => {
     pipeline.value = createPipelineValue();
     renderScreen(<ChunkingScreen />);
-    const radios = screen.getAllByRole("radio");
-    const selected = radios.find((radio) => radio.getAttribute("aria-checked") === "true")!;
+    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    const selected = radios.find((radio) => radio.checked)!;
     fireEvent.keyDown(selected, { key: "ArrowRight" });
     const next = radios[(radios.indexOf(selected) + 1) % radios.length];
     expect(next).toHaveFocus();
-    expect(next).toHaveAttribute("aria-checked", "true");
+    expect(next).toBeChecked();
     expect(radios.filter((radio) => radio.tabIndex === 0)).toHaveLength(1);
   });
   it("starts the chunking form from the selected chunk run and reports whether it is up to date", () => {
@@ -228,7 +232,7 @@ describe("Product workspace and build-stage semantic contract", () => {
     };
     renderScreen(<ChunkingScreen />);
 
-    expect(screen.getByRole("radio", { name: /Recursive/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: /Recursive/ })).toBeChecked();
     expect(screen.getByLabelText(/Chunk size/)).toHaveValue(256);
     expect(screen.getByLabelText(/Overlap/)).toHaveValue(32);
     const card = screen.getByTestId("chunking-config-card");
@@ -354,8 +358,9 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(screen.queryByTestId("embedding-input")).not.toBeInTheDocument();
     expect(screen.getByTestId("embedding-primary-result")).toHaveTextContent("12 chunks");
     expect(screen.getByTestId("embedding-output-result")).toHaveTextContent("12 vectors");
-    expect(screen.getByTestId("embedding-result-details")).toHaveTextContent("gemini");
-    expect(screen.getByTestId("embedding-result-details")).toHaveTextContent("768 dimensions");
+    // Model and vector size label the chunks → vectors arrow; the details keep storage/provenance only.
+    expect(screen.getByTestId("embedding-lineage")).toHaveTextContent("gemini");
+    expect(screen.getByTestId("embedding-lineage")).toHaveTextContent("768 dimensions");
     expect(screen.getByTestId("embedding-details")).not.toHaveAttribute("open");
     expect(screen.getByTestId("embedding-details")).toHaveTextContent("Stored in pgvector");
     // Real provenance: which chunking run produced these vectors.
@@ -403,6 +408,16 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(screen.getByTestId("chunking-workspace")).toContainElement(screen.getByTestId("chunking-run-action"));
     expect(screen.getByTestId("chunking-config-card")).toContainElement(screen.getByTestId("chunk-compact-controls"));
     expect(screen.getByTestId("chunking-config-card")).toContainElement(screen.getByTestId("chunking-run-action"));
+  });
+
+  it("does not offer Embeddings as the next step while its lineage is blocked", () => {
+    // The selected chunk run is usable, but its parse run no longer matches the pipeline.
+    pipeline.value = { ...createPipelineValue(), activeDocument: { ...activeDocument, parseRuns: [{ ...parseRun, isCompatible: false }] } };
+    renderScreen(<ChunkingScreen />);
+
+    const next = screen.getByTestId("chunking-next-action");
+    expect(next).toBeDisabled();
+    expect(screen.queryByRole("link", { name: /Continue to Embeddings/ })).not.toBeInTheDocument();
   });
 
   it("does not offer a next step for an unselected inspected embedding", () => {
@@ -554,6 +569,9 @@ describe("Build-stage UX safety nets", () => {
     };
     renderScreen(<OverviewScreen />);
     expect(screen.getByTestId("overview-compact-journey-reason-retrieve")).toHaveTextContent("Dense and hybrid retrieval require embeddings");
+    // The shared reason is printed once; later locked steps reference it instead of repeating it.
+    expect(within(screen.getByTestId("overview-journey-compact")).getAllByText(/Dense and hybrid retrieval require embeddings/)).toHaveLength(1);
+    expect(screen.getByTestId("overview-compact-journey-node-evaluate")).toHaveAccessibleDescription(/Dense and hybrid retrieval require embeddings/);
     fireEvent.focus(screen.getByTestId("overview-journey-node-retrieve"));
     expect(screen.getByTestId("overview-journey-reason")).toHaveTextContent("Retrieval: Dense and hybrid retrieval require embeddings");
   });
@@ -609,6 +627,9 @@ describe("Build-stage UX safety nets", () => {
     };
     renderScreen(<EmbeddingsScreen />);
     expect(screen.getByTestId("embedding-blocker")).toHaveAttribute("data-code", "incompatible_lineage");
+    // The lineage warning stays; the "Open history" button is the way out, so the sentence does not restate it.
+    expect(screen.getByTestId("embedding-blocker")).toHaveTextContent("This result doesn't match the current pipeline.");
+    expect(screen.getByTestId("embedding-blocker")).not.toHaveTextContent(/history/i);
     const history = screen.getByTestId("embedding-history").querySelector("details")!;
     expect(history).not.toHaveAttribute("open");
     fireEvent.click(screen.getByTestId("embedding-open-history"));

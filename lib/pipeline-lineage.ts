@@ -4,6 +4,7 @@ import type {
   DocumentLineageSelection,
   DocumentPipeline,
   DocumentSummary,
+  ExperimentSummary,
   RunSummary,
 } from "@/lib/rag-api-types";
 
@@ -47,6 +48,24 @@ export function normalizeLineageSelection(value: unknown): DocumentLineageSelect
 
 export function completedCompatibleRun(run: Pick<RunSummary, "status" | "isCompatible"> | undefined | null) {
   return Boolean(run && run.status === "completed" && run.isCompatible);
+}
+
+/**
+ * The experiment a use screen shows for the working lineage: the newest
+ * compatible run on its chunk run (keyword runs need no embedding). A saved
+ * pipeline whose lineage did not resolve intact, e.g. because its embedding
+ * format changed, has no current experiment: retrieval is blocked as
+ * incompatible, so no earlier run may be presented as its result.
+ */
+export function currentExperimentSummary<T extends Pick<ExperimentSummary, "isCompatible" | "upstream" | "embeddingRunId">>(
+  experiments: T[],
+  selection: DocumentLineageSelection,
+  pipelineLineage: DocumentLineageSelection | null,
+): T | null {
+  if (pipelineLineage && !sameLineageSelection(pipelineLineage, selection)) return null;
+  return experiments.find((run) => run.isCompatible
+    && run.upstream.chunkRunId === selection.selectedChunkRunId
+    && (run.embeddingRunId === null || run.embeddingRunId === selection.selectedEmbeddingRunId)) ?? null;
 }
 
 export function pipelineStatusFromRun(run: Pick<RunSummary, "status">): PipelineOperationStatus {

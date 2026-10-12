@@ -8,14 +8,18 @@ import { type Ref, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { useAuthBootstrap } from "@/components/auth-provider";
 import { BrandMark } from "@/components/brand-mark";
+import { useOptionalDocumentPipeline } from "@/components/document-pipeline-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { PageTransition } from "@/components/page-transition";
 import { AppIcon, type SemanticIconName } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { type AppCopy, type AppNavGroupKey, type AppNavKey, UI_COPY } from "@/lib/copy";
 import { documentTitle, pageTitle, pageTitleKey } from "@/lib/page-titles";
+import type { PipelineStepState } from "@/lib/rag-ui-types";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { cn } from "@/lib/utils";
+import { buildWorkspaceOverview } from "@/lib/workspace-overview";
 
 type NavItem = { key: AppNavKey; href: string; icon: SemanticIconName };
 type NavGroup = { label?: AppNavGroupKey; items: NavItem[] };
@@ -53,16 +57,85 @@ function isNavItemActive(key: AppNavKey, pathname: string) {
   return pathname === `/${key}`;
 }
 
-/** Active item: neutral surface + brand icon, so brand marks only "where you are". */
-function navItemClass(isActive: boolean) {
-  return cn(
-    "flex h-9 items-center gap-3 rounded-md px-3 text-sm text-muted-foreground transition-colors hover:bg-surface-subtle hover:text-foreground",
-    isActive && "bg-secondary font-medium text-foreground hover:bg-secondary",
+type StageStates = Partial<Record<AppNavKey, PipelineStepState>>;
+
+/** Playground covers retrieval → answer: an exception anywhere wins, then "next", then done. */
+function playgroundState(states: PipelineStepState[]): PipelineStepState {
+  for (const exception of ["Processing", "Error", "Stale"] as const) if (states.includes(exception)) return exception;
+  if (states.includes("Ready")) return "Ready";
+  return states.every((state) => state === "Completed" || state === "Skipped") ? "Completed" : "Locked";
+}
+
+/**
+ * Stage markers for the selected document + pipeline lineage, from the same derivation as the
+ * Overview journey. Read optionally: the shell also renders without the pipeline provider.
+ */
+function useNavStageStates(): StageStates | null {
+  const pipeline = useOptionalDocumentPipeline();
+  return useMemo(() => {
+    if (!pipeline || pipeline.persistenceStatus !== "available") return null;
+    const state = buildWorkspaceOverview(pipeline).pipelineState;
+    return {
+      documents: state.document,
+      parse: state.parse,
+      chunking: state.chunk,
+      embeddings: state.embed,
+      playground: playgroundState([state.retrieve, state.rerank, state.context, state.generate]),
+      evaluation: state.evaluate,
+    };
+  }, [pipeline]);
+}
+
+/** Quiet trailing marker: done = grey check, next = brand dot, exceptions in their colour; locked shows nothing. */
+function NavStageMarker({ state }: { state: PipelineStepState | undefined }) {
+  if (!state || state === "Locked" || state === "Not started") return null;
+  if (state === "Processing") return <Spinner aria-hidden="true" className="shrink-0" size="xs" />;
+  if (state === "Completed" || state === "Skipped") {
+    return <AppIcon aria-hidden="true" className="size-3.5 shrink-0 text-fg-quaternary" data-stage-state={state} name="check" strokeWidth={2} />;
+  }
+  if (state === "Ready") {
+    return (
+      <span aria-hidden="true" className="relative grid size-4 shrink-0 place-items-center" data-stage-state={state}>
+        <span className="absolute inset-0.5 rounded-full bg-brand-primary" />
+        <span className="relative size-1.5 rounded-full bg-fg-brand-primary" />
+      </span>
+    );
+  }
+  return (
+    <span aria-hidden="true" className="grid size-4 shrink-0 place-items-center" data-stage-state={state}>
+      <span className={cn("size-1.5 rounded-full", state === "Error" ? "bg-fg-error-secondary" : "bg-fg-warning-secondary")} />
+    </span>
   );
 }
 
-function navIconClass(isActive: boolean) {
-  return cn("size-4.5 shrink-0", isActive && "text-brand");
+function NavLink({ item, pathname, copy, state, onNavigate }: { item: NavItem; pathname: string; copy: AppCopy; state?: PipelineStepState; onNavigate?: () => void }) {
+  const isActive = isNavItemActive(item.key, pathname);
+  // The stage state is a description, never part of the link's name.
+  const description = state && state !== "Locked" && state !== "Not started" ? copy.status[state] : undefined;
+  return (
+    <Link
+      aria-current={isActive ? "page" : undefined}
+      aria-description={description}
+      className={cn(
+        "group/nav flex h-9 items-center gap-3 rounded-lg px-2.5 text-sm font-medium text-secondary transition-colors duration-150",
+        "hover:bg-primary_hover hover:text-primary",
+        isActive && "bg-active font-semibold text-primary hover:bg-active",
+      )}
+      href={item.href}
+      onClick={onNavigate}
+      prefetch={false}
+    >
+      <AppIcon
+        className={cn(
+          "size-5 shrink-0 transition-colors duration-150",
+          isActive ? "text-fg-brand-primary" : "text-fg-quaternary group-hover/nav:text-fg-quaternary_hover",
+        )}
+        name={item.icon}
+      />
+      <span className="min-w-0 flex-1 truncate">{copy.nav[item.key]}</span>
+      <NavStageMarker state={state} />
+    </Link>
+  );
 }
 
 type AuthUserSummary = {
@@ -99,14 +172,15 @@ type UserMenuItemProps = {
   ref?: Ref<HTMLButtonElement>;
 };
 
-function UserMenuItem({ icon, label, onClick, href, ref }: UserMenuItemProps) {
-  const className = "flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground";
+const menuItemClass = "group/item flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-left text-sm font-medium text-secondary transition-colors duration-100 hover:bg-primary_hover hover:text-primary";
+const menuIconClass = "size-4 shrink-0 text-fg-quaternary transition-colors group-hover/item:text-fg-quaternary_hover";
 
+function UserMenuItem({ icon, label, onClick, href, ref }: UserMenuItemProps) {
   if (href) {
-    return <Link className={className} href={href} onClick={onClick}><AppIcon name={icon} className="size-4 text-subtle-foreground" />{label}</Link>;
+    return <Link className={menuItemClass} href={href} onClick={onClick}><AppIcon name={icon} className={menuIconClass} />{label}</Link>;
   }
 
-  return <button className={className} onClick={onClick} ref={ref} type="button"><AppIcon name={icon} className="size-4 text-subtle-foreground" />{label}</button>;
+  return <button className={menuItemClass} onClick={onClick} ref={ref} type="button"><AppIcon name={icon} className={menuIconClass} />{label}</button>;
 }
 
 type UserMenuProps = {
@@ -130,6 +204,8 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
   const focusAfterViewChange = useRef(false);
   const panelId = useId();
   const displayName = user.name ?? user.email ?? copy.productName;
+  // The second line never repeats the first (no name → the email is already the title).
+  const secondaryLine = user.name && user.email ? user.email : copy.common.accountFallback;
   const initials = getInitials(user.name, user.email);
 
   function switchView(view: UserMenuView) {
@@ -187,101 +263,79 @@ function UserMenu({ copy, user, onNavigate, onSignOut }: UserMenuProps) {
         aria-controls={isOpen ? panelId : undefined}
         aria-expanded={isOpen}
         aria-label={`${displayName} — ${copy.common.accountMenu}`}
-        className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-surface-subtle"
+        className="group/account flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors duration-150 hover:bg-primary_hover aria-expanded:bg-active"
         onClick={() => { setIsOpen(!isOpen); setOpenView("menu"); }}
         ref={triggerRef}
         type="button"
       >
-        <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-full bg-secondary text-2xs font-semibold text-foreground">{initials}</span>
+        <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-tertiary text-xs font-semibold text-secondary ring-1 ring-secondary_alt ring-inset">{initials}</span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-xs text-muted-foreground" data-testid="app-shell-user-name">{displayName}</span>
-          <span className="sr-only">{user.email ?? copy.common.accountFallback}</span>
+          <span className="block truncate text-sm font-semibold text-primary" data-testid="app-shell-user-name">{displayName}</span>
+          <span className="block truncate text-xs text-tertiary">{secondaryLine}</span>
         </span>
+        <AppIcon aria-hidden="true" className="size-4 shrink-0 text-fg-quaternary transition-transform duration-200 group-aria-expanded/account:rotate-180" name="chevronUp" />
       </button>
 
       <TransitionSurface kind="dropdown" open={isOpen} data-origin="bottom-left"
-            aria-label={copy.common.accountMenu}
-            className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-50 overflow-hidden rounded-lg border border-border bg-card p-1.5 shadow-lg shadow-foreground/8"
-            id={panelId}
-            role="group"
-          >
-            <TransitionPanel transitionKey={openView}>
-            {openView === "menu" && (
-              <>
-                <div className="mb-1 border-b border-border px-2.5 pb-2.5 pt-1">
-                  <p className="truncate text-sm font-semibold text-foreground">{displayName}</p>
-                  <p className="truncate text-xs text-subtle-foreground">{user.email ?? copy.common.accountFallback}</p>
-                </div>
-                <UserMenuItem icon="help" label={copy.help} onClick={() => switchView("help")} ref={helpRef} />
-                <UserMenuItem href="/settings" icon="settings" label={copy.nav.settings} onClick={closeAfterNavigation} />
-                <div className="my-1 border-t" />
-                <UserMenuItem icon="logOut" label={copy.common.signOut} onClick={() => void handleSignOut()} />
-              </>
-            )}
+        aria-label={copy.common.accountMenu}
+        className="absolute bottom-full left-0 right-0 z-50 mb-2 overflow-hidden rounded-xl bg-primary_alt p-1.5 shadow-lg ring-1 ring-secondary_alt"
+        id={panelId}
+        role="group"
+      >
+        <TransitionPanel transitionKey={openView}>
+          {openView === "menu" && (
+            <>
+              <UserMenuItem icon="help" label={copy.help} onClick={() => switchView("help")} ref={helpRef} />
+              <UserMenuItem href="/settings" icon="settings" label={copy.nav.settings} onClick={closeAfterNavigation} />
+              <div aria-hidden="true" className="-mx-1.5 my-1.5 h-px bg-border-secondary" />
+              <UserMenuItem icon="logOut" label={copy.common.signOut} onClick={() => void handleSignOut()} />
+            </>
+          )}
 
-            {openView === "help" && (
-              <div className="p-1">
-                <button className="mb-2 flex items-center gap-1.5 rounded-sm px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-secondary hover:text-foreground" onClick={() => switchView("menu")} ref={backRef} type="button">
-                  <AppIcon name="arrowLeft" className="size-3.5" />
-                  {copy.common.back}
-                </button>
-                <h2 className="px-1.5 text-sm font-semibold text-foreground">{copy.helpPanel.title}</h2>
-                <p className="px-1.5 pb-1 pt-1.5 text-xs leading-5 text-muted-foreground">{copy.helpPanel.description}</p>
-              </div>
-            )}
-            </TransitionPanel>
+          {openView === "help" && (
+            <div className="p-1.5">
+              <button className="-ml-1 mb-3 inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-xs font-semibold text-tertiary transition-colors hover:bg-primary_hover hover:text-secondary" onClick={() => switchView("menu")} ref={backRef} type="button">
+                <AppIcon name="arrowLeft" className="size-3.5" />
+                {copy.common.back}
+              </button>
+              <h2 className="text-sm font-semibold text-primary">{copy.helpPanel.title}</h2>
+              <p className="mt-1 text-sm text-tertiary">{copy.helpPanel.description}</p>
+            </div>
+          )}
+        </TransitionPanel>
       </TransitionSurface>
     </div>
   );
 }
 
 function Sidebar({ pathname, onNavigate, copy, user, onSignOut }: { pathname: string; onNavigate?: () => void; copy: AppCopy; user: AuthUserSummary; onSignOut: () => Promise<void> }) {
+  const stageStates = useNavStageStates();
   return (
-    <div className="flex h-full flex-col bg-card">
-      <div className="flex h-[72px] items-center gap-2.5 px-5 pb-5 pt-6">
+    <div className="flex h-full flex-col bg-primary">
+      <div className="flex h-16 shrink-0 items-center gap-2.5 px-5">
         <BrandMark />
-        <span className="text-base font-semibold tracking-tight text-foreground">{copy.productName}</span>
+        <span className="text-md font-semibold text-primary">{copy.productName}</span>
       </div>
 
-      <nav aria-label={copy.common.primaryNavigation} className="flex flex-1 flex-col overflow-hidden px-3 pb-4 pt-0">
+      <nav aria-label={copy.common.primaryNavigation} className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pt-2 pb-3">
         {navGroups.map((group) => (
-          <div className={cn("space-y-0", group.label && "pt-6")} key={group.label ?? group.items[0].key}>
-            {group.label ? <p className="px-3 text-xs font-medium text-subtle-foreground">{copy.navGroups[group.label]}</p> : null}
-            <div className={cn(group.label && "pt-1.5")}>
-              {group.items.map((item) => {
-                const isActive = isNavItemActive(item.key, pathname);
-                return (
-                  <Link
-                    aria-current={isActive ? "page" : undefined}
-                    className={navItemClass(isActive)}
-                    href={item.href}
-                    key={item.key}
-                    onClick={onNavigate}
-                    prefetch={false}
-                  >
-                    <AppIcon name={item.icon} className={navIconClass(isActive)} />
-                    {copy.nav[item.key]}
-                  </Link>
-                );
-              })}
-            </div>
+          <div className={cn(group.label && "mt-6")} key={group.label ?? group.items[0].key}>
+            {group.label ? <p className="mb-1.5 px-2.5 text-xs font-medium text-quaternary">{copy.navGroups[group.label]}</p> : null}
+            <ul className="flex flex-col gap-0.5">
+              {group.items.map((item) => (
+                <li key={item.key}>
+                  <NavLink copy={copy} item={item} onNavigate={onNavigate} pathname={pathname} state={stageStates?.[item.key]} />
+                </li>
+              ))}
+            </ul>
           </div>
         ))}
-        <div className="mt-auto -mx-3 border-t border-border px-3 pb-1 pt-4">
-          <Link
-            aria-current={isNavItemActive(settingsNavItem.key, pathname) ? "page" : undefined}
-            className={navItemClass(isNavItemActive(settingsNavItem.key, pathname))}
-            href={settingsNavItem.href}
-            onClick={onNavigate}
-            prefetch={false}
-          >
-            <AppIcon name={settingsNavItem.icon} className={navIconClass(isNavItemActive(settingsNavItem.key, pathname))} />
-            {copy.nav.settings}
-          </Link>
+        <div className="mt-auto pt-6">
+          <NavLink copy={copy} item={settingsNavItem} onNavigate={onNavigate} pathname={pathname} />
         </div>
       </nav>
 
-      <div className="px-3 pb-3 pt-1" data-testid="app-shell-user"><UserMenu copy={copy} onNavigate={onNavigate} onSignOut={onSignOut} user={user} /></div>
+      <div className="border-t border-secondary p-3" data-testid="app-shell-user"><UserMenu copy={copy} onNavigate={onNavigate} onSignOut={onSignOut} user={user} /></div>
     </div>
   );
 }
@@ -408,9 +462,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-      <div className="min-h-screen w-full min-w-0 bg-background text-foreground">
+    <div className="min-h-screen w-full min-w-0 bg-canvas text-primary">
       <a
-        className="fixed left-3 top-3 z-[60] -translate-y-[calc(100%+1rem)] rounded-md border border-border bg-card px-3 py-2 text-sm font-medium text-foreground shadow-lg focus:translate-y-0"
+        // Parked above the viewport rather than sr-only: sr-only plus padding leaves a clipped 24px box.
+        className="fixed top-3 left-3 z-60 -translate-y-[calc(100%+1rem)] rounded-lg bg-primary_alt px-3 py-2 text-sm font-semibold text-primary shadow-lg ring-1 ring-secondary_alt focus:translate-y-0"
         data-testid="skip-to-content"
         href="#main-content"
         // Focus <main> directly: no hash entry in the router history.
@@ -418,7 +473,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         {copy.common.skipToContent}
       </a>
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] border-r border-border xl:block" data-testid="app-shell-sidebar" inert={mobileOpen}>
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-62 border-r border-secondary xl:block" data-testid="app-shell-sidebar" inert={mobileOpen}>
         <Sidebar copy={copy} onSignOut={signOut} pathname={pathname} user={authUser} />
       </aside>
 
@@ -429,30 +484,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         onKeyDown={trapMobileFocus}
       >
         <TransitionSurface className="steplab-backdrop absolute inset-0" kind="modal" open={mobileOpen}>
-          <button aria-label={copy.common.close} className="absolute inset-0 bg-overlay/20" onClick={() => setMobileOpen(false)} tabIndex={-1} type="button" />
+          <button aria-label={copy.common.close} className="absolute inset-0 bg-overlay/40 backdrop-blur-xs dark:bg-overlay/70" onClick={() => setMobileOpen(false)} tabIndex={-1} type="button" />
         </TransitionSurface>
-        <TransitionSurface as="aside" aria-label={copy.common.primaryNavigation} aria-modal="true" className="relative h-full w-[min(86vw,320px)] border-r border-border bg-card" kind="panel" open={mobileOpen} role="dialog" surfaceRef={mobilePanelRef}>
-          <Button aria-label={copy.common.close} autoFocus className="absolute right-3 top-4 z-10" onClick={() => setMobileOpen(false)} ref={mobileCloseButtonRef} size="icon" variant="ghost"><AppIcon name="close" className="size-5" /></Button>
+        <TransitionSurface as="aside" aria-label={copy.common.primaryNavigation} aria-modal="true" className="relative h-full w-full max-w-80 border-r border-secondary bg-primary shadow-xl" kind="panel" open={mobileOpen} role="dialog" surfaceRef={mobilePanelRef}>
+          <Button aria-label={copy.common.close} autoFocus className="absolute top-3.5 right-3 z-10" onClick={() => setMobileOpen(false)} ref={mobileCloseButtonRef} size="icon" variant="tertiary"><AppIcon name="close" className="size-5" /></Button>
           <Sidebar copy={copy} onNavigate={() => setMobileOpen(false)} onSignOut={signOut} pathname={pathname} user={authUser} />
         </TransitionSurface>
       </div>
 
       {/* The open drawer is modal: the page behind it leaves the tab order and the accessibility tree. */}
-      <div className="w-full min-w-0 xl:pl-[248px]" inert={mobileOpen}>
-        <header className="sticky top-0 z-30 flex h-[64px] items-center justify-between border-b border-border bg-card px-4 sm:px-7 xl:hidden">
-          <div className="flex min-w-0 items-center gap-3">
-            <Button aria-controls="mobile-navigation" aria-expanded={mobileOpen} aria-label={copy.common.openNavigation} className="xl:hidden" onClick={() => setMobileOpen(true)} ref={mobileOpenButtonRef} size="icon" variant="ghost">
-              <AppIcon name="menu" className="size-5" />
-            </Button>
-            <span className="truncate text-lg font-semibold tracking-tight">{getPageTitle(pathname, copy)}</span>
-          </div>
+      <div className="w-full min-w-0 xl:pl-62" inert={mobileOpen}>
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-secondary bg-primary px-3 sm:px-5 xl:hidden">
+          <Button aria-controls="mobile-navigation" aria-expanded={mobileOpen} aria-label={copy.common.openNavigation} className="xl:hidden" onClick={() => setMobileOpen(true)} ref={mobileOpenButtonRef} size="icon" variant="tertiary">
+            <AppIcon name="menu" className="size-5" />
+          </Button>
+          <span className="min-w-0 truncate text-md font-semibold text-primary">{getPageTitle(pathname, copy)}</span>
         </header>
 
         <main className="w-full min-w-0 outline-none" data-testid="app-shell-main" id="main-content" ref={mainRef} tabIndex={-1}>
           <PageTransition>{children}</PageTransition>
         </main>
       </div>
-      </div>
+    </div>
   );
 }
-

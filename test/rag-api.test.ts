@@ -243,6 +243,8 @@ describe("RAG API contract normalization", () => {
     await expect(getEmbeddingRun("embedding-run-1")).resolves.toMatchObject({
       effectiveModel: "gemini-embedding-2-001",
       reusedArtifact: true,
+      // The detail payload has flat lineage only; the Embeddings next step compares upstream.chunkRunId.
+      upstream: { documentId: "document-1", chunkRunId: "chunk-run-1" },
       timing: {
         startedAt: "2026-08-23T20:09:38.883931Z",
         completedAt: "2026-08-23T20:09:50.744289Z",

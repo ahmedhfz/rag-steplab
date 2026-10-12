@@ -139,6 +139,34 @@ describe("Parse ownership and lifecycle", () => {
     expect(announcement).toHaveTextContent(/^Parsed$/);
   });
 
+  it("does not show the previous run's number or duration while a new parse runs", async () => {
+    const user = userEvent.setup();
+    prepareActiveDocument();
+    const previousRun = { ...runSummary("completed"), runNumber: 1, timing: { startedAt: "2026-01-01T10:00:00Z", completedAt: "2026-01-01T10:00:05Z", durationMs: 5_000 } };
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/capabilities")) return jsonResponse(capabilities);
+      if (url.endsWith("/documents") && init?.method !== "POST") return jsonResponse({ items: [{ ...documentItem, activeParseRunId: "parse-1", pageCount: 1 }] });
+      // The summary keeps listing only the finished run while the new one is in flight.
+      if (url.split("?")[0].endsWith("/documents/document-1/summary")) return jsonResponse(summary([previousRun], "parse-1"));
+      if (url.endsWith("/parse-runs/parse-1")) return jsonResponse({ id: "parse-1", documentId: "document-1", status: "completed", result: parseResult });
+      if (url.endsWith("/documents/document-1/parse") && init?.method === "POST") return jsonResponse({ documentId: "document-1", parseRunId: "parse-2", status: "queued" }, 202);
+      if (url.endsWith("/parse-runs/parse-2")) return jsonResponse({ id: "parse-2", documentId: "document-1", status: "running", progress: 30 });
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderScreen(<ParseScreen />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Parse again" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Parse again" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Running" })).toBeDisabled());
+
+    const lifecycle = screen.getByTestId("parse-lifecycle");
+    expect(lifecycle).not.toHaveTextContent("Parse #1");
+    const elapsed = screen.getByTestId("parse-elapsed");
+    expect(elapsed.textContent).toMatch(/^\d+:\d{2}$/);
+    expect(elapsed).not.toHaveTextContent("0:05");
+  });
+
   it("guards duplicate Parse clicks while the run is queued", async () => {
     prepareActiveDocument();
     let postCalls = 0;

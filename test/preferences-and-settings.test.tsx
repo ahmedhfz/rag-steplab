@@ -114,7 +114,7 @@ describe("PreferencesProvider and SettingsScreen", () => {
 
     const reset = screen.getByRole("button", { name: "Reset" });
     expect(reset).toBeDisabled();
-    expect(screen.getByText("Preferences already use the defaults.")).toBeVisible();
+    // The reason is announced with the disabled button, not printed as helper text.
     expect(reset).toHaveAccessibleDescription("Preferences already use the defaults.");
 
     await user.click(screen.getByRole("switch", { name: "Show learning hints" }));

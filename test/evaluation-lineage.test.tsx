@@ -240,7 +240,11 @@ describe("Evaluation results and comparison", () => {
     expect(answer).not.toHaveTextContent("Faithfulness");
     expect(answer).toHaveTextContent("Source word overlap (diagnostic)");
     expect(answer).toHaveTextContent("0.80");
-    expect(answer).toHaveTextContent("A citation confirms the source is in the context, not that it supports the claim.");
+    // Caveats sit behind the metric's (?) tooltip; the panel states once that scores are diagnostic.
+    await user.hover(within(answer).getByRole("button", { name: "About Citation validity" }));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("A citation confirms the source is in the context, not that it supports the claim.");
+    await user.unhover(within(answer).getByRole("button", { name: "About Citation validity" }));
+    expect(screen.getByTestId("evaluation-diagnostic-note")).toHaveTextContent("Scores are diagnostic signals, not proof of correctness.");
     expect(screen.getByTestId("evaluation-run-summary")).toHaveTextContent("n = 3 questions");
     expect(screen.getByTestId("evaluation-run-summary")).toHaveTextContent("1 failed");
 

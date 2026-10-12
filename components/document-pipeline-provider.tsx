@@ -61,6 +61,7 @@ import type {
 } from "@/lib/rag-api-types";
 import {
   completedCompatibleRun,
+  currentExperimentSummary,
   describeReparseImpact,
   emptyLineageSelection,
   pipelineSelection,
@@ -132,7 +133,7 @@ type EvaluationRunInput = {
   generation: ExperimentRequest["generation"];
 };
 
-type DocumentPipelineContextValue = {
+export type DocumentPipelineContextValue = {
   parseStatus: DocumentParseStatus;
   parseProgress: number;
   parseProgressEstimated: boolean;
@@ -530,11 +531,9 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     selectionOverride?: DocumentLineageSelection,
     strictSelection = false,
   ): DocumentSnapshot => {
-    const selection = resolveLineageSelection(
-      detail,
-      selectionOverride ?? lineageSelectionsRef.current[detail.id],
-      strictSelection,
-    );
+    // Strict (saved pipeline) callers request the pipeline's own lineage.
+    const requestedSelection = selectionOverride ?? lineageSelectionsRef.current[detail.id];
+    const selection = resolveLineageSelection(detail, requestedSelection, strictSelection);
     const parseSummary = selection.selectedParseRunId
       ? detail.parseRuns.find((run) => run.id === selection.selectedParseRunId) ?? null
       : null;
@@ -567,9 +566,11 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       selectedEmbeddingRunId: embeddingMatchesLineage ? selection.selectedEmbeddingRunId : null,
     };
     const filteredDatasets = detail.evaluationDatasets.filter((dataset) => dataset.parseRunId === effectiveSelection.selectedParseRunId);
-    const selectedExperimentSummary = detail.experiments.find((run) => run.isCompatible
-      && run.upstream.chunkRunId === effectiveSelection.selectedChunkRunId
-      && (run.embeddingRunId === null || run.embeddingRunId === effectiveSelection.selectedEmbeddingRunId)) ?? null;
+    const selectedExperimentSummary = currentExperimentSummary(
+      detail.experiments,
+      effectiveSelection,
+      strictSelection ? requestedSelection ?? emptyLineageSelection() : null,
+    );
     const selectedExperiment = selectedExperimentSummary ? readArtifact<ExperimentRun>("experiment", selectedExperimentSummary.id) ?? null : null;
     const nextParseStatus: DocumentParseStatus = inFlightParseSummary
       ? inFlightParseSummary.status as DocumentParseStatus
@@ -1859,6 +1860,10 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   }, [cacheArtifact, captureScope, commitEvaluationResult, readArtifact, replaceController]);
 
   const { selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId } = selectedLineage;
+  const activePipeline = useMemo(
+    () => pipelines.find((pipeline) => pipeline.id === activePipelineId) ?? null,
+    [activePipelineId, pipelines],
+  );
 
   useEffect(() => {
     const documentId = activeDocumentRef.current?.id;
@@ -1869,9 +1874,11 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     if (pathname === "/chunking" && selectedChunkRunId) void hydrateChunkDetail(documentId, selectedChunkRunId);
     if (pathname === "/embeddings" && selectedEmbeddingRunId) void hydrateEmbeddingDetail(documentId, selectedEmbeddingRunId);
     if (pathname === "/playground" && !experimentRun) {
-      const summary = activeDocumentRef.current?.experiments.find((run) => run.isCompatible
-        && run.upstream.chunkRunId === selectedChunkRunId
-        && (run.embeddingRunId === null || run.embeddingRunId === selectedEmbeddingRunId));
+      const summary = currentExperimentSummary(
+        activeDocumentRef.current?.experiments ?? [],
+        { selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId },
+        activePipeline ? pipelineSelection(activePipeline) : null,
+      );
       if (summary) void loadExperiment(summary.id);
     }
     if (pathname === "/evaluation") {
@@ -1879,6 +1886,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (dataset) void loadEvaluationDataset(dataset.id);
     }
   }, [
+    activePipeline,
     experimentRun,
     hydrateChunkDetail,
     hydrateEmbeddingDetail,
@@ -2083,11 +2091,6 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     }
   }, [experimentRun?.id, evaluationRun?.id, captureScope, replaceController, cacheArtifact, commitEvaluationResult]);
 
-  const activePipeline = useMemo(
-    () => pipelines.find((pipeline) => pipeline.id === activePipelineId) ?? null,
-    [activePipelineId, pipelines],
-  );
-
   const inspectingParse = inspectedLineage.selectedParseRunId !== null && inspectedLineage.selectedParseRunId !== selectedParseRunId;
   const inspectingChunk = inspectedLineage.selectedChunkRunId !== null && inspectedLineage.selectedChunkRunId !== selectedChunkRunId;
   const inspectingEmbedding = inspectedLineage.selectedEmbeddingRunId !== null && inspectedLineage.selectedEmbeddingRunId !== selectedEmbeddingRunId;
@@ -2154,4 +2157,9 @@ export function useDocumentPipeline() {
   const context = useContext(DocumentPipelineContext);
   if (!context) throw new Error("useDocumentPipeline must be used within DocumentPipelineProvider");
   return context;
+}
+
+/** For chrome that can render outside the provider (the app shell); null there. */
+export function useOptionalDocumentPipeline() {
+  return useContext(DocumentPipelineContext);
 }

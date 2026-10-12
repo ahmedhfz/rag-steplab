@@ -31,4 +31,15 @@ describe("SourceInspector", () => {
     await waitFor(() => expect(screen.getByTitle("Kaynak denetleyicisi")).toHaveAttribute("src", "blob:http://localhost/source-pdf#page=2"));
     expect(preview.get).toHaveBeenCalledTimes(2);
   });
+
+  it("names the icon-only trigger and still opens the inspector", async () => {
+    const user = userEvent.setup();
+    preview.get.mockRejectedValueOnce(new Error("not needed"));
+    render(<SourceInspector documentId="doc-1" pageNumbers={[2]} parseResult={null} triggerAriaLabel="Kaynağı incele: Bölüm 1" triggerLabel="Kaynağı görüntüle" variant="icon" />);
+
+    const trigger = screen.getByRole("button", { name: "Kaynağı incele: Bölüm 1" });
+    expect(trigger).not.toHaveTextContent("Kaynağı görüntüle");
+    await user.click(trigger);
+    expect(await screen.findByRole("dialog", { name: "Kaynak denetleyicisi" })).toBeInTheDocument();
+  });
 });

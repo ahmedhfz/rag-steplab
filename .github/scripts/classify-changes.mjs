@@ -33,7 +33,6 @@ const frontendConfig = new Set([
   "eslint.config.mjs",
   "tsconfig.json",
   "vitest.config.mts",
-  "components.json",
   "next-env.d.ts",
 ]);
 // ESLint kuralı/sürümü veya TS ayarı değişince yalnız değişen dosyalar değil, tüm repo lintlenir.

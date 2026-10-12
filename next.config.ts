@@ -22,6 +22,12 @@ for (const candidate of [origin(configuredApiBaseUrl), origin(configuredSupabase
   connectOrigins.add(candidate);
   if (candidate.startsWith("https://")) connectOrigins.add(candidate.replace("https://", "wss://"));
 }
+// The backend serves the private PDF as a short-lived signed Supabase Storage URL that the source
+// inspector frames; without this origin the preview is blocked.
+const frameOrigins = new Set<string>(["'self'", "blob:"]);
+if (isVercelPreview) frameOrigins.add("https://vercel.live");
+const supabaseOrigin = origin(configuredSupabaseUrl);
+if (supabaseOrigin) frameOrigins.add(supabaseOrigin);
 const contentSecurityPolicy = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}${isVercelPreview ? " https://vercel.live" : ""}`,
@@ -29,7 +35,7 @@ const contentSecurityPolicy = [
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
   `connect-src ${[...connectOrigins].join(" ")}`,
-  `frame-src 'self' blob:${isVercelPreview ? " https://vercel.live" : ""}`,
+  `frame-src ${[...frameOrigins].join(" ")}`,
   "frame-ancestors 'none'",
   "object-src 'none'",
   "base-uri 'self'",

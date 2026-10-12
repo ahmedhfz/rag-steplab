@@ -28,12 +28,12 @@ export function brandMarkShapes(color: string, strokeWidth = 1.5) {
   ];
 }
 
-/** Decorative product mark; color comes from `currentColor` (brand token by default). */
+/** Decorative product mark; color comes from `currentColor` (`text-fg-brand-primary` by default). */
 export function BrandMark({ className, ...props }: ComponentProps<"svg">) {
   return (
     <svg
       aria-hidden="true"
-      className={cn("size-7 shrink-0 text-brand", className)}
+      className={cn("size-7 shrink-0 text-fg-brand-primary", className)}
       data-slot="brand-mark"
       fill="none"
       focusable="false"
