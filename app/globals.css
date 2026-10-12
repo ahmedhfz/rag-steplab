@@ -1,10 +1,30 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "./theme.css";
 @import "./transitions.css";
 @import "./transition-adapters.css";
 
+/* PreferencesProvider + lib/theme.ts toggle `.dark` on <html>. */
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Fonts. `inline` because next/font sets the Geist variables on <body>, not :root.
+ * Untitled components read --font-body/--font-display; Tailwind reads --font-sans/--font-mono.
+ */
+@theme inline {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-body: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/*
+ * LEGACY TOKENS (pre-Untitled, shadcn-style names) kept as aliases so un-migrated
+ * screens keep rendering coherently. Each points at a step of the new scales in
+ * app/theme.css. New code uses the Untitled names; see components/ui/README.md.
+ * `primary`/`secondary` are deliberately NOT registered as Tailwind colors here:
+ * `bg-primary`, `text-secondary`, ... belong to the Untitled semantic layer.
+ */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -12,10 +32,6 @@
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-subtle-foreground: var(--subtle-foreground);
@@ -45,122 +61,92 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-overlay: var(--overlay);
-
-  /* Typography: Geist is loaded by next/font onto <body>; `inline` resolves it there. */
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
-
-  /* Type scale (size / line-height). 2xs is only for table column headers and micro meta. */
-  --text-2xs: 0.6875rem;
-  --text-2xs--line-height: 1rem;
-  --text-xs: 0.75rem;
-  --text-xs--line-height: 1.125rem;
-  --text-sm: 0.8125rem;
-  --text-sm--line-height: 1.25rem;
-  --text-base: 0.875rem;
-  --text-base--line-height: 1.375rem;
-  --text-lg: 1rem;
-  --text-lg--line-height: 1.5rem;
-  --text-xl: 1.25rem;
-  --text-xl--line-height: 1.75rem;
-  --text-2xl: 1.5rem;
-  --text-2xl--line-height: 2rem;
-  --text-2xl--letter-spacing: -0.02em;
-  --text-3xl: 1.875rem;
-  --text-3xl--line-height: 2.25rem;
-
-  /* Radius: sm inner item/chip, md control, lg panel/card, xl outer shell/modal. */
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
 }
 
 :root {
   color-scheme: light;
-  --radius: 0.5rem;
-  --background: #f8f7f7;
-  --foreground: #171416;
-  --card: #ffffff;
-  --card-foreground: #171416;
-  --popover: #ffffff;
-  --popover-foreground: #171416;
-  --primary: #171416;
-  --primary-foreground: #ffffff;
-  --secondary: #f2eff0;
-  --secondary-foreground: #171416;
-  --muted: #f7f5f6;
-  --muted-foreground: #5a5357;
-  --subtle-foreground: #6f676b;
-  --accent: #fbf4f6;
-  --accent-foreground: #501329;
-  --accent-border: #d8b5c2;
-  --brand: #711f3a;
-  --brand-subtle: #f3d9e0;
-  --brand-subtle-border: #e3a9b9;
-  --destructive: #a23b3b;
-  --destructive-subtle: #fbefef;
-  --destructive-border: #edcfcf;
-  --success: #3f7a55;
-  --success-subtle: #eef4ef;
-  --success-border: #c6ddcc;
-  --warning: #8d651e;
-  --warning-subtle: #fffaf1;
-  --warning-border: #eadfc9;
-  --warning-icon: #f6e4bd;
-  --technical: #fbfafb;
-  --surface-subtle: #fbfafa;
-  --destructive-panel: #fff8f8;
-  --border: #e7e2e4;
-  --border-subtle: #eee9eb;
-  --hover-border: #6f676b;
-  --strong-hover: #2b2729;
-  --input: #8a8286;
-  --ring: #711f3a;
-  --overlay: #171416;
+  --background: var(--color-gray-50);
+  --foreground: var(--color-gray-900);
+  --card: var(--color-white);
+  --card-foreground: var(--color-gray-900);
+  --popover: var(--color-white);
+  --popover-foreground: var(--color-gray-900);
+  --primary: var(--color-gray-900);
+  --primary-foreground: var(--color-white);
+  --secondary: var(--color-gray-50);
+  --secondary-foreground: var(--color-gray-900);
+  --muted: var(--color-gray-50);
+  --muted-foreground: var(--color-gray-600);
+  --subtle-foreground: var(--color-gray-500);
+  --accent: var(--color-brand-25);
+  --accent-foreground: var(--color-brand-700);
+  --accent-border: var(--color-brand-200);
+  --brand: var(--color-brand-600);
+  --brand-subtle: var(--color-brand-100);
+  --brand-subtle-border: var(--color-brand-200);
+  --destructive: var(--color-error-600);
+  --destructive-subtle: var(--color-error-50);
+  --destructive-border: var(--color-error-200);
+  --success: var(--color-success-600);
+  --success-subtle: var(--color-success-50);
+  --success-border: var(--color-success-200);
+  --warning: var(--color-warning-700);
+  --warning-subtle: var(--color-warning-50);
+  --warning-border: var(--color-warning-200);
+  --warning-icon: var(--color-warning-100);
+  --technical: var(--color-gray-25);
+  --surface-subtle: var(--color-gray-25);
+  --destructive-panel: var(--color-error-25);
+  --border: var(--color-gray-200);
+  --border-subtle: var(--color-gray-100);
+  --hover-border: var(--color-gray-500);
+  --strong-hover: var(--color-gray-800);
+  --input: var(--color-gray-400);
+  --ring: var(--color-brand-500);
+  --overlay: var(--color-gray-950);
 }
 
 :root.dark {
   color-scheme: dark;
-  --background: #141113;
-  --foreground: #f4f1f2;
-  --card: #201b1e;
-  --card-foreground: #f4f1f2;
-  --popover: #2c252a;
-  --popover-foreground: #f4f1f2;
-  --primary: #f4f1f2;
-  --primary-foreground: #1b1719;
-  --secondary: #30272c;
-  --secondary-foreground: #f4f1f2;
-  --muted: #201b1d;
-  --muted-foreground: #b0a7ab;
-  --subtle-foreground: #9c9397;
-  --accent: #34212a;
-  --accent-foreground: #f0b6c9;
-  --accent-border: #6b3f4e;
-  --brand: #de8eaa;
-  --brand-subtle: #3a2029;
-  --brand-subtle-border: #855169;
-  --destructive: #f08a8a;
-  --destructive-subtle: #331d20;
-  --destructive-border: #6a333a;
-  --success: #75c48f;
-  --success-subtle: #18291f;
-  --success-border: #315940;
-  --warning: #e2b76b;
-  --warning-subtle: #302515;
-  --warning-border: #674d22;
-  --warning-icon: #4a3818;
-  --technical: #262024;
-  --surface-subtle: #1a1619;
-  --destructive-panel: #281719;
-  --border: #3a3035;
-  --border-subtle: #2f272b;
-  --hover-border: #a3969c;
-  --strong-hover: #dfd8da;
-  --input: #806f76;
-  --ring: #de8eaa;
-  --overlay: #000000;
+  --background: var(--color-gray-950);
+  --foreground: var(--color-gray-50);
+  --card: var(--color-gray-900);
+  --card-foreground: var(--color-gray-50);
+  --popover: var(--color-gray-800);
+  --popover-foreground: var(--color-gray-50);
+  --primary: var(--color-gray-50);
+  --primary-foreground: var(--color-gray-900);
+  --secondary: var(--color-gray-800);
+  --secondary-foreground: var(--color-gray-50);
+  --muted: var(--color-gray-800);
+  --muted-foreground: var(--color-gray-400);
+  --subtle-foreground: var(--color-gray-400);
+  --accent: var(--color-brand-950);
+  --accent-foreground: var(--color-brand-200);
+  --accent-border: var(--color-brand-800);
+  --brand: var(--color-brand-300);
+  --brand-subtle: var(--color-brand-900);
+  --brand-subtle-border: var(--color-brand-700);
+  --destructive: var(--color-error-400);
+  --destructive-subtle: var(--color-error-950);
+  --destructive-border: var(--color-error-800);
+  --success: var(--color-success-400);
+  --success-subtle: var(--color-success-950);
+  --success-border: var(--color-success-800);
+  --warning: var(--color-warning-400);
+  --warning-subtle: var(--color-warning-950);
+  --warning-border: var(--color-warning-800);
+  --warning-icon: var(--color-warning-900);
+  --technical: var(--color-gray-800);
+  --surface-subtle: var(--color-gray-950);
+  --destructive-panel: var(--color-error-950);
+  --border: var(--color-gray-800);
+  --border-subtle: var(--color-gray-800);
+  --hover-border: var(--color-gray-400);
+  --strong-hover: var(--color-gray-200);
+  --input: var(--color-gray-500);
+  --ring: var(--color-brand-400);
+  --overlay: var(--color-black);
 }
 
 @layer base {
@@ -176,6 +162,8 @@
 
   html {
     background: var(--background);
+    font-kerning: normal;
+    font-variant-ligatures: contextual;
   }
 
   /* Scrollbar görünüp kaybolunca başlık kaymasın; dar ekranlarda scrollbar zaten overlay. */
@@ -192,9 +180,40 @@
 
   button,
   input,
-  select {
+  select,
+  textarea {
     font: inherit;
   }
+
+  /* Native number spinners and search clear buttons fight the control styling (Untitled globals). */
+  input::-webkit-outer-spin-button,
+  input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+  input[type="search"]::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+  }
+  details summary::-webkit-details-marker {
+    display: none;
+  }
+}
+
+/* Untitled utilities used by the copied component recipes. */
+@utility scrollbar-hide {
+  &::-webkit-scrollbar {
+    display: none;
+  }
+  scrollbar-width: none;
+}
+
+@utility transition-inherit-all {
+  transition-property: inherit;
+  transition-duration: inherit;
+  transition-timing-function: inherit;
 }
 
 html,
@@ -231,8 +250,8 @@ body,
 }
 
 ::selection {
-  background: var(--accent);
-  color: var(--accent-foreground);
+  background: var(--brand-subtle);
+  color: var(--foreground);
 }
 
 .technical-scrollbar {
@@ -240,18 +259,121 @@ body,
   scrollbar-width: thin;
 }
 
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
-summary:focus-visible,
-[role="button"]:focus-visible,
-/* Keyboard-scrollable regions and the locked journey nodes are focusable non-controls. */
-[tabindex]:not([tabindex="-1"]):focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+/*
+ * One focus language: 2px brand outline, 2px offset. Text fields instead turn their own
+ * border brand (ring-2) and opt out with `focus-visible:outline-none`; that works because
+ * this rule sits in the base layer, below utilities.
+ */
+@layer base {
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  summary:focus-visible,
+  [role="button"]:focus-visible,
+  /* Keyboard-scrollable regions and the locked journey nodes are focusable non-controls. */
+  [tabindex]:not([tabindex="-1"]):focus-visible,
+  [data-rac][data-focus-visible] {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+  }
 }
+
+/*
+ * Pearl CTA (hero only): an ink pearl on light surfaces, a white pearl in dark mode.
+ * Sheen layers sit under the label so text stays crisp. Disabled is a flat surface.
+ */
+@layer components {
+  .steplab-pearl {
+    --pearl-surface: linear-gradient(180deg, var(--color-gray-700) 0%, var(--color-gray-900) 55%, var(--color-gray-950) 100%);
+    --pearl-text: var(--color-brand-25);
+    --pearl-glow: rgb(255 255 255 / 0.24);
+    --pearl-shade: rgb(0 0 0 / 0.6);
+    --pearl-bounce: color-mix(in oklab, var(--color-brand-200) 32%, transparent);
+    --pearl-drop: color-mix(in oklab, var(--color-gray-950) 50%, transparent);
+    --pearl-dome: rgb(255 255 255 / 0.1);
+    --pearl-gloss: rgb(255 255 255 / 0.26);
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    color: var(--pearl-text);
+    background: var(--pearl-surface);
+    box-shadow:
+      inset 0 0.25rem 0.6rem var(--pearl-glow),
+      inset 0 -1px 2px var(--pearl-shade),
+      inset 0 -0.3rem 0.6rem var(--pearl-bounce),
+      0 1px 1px var(--pearl-drop),
+      0 0.6rem 1rem -0.5rem var(--pearl-drop);
+    transition: box-shadow 200ms ease, translate 150ms ease, scale 150ms ease, color 150ms ease;
+  }
+  :root.dark .steplab-pearl {
+    --pearl-surface: linear-gradient(180deg, var(--color-white) 0%, var(--color-gray-100) 55%, var(--color-gray-300) 100%);
+    --pearl-text: var(--color-gray-900);
+    --pearl-glow: rgb(255 255 255 / 0.95);
+    --pearl-shade: color-mix(in oklab, var(--color-brand-900) 35%, transparent);
+    --pearl-bounce: color-mix(in oklab, var(--color-brand-300) 30%, transparent);
+    --pearl-drop: rgb(0 0 0 / 0.6);
+    --pearl-dome: rgb(255 255 255 / 0.45);
+    --pearl-gloss: rgb(255 255 255 / 0.7);
+  }
+  .steplab-pearl::before,
+  .steplab-pearl::after {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    pointer-events: none;
+    transition: transform 300ms ease, opacity 300ms ease;
+  }
+  /* Upper dome: the soft lighter half of the pearl. */
+  /* The same ellipse as a box at inset -100% -15% 25% with 50% radius, drawn as a gradient inside the
+     button: an oversized pseudo-element widened the button's scroll box (a horizontal-overflow finding). */
+  .steplab-pearl::before {
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(65% 87.5% at 50% -12.5%, var(--pearl-dome) 99%, transparent 100%);
+  }
+  /* Specular band along the top edge. */
+  .steplab-pearl::after {
+    inset: 12% 6% 45%;
+    border-radius: 999px 999px 0 0;
+    box-shadow: inset 0 0.5rem 0.4rem -0.5rem var(--pearl-gloss);
+    background: linear-gradient(180deg, var(--pearl-gloss) 0%, transparent 60%);
+    opacity: 0.8;
+  }
+  /* Button wraps icons in a `contents` span, so match descendants; the loading spinner keeps spinning. */
+  .steplab-pearl svg:not([data-icon="loading"]) {
+    transition: transform 300ms ease;
+  }
+  .steplab-pearl:hover:not(:disabled) {
+    --pearl-bounce: color-mix(in oklab, var(--color-brand-200) 45%, transparent);
+    translate: 0 -1px;
+  }
+  :root.dark .steplab-pearl:hover:not(:disabled) {
+    --pearl-bounce: color-mix(in oklab, var(--color-brand-300) 45%, transparent);
+  }
+  .steplab-pearl:hover:not(:disabled)::before { transform: translateY(-5%); }
+  .steplab-pearl:hover:not(:disabled)::after { opacity: 0.45; transform: translateY(6%); }
+  .steplab-pearl:hover:not(:disabled) svg:not([data-icon="loading"]) { transform: rotate(-12deg) scale(1.1); }
+  .steplab-pearl:active:not(:disabled) {
+    translate: 0 1px;
+    box-shadow:
+      inset 0 0.25rem 0.5rem var(--pearl-glow),
+      inset 0 -1px 2px var(--pearl-shade),
+      inset 0 -0.2rem 0.5rem var(--pearl-bounce),
+      0 1px 1px var(--pearl-drop);
+  }
+  .steplab-pearl:disabled {
+    color: var(--color-text-disabled);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-secondary);
+  }
+  .steplab-pearl:disabled::before,
+  .steplab-pearl:disabled::after {
+    opacity: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .page-transition { animation: none; }
   *, *::before, *::after {
@@ -261,4 +383,3 @@ summary:focus-visible,
     transition-duration: 0.01ms !important;
   }
 }
-

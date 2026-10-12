@@ -7,23 +7,26 @@ import { useMemo } from "react";
 import { usePreferences } from "@/components/preferences-provider";
 import { StageBlocker } from "@/components/stage-blocker";
 import { AppIcon } from "@/components/ui/app-icon";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Disclosure, TechnicalDetails } from "@/components/ui/disclosure";
-import { StatusPill } from "@/components/ui/status-pill";
+import { Notice } from "@/components/ui/notice";
+import { StatusBadge } from "@/components/ui/status-badge";
 import type { PipelineAvailability } from "@/lib/blockers";
-import { interpolate, runName, useCopy } from "@/lib/copy";
-import { formatMs } from "@/lib/format";
+import { type AppCopy, type AppLocale, interpolate, runName, useCopy } from "@/lib/copy";
+import { formatCount, formatMs } from "@/lib/format";
 import { completedCompatibleRun } from "@/lib/pipeline-lineage";
-import type { RunSummary } from "@/lib/rag-api-types";
+import type { ChunkStrategy, RunSummary } from "@/lib/rag-api-types";
 import { cn } from "@/lib/utils";
 
+/** A failed stage request. Neutral layout, error tone, announced once (role="alert"). */
 export function PipelineErrorMessage({ message }: { message: string | null | undefined }) {
   if (!message) return null;
-  return <p className="rounded-md border border-destructive-border bg-destructive-subtle px-3 py-2 text-xs text-destructive" role="alert">{message}</p>;
+  return <Notice tone="error">{message}</Notice>;
 }
 
 export function DisabledReason({ id, children }: { id: string; children: React.ReactNode }) {
-  return <p className="mt-2 text-xs leading-5 text-muted-foreground" id={id}>{children}</p>;
+  return <p className="mt-2 text-sm text-tertiary" id={id}>{children}</p>;
 }
 
 export type RunKind = "parse" | "chunk" | "embedding";
@@ -52,14 +55,17 @@ export function hasVisibleBlocker(blocker: PipelineAvailability | null | undefin
 export function StageBlockerRow({ blocker, kind, id, testId, className }: { blocker: PipelineAvailability | null | undefined; kind: RunKind; id?: string; testId?: string; className?: string }) {
   const copy = useCopy();
   if (!hasVisibleBlocker(blocker)) return null;
+  const incompatible = blocker.code === "incompatible_lineage";
+  // "Open history" is the way out here, so the message does not also say "select a result from its history".
+  const shown = incompatible ? { ...blocker, message: copy.runs.incompatibleLineage } : blocker;
   return (
-    <div className={cn("flex flex-wrap items-baseline gap-x-3 gap-y-1", className)}>
-      <StageBlocker blocker={blocker} data-testid={testId} id={id} />
-      {blocker.code === "incompatible_lineage" ? (
-        <button className="inline-flex items-center gap-1 text-sm font-medium text-foreground underline-offset-4 hover:underline" data-testid={`${kind}-open-history`} onClick={() => revealRunHistory(kind)} type="button">
+    <div className={cn("flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1", className)}>
+      <StageBlocker blocker={shown} data-testid={testId} id={id} />
+      {incompatible ? (
+        <Button className="group/history" data-testid={`${kind}-open-history`} onClick={() => revealRunHistory(kind)} size="sm" variant="link-gray">
           {copy.runs.openHistory}
-          <AppIcon name="arrowRight" className="size-3.5" />
-        </button>
+          <AppIcon name="arrowRight" className="size-3.5 transition-transform duration-150 ease-out group-hover/history:translate-x-0.5 motion-reduce:transition-none" />
+        </Button>
       ) : null}
     </div>
   );
@@ -70,33 +76,41 @@ export function StageBlockerRow({ blocker, kind, id, testId, className }: { bloc
  * reason and the action that unlocks it. `emphasis` keeps one primary action
  * per page (secondary while the stage has unapplied changes).
  */
-export function StageNextAction({ href, label, disabled, testId, blocker, reason, emphasis = "primary" }: {
+export function StageNextAction({ href, label, disabled, testId, blocker, stageBlocker, reason, emphasis = "primary" }: {
   href: string;
   label: string;
   disabled: boolean;
   testId: string;
   /** Availability of the next stage; when blocked its message and CTA explain why. */
   blocker?: PipelineAvailability | null;
+  /** This stage's own blocker, already shown above; the footer does not repeat the same words on screen. */
+  stageBlocker?: PipelineAvailability | null;
   /** Fallback explanation when the next stage is locked for a stage-local reason. */
   reason: string;
   emphasis?: "primary" | "secondary";
 }) {
   const pathname = usePathname();
   const reasonId = `${testId}-reason`;
+  // Legacy names on purpose: `data-variant` echoes them and the emphasis contract is asserted on it.
   const variant = emphasis === "primary" ? "default" : "outline";
   // A blocker that points back at this page restates the stage's own job; the
   // stage reason says it better. Blockers elsewhere (or without a page) win.
   const showBlocker = hasVisibleBlocker(blocker) && (!blocker.href || blocker.href !== pathname);
+  // The same sentence already explains the stage above: keep it as the button's description only.
+  const repeatsStage = showBlocker && hasVisibleBlocker(stageBlocker) && stageBlocker.message === blocker?.message;
+  const arrow = <AppIcon name="arrowRight" className="size-4 transition-transform duration-150 ease-out group-hover/button:translate-x-0.5 motion-reduce:transition-none" />;
   return (
-    <footer className="mt-8 flex flex-wrap items-center justify-end gap-x-4 gap-y-2 border-t border-border pt-5" data-testid={`${testId}-footer`}>
-      {disabled ? (showBlocker
-        ? <StageBlocker blocker={blocker} className="min-w-0 flex-1 justify-end text-right" id={reasonId} />
-        : <p className="min-w-0 flex-1 text-right text-sm text-muted-foreground" id={reasonId}>{reason}</p>) : null}
+    <footer className="mt-12 flex flex-wrap items-center justify-end gap-x-6 gap-y-3 border-t border-secondary pt-6" data-testid={`${testId}-footer`}>
+      {disabled ? (repeatsStage
+        ? <p className="sr-only" id={reasonId}>{blocker?.message}</p>
+        : showBlocker
+          ? <StageBlocker blocker={blocker} className="min-w-0 flex-1 justify-end text-right" id={reasonId} />
+          : <p className="min-w-0 flex-1 text-right text-sm text-tertiary" id={reasonId}>{reason}</p>) : null}
       {disabled ? (
-        <Button aria-describedby={reasonId} data-testid={testId} disabled variant={variant}>{label}<AppIcon name="arrowRight" className="size-4" /></Button>
+        <Button aria-describedby={reasonId} data-testid={testId} disabled size="lg" variant={variant}>{label}{arrow}</Button>
       ) : (
-        <Button asChild data-testid={testId} variant={variant}>
-          <Link href={href}>{label}<AppIcon name="arrowRight" className="size-4" /></Link>
+        <Button asChild data-testid={testId} size="lg" variant={variant}>
+          <Link href={href}>{label}{arrow}</Link>
         </Button>
       )}
     </footer>
@@ -125,14 +139,53 @@ export function InspectionBand({ kind, runs, selectedId, inspectedId, canUse, on
     ? interpolate(copy.runs.inspectionBand, { inspected: inspectedName, selected: runName(copy, kind, selected?.runNumber) })
     : interpolate(copy.runs.inspectionBandEmpty, { inspected: inspectedName });
   return (
-    <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-warning-border bg-warning-subtle px-4 py-2.5" data-testid={`${kind}-inspection-band`} role="status">
-      <p className="flex min-w-0 items-center gap-2 text-sm text-foreground"><AppIcon name="eye" className="size-4 shrink-0 text-warning" />{text}</p>
-      <div className="flex flex-wrap gap-2">
-        {canUse && completedCompatibleRun(inspected) ? <Button onClick={() => void onUse(inspectedId)} size="sm">{copy.runs.useInPipeline}</Button> : null}
-        {selectedId ? <Button onClick={() => void onBack(selectedId)} size="sm" variant="outline">{copy.runs.backToPipeline}</Button> : null}
-      </div>
-    </div>
+    <Notice
+      action={(
+        <div className="flex flex-wrap gap-2">
+          {selectedId ? <Button onClick={() => void onBack(selectedId)} size="sm" variant="tertiary">{copy.runs.backToPipeline}</Button> : null}
+          {canUse && completedCompatibleRun(inspected) ? <Button onClick={() => void onUse(inspectedId)} size="sm" variant="secondary">{copy.runs.useInPipeline}</Button> : null}
+        </div>
+      )}
+      className="mt-6 items-center"
+      data-testid={`${kind}-inspection-band`}
+      icon="eye"
+      tone="warning"
+    >
+      <span className="text-secondary">{text}</span>
+    </Notice>
   );
+}
+
+function formatRunDate(locale: AppLocale, value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat(locale === "tr" ? "tr-TR" : "en-US", { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+function readNumber(config: Record<string, unknown>, key: string) {
+  const value = config[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** One quiet line that tells runs apart: what was configured and what came out. */
+function runMeta(copy: AppCopy, locale: AppLocale, kind: RunKind, run: RunSummary) {
+  const parts: Array<string | null> = [];
+  if (kind === "chunk") {
+    const size = readNumber(run.config, "chunkSizeTokens");
+    const overlap = readNumber(run.config, "overlapTokens");
+    parts.push(run.strategy ? copy.chunking.strategies[run.strategy as ChunkStrategy] ?? null : null);
+    if (size !== null) parts.push(overlap !== null ? `${size} / ${overlap}` : String(size));
+    if (run.chunkCount != null) parts.push(formatCount(locale, run.chunkCount, copy.units.chunk));
+  } else if (kind === "embedding") {
+    parts.push(run.model ?? null);
+    if (run.dimensions != null) parts.push(formatCount(locale, run.dimensions, copy.units.dimension));
+    if (run.embeddingCount != null) parts.push(formatCount(locale, run.embeddingCount, copy.units.vector));
+  } else if (run.timing.durationMs != null) {
+    parts.push(formatMs(locale, run.timing.durationMs));
+  }
+  parts.push(formatRunDate(locale, run.createdAt));
+  return parts.filter(Boolean).join(" · ");
 }
 
 /**
@@ -161,42 +214,45 @@ export function RunHistory({ kind, runs, selectedId, inspectedId, defaultId, has
   const viewedId = inspectedId ?? selectedId;
 
   return (
-    <section className="mt-8 scroll-mt-6" data-testid={historyTestId[kind]} id={historyTestId[kind]}>
-      <Disclosure contentClassName="divide-y divide-border p-0" meta={ordered.length} title={copy.runs.history[kind]}>
+    <section className="mt-10 scroll-mt-6" data-testid={historyTestId[kind]} id={historyTestId[kind]}>
+      <Disclosure contentClassName="divide-y divide-secondary p-0" meta={ordered.length} title={copy.runs.history[kind]}>
         {ordered.map((run) => {
           const usable = completedCompatibleRun(run);
           const isSelected = run.id === selectedId;
           const isViewed = run.id === viewedId;
+          const meta = runMeta(copy, preferences.locale, kind, run);
           const problem = run.status === "queued" || run.status === "running"
-            ? copy.runs.running
+            ? <StatusBadge status="processing">{copy.runs.running}</StatusBadge>
             : run.status === "failed"
-              ? copy.runs.failed
+              ? <StatusBadge status="error">{copy.runs.failed}</StatusBadge>
               : !run.isCompatible
-                ? copy.runs.incompatible
+                ? <StatusBadge status="stale">{copy.runs.incompatible}</StatusBadge>
                 : null;
           return (
-            <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between" data-testid={`${historyTestId[kind]}-row`} key={run.id}>
+            <div className={cn("flex flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-start sm:justify-between", isViewed && "bg-secondary")} data-testid={`${historyTestId[kind]}-row`} key={run.id}>
               <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <span className="text-sm font-medium text-foreground tabular-nums">{runName(copy, kind, run.runNumber)}</span>
-                  {isSelected ? <StatusPill tone="neutral">{copy.runs.inUse}</StatusPill> : null}
-                  {!isSelected && isViewed ? <StatusPill tone="warning">{copy.runs.inspecting}</StatusPill> : null}
-                  {!isSelected && run.id === defaultId ? <StatusPill tone="idle">{copy.runs.documentDefault}</StatusPill> : null}
-                  {run.historicalLineage ? <StatusPill tone="warning">{copy.runs.historical}</StatusPill> : null}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="text-sm font-semibold text-primary tabular-nums">{runName(copy, kind, run.runNumber)}</span>
+                  {isSelected ? <Badge color="brand">{copy.runs.inUse}</Badge> : null}
+                  {!isSelected && isViewed ? <Badge color="warning">{copy.runs.inspecting}</Badge> : null}
+                  {!isSelected && run.id === defaultId ? <Badge color="gray">{copy.runs.documentDefault}</Badge> : null}
+                  {run.historicalLineage ? <StatusBadge status="stale">{copy.runs.historical}</StatusBadge> : null}
+                  {problem}
                 </div>
-                {problem ? <p className={cn("mt-1 text-xs", run.status === "failed" ? "text-destructive" : run.isCompatible ? "text-muted-foreground" : "text-warning")}>{problem}</p> : null}
-                {run.error?.message ? <p className="mt-1 text-xs text-destructive">{run.error.message}</p> : null}
-                {!run.isCompatible && run.compatibilityReason ? <p className="mt-1 text-xs text-warning">{run.compatibilityReason}</p> : null}
-                <TechnicalDetails className="mt-1">
-                  <dl className="grid gap-1 text-xs text-muted-foreground">
-                    {run.timing.durationMs != null ? <div className="flex gap-2"><dt>{copy.runs.duration}</dt><dd className="tabular-nums text-foreground">{formatMs(preferences.locale, run.timing.durationMs)}</dd></div> : null}
-                    <div className="flex min-w-0 gap-2"><dt className="shrink-0">{copy.runs.runId}</dt><dd className="min-w-0 font-mono text-foreground [overflow-wrap:anywhere]">{run.id}</dd></div>
+                {meta ? <p className="mt-1 text-sm text-tertiary tabular-nums">{meta}</p> : null}
+                {run.error?.message ? <p className="mt-1 text-sm text-error-primary">{run.error.message}</p> : null}
+                {!run.isCompatible && run.compatibilityReason ? <p className="mt-1 text-sm text-warning-primary">{run.compatibilityReason}</p> : null}
+                <TechnicalDetails className="mt-1.5" summaryClassName="text-xs">
+                  <dl className="grid gap-1 text-xs text-tertiary">
+                    {/* Parse rows already show the duration in their meta line. */}
+                    {kind !== "parse" && run.timing.durationMs != null ? <div className="flex gap-2"><dt>{copy.runs.duration}</dt><dd className="text-secondary tabular-nums">{formatMs(preferences.locale, run.timing.durationMs)}</dd></div> : null}
+                    <div className="flex min-w-0 gap-2"><dt className="shrink-0">{copy.runs.runId}</dt><dd className="min-w-0 font-mono text-secondary wrap-anywhere">{run.id}</dd></div>
                   </dl>
                 </TechnicalDetails>
               </div>
-              <div className="flex flex-wrap justify-end gap-2">
-                {usable && !isViewed ? <Button onClick={() => void onInspect(run.id)} size="sm" variant="outline">{hasPipeline ? copy.runs.inspect : copy.runs.select}</Button> : null}
-                {onUse && hasPipeline && usable && isViewed && !isSelected ? <Button onClick={() => void onUse(run.id)} size="sm" variant="outline">{copy.runs.useInPipeline}</Button> : null}
+              <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                {usable && !isViewed ? <Button onClick={() => void onInspect(run.id)} size="sm" variant="secondary">{hasPipeline ? copy.runs.inspect : copy.runs.select}</Button> : null}
+                {onUse && hasPipeline && usable && isViewed && !isSelected ? <Button onClick={() => void onUse(run.id)} size="sm" variant="secondary">{copy.runs.useInPipeline}</Button> : null}
               </div>
             </div>
           );

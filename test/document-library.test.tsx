@@ -40,7 +40,7 @@ describe("Document library layout", () => {
     expect(name).toHaveTextContent(LONG_NAME);
     expect(name).toHaveClass("truncate", "min-w-0");
     expect(name.closest("button")).toHaveAttribute("title", LONG_NAME);
-    const badge = within(row).getByText("In use").closest("[data-tone]");
+    const badge = within(row).getByText("In use").closest("[data-slot='badge']");
     expect(badge).toHaveClass("shrink-0");
     expect(within(row).getByRole("cell", { name: "8" })).toBeInTheDocument();
     // The redundant "PDF" sub-label is gone (only PDFs are supported).

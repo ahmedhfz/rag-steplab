@@ -117,7 +117,7 @@ describe("Playground presentation states", () => {
     state().experimentRun = { ...state().experimentRun! };
     view.rerender(<PreferencesProvider><RetrievalScreen /></PreferencesProvider>);
     expect(question).toHaveValue("My draft");
-    expect(screen.getByTestId("playground-run-state")).toHaveTextContent("Settings changed — the result shown belongs to the previous run.");
+    expect(screen.getByTestId("playground-run-state")).toHaveTextContent("Settings changed since this run.");
     expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
   });
 
@@ -159,7 +159,7 @@ describe("Playground presentation states", () => {
     renderRetrieval();
     openAnswer();
     expect(screen.getByTestId("playground-insufficient-context")).toHaveTextContent("Not enough context to answer");
-    expect(screen.getByTestId("playground-answer").querySelector("p.text-base")).toBeNull();
+    expect(within(screen.getByTestId("playground-answer")).queryByTestId("playground-answer-text")).toBeNull();
     expect(screen.queryByTestId("playground-continue-evaluation")).not.toBeInTheDocument();
   });
 
@@ -167,7 +167,9 @@ describe("Playground presentation states", () => {
     state().experimentRun = buildRun({ answer: "", insufficientContext: false, outcome: "grounding_rejected", segments: [], groundingFailureDetail: { code: "unsupported_factual_token", token: "2027", attempts: 2 } });
     renderRetrieval();
     openAnswer();
-    expect(screen.getByTestId("playground-grounding-rejected")).toHaveTextContent("An answer was generated but contained a value that could not be verified: 2027");
+    const rejected = screen.getByTestId("playground-grounding-rejected");
+    expect(rejected).toHaveTextContent("Answer withheld: 2027 could not be verified");
+    expect(rejected).toHaveTextContent("The value does not appear in the cited sources.");
     expect(screen.queryByTestId("playground-insufficient-context")).not.toBeInTheDocument();
     expect(screen.getByTestId("playground-details")).toHaveTextContent("Answer withheld (unverified value)");
   });
@@ -187,7 +189,8 @@ describe("Playground presentation states", () => {
     renderRetrieval();
     openAnswer();
 
-    const paragraph = screen.getByTestId("playground-answer").querySelector("p.text-base");
+    const paragraph = within(screen.getByTestId("playground-answer")).getByTestId("playground-answer-text");
+    expect(paragraph.tagName).toBe("P");
     expect(paragraph).toHaveTextContent("The beacon code is ORBIT-731.[C1] It is on page three.[C1][C2]");
     expect(within(paragraph as HTMLElement).getAllByRole("button", { name: "Inspect source: C1" })).toHaveLength(2);
     // Default states stay quiet: no "Complete" pill and no "Executed" label.
@@ -222,6 +225,9 @@ describe("Playground presentation states", () => {
     const score = within(content).getByTestId("candidate-score");
     expect(score).toHaveTextContent("Fusion score (relative, diagnostic) 0.82");
     expect(score).toHaveAttribute("title", "Ranking score; not an indicator of correctness.");
+    // The score's meaning is shown once for the list, with the "not proof of correctness" hint behind (?).
+    expect(within(content).getByTestId("playground-score-legend")).toHaveTextContent("Fusion score (relative, diagnostic)");
+    expect(within(content).getByRole("button", { name: "About scores" })).toBeInTheDocument();
     expect(within(content).queryByTestId("playground-reranker-input")).not.toBeInTheDocument();
     expect(content).not.toHaveTextContent(/\d+ candidates/);
     expect(within(content).getByRole("button", { name: "Inspect source: Source document" })).toBeInTheDocument();
@@ -279,7 +285,7 @@ describe("Playground presentation states", () => {
 
     const error = screen.getByTestId("playground-error");
     expect(error.querySelector("h2")).toHaveTextContent("Experiment couldn’t be completed");
-    expect(error.querySelector("p")).toHaveTextContent("We couldn’t complete this experiment.");
+    expect(error.querySelector("p")).toHaveTextContent("Try again, or review the technical details.");
     expect(error.querySelector("p")).not.toHaveTextContent("MODAL_TIMEOUT");
     expect(error.querySelector("p")).not.toHaveTextContent("worker diagnostic detail");
   });

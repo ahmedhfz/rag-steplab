@@ -15,6 +15,9 @@ const HERO_STEPS: readonly { key: PipelineStepKey; icon: SemanticIconName }[] = 
   { key: "generate", icon: "generate" },
 ];
 
+/** Staggered entrance, one step after another (reduced motion: no animation). */
+const ENTRANCE_DELAYS = ["delay-0", "delay-75", "delay-150", "delay-225", "delay-300", "delay-375"] as const;
+
 /**
  * Static, code-drawn pipeline for the auth screens: real text (TR/EN), theme
  * tokens and the app's own stage icons. The answer is the single brand accent.
@@ -26,27 +29,36 @@ export function LoginHero({ className }: { className?: string }) {
   const lastIndex = HERO_STEPS.length - 1;
 
   return (
-    <section aria-labelledby="auth-hero-title" className={cn("flex w-full max-w-sm flex-col gap-8", className)} data-testid="auth-hero">
-      <div className="space-y-2">
-        <p className="text-2xl font-semibold tracking-tight text-foreground" id="auth-hero-title">{hero.title}</p>
-        <p className="text-sm text-muted-foreground">{hero.description}</p>
+    <section aria-labelledby="auth-hero-title" className={cn("flex w-full max-w-sm flex-col gap-10", className)} data-testid="auth-hero">
+      <div>
+        <p className="text-display-sm font-semibold text-primary" id="auth-hero-title">{hero.title}</p>
+        <p className="mt-3 text-md text-tertiary">{hero.description}</p>
       </div>
-      <ol className="flex flex-col">
+      <ol className="flex flex-col gap-3">
         {HERO_STEPS.map((step, index) => {
           const accent = index === lastIndex;
           return (
-            <li className="relative flex items-center gap-3 pb-4 last:pb-0" data-testid={`auth-hero-step-${step.key}`} key={step.key}>
-              {accent ? null : <span aria-hidden="true" className="absolute bottom-0 left-4.5 top-9 w-px -translate-x-1/2 bg-input/50" />}
+            <li
+              className={cn(
+                "relative flex items-center gap-3.5 animate-in fade-in slide-in-from-left-2 fill-mode-both animation-duration-500 motion-reduce:animate-none",
+                ENTRANCE_DELAYS[index],
+              )}
+              data-testid={`auth-hero-step-${step.key}`}
+              key={step.key}
+            >
+              {accent ? null : <span aria-hidden="true" className="absolute top-10 left-5 h-3 w-px -translate-x-1/2 bg-border-primary" />}
               <span
                 aria-hidden="true"
                 className={cn(
-                  "grid size-9 shrink-0 place-items-center rounded-md border bg-card",
-                  accent ? "border-brand-subtle-border text-brand" : "border-border text-muted-foreground",
+                  "grid size-10 shrink-0 place-items-center rounded-xl ring-1 ring-inset",
+                  accent
+                    ? "bg-brand-primary text-fg-brand-primary shadow-sm ring-utility-brand-200"
+                    : "bg-primary text-fg-tertiary shadow-xs ring-secondary",
                 )}
               >
-                <AppIcon name={step.icon} className="size-4.5" />
+                <AppIcon name={step.icon} className="size-5" />
               </span>
-              <span className="text-sm font-medium text-foreground">{stepLabels[step.key]}</span>
+              <span className={cn("text-sm", accent ? "font-semibold text-primary" : "font-medium text-secondary")}>{stepLabels[step.key]}</span>
             </li>
           );
         })}

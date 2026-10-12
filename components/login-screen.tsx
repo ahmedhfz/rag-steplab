@@ -9,6 +9,7 @@ import { shakeValidation } from "@/lib/transitions";
 import { AuthShell, MIN_PASSWORD_LENGTH } from "@/components/auth-shell";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { usePreferences } from "@/components/preferences-provider";
 import { safeNextPath } from "@/lib/auth-redirect";
@@ -137,57 +138,64 @@ export function LoginScreen() {
   }
 
   const title = mode === "signup" ? labels.titleSignUp : mode === "forgot" ? labels.titleForgot : labels.titleSignIn;
-  const subtitle = mode === "signin" ? labels.subtitleSignIn : mode === "signup" ? labels.subtitleSignUp : labels.subtitleForgot;
   const submitLabel = mode === "signup" ? labels.submitSignUp : mode === "forgot" ? labels.submitForgot : labels.submitSignIn;
   const urlStatusMessage = linkErrorMessage(urlAuthErrorCode, auth.linkErrors);
   const visibleStatus = statusMessage || urlStatusMessage;
 
   return (
     <AuthShell>
-      <section aria-label={labels.form} className="w-full max-w-[360px]">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">{subtitle}</p>
-        {/* The desktop hero carries this message; small screens hide the hero and show it here. */}
-        {mode !== "forgot" ? <p className="mt-3 text-sm text-muted-foreground md:hidden" data-testid="auth-intro">{labels.intro}</p> : null}
+      <section aria-label={labels.form} className="w-full max-w-sm">
+        <h1 className="text-display-xs font-semibold text-primary">{title}</h1>
+        {/* Sign-in/up titles speak for themselves; the reset mode says what happens next. Small
+            screens hide the hero, so its one-line pitch moves under the title there. */}
+        {mode === "forgot"
+          ? <p className="mt-2 text-md text-tertiary">{labels.subtitleForgot}</p>
+          : <p className="mt-2 text-md text-tertiary md:hidden" data-testid="auth-intro">{labels.intro}</p>}
 
-        <TransitionForm aria-describedby="login-status" className="mt-7" onSubmit={submit}>
-          <div className="space-y-2">
-            <label className="flex items-center justify-between text-sm font-medium text-foreground" htmlFor="login-email">
-              <span>{labels.email}</span>
-            </label>
-            <Input autoComplete="email" className="h-10" id="login-email" onChange={(event) => setEmail(event.target.value)} placeholder={mode === "signup" || mode === "forgot" ? labels.emailPlaceholderSignup : labels.emailPlaceholder} required type="email" value={email} />
+        <TransitionForm aria-describedby="login-status" className="mt-8" onSubmit={submit}>
+          <div className="flex flex-col gap-5">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="login-email">{labels.email}</Label>
+            <Input autoComplete="email" id="login-email" onChange={(event) => setEmail(event.target.value)} placeholder={mode === "signup" || mode === "forgot" ? labels.emailPlaceholderSignup : labels.emailPlaceholder} required size="lg" type="email" value={email} />
           </div>
 
-          {mode !== "forgot" ? <div className="mt-4 space-y-2">
-            <div className="flex items-center justify-between text-sm font-medium text-foreground"><label htmlFor="login-password">{labels.password}</label>{mode === "signin" ? <button className="font-medium text-brand hover:underline" onClick={() => setAuthMode("forgot")} type="button">{labels.forgot}</button> : null}</div>
-            <div className="relative">
-              <Input autoComplete={mode === "signup" ? "new-password" : "current-password"} className="h-10 pr-10" id="login-password" minLength={mode === "signup" ? MIN_PASSWORD_LENGTH : undefined} onChange={(event) => setPassword(event.target.value)} placeholder={labels.passwordPlaceholder} required type={showPassword ? "text" : "password"} value={password} />
-              <button aria-label={showPassword ? labels.hidePassword : labels.showPassword} className="absolute right-2.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded-sm text-subtle-foreground transition-colors hover:text-foreground" onClick={() => setShowPassword((current) => !current)} type="button"><IconSwap active={showPassword} first={<AppIcon name="eye" className="size-4" />} second={<AppIcon name="eyeOff" className="size-4" />} /></button>
+          {mode !== "forgot" ? <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between gap-3">
+              <Label htmlFor="login-password">{labels.password}</Label>
+              {mode === "signin" ? <Button onClick={() => setAuthMode("forgot")} size="sm" type="button" variant="link">{labels.forgot}</Button> : null}
             </div>
+            <Input
+              autoComplete={mode === "signup" ? "new-password" : "current-password"}
+              id="login-password"
+              minLength={mode === "signup" ? MIN_PASSWORD_LENGTH : undefined}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder={labels.passwordPlaceholder}
+              required
+              size="lg"
+              trailing={<button aria-label={showPassword ? labels.hidePassword : labels.showPassword} className="grid size-7 cursor-pointer place-items-center rounded-md text-fg-quaternary transition-colors hover:bg-primary_hover hover:text-fg-quaternary_hover" onClick={() => setShowPassword((current) => !current)} type="button"><IconSwap active={showPassword} first={<AppIcon name="eye" className="size-4" />} second={<AppIcon name="eyeOff" className="size-4" />} /></button>}
+              type={showPassword ? "text" : "password"}
+              value={password}
+            />
           </div> : null}
 
-          {mode === "signup" ? <div className="mt-4 space-y-2">
-            <label className="text-sm font-medium text-foreground" htmlFor="login-password-confirm">{labels.confirm}</label>
-            <Input autoComplete="new-password" className="h-10" id="login-password-confirm" minLength={MIN_PASSWORD_LENGTH} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.confirmPlaceholder} required type="password" value={confirmation} />
+          {mode === "signup" ? <div className="flex flex-col gap-1.5">
+            <Label htmlFor="login-password-confirm">{labels.confirm}</Label>
+            <Input autoComplete="new-password" id="login-password-confirm" minLength={MIN_PASSWORD_LENGTH} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.passwordPlaceholder} required size="lg" type="password" value={confirmation} />
           </div> : null}
 
-          <Button className="mt-6 w-full" size="lg" disabled={busy} type="submit"><TransitionText>{busy ? labels.wait : submitLabel}</TransitionText>{mode === "signin" && !busy ? <AppIcon name="arrowRight" className="size-4" /> : null}</Button>
+          <Button className="mt-1 w-full" disabled={busy} size="lg" type="submit"><TransitionText>{busy ? labels.wait : submitLabel}</TransitionText>{mode === "signin" && !busy ? <AppIcon name="arrowRight" className="size-4" /> : null}</Button>
+          </div>
         </TransitionForm>
 
-        {mode === "signin" ? <>
-          <div className="my-6 flex items-center gap-3 text-xs text-subtle-foreground"><span aria-hidden="true" className="h-px flex-1 bg-border" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-border" /></div>
-          <Button asChild className="w-full" size="lg" variant="outline"><a href={googleHref}><GoogleMark />{labels.google}</a></Button>
+        {mode !== "forgot" ? <>
+          <div className="my-6 flex items-center gap-3 text-xs font-medium text-quaternary"><span aria-hidden="true" className="h-px flex-1 bg-border-secondary" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-border-secondary" /></div>
+          <Button asChild className="w-full" size="lg" variant="secondary"><a href={googleHref}><GoogleMark />{labels.google}</a></Button>
         </> : null}
 
-        {mode === "signup" ? <>
-          <div className="my-6 flex items-center gap-3 text-xs text-subtle-foreground"><span aria-hidden="true" className="h-px flex-1 bg-border" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-border" /></div>
-          <Button asChild className="w-full" size="lg" variant="outline"><a href={googleHref}><GoogleMark />{labels.google}</a></Button>
-        </> : null}
-
-        {mode === "forgot" ? <div className="mt-6 text-center"><button className="text-sm font-medium text-brand underline-offset-4 hover:underline" onClick={() => setAuthMode("signin")} type="button">{labels.back}</button></div> : null}
-        <p aria-live="polite" className={visibleStatus ? "mt-4 min-h-5 text-center text-xs leading-5 text-muted-foreground" : "sr-only"} id="login-status" role="status"><TransitionText>{visibleStatus}</TransitionText></p>
-        {mode === "signin" ? <div className="mt-6 text-center text-sm text-muted-foreground"><span>{labels.noAccount}</span>{" "}<button className="font-medium text-brand underline-offset-4 hover:underline" onClick={() => setAuthMode("signup")} type="button">{labels.submitSignUp}</button></div> : null}
-        {mode === "signup" ? <div className="mt-6 text-center text-sm text-muted-foreground"><span>{labels.alreadyAccount}</span>{" "}<button className="font-medium text-brand underline-offset-4 hover:underline" onClick={() => setAuthMode("signin")} type="button">{labels.submitSignIn}</button></div> : null}
+        {mode === "forgot" ? <div className="mt-6 flex justify-center"><Button iconLeading="arrowLeft" onClick={() => setAuthMode("signin")} size="sm" type="button" variant="link-gray">{labels.back}</Button></div> : null}
+        <p aria-live="polite" className={visibleStatus ? "mt-5 rounded-lg bg-secondary px-3.5 py-2.5 text-center text-sm text-secondary" : "sr-only"} id="login-status" role="status"><TransitionText>{visibleStatus}</TransitionText></p>
+        {mode === "signin" ? <p className="mt-8 text-center text-sm text-tertiary"><span>{labels.noAccount}</span>{" "}<Button onClick={() => setAuthMode("signup")} size="sm" type="button" variant="link">{labels.submitSignUp}</Button></p> : null}
+        {mode === "signup" ? <p className="mt-8 text-center text-sm text-tertiary"><span>{labels.alreadyAccount}</span>{" "}<Button onClick={() => setAuthMode("signin")} size="sm" type="button" variant="link">{labels.submitSignIn}</Button></p> : null}
       </section>
     </AuthShell>
   );

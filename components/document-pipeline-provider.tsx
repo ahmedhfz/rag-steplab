@@ -132,7 +132,7 @@ type EvaluationRunInput = {
   generation: ExperimentRequest["generation"];
 };
 
-type DocumentPipelineContextValue = {
+export type DocumentPipelineContextValue = {
   parseStatus: DocumentParseStatus;
   parseProgress: number;
   parseProgressEstimated: boolean;
@@ -2154,4 +2154,9 @@ export function useDocumentPipeline() {
   const context = useContext(DocumentPipelineContext);
   if (!context) throw new Error("useDocumentPipeline must be used within DocumentPipelineProvider");
   return context;
+}
+
+/** For chrome that can render outside the provider (the app shell); null there. */
+export function useOptionalDocumentPipeline() {
+  return useContext(DocumentPipelineContext);
 }

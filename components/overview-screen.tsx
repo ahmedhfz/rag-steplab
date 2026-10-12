@@ -1,26 +1,32 @@
 "use client";
 
 import { TransitionDetails, TransitionPanel } from "@/components/ui/transitions";
-import { TransitionDialogContent } from "@/components/ui/transition-surface";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
-import { Dialog as DialogPrimitive } from "radix-ui";
+import { useEffect, useRef, useState } from "react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { SampleDocumentButton } from "@/components/sample-document-button";
-import { PipelineErrorMessage } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
 import { AppIcon, type SemanticIconName } from "@/components/ui/app-icon";
-import { Button } from "@/components/ui/button";
+import { Button, buttonStyles } from "@/components/ui/button";
 import { HowItWorks } from "@/components/ui/disclosure";
+import { FeaturedIcon } from "@/components/ui/featured-icon";
+import { Label } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { MetricValue } from "@/components/ui/metric";
+import { Modal, ModalClose, ModalContent, ModalFooter } from "@/components/ui/modal";
+import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
+import { ProgressBar } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { StatusBadge, type Status } from "@/components/ui/status-badge";
 import { isExceptionTone, PIPELINE_STEP_STATUS, StatusIcon, StatusPill } from "@/components/ui/status-pill";
+import { toast } from "@/components/ui/toast";
 import { useCopy } from "@/lib/copy";
 import { blocker } from "@/lib/blockers";
-import { buildOverviewViewModel, journeyLockReason } from "@/lib/overview-view-model";
+import { journeyLockReason } from "@/lib/overview-view-model";
 import {
   buildJourneyConnectorPath,
   deriveJourneyConnectorState,
@@ -30,10 +36,12 @@ import {
   journeyGroupPosition,
   journeyNodePosition,
   journeyNodeVisualForState,
+  type JourneyGroupKey,
   type JourneyStepKey,
 } from "@/lib/overview-journey";
 import type { PipelineStepDefinition, PipelineStepKey, PipelineStepState } from "@/lib/rag-ui-types";
 import { cn } from "@/lib/utils";
+import { buildWorkspaceOverview, countDoneJourneyStages } from "@/lib/workspace-overview";
 
 const pipelineSteps = [
   { key: "document", icon: "document" },
@@ -74,8 +82,17 @@ const journeyIcons: Record<JourneyStepKey, SemanticIconName> = {
   evaluate: "evaluate",
 };
 
-const selectorTriggerClass = "min-w-0 max-w-full overflow-hidden [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]]:truncate [&_[data-slot=select-value]]:whitespace-nowrap";
-const selectorItemClass = "h-auto min-h-8 whitespace-normal [overflow-wrap:anywhere]";
+/** The compact journey keeps the desktop grouping: Prepare · Test · Measure. */
+const compactGroups: readonly { key: JourneyGroupKey; steps: readonly JourneyPipelineStep[] }[] = [
+  { key: "prepare", steps: pipelineSteps.slice(0, 4) },
+  { key: "test", steps: pipelineSteps.slice(4, 8) },
+  { key: "measure", steps: pipelineSteps.slice(8) },
+];
+
+/** Exceptional continuation states get a visible status chip next to the progress readout. */
+const exceptionStatus: Partial<Record<PipelineStepState, Status>> = { Processing: "processing", Error: "error", Stale: "stale" };
+
+const menuItemClass = "flex h-9 w-full items-center rounded-md px-2.5 text-left text-sm font-medium text-secondary transition-colors duration-100 hover:bg-primary_hover hover:text-primary disabled:cursor-not-allowed disabled:text-disabled disabled:hover:bg-transparent";
 
 function JourneyGlyph({ stepKey, state }: { stepKey: JourneyStepKey; state: PipelineStepState }) {
   const visual = journeyNodeVisualForState(state);
@@ -156,14 +173,14 @@ function JourneyNode({
       >
         <JourneyGlyph state={state} stepKey={step.key} />
         {completed ? (
-          <span aria-hidden="true" className="absolute -right-1 -top-1 grid size-3.5 place-items-center rounded-full bg-muted-foreground text-card" data-testid={`overview-journey-check-${step.key}`}>
+          <span aria-hidden="true" className="absolute -right-1 -top-1 grid size-3.5 place-items-center rounded-full bg-fg-tertiary text-bg-primary" data-testid={`overview-journey-check-${step.key}`}>
             <AppIcon name="check" className="size-2.5" strokeWidth={2.5} />
           </span>
         ) : null}
       </span>
       <span
         className={cn(
-          "absolute left-1/2 w-28 -translate-x-1/2 text-center text-xs font-medium leading-4 text-foreground",
+          "absolute left-1/2 w-28 -translate-x-1/2 text-center text-xs font-medium leading-4 text-primary",
           position.label === "above" ? "-top-6" : "top-12",
         )}
       >
@@ -172,7 +189,7 @@ function JourneyNode({
     </>
   );
 
-  const className = cn("absolute z-10 rounded-md", reason ? "cursor-help" : "hover:ring-2 hover:ring-input");
+  const className = cn("absolute z-10 rounded-md", reason ? "cursor-help" : "hover:ring-2 hover:ring-control");
   const style = { left: position.left, top: position.top };
   // A locked node stays focusable so its reason is reachable by pointer, touch and keyboard (Q9).
   return reason ? (
@@ -212,33 +229,111 @@ function JourneyStatus({ state }: { state: PipelineStepState }) {
     : <StatusIcon icon={presentation.icon} label={label} tone={presentation.tone} />;
 }
 
-function JourneyCompact({ labels, reasonFor, stateFor }: { labels: Record<PipelineStepKey, string>; reasonFor: (step: PipelineStepKey) => string | null; stateFor: (step: PipelineStepKey) => PipelineStepState }) {
+/**
+ * Below 1440px the wave becomes three vertical timelines (Prepare · Test · Measure) using the
+ * same node and connector colours, so the reading order and the "next step" stay identical.
+ * Locked steps share their unlock reason, so it is shown once, on the first step it applies to;
+ * later steps with the same reason point at that line for assistive technology.
+ */
+function JourneyCompact({ labels, groupLabels, reasonFor, stateFor }: { labels: Record<PipelineStepKey, string>; groupLabels: Record<JourneyGroupKey, string>; reasonFor: (step: PipelineStepKey) => string | null; stateFor: (step: PipelineStepKey) => PipelineStepState }) {
+  const reasonOwner = new Map<string, JourneyStepKey>();
+  for (const step of pipelineSteps) {
+    const reason = reasonFor(step.key);
+    if (reason && !reasonOwner.has(reason)) reasonOwner.set(reason, step.key);
+  }
   return (
-    <ol className="grid gap-2" data-testid="overview-journey-compact">
-      {pipelineSteps.map((step) => {
-        const reason = reasonFor(step.key);
-        const state = stateFor(step.key);
-        const content = (
-          <>
-            <span className="grid size-9 shrink-0 place-items-center rounded-md border border-border bg-card">
-              <JourneyGlyph state={state} stepKey={step.key} />
-            </span>
-            <span className="min-w-0 flex-1 text-left">
-              <span className="block truncate text-sm font-medium text-foreground">{labels[step.key]}</span>
-              {reason ? <span className="block text-xs text-muted-foreground" data-testid={`overview-compact-journey-reason-${step.key}`}>{reason}</span> : null}
-            </span>
-            <JourneyStatus state={state} />
-          </>
-        );
-        return (
-          <li key={step.key}>
-            {reason
-              ? <div aria-disabled="true" className="flex min-w-0 items-center gap-3 rounded-md border border-border bg-card px-3 py-2.5" data-testid={`overview-compact-journey-node-${step.key}`}>{content}</div>
-              : <Link className="flex min-w-0 items-center gap-3 rounded-md border border-border bg-card px-3 py-2.5 hover:bg-surface-subtle" data-testid={`overview-compact-journey-node-${step.key}`} href={stageHref[step.key]}>{content}</Link>}
-          </li>
-        );
-      })}
-    </ol>
+    <div className="grid gap-x-6 gap-y-5 md:grid-cols-3" data-testid="overview-journey-compact">
+      {compactGroups.map((group) => (
+        <section aria-label={groupLabels[group.key]} className="min-w-0" key={group.key}>
+          <p className="mb-1 px-2 text-xs font-medium text-tertiary">{groupLabels[group.key]}</p>
+          <ol className="flex flex-col">
+            {group.steps.map((step, index) => {
+              const reason = reasonFor(step.key);
+              const reasonStep = reason ? reasonOwner.get(reason) : undefined;
+              const showsReason = reasonStep === step.key;
+              const state = stateFor(step.key);
+              const visual = journeyNodeVisualForState(state);
+              const next = group.steps[index + 1];
+              const line = next ? journeyConnectorVisualForState(deriveJourneyConnectorState(state, stateFor(next.key))) : null;
+              const content = (
+                <>
+                  <span
+                    className="relative z-10 grid size-9 shrink-0 place-items-center rounded-lg border"
+                    style={{ backgroundColor: visual.backgroundColor, borderColor: visual.borderColor, opacity: visual.opacity }}
+                  >
+                    <JourneyGlyph state={state} stepKey={step.key} />
+                  </span>
+                  <span className="min-w-0 flex-1 text-left">
+                    <span className={cn("block truncate text-sm font-medium", reason ? "text-tertiary" : "text-primary")}>{labels[step.key]}</span>
+                    {showsReason ? <span className="block text-xs text-tertiary" data-testid={`overview-compact-journey-reason-${step.key}`} id={`overview-compact-journey-reason-${step.key}`}>{reason}</span> : null}
+                  </span>
+                  <JourneyStatus state={state} />
+                </>
+              );
+              const rowClass = "relative flex min-w-0 items-center gap-3 rounded-lg px-2 py-1.5";
+              return (
+                <li className="relative" key={step.key}>
+                  {line ? (
+                    <span
+                      aria-hidden="true"
+                      className="absolute top-10.5 -bottom-1.5 left-6.5 w-0.5 -translate-x-1/2 rounded-full"
+                      style={{ backgroundColor: line.color, opacity: line.opacity }}
+                    />
+                  ) : null}
+                  {reason
+                    ? <div aria-describedby={reasonStep && !showsReason ? `overview-compact-journey-reason-${reasonStep}` : undefined} aria-disabled="true" className={rowClass} data-testid={`overview-compact-journey-node-${step.key}`}>{content}</div>
+                    : <Link className={cn(rowClass, "transition-colors duration-150 hover:bg-primary_hover")} data-testid={`overview-compact-journey-node-${step.key}`} href={stageHref[step.key]}>{content}</Link>}
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/** Decorative first-use illustration: a PDF becomes chunks, chunks become a sourced answer. */
+function FirstUseIllustration() {
+  const bar = "block h-1.5 rounded-full bg-quaternary";
+  return (
+    <div aria-hidden="true" className="relative hidden shrink-0 items-center gap-4 lg:flex">
+      <div className="w-28 rounded-xl bg-primary p-3 shadow-sm ring-1 ring-secondary transition-transform duration-300 ease-out group-hover/first-use:-translate-y-1">
+        <div className="flex items-center gap-1.5">
+          <AppIcon className="size-4 text-fg-quaternary" name="document" />
+          <span className={cn(bar, "w-10 bg-tertiary")} />
+        </div>
+        <div className="mt-3 flex flex-col gap-1.5">
+          <span className={cn(bar, "w-full")} />
+          <span className={cn(bar, "w-4/5")} />
+          <span className={cn(bar, "w-full")} />
+          <span className={cn(bar, "w-2/3")} />
+          <span className={cn(bar, "w-5/6")} />
+          <span className={cn(bar, "w-1/2")} />
+        </div>
+      </div>
+      <AppIcon className="size-4 text-fg-quaternary" name="arrowRight" />
+      <div className="flex flex-col gap-2">
+        {["w-full", "w-4/5", "w-2/3"].map((width, index) => (
+          <div className={cn("flex w-24 flex-col gap-1 rounded-lg bg-secondary px-2.5 py-2 ring-1 ring-secondary transition-transform duration-300 ease-out", index === 1 && "translate-x-2 group-hover/first-use:translate-x-3")} key={width}>
+            <span className={cn(bar, "h-1", width)} />
+            <span className={cn(bar, "h-1 w-1/2")} />
+          </div>
+        ))}
+      </div>
+      <AppIcon className="size-4 text-fg-quaternary" name="arrowRight" />
+      <div className="w-36 rounded-xl bg-primary p-3 shadow-sm ring-1 ring-secondary transition-transform duration-300 ease-out group-hover/first-use:-translate-y-1">
+        <AppIcon className="size-4 text-fg-tertiary" name="generate" />
+        <div className="mt-2.5 flex flex-col gap-1.5">
+          <span className={cn(bar, "w-full")} />
+          <span className={cn(bar, "w-3/4")} />
+        </div>
+        <div className="mt-3 flex gap-1">
+          <span className="rounded-sm bg-tertiary px-1.5 text-xs font-semibold text-tertiary">S1</span>
+          <span className="rounded-sm bg-tertiary px-1.5 text-xs font-semibold text-tertiary">S2</span>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -246,18 +341,13 @@ export function OverviewScreen() {
   const { preferences } = usePreferences();
   const copy = useCopy();
   const labels = copy.overview.workspace;
+  const pipelineContext = useDocumentPipeline();
   const {
     documents,
     activeDocumentId,
     activeDocument,
     persistenceStatus,
     persistenceError,
-    workspaceStatus,
-    selectedParseRunId,
-    selectedChunkRunId,
-    selectedEmbeddingRunId,
-    chunkStatus,
-    embeddingStatus,
     pipelines,
     activePipelineId,
     activePipeline,
@@ -266,7 +356,7 @@ export function OverviewScreen() {
     createPipeline,
     renamePipeline,
     deletePipeline,
-  } = useDocumentPipeline();
+  } = pipelineContext;
   const [editing, setEditing] = useState<"create" | "rename" | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [pipelineName, setPipelineName] = useState("");
@@ -275,41 +365,35 @@ export function OverviewScreen() {
   const [revealedStep, setRevealedStep] = useState<JourneyStepKey | null>(null);
   const managementMenuRef = useRef<HTMLDetailsElement>(null);
 
-  const parseSummary = activeDocument?.parseRuns.find((run) => run.id === selectedParseRunId);
-  const chunkSummary = activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId);
-  const embeddingSummary = activeDocument?.embeddingRuns.find((run) => run.id === selectedEmbeddingRunId);
-  const matchingExperiment = activeDocument?.experiments.find(
-    (run) => run.isCompatible && run.chunkRunId === selectedChunkRunId && (run.embeddingRunId === null || run.embeddingRunId === selectedEmbeddingRunId),
-  );
-  const matchingDatasetIds = new Set(
-    activeDocument?.evaluationDatasets.filter((dataset) => dataset.parseRunId === selectedParseRunId).map((dataset) => dataset.id) ?? [],
-  );
-  const matchingEvaluation = activeDocument?.evaluationRuns.find(
-    (run) => matchingDatasetIds.has(run.datasetId) && run.chunkRunId === selectedChunkRunId && run.embeddingRunId === selectedEmbeddingRunId,
-  );
-  const overviewModel = buildOverviewViewModel({
-    activeDocument: activeDocument ? { parseRuns: activeDocument.parseRuns } : undefined,
-    activeDocumentId,
-    chunk: chunkSummary,
-    chunkStatus,
-    embedding: embeddingSummary,
-    embeddingStatus,
-    evaluation: matchingEvaluation,
-    experiment: matchingExperiment,
-    hasEvaluationDataset: matchingDatasetIds.size > 0,
-    parse: parseSummary,
-    // While the active lineage is still loading, the continuation stays neutral.
-    persistenceStatus: workspaceStatus === "loading" && persistenceStatus === "available" ? "checking" : persistenceStatus,
-    selectedChunkRunId,
-    selectedEmbeddingRunId,
-    selectedParseRunId,
-  });
+  const overviewModel = buildWorkspaceOverview(pipelineContext);
   const pipelineState = overviewModel.pipelineState;
   const isFirstUse = persistenceStatus === "available" && documents.length === 0;
   const continuation = overviewModel.continuation;
-  const continuationStatus = PIPELINE_STEP_STATUS[continuation.state];
+  const continuationException = exceptionStatus[continuation.state];
+  const progress = countDoneJourneyStages(pipelineState);
+  const showProgress = persistenceStatus === "available" && continuation.kind !== "checking";
   const journeyLabels = copy.overview.journey.steps;
   const groupLabels = copy.navGroups;
+
+  // The management menu is a <details> dropdown: close it on an outside press or Escape.
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      const menu = managementMenuRef.current;
+      if (menu?.open && !menu.contains(event.target as Node)) menu.open = false;
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      const menu = managementMenuRef.current;
+      if (event.key !== "Escape" || !menu?.open) return;
+      menu.open = false;
+      menu.querySelector("summary")?.focus();
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
 
   function lockedReason(step: PipelineStepKey): string | null {
     const code = journeyLockReason(step, pipelineState);
@@ -323,13 +407,15 @@ export function OverviewScreen() {
     setManagementBusy(true);
     setManagementError(null);
     try {
-      const result = editing === "create" ? await createPipeline(name) : editing === "rename" && activePipeline ? await renamePipeline(activePipeline.id, name) : null;
+      const mode = editing;
+      const result = mode === "create" ? await createPipeline(name) : mode === "rename" && activePipeline ? await renamePipeline(activePipeline.id, name) : null;
       if (!result) {
         setManagementError(labels.saveFailed);
         return;
       }
       setEditing(null);
       setPipelineName("");
+      toast.success(mode === "create" ? labels.created : labels.renamed, { description: result.name });
     } finally {
       setManagementBusy(false);
     }
@@ -337,11 +423,14 @@ export function OverviewScreen() {
 
   async function confirmPipelineDelete() {
     if (!activePipeline || managementBusy) return;
+    const name = activePipeline.name;
     setManagementBusy(true);
     setManagementError(null);
     try {
-      if (await deletePipeline(activePipeline.id)) setConfirmDelete(false);
-      else setManagementError(labels.deleteFailed);
+      if (await deletePipeline(activePipeline.id)) {
+        setConfirmDelete(false);
+        toast.success(labels.deleted, { description: name });
+      } else setManagementError(labels.deleteFailed);
     } finally {
       setManagementBusy(false);
     }
@@ -369,135 +458,157 @@ export function OverviewScreen() {
   }
 
   return (
-    <div className="min-w-0 bg-background" data-testid="overview-screen">
-      <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4" data-testid="overview-main">
+    <div className="min-w-0" data-testid="overview-screen">
+      <div className="mx-auto w-full max-w-container p-10 max-md:p-4" data-testid="overview-main">
         <PageHeader
           data-testid="overview-page-header"
-          description={isFirstUse ? copy.overview.firstUseDescription : copy.overview.description}
           help={preferences.showLearningHints ? <div data-testid="overview-learning-note"><HowItWorks>{copy.overview.howItWorks}</HowItWorks></div> : undefined}
           title={copy.overview.title}
         />
 
-        {isFirstUse ? (
-          <section className="mt-6 rounded-lg border border-border bg-card p-5 sm:p-6" data-testid="overview-first-use">
-            <h2 className="text-lg font-semibold text-foreground">{copy.overview.firstUse.title}</h2>
-            <ol className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground" data-testid="overview-first-use-steps">
-              {copy.overview.firstUse.steps.map((step, index) => (
-                <li className="flex items-center gap-2" key={step}>
-                  {index > 0 ? <AppIcon aria-hidden="true" name="arrowRight" className="size-3.5 text-subtle-foreground" /> : null}
-                  <span className="tabular-nums text-subtle-foreground">{index + 1}</span>
-                  <span className="text-foreground">{step}</span>
-                </li>
-              ))}
-            </ol>
-            <div className="mt-5 flex flex-wrap items-center gap-3">
-              <SampleDocumentButton primary />
-              <Button asChild variant="outline"><Link href="/documents">{copy.overview.firstUse.addOwnPdf}<AppIcon className="size-4" name="arrowRight" /></Link></Button>
-            </div>
-            <p className="mt-3 text-xs text-muted-foreground" data-testid="overview-privacy-note">{copy.overview.firstUse.privacy}</p>
-          </section>
-        ) : (
-          <section className="mt-6 rounded-lg border border-border bg-card p-4" data-testid="workspace-control-plane">
-            <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-              <div className="min-w-0">
-                <label className="mb-1.5 block text-xs font-medium text-foreground" htmlFor="overview-document">{labels.document}</label>
-                <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
-                  <SelectTrigger aria-label={labels.document} className={selectorTriggerClass} data-testid="overview-document-selector" id="overview-document" title={activeDocument?.fileName ?? labels.chooseDocument}><SelectValue placeholder={labels.chooseDocument} /></SelectTrigger>
-                  <SelectContent>{documents.map((document) => <SelectItem className={selectorItemClass} key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-              <div className="min-w-0">
-                <label className="mb-1.5 block text-xs font-medium text-foreground" htmlFor="overview-pipeline">{labels.pipeline}</label>
-                <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value)} value={activePipelineId ?? ""}>
-                  <SelectTrigger aria-label={labels.pipeline} className={selectorTriggerClass} data-testid="overview-pipeline-selector" id="overview-pipeline" title={activePipeline?.name ?? labels.choosePipeline}>
-                    {/* The trigger shows only the name; the "default" marker lives in the list. */}
-                    <SelectValue placeholder={labels.choosePipeline}>{activePipeline ? activePipeline.name : undefined}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>{pipelines.map((pipeline) => (
-                    <SelectItem className={selectorItemClass} key={pipeline.id} value={pipeline.id}>
-                      {pipeline.name}{pipeline.isDefault ? <span className="ml-1.5 text-xs font-normal text-subtle-foreground">{copy.common.defaultPipeline}</span> : null}
-                    </SelectItem>
-                  ))}</SelectContent>
-                </Select>
-              </div>
-              <TransitionDetails className="relative self-end" data-testid="pipeline-management" ref={managementMenuRef} variant="dropdown">
-                <summary className="flex h-9 cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-border bg-card px-3 text-sm font-medium text-foreground transition-colors hover:bg-secondary [&::-webkit-details-marker]:hidden">
-                  <span>{labels.managePipeline}</span>
-                  <AppIcon name="chevronDown" className="size-4 text-subtle-foreground" />
-                </summary>
-                <div className="absolute right-0 z-20 mt-2 flex w-[min(28rem,calc(100vw-4rem))] flex-wrap gap-2 rounded-md border border-border bg-card p-3 shadow-lg">
-                  <Button disabled={!activeDocumentId || persistenceStatus !== "available" || managementBusy} onClick={beginCreatePipeline} size="sm" variant="secondary">{labels.newPipeline}</Button>
-                  {activePipeline ? <Button onClick={() => void selectPipeline(null)} size="sm" variant="ghost" data-testid="clear-pipeline-selection">{labels.clearPipeline}</Button> : null}
-                  <Button disabled={!activePipeline || managementBusy} onClick={beginRenamePipeline} size="sm" variant="outline">{labels.rename}</Button>
-                  <Button disabled={!activePipeline || managementBusy} onClick={() => { setEditing(null); setManagementError(null); setConfirmDelete(true); closeManagementMenu(); }} size="sm" variant="ghost">{copy.common.delete}</Button>
-                </div>
-              </TransitionDetails>
-            </div>
-
-            <div className="mt-3.5 flex min-w-0 flex-wrap items-center justify-end gap-x-4 gap-y-2 border-t border-border pt-3" data-testid="continue-surface">
-              {isExceptionTone(continuationStatus.tone) ? <StatusPill className="mr-auto" tone={continuationStatus.tone}>{copy.status[continuation.state]}</StatusPill> : null}
-              {continuation.kind === "checking" ? (
-                <Button className="min-w-0 max-sm:w-full" data-testid="overview-continue-action" disabled>{copy.overview.continuation.checking}</Button>
-              ) : (
-                <Button asChild className="min-w-0 max-sm:w-full" data-testid="overview-continue-action">
-                  <Link href={continuation.href}>{copy.overview.continuation[continuation.kind]}<AppIcon name="arrowRight" className="size-4" /></Link>
-                </Button>
-              )}
-            </div>
-
-            {editing ? (
-              <TransitionPanel className="mt-4 flex flex-wrap items-end gap-2 border-t border-border pt-4" data-testid="pipeline-name-editor">
-                <label className="sr-only" htmlFor="overview-pipeline-name">{labels.namePlaceholder}</label>
-                <Input autoFocus className="max-w-sm" id="overview-pipeline-name" maxLength={100} onChange={(event) => setPipelineName(event.target.value)} placeholder={labels.namePlaceholder} value={pipelineName} />
-                <Button disabled={!pipelineName.trim() || managementBusy} onClick={() => void savePipelineName()} size="sm">{managementBusy ? copy.common.saving : copy.common.save}</Button>
-                <Button disabled={managementBusy} onClick={() => { setEditing(null); setManagementError(null); }} size="sm" variant="ghost">{copy.common.cancel}</Button>
-              </TransitionPanel>
-            ) : null}
-
-            <DialogPrimitive.Root onOpenChange={(open) => { if (!open && !managementBusy) { setConfirmDelete(false); setManagementError(null); } }} open={confirmDelete && Boolean(activePipeline)}>
-              {activePipeline ? <DialogPrimitive.Portal>
-                <DialogPrimitive.Overlay className="steplab-overlay fixed inset-0 z-50 bg-overlay/35 dark:bg-overlay/65" />
-                <TransitionDialogContent className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 shadow-2xl focus:outline-none sm:p-6" data-testid="delete-pipeline-dialog">
-                  <DialogPrimitive.Title className="text-base font-semibold text-foreground">{labels.deleteTitle}</DialogPrimitive.Title>
-                  <DialogPrimitive.Description className="mt-2 text-sm leading-6 text-muted-foreground"><span className="font-medium text-foreground [overflow-wrap:anywhere]">{activePipeline.name}</span> — {labels.deleteDescription}</DialogPrimitive.Description>
-                  {managementError ? <p className="mt-3 text-sm text-destructive" role="alert">{managementError}</p> : null}
-                  <div className="mt-5 flex justify-end gap-2">
-                    <DialogPrimitive.Close asChild><Button disabled={managementBusy} size="sm" variant="outline">{copy.common.cancel}</Button></DialogPrimitive.Close>
-                    <Button disabled={managementBusy} onClick={() => void confirmPipelineDelete()} size="sm" variant="destructive">{managementBusy ? copy.common.deleting : copy.common.delete}</Button>
+        <div className="mt-8 flex flex-col gap-6">
+          {isFirstUse ? (
+            <Panel as="section" className="group/first-use relative overflow-hidden" data-testid="overview-first-use" padding="none">
+              <div className="flex items-center justify-between gap-10 p-6 sm:p-8">
+                <div className="min-w-0 max-w-xl">
+                  <FeaturedIcon icon="cloudUpload" size="lg" />
+                  <h2 className="mt-5 text-xl font-semibold text-primary">{copy.overview.firstUse.title}</h2>
+                  <div className="mt-6 flex flex-wrap items-center gap-3">
+                    <SampleDocumentButton primary size="lg" />
+                    <Button asChild size="lg" variant="secondary">
+                      <Link href="/documents">{copy.overview.firstUse.addOwnPdf}<AppIcon className="size-4" name="arrowRight" /></Link>
+                    </Button>
                   </div>
-                </TransitionDialogContent>
-              </DialogPrimitive.Portal> : null}
-            </DialogPrimitive.Root>
-            {editing && managementError ? <p className="mt-2 text-sm text-destructive" role="alert">{managementError}</p> : null}
+                  <p className="mt-5 flex items-start gap-1.5 text-xs text-tertiary" data-testid="overview-privacy-note">
+                    <AppIcon aria-hidden="true" className="mt-px size-3.5 shrink-0 text-fg-quaternary" name="lock" />
+                    {copy.overview.firstUse.privacy}
+                  </p>
+                </div>
+                <FirstUseIllustration />
+              </div>
+            </Panel>
+          ) : (
+            <Panel as="section" data-testid="workspace-control-plane" padding="none">
+              <div className="flex flex-wrap items-end gap-3 p-5">
+                <div className="flex min-w-0 flex-1 basis-64 flex-col gap-1.5">
+                  <Label htmlFor="overview-document">{labels.document}</Label>
+                  <Select disabled={persistenceStatus !== "available" || documents.length === 0} onValueChange={(value) => void selectPersistedDocument(value)} value={activeDocumentId ?? ""}>
+                    <SelectTrigger aria-label={labels.document} className="max-w-full" data-testid="overview-document-selector" id="overview-document" size="lg" title={activeDocument?.fileName ?? labels.chooseDocument}><SelectValue placeholder={labels.chooseDocument} /></SelectTrigger>
+                    <SelectContent>{documents.map((document) => <SelectItem className="wrap-anywhere" key={document.id} value={document.id}>{document.fileName}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="flex min-w-0 flex-1 basis-64 flex-col gap-1.5">
+                  <Label htmlFor="overview-pipeline">{labels.pipeline}</Label>
+                  <Select disabled={!activeDocumentId || pipelines.length === 0} onValueChange={(value) => void selectPipeline(value)} value={activePipelineId ?? ""}>
+                    <SelectTrigger aria-label={labels.pipeline} className="max-w-full" data-testid="overview-pipeline-selector" id="overview-pipeline" size="lg" title={activePipeline?.name ?? labels.choosePipeline}>
+                      {/* The trigger shows only the name; the "default" marker lives in the list. */}
+                      <SelectValue placeholder={labels.choosePipeline}>{activePipeline ? activePipeline.name : undefined}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>{pipelines.map((pipeline) => (
+                      <SelectItem className="wrap-anywhere" key={pipeline.id} value={pipeline.id}>
+                        {pipeline.name}{pipeline.isDefault ? <span className="ml-1.5 text-xs font-normal text-quaternary">{copy.common.defaultPipeline}</span> : null}
+                      </SelectItem>
+                    ))}</SelectContent>
+                  </Select>
+                </div>
+                <TransitionDetails className="relative max-sm:w-full" data-testid="pipeline-management" ref={managementMenuRef} variant="dropdown">
+                  <summary className={buttonStyles({ variant: "secondary", size: "lg", className: "w-full cursor-pointer list-none justify-between gap-2 [&::-webkit-details-marker]:hidden" })}>
+                    <span>{labels.managePipeline}</span>
+                    <AppIcon name="chevronDown" className="size-4 text-fg-quaternary" />
+                  </summary>
+                  <div className="absolute right-0 z-20 mt-2 flex w-60 flex-col rounded-xl bg-primary_alt p-1.5 shadow-lg ring-1 ring-secondary_alt">
+                    <button className={menuItemClass} disabled={!activeDocumentId || persistenceStatus !== "available" || managementBusy} onClick={beginCreatePipeline} type="button">{labels.newPipeline}</button>
+                    <button className={menuItemClass} disabled={!activePipeline || managementBusy} onClick={beginRenamePipeline} type="button">{labels.rename}</button>
+                    {activePipeline ? <button className={menuItemClass} data-testid="clear-pipeline-selection" onClick={() => { closeManagementMenu(); void selectPipeline(null); }} type="button">{labels.clearPipeline}</button> : null}
+                    <div aria-hidden="true" className="-mx-1.5 my-1.5 h-px bg-border-secondary" />
+                    <button className={cn(menuItemClass, "text-error-primary hover:bg-error-primary hover:text-error-primary_hover")} disabled={!activePipeline || managementBusy} onClick={() => { setEditing(null); setManagementError(null); setConfirmDelete(true); closeManagementMenu(); }} type="button">{copy.common.delete}</button>
+                  </div>
+                </TransitionDetails>
+              </div>
 
-            {activeDocumentId && !activePipeline ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{labels.noActivePipeline}</p> : null}
-            {!activeDocumentId && documents.length > 0 ? <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{labels.selectDocumentForPipeline}</p> : null}
-            {persistenceStatus === "unavailable" ? <div className="mt-4 space-y-2 border-t border-border pt-3"><p className="text-xs leading-5 text-destructive">{labels.unavailable}</p><PipelineErrorMessage message={persistenceError?.message} /></div> : null}
-          </section>
-        )}
+              {persistenceStatus === "unavailable" ? (
+                <div className="px-5 pb-5">
+                  <Notice role="alert" title={labels.unavailable} tone="error">{persistenceError?.message}</Notice>
+                </div>
+              ) : null}
 
-        <section className="mt-6 rounded-lg border border-border bg-card px-5 pb-4 pt-5" data-testid="overview-pipeline">
-          <h2 className="m-0 text-base font-semibold text-foreground">{copy.overview.journey.title}</h2>
-          <div className="relative mt-2 w-full overflow-hidden" data-testid="overview-journey">
-            {/* Node labels and check badges sit outside their 40px node boxes by design, inside this canvas. */}
-            <div className="relative hidden h-54 w-full pt-3 min-[1440px]:block" data-overflow-intentional="" data-testid="overview-journey-desktop">
-              <div className="relative h-50 w-full">
-                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="overview-group-prepare" style={journeyGroupPosition("prepare")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.prepare}</span></div>
-                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="overview-group-test" style={journeyGroupPosition("test")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.test}</span></div>
-                <div className="absolute top-1 h-48 rounded-lg border border-border-subtle bg-technical" data-testid="overview-group-measure" style={journeyGroupPosition("measure")}><span className="absolute left-3.5 top-3 text-xs font-medium text-muted-foreground">{groupLabels.measure}</span></div>
-                <JourneyConnectors stateFor={(step) => pipelineState[step]} />
-                {pipelineSteps.map((step) => <JourneyNode href={stageHref[step.key]} key={step.key} labels={journeyLabels} onReveal={setRevealedStep} reason={lockedReason(step.key)} state={pipelineState[step.key]} step={step} />)}
+              {editing ? (
+                <TransitionPanel className="border-t border-secondary px-5 py-4" data-testid="pipeline-name-editor">
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="flex min-w-0 flex-1 basis-60 flex-col gap-1.5 sm:max-w-sm">
+                      <Label htmlFor="overview-pipeline-name">{labels.namePlaceholder}</Label>
+                      <Input aria-invalid={managementError ? true : undefined} autoFocus id="overview-pipeline-name" maxLength={100} onChange={(event) => setPipelineName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void savePipelineName(); }} placeholder={labels.namePlaceholder} value={pipelineName} />
+                    </div>
+                    <Button disabled={!pipelineName.trim() || managementBusy} isLoading={managementBusy} onClick={() => void savePipelineName()}>{copy.common.save}</Button>
+                    <Button disabled={managementBusy} onClick={() => { setEditing(null); setManagementError(null); }} variant="tertiary">{copy.common.cancel}</Button>
+                  </div>
+                  {managementError ? <p className="mt-2 text-sm text-error-primary" role="alert">{managementError}</p> : null}
+                </TransitionPanel>
+              ) : null}
+
+              <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-6 gap-y-3 rounded-b-xl border-t border-secondary bg-secondary px-5 py-3.5 max-sm:flex-col max-sm:items-stretch" data-testid="continue-surface">
+                {/* While the workspace loads or the service is down there is no lineage to measure. */}
+                {showProgress ? <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
+                  {continuationException ? <StatusBadge appearance="pill" status={continuationException}>{copy.status[continuation.state]}</StatusBadge> : null}
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-tertiary">{copy.overview.journey.progress}</span>
+                    <span className="inline-flex items-baseline gap-0.5 text-sm font-semibold text-primary tabular-nums"><MetricValue value={progress.done} /><span className="font-normal text-quaternary">/</span><span className="font-normal text-quaternary">{progress.total}</span></span>
+                    <ProgressBar className="w-24" label={copy.overview.journey.progress} max={progress.total} tone="gray" value={progress.done} />
+                  </div>
+                </div> : <span aria-hidden="true" />}
+                {continuation.kind === "checking" ? (
+                  <Button className="min-w-0" data-testid="overview-continue-action" disabled size="lg">{copy.overview.continuation.checking}</Button>
+                ) : (
+                  <Button asChild className="min-w-0" data-testid="overview-continue-action" size="lg">
+                    <Link href={continuation.href}>{copy.overview.continuation[continuation.kind]}<AppIcon name="arrowRight" className="size-4" /></Link>
+                  </Button>
+                )}
+              </div>
+
+              <Modal onOpenChange={(open) => { if (!open && !managementBusy) { setConfirmDelete(false); setManagementError(null); } }} open={confirmDelete && Boolean(activePipeline)}>
+                {activePipeline ? (
+                  <ModalContent
+                    data-testid="delete-pipeline-dialog"
+                    description={<><span className="font-medium text-primary wrap-anywhere">{activePipeline.name}</span> — {labels.deleteDescription}</>}
+                    icon="trash"
+                    iconColor="error"
+                    size="sm"
+                    title={labels.deleteTitle}
+                  >
+                    {managementError ? <p className="px-6 pt-4 text-sm text-error-primary" role="alert">{managementError}</p> : null}
+                    <ModalFooter>
+                      <ModalClose asChild><Button disabled={managementBusy} size="lg" variant="secondary">{copy.common.cancel}</Button></ModalClose>
+                      <Button disabled={managementBusy} isLoading={managementBusy} onClick={() => void confirmPipelineDelete()} size="lg" variant="destructive">{copy.common.delete}</Button>
+                    </ModalFooter>
+                  </ModalContent>
+                ) : null}
+              </Modal>
+            </Panel>
+          )}
+
+          <Panel as="section" className="pb-4" data-testid="overview-pipeline">
+            <h2 className="text-md font-semibold text-primary">{copy.overview.journey.title}</h2>
+            <div className="relative mt-2 w-full overflow-hidden" data-testid="overview-journey">
+              {/* Node labels and check badges sit outside their 40px node boxes by design, inside this canvas. */}
+              <div className="relative hidden h-54 w-full pt-3 min-[1440px]:block" data-overflow-intentional="" data-testid="overview-journey-desktop">
+                <div className="relative h-50 w-full">
+                  <div className="absolute top-1 h-48 rounded-lg border border-tertiary bg-secondary" data-testid="overview-group-prepare" style={journeyGroupPosition("prepare")}><span className="absolute left-3.5 top-3 text-xs font-medium text-tertiary">{groupLabels.prepare}</span></div>
+                  <div className="absolute top-1 h-48 rounded-lg border border-tertiary bg-secondary" data-testid="overview-group-test" style={journeyGroupPosition("test")}><span className="absolute left-3.5 top-3 text-xs font-medium text-tertiary">{groupLabels.test}</span></div>
+                  <div className="absolute top-1 h-48 rounded-lg border border-tertiary bg-secondary" data-testid="overview-group-measure" style={journeyGroupPosition("measure")}><span className="absolute left-3.5 top-3 text-xs font-medium text-tertiary">{groupLabels.measure}</span></div>
+                  <JourneyConnectors stateFor={(step) => pipelineState[step]} />
+                  {pipelineSteps.map((step) => <JourneyNode href={stageHref[step.key]} key={step.key} labels={journeyLabels} onReveal={setRevealedStep} reason={lockedReason(step.key)} state={pipelineState[step.key]} step={step} />)}
+                </div>
+              </div>
+              <div className="pt-2 min-[1440px]:hidden">
+                <JourneyCompact groupLabels={groupLabels} labels={journeyLabels} reasonFor={lockedReason} stateFor={(step) => pipelineState[step]} />
               </div>
             </div>
-            <div className="min-[1440px]:hidden">
-              <JourneyCompact labels={journeyLabels} reasonFor={lockedReason} stateFor={(step) => pipelineState[step]} />
-            </div>
-          </div>
-          {/* Visible reason for the hovered/focused/tapped locked desktop node (Q9). */}
-          <p aria-live="polite" className="mt-1 hidden min-h-5 text-xs text-muted-foreground min-[1440px]:block" data-testid="overview-journey-reason" id="overview-journey-reason">
-            {revealedReason ? <><AppIcon aria-hidden="true" name="lock" className="mr-1.5 inline size-3.5 align-[-2px]" />{journeyLabels[revealedStep!]}: {revealedReason}</> : null}
-          </p>
-        </section>
+            {/* Visible reason for the hovered/focused/tapped locked desktop node (Q9). */}
+            <p aria-live="polite" className="mt-1 hidden min-h-5 text-xs text-tertiary min-[1440px]:block" data-testid="overview-journey-reason" id="overview-journey-reason">
+              {revealedReason ? <><AppIcon aria-hidden="true" name="lock" className="mr-1.5 inline size-3.5 align-[-2px]" />{journeyLabels[revealedStep!]}: {revealedReason}</> : null}
+            </p>
+          </Panel>
+        </div>
       </div>
     </div>
   );

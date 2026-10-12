@@ -70,7 +70,8 @@ test("@critical Dark shell ikonları tema rengini ve Iconoir SVG’yi kullanır"
   const documentsLink = page.getByRole("link", { name: "Documents", exact: true });
   const appIcon = documentsLink.locator("svg[aria-hidden='true']");
   await expect(appIcon).toHaveCount(1);
-  await expect(appIcon).toHaveCSS("color", "rgb(176, 167, 171)");
+  // Dark `fg-quaternary` (gray-500) from app/theme.css.
+  await expect(appIcon).toHaveCSS("color", "rgb(119, 110, 115)");
   await expect(documentsLink.locator("img")).toHaveCount(0);
 });
 

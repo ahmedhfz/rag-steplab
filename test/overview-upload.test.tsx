@@ -36,7 +36,6 @@ describe("Overview document ownership", () => {
     expect(screen.getByRole("link", { name: "Add your own PDF" })).toHaveAttribute("href", "/documents");
     // The privacy warning is shortened to one sentence, never removed.
     expect(screen.getByTestId("overview-privacy-note")).toHaveTextContent("The sample is fictional. Don't upload personal or confidential PDFs.");
-    expect(screen.getByTestId("overview-first-use-steps")).toHaveTextContent(/Add a PDF.*Inspect each stage.*Get a sourced answer/);
     expect(screen.queryByTestId("current-setup")).not.toBeInTheDocument();
     expect(within(screen.getByTestId("overview-journey-compact")).getByText("Context")).toBeInTheDocument();
     expect(screen.getAllByText("Retrieval").length).toBeGreaterThanOrEqual(1);

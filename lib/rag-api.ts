@@ -737,10 +737,14 @@ function normalizeChunkRun(value: unknown): ChunkRun {
 function normalizeEmbeddingRun(value: unknown): EmbeddingRun {
   const payload = requiredObject(value, "embedding run");
   const run = normalizeRun(payload);
+  const documentId = requiredString(payload.documentId, "embedding document id");
+  const chunkRunId = requiredString(payload.chunkRunId, "embedding chunk run id");
   return {
     ...run,
-    documentId: requiredString(payload.documentId, "embedding document id"),
-    chunkRunId: requiredString(payload.chunkRunId, "embedding chunk run id"),
+    // The run detail endpoint sends lineage as flat fields (no `upstream`); lineage checks read `upstream`.
+    upstream: { ...run.upstream, documentId: run.upstream.documentId ?? documentId, chunkRunId: run.upstream.chunkRunId ?? chunkRunId },
+    documentId,
+    chunkRunId,
     model: requiredString(payload.model, "embedding model"),
     dimensions: requiredNumber(payload.dimensions, "embedding dimensions"),
     embeddingFormatVersion: requiredString(payload.embeddingFormatVersion, "embedding format version"),

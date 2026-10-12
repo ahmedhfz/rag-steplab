@@ -17,12 +17,15 @@ function validationMessage(error: DocumentFileValidationError, copy: AppCopy["er
   return error === "invalidPdf" ? copy.invalidPdf : copy.fileTooLarge;
 }
 
-/** Documents owns persistence; parsing starts only from the Parse screen. */
+/**
+ * Documents owns persistence; parsing starts only from the Parse screen.
+ * The whole drop surface is one button (click = browse, drop = upload): a tall, dashed, centred area.
+ */
 export function DocumentUploadPanel() {
   const { preferences } = usePreferences();
   const copy = useCopy();
   const labels = copy.documents.upload;
-  const { addDocument } = useDocumentPipeline();
+  const { addDocument, documents } = useDocumentPipeline();
   const dropRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -30,6 +33,8 @@ export function DocumentUploadPanel() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  const hasDocuments = documents.length > 0;
+  const hasError = Boolean(validationError || submitError);
 
   async function addFile(nextFile: File | undefined) {
     if (!nextFile || isSubmitting) return;
@@ -51,17 +56,23 @@ export function DocumentUploadPanel() {
     }
   }
 
+  const title = isSubmitting
+    ? `${labels.uploading}${selectedFile ? ` ${selectedFile.name}` : ""}`
+    : dragActive ? labels.dropActive : labels.dropTitle;
+
   return (
-    <div className="relative" data-testid="document-upload-panel">
+    <div className="relative min-w-0" data-testid="document-upload-panel">
       <button
         aria-busy={isSubmitting}
-        aria-describedby={validationError || submitError ? "document-upload-feedback" : undefined}
+        aria-describedby={hasError ? "document-upload-feedback" : undefined}
         className={cn(
-          "mt-6 flex min-h-[148px] w-full flex-col items-center justify-center rounded-lg border border-dashed border-input bg-surface-subtle px-6 py-6 text-center transition-colors",
-          dragActive && "border-brand bg-accent",
-          !isSubmitting && "cursor-pointer hover:border-hover-border hover:bg-secondary",
+          "group/drop relative flex min-h-37 w-full flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-control bg-secondary_alt px-6 py-6 text-center transition-[background-color,border-color] duration-150 ease-out",
+          !isSubmitting && "cursor-pointer hover:border-control_hover hover:bg-primary_hover",
+          dragActive && "border-brand bg-brand-primary hover:border-brand hover:bg-brand-primary",
+          hasError && !dragActive && "border-error",
           isSubmitting && "cursor-wait",
         )}
+        data-dragging={dragActive || undefined}
         data-testid="pdf-drop-zone"
         ref={dropRef}
         onClick={() => { if (!isSubmitting) fileInputRef.current?.click(); }}
@@ -71,18 +82,25 @@ export function DocumentUploadPanel() {
         onDrop={(event) => { event.preventDefault(); setDragActive(false); void addFile(event.dataTransfer.files?.[0]); }}
         type="button"
       >
-        <span className="grid size-10 place-items-center rounded-lg bg-card text-brand shadow-xs">
-          <IconSwap active={isSubmitting} first={<AppIcon name="upload" className="size-5" />} second={<AppIcon name="loading" className="size-5 animate-spin" />} />
+        {/* The idle spinner rotates inside the swap, so its corners briefly exceed the 20px icon box. */}
+        <span
+          aria-hidden="true"
+          data-overflow-intentional=""
+          className={cn(
+            "relative grid size-10 shrink-0 place-items-center rounded-lg bg-primary text-fg-brand-primary shadow-xs ring-1 ring-secondary ring-inset transition-transform duration-200 ease-out",
+            dragActive && "-translate-y-0.5 scale-105",
+            !isSubmitting && !dragActive && "group-hover/drop:-translate-y-0.5",
+          )}
+        >
+          <IconSwap active={isSubmitting} first={<AppIcon name="upload" className="size-5" />} second={<AppIcon name="loading" className="size-5 animate-spin motion-reduce:animate-none" />} />
         </span>
-        <span className="mt-3 max-w-full text-base font-medium text-foreground [overflow-wrap:anywhere]">
-          {isSubmitting
-            ? `${labels.uploading}${selectedFile ? ` ${selectedFile.name}` : ""}`
-            : dragActive ? labels.dropActive : labels.dropTitle}
+        <span className="flex max-w-full min-w-0 flex-col items-center gap-1">
+          <span className="max-w-full text-sm font-semibold text-primary wrap-anywhere">{title}</span>
+          <span className="text-sm text-tertiary">
+            {labels.or} <span className="font-semibold text-brand-secondary">{labels.browse}</span> · {labels.requirements}
+          </span>
+          {selectedFile && !isSubmitting ? <span className="max-w-full truncate text-xs text-quaternary">{selectedFile.name} · {formatDocumentFileSize(selectedFile.size, preferences.locale)}</span> : null}
         </span>
-        <span className="mt-1 text-sm text-muted-foreground">
-          {labels.or} <span className="font-medium text-brand underline-offset-4">{labels.browse}</span> · {labels.requirements}
-        </span>
-        {selectedFile && !isSubmitting ? <span className="mt-3 max-w-full truncate text-xs text-muted-foreground">{selectedFile.name} · {formatDocumentFileSize(selectedFile.size, preferences.locale)}</span> : null}
       </button>
       <input
         accept="application/pdf,.pdf"
@@ -92,11 +110,15 @@ export function DocumentUploadPanel() {
         ref={fileInputRef}
         type="file"
       />
-      {validationError ? <p className="mt-3 text-sm text-destructive" id="document-upload-feedback" role="alert">{validationMessage(validationError, copy.errors)}</p> : null}
-      {submitError ? <p className="mt-3 text-sm text-destructive" id="document-upload-feedback" role="alert">{submitError} <span className="block text-xs">{labels.retry}</span></p> : null}
+      {validationError ? <p className="mt-2 text-sm text-error-primary" id="document-upload-feedback" role="alert">{validationMessage(validationError, copy.errors)}</p> : null}
+      {submitError ? <p className="mt-2 text-sm text-error-primary" id="document-upload-feedback" role="alert">{submitError} <span className="block text-xs text-tertiary">{labels.retry}</span></p> : null}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-[520px] text-xs leading-5 text-muted-foreground" data-testid="upload-privacy-note">{labels.privacy}</p>
-        <SampleDocumentButton />
+        <p className="flex max-w-xl items-start gap-1.5 text-xs text-tertiary" data-testid="upload-privacy-note">
+          <AppIcon aria-hidden="true" className="mt-px size-3.5 shrink-0 text-fg-quaternary" name="lock" />
+          {labels.privacy}
+        </p>
+        {/* While the library is empty its empty state carries the sample CTA instead. */}
+        {hasDocuments ? <SampleDocumentButton size="sm" /> : null}
       </div>
     </div>
   );

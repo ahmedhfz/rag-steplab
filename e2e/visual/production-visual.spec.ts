@@ -132,6 +132,19 @@ async function assertBelow(above: Locator, below: Locator, label: string) {
   expect(bottom.y, label).toBeGreaterThanOrEqual(top.y + top.height - 1);
 }
 
+/** Stage screens carry the document/pipeline context as a breadcrumb inside the header, above the title. */
+async function assertInlineStageContext(header: Locator, label: string) {
+  const context = header.getByTestId("pipeline-context-bar");
+  await expect(context, `${label} context sits in the header`).toBeVisible();
+  const headerRect = await rect(header);
+  const contextRect = await rect(context);
+  // A plain h1 locator: an open Select marks the rest of the page aria-hidden, so role queries miss it.
+  const titleRect = await rect(header.locator("h1"));
+  expect(contextRect.x, `${label} context starts in the header column`).toBeGreaterThanOrEqual(headerRect.x - 8);
+  expect(contextRect.x + contextRect.width, `${label} context stays in the header`).toBeLessThanOrEqual(headerRect.x + headerRect.width + 1);
+  expect(contextRect.y + contextRect.height, `${label} context above the title`).toBeLessThanOrEqual(titleRect.y + 1);
+}
+
 /** Layout width without the reserved scrollbar gutter (`scrollbar-gutter: stable` at >=768px). */
 async function contentWidth(page: Page) {
   return page.evaluate(() => Math.round(document.body.getBoundingClientRect().width));
@@ -158,7 +171,8 @@ async function assertOverviewGeometry(page: Page, theme: "light" | "dark") {
   const pipeline = page.getByTestId("overview-pipeline");
   await assertRect(pipeline, { x: 288, width: 1113, fluid: 1 }, "overview-pipeline");
   await assertBelow(workspace, pipeline, "overview-pipeline below control plane");
-  await assertRect(page.getByTestId("overview-journey"), { x: 309, width: 1071, fluid: 1, height: 216 }, "overview-journey");
+  // The panel edge is an inset ring (no border box), so the journey starts 1px earlier and is 2px wider.
+  await assertRect(page.getByTestId("overview-journey"), { x: 308, width: 1073, fluid: 1, height: 216 }, "overview-journey");
   const journey = await rect(page.getByTestId("overview-journey"));
   const canvas = page.getByTestId("overview-journey-connectors");
   await expect(canvas).toHaveAttribute("viewBox", "0 0 1054.1 200");
@@ -200,7 +214,7 @@ async function assertOverviewGeometry(page: Page, theme: "light" | "dark") {
   await expect(chunkGlyph).toHaveAttribute("data-state", "Completed");
   // Iconoir SVG'lerinde Journey state rengi currentColor/stroke üzerinden taşınır.
   // Tamamlanan aşama nötrdür (--muted-foreground); marka yalnız sıradaki adımda.
-  expect(await chunkGlyph.evaluate((element) => getComputedStyle(element).color)).toBe(theme === "dark" ? "rgb(176, 167, 171)" : "rgb(90, 83, 87)");
+  expect(await chunkGlyph.evaluate((element) => getComputedStyle(element).color)).toBe(theme === "dark" ? "rgb(146, 137, 142)" : "rgb(96, 87, 92)");
   const evaluation = nodeGeometry.at(-1);
   expect(evaluation).toBeDefined();
   expect(evaluation!.x + evaluation!.width / 2).toBeGreaterThanOrEqual(measure.x);
@@ -285,40 +299,45 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     const header = page.getByTestId("parse-page-header");
     const controls = page.getByTestId("parse-workspace-controls");
     await assertRect(header, { x: 288, y: 40, width: 1113, fluid: 1 }, "parse-header");
-    await assertRect(controls, { x: 288, width: 1113, fluid: 1 }, "parse-workspace-controls");
-    await assertBelow(header, controls, "parse controls below header");
+    // Status and the Parse action live in the header's action slot, right of the title.
+    const headerRect = await rect(header);
     const controlsRect = await rect(controls);
+    expect(controlsRect.x, "parse controls sit right of the header start").toBeGreaterThan(headerRect.x);
+    expect(controlsRect.x + controlsRect.width, "parse controls stay in the header").toBeLessThanOrEqual(headerRect.x + headerRect.width + 1);
+    expect(controlsRect.y, "parse controls start inside the header").toBeGreaterThanOrEqual(headerRect.y - 1);
     const statusRect = await rect(page.getByTestId("parse-document-status"));
-    expect(statusRect.x, "parse-status starts after the context").toBeGreaterThan(controlsRect.x);
-    expect(statusRect.x + statusRect.width, "parse-status stays in the column").toBeLessThanOrEqual(controlsRect.x + controlsRect.width + 1);
-    expect(Math.abs(statusRect.y - controlsRect.y), "parse-status shares the controls row").toBeLessThanOrEqual(1);
+    expect(statusRect.x, "parse-status starts within the controls").toBeGreaterThanOrEqual(controlsRect.x - 1);
+    expect(statusRect.x + statusRect.width, "parse-status stays in the controls").toBeLessThanOrEqual(controlsRect.x + controlsRect.width + 1);
+    expect(Math.abs(statusRect.y + statusRect.height / 2 - (controlsRect.y + controlsRect.height / 2)), "parse-status shares the controls row").toBeLessThanOrEqual(1);
     await assertRect(page.getByTestId("parse-result-summary"), { x: 288, width: 1113, fluid: 1 }, "parse-result");
-    await assertBelow(controls, page.getByTestId("parse-result-summary"), "parse result below controls");
+    await assertBelow(header, page.getByTestId("parse-result-summary"), "parse result below header");
   } else if (state.group === "chunking") {
     const header = page.getByTestId("chunking-page-header");
     await assertRect(header, { x: 288, y: 40, width: 1113, fluid: 1 }, "chunking-header");
-    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 289, width: 556, height: 53 }, "chunking-context");
-    await assertBelow(header, page.getByTestId("pipeline-context-bar"), "chunking context below header");
+    await assertInlineStageContext(header, "chunking");
     await assertRect(page.getByTestId("chunking-workspace"), { x: 288, width: 1113, fluid: 1 }, "chunking-workspace");
-    await assertBelow(page.getByTestId("pipeline-context-bar"), page.getByTestId("chunking-workspace"), "chunking workspace below context");
+    await assertBelow(header, page.getByTestId("chunking-workspace"), "chunking workspace below header");
   } else if (state.group === "embeddings") {
     const header = page.getByTestId("embeddings-page-header");
     await assertRect(header, { x: 288, y: 40, width: 1113, fluid: 1 }, "embeddings-header");
-    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 289, width: 556, height: 53 }, "embeddings-context");
-    await assertBelow(header, page.getByTestId("pipeline-context-bar"), "embeddings context below header");
+    await assertInlineStageContext(header, "embeddings");
     await expect(page.getByTestId("embedding-input")).toHaveCount(0);
     const embeddingWorkspace = page.getByTestId("embeddings-workspace");
     await assertRect(embeddingWorkspace, { x: 288, width: 1113, fluid: 1 }, "embeddings-workspace");
-    await assertBelow(page.getByTestId("pipeline-context-bar"), embeddingWorkspace, "embeddings workspace below context");
+    await assertBelow(header, embeddingWorkspace, "embeddings workspace below header");
     expect((await rect(embeddingWorkspace)).height, `${state.key}-workspace-height`).toBeGreaterThan(stateKey === "embeddings-ready" ? 60 : 110);
     await expect(page.getByTestId("embedding-lineage")).toBeVisible();
-    expect((await rect(page.getByTestId("embedding-action-card"))).width).toBeLessThanOrEqual(760);
+    // The action card spans the workspace column (lineage strip + run footer), never past it.
+    expect((await rect(page.getByTestId("embedding-action-card"))).width).toBeLessThanOrEqual((await rect(embeddingWorkspace)).width + 1);
     const inputRect = await rect(page.getByTestId("embedding-primary-result"));
     const outputRect = await rect(page.getByTestId("embedding-output-result"));
-    expect(outputRect.x - inputRect.x - inputRect.width).toBeLessThan(80);
+    // Chunks (left) → model → vectors (right) across the card: output after input, on the same row.
+    expect(outputRect.x, "embedding output right of input").toBeGreaterThan(inputRect.x + inputRect.width);
+    // Same row = overlapping vertical spans; the pending output is one line while the input has two.
+    expect(outputRect.y < inputRect.y + inputRect.height && inputRect.y < outputRect.y + outputRect.height, "embedding input/output share a row").toBe(true);
   } else if (state.group === "playground") {
-    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: (await contentWidth(page)) - 248, height: 53 }, "playground-context-bar");
-    await assertRect(page.getByTestId("playground-page-header"), { x: 288, y: 93, width: 1113, fluid: 1 }, "playground-header");
+    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: (await contentWidth(page)) - 248, height: 49 }, "playground-context-bar");
+    await assertRect(page.getByTestId("playground-page-header"), { x: 288, y: 89, width: 1113, fluid: 1 }, "playground-header");
     await assertRect(page.getByTestId("playground-input"), { x: 288, width: 1113, fluid: 1 }, "playground-input");
     await assertBelow(page.getByTestId("playground-page-header"), page.getByTestId("playground-input"), "playground input below header");
     const primaryControls = [
@@ -340,8 +359,8 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
       await assertRect(page.getByTestId("playground-stage-content"), { x: 568, width: 833, fluid: 1 }, "playground-stage-content");
     }
   } else if (state.group === "evaluation") {
-    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: (await contentWidth(page)) - 248, height: 53 }, "evaluation-context-bar");
-    await assertRect(page.getByTestId("evaluation-page-header"), { x: 288, y: 93, width: 1113, fluid: 1 }, "evaluation-header");
+    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: (await contentWidth(page)) - 248, height: 49 }, "evaluation-context-bar");
+    await assertRect(page.getByTestId("evaluation-page-header"), { x: 288, y: 89, width: 1113, fluid: 1 }, "evaluation-header");
     await assertRect(page.getByTestId("evaluation-workspace-context"), { x: 288, width: 1113, fluid: 1 }, "evaluation-workspace-context");
     await assertBelow(page.getByTestId("evaluation-page-header"), page.getByTestId("evaluation-workspace-context"), "evaluation context below header");
     const panel = page.getByTestId(`evaluation-panel-${stateKey.replace("evaluation-", "")}`);
@@ -352,7 +371,8 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
       const first = await rect(cards.nth(0));
       const second = await rect(cards.nth(1));
       expect(Math.abs(first.width - second.width), "evaluation compare card widths").toBeLessThanOrEqual(1);
-      expect(second.x - first.x).toBeGreaterThan(first.width);
+      // A and B share one panel with a hairline between them: adjacent, never overlapping.
+      expect(second.x - first.x, "evaluation compare cards side by side").toBeGreaterThanOrEqual(first.width - 1);
     }
   } else {
     await assertRect(page.getByTestId("settings-page-header"), { x: 288, y: 40, width: 1113, fluid: 1 }, "settings-header");
@@ -443,7 +463,8 @@ async function prepareState(page: Page, state: VisualState) {
     await expect(page.getByRole("button", { name: "Create embeddings", exact: true })).toBeEnabled();
     await expect(page.getByTestId("embedding-result-details")).toHaveCount(0);
   } else if (stateKey === "embeddings-result") {
-    await expect(page.getByTestId("embedding-result-details")).toContainText("dimensions");
+    await expect(page.getByTestId("embedding-result-details")).toBeVisible();
+    await expect(page.getByTestId("embedding-lineage")).toContainText("dimensions");
   } else if (stateKey === "documents-populated") {
     await expect(page.getByTestId("document-library")).toBeVisible();
     await expect(page.getByRole("button", { name: documentName }).first()).toBeVisible();
@@ -589,7 +610,8 @@ test.describe("canonical desktop auth route inventory", () => {
         const password = page.getByLabel(labels.password, { exact: true });
         const confirmation = page.locator("#reset-password-confirmation");
         const submit = page.getByRole("button", { name: labels.submit });
-        const cardBounds = await rect(page.locator("main > div"));
+        // The split auth layout: the form column (<main>) is the card that must fit the viewport.
+        const cardBounds = await rect(page.locator("main"));
         const formBounds = await rect(form);
         const passwordBounds = await rect(password);
         const submitBounds = await rect(submit);
