@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusIcon } from "@/components/ui/status-pill";
 import { Switch } from "@/components/ui/switch";
-import { ThinkingText, TransitionCheckbox, TransitionPanel, TransitionText } from "@/components/ui/transitions";
+import { SlidingTabs, ThinkingText, TransitionCheckbox, TransitionPanel, TransitionText } from "@/components/ui/transitions";
 import { getPipelineAvailability } from "@/lib/blockers";
 import { type AppCopy, type AppLocale, interpolate, runName, UI_COPY } from "@/lib/copy";
 import type { DocumentParseResponse } from "@/lib/document-parse-types";
@@ -721,9 +721,10 @@ export function RetrievalScreen() {
           <div className="mt-3 grid grid-cols-[max-content_max-content_max-content] items-end gap-3 border-t border-border px-3 pt-3 max-sm:grid-cols-2" data-testid="playground-primary-controls">
             <fieldset className="min-w-0 max-sm:col-span-2">
               <legend className="mb-1.5 block text-xs font-medium text-muted-foreground">{copy.retrieval}</legend>
-              <div aria-label={copy.mode} className="flex h-9 min-w-0 items-center rounded-md border border-border bg-secondary p-1 max-sm:w-full" data-testid="playground-mode-control" role="group">
-                {(["dense", "hybrid", "keyword"] as const).map((value) => <button aria-pressed={mode === value} className={mode === value ? "h-full rounded-sm bg-card px-3 text-xs font-medium text-foreground shadow-sm max-sm:flex-1" : "h-full rounded-sm px-2.5 text-xs font-medium text-muted-foreground hover:bg-card/70 max-sm:flex-1"} key={value} onClick={() => setMode(value)} type="button">{copy.modes[value]}</button>)}
-              </div>
+              {/* The sliding pill follows the aria-pressed button, like the other segmented controls. */}
+              <SlidingTabs aria-label={copy.mode} className="flex h-9 min-w-0 items-center rounded-md border border-border bg-secondary p-1 max-sm:w-full [&>.t-tabs-pill]:shadow-xs [&>.t-tabs-pill]:ring-1 [&>.t-tabs-pill]:ring-border" data-testid="playground-mode-control" role="group" value={mode}>
+                {(["dense", "hybrid", "keyword"] as const).map((value) => <button aria-pressed={mode === value} className={mode === value ? "h-full rounded-sm px-3 text-xs font-medium text-foreground max-sm:flex-1" : "h-full rounded-sm px-3 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground max-sm:flex-1"} key={value} onClick={() => setMode(value)} type="button">{copy.modes[value]}</button>)}
+              </SlidingTabs>
             </fieldset>
             <div>
               <span className="mb-1.5 block text-xs font-medium text-muted-foreground">{copy.topK}</span>
