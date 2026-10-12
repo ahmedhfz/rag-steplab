@@ -326,10 +326,12 @@ body,
     transition: transform 300ms ease, opacity 300ms ease;
   }
   /* Upper dome: the soft lighter half of the pearl. */
+  /* The same ellipse as a box at inset -100% -15% 25% with 50% radius, drawn as a gradient inside the
+     button: an oversized pseudo-element widened the button's scroll box (a horizontal-overflow finding). */
   .steplab-pearl::before {
-    inset: -100% -15% 25%;
-    border-radius: 50%;
-    background: var(--pearl-dome);
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(65% 87.5% at 50% -12.5%, var(--pearl-dome) 99%, transparent 100%);
   }
   /* Specular band along the top edge. */
   .steplab-pearl::after {

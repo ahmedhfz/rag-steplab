@@ -1171,7 +1171,8 @@ export function RetrievalScreen() {
           ) : null}
 
           <div className="mt-5 flex flex-wrap items-center gap-x-7 gap-y-3 border-t border-secondary pt-4" data-testid="playground-primary-controls">
-            <div className="flex items-center gap-2.5 max-sm:w-full">
+            {/* On phones the label sits above the toggle; side by side they overflow 320px. */}
+            <div className="flex items-center gap-2.5 max-sm:w-full max-sm:flex-col max-sm:items-start max-sm:gap-1.5">
               <span className="text-sm font-medium text-tertiary">{copy.retrieval}</span>
               <ModeToggle copy={copy} mode={mode} onChange={setMode} />
             </div>
