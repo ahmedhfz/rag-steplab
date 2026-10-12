@@ -344,6 +344,9 @@ export function ParseScreen() {
   const [now, setNow] = useState(() => Date.now());
   const [showLifecycle, setShowLifecycle] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // When the user started the parse here; the run summary that carries its server start time
+  // only arrives once the document summary refreshes after the run finishes.
+  const [processingSince, setProcessingSince] = useState<number | null>(null);
   const isProcessing = parseStatus === "queued" || parseStatus === "running";
   useEffect(() => {
     if (!isProcessing) return;
@@ -353,7 +356,13 @@ export function ParseScreen() {
 
   const parseRuns = activeDocument?.parseRuns ?? [];
   const selectedRun = parseRuns.find((run) => run.id === selectedParseRunId) ?? null;
-  const currentRun = parseRuns.find((run) => run.status === "queued" || run.status === "running") ?? selectedRun;
+  const inFlightRun = parseRuns.find((run) => run.status === "queued" || run.status === "running") ?? null;
+  // A parse started in this session is not in the summary list yet: never show the previous
+  // run's number or duration as if it were the one running.
+  const currentRun = inFlightRun ?? (isProcessing ? null : selectedRun);
+  const elapsed = currentRun
+    ? formatElapsed(currentRun.timing.startedAt, now, currentRun.status === "completed" ? currentRun.timing.durationMs : null)
+    : isProcessing && processingSince !== null ? formatElapsed(new Date(processingSince).toISOString(), now) : "—";
   const resultRun = parseResult?.parseRunId ? parseRuns.find((run) => run.id === parseResult.parseRunId) ?? null : null;
   const resultRunName = resultRun ? runName(copy, "parse", resultRun.runNumber) : null;
   const selection = { selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId };
@@ -374,7 +383,8 @@ export function ParseScreen() {
   // Said once: the lifecycle panel names the state while it is open, and the empty state says "not parsed".
   const showStatusBadge = !lifecycleVisible && status !== "idle";
   const pollTimedOut = parseError?.code === "parse_poll_timeout";
-  const canContinue = Boolean(selectedRun && completedCompatibleRun(selectedRun) && !isProcessing);
+  // A blocked next stage (incompatible lineage, outage) is never a destination, even from a usable run.
+  const canContinue = Boolean(selectedRun && completedCompatibleRun(selectedRun) && !isProcessing) && nextAvailability.allowed;
   const summaryFields = parseResult ? [
     [labels.summary.pages, parseResult.summary.pageCount],
     [labels.summary.headings, parseResult.summary.headingCount],
@@ -404,6 +414,7 @@ export function ParseScreen() {
   }, [finishedRunId, toastTitle, toastDescription]);
 
   function startParse() {
+    setProcessingSince(Date.now());
     setConfirmOpen(false);
     setShowLifecycle(true);
     void reparseActiveDocument();
@@ -450,7 +461,7 @@ export function ParseScreen() {
             </div>
             <div className="text-right">
               <p className="text-sm font-medium text-tertiary">{labels.progress.elapsed}</p>
-              <p className="mt-0.5 text-display-xs font-semibold text-primary tabular-nums">{formatElapsed(currentRun?.timing.startedAt, now, currentRun?.status === "completed" ? currentRun.timing.durationMs : null)}</p>
+              <p className="mt-0.5 text-display-xs font-semibold text-primary tabular-nums" data-testid="parse-elapsed">{elapsed}</p>
             </div>
           </div>
           <ProgressBar className="mt-4" label={`${labels.progress.label} ${parseProgress}%`} size="md" tone={failed ? "error" : running ? "brand" : "gray"} value={Math.min(100, Math.max(0, parseProgress))} />

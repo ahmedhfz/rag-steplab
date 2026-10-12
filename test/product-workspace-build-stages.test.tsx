@@ -203,7 +203,11 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(screen.queryByText("The RAG service is temporarily unavailable. Retry shortly.")).not.toBeInTheDocument();
     pipeline.value = { ...createPipelineValue(), persistenceStatus: "unavailable", workspaceStatus: "unavailable" };
     view.rerender(<PreferencesProvider><ParseScreen /></PreferencesProvider>);
-    expect(screen.getAllByText("The RAG service is temporarily unavailable. Retry shortly.")).toHaveLength(1);
+    // One visible copy; the blocked next step keeps the same sentence only as its sr-only description.
+    const outage = "The RAG service is temporarily unavailable. Retry shortly.";
+    expect(screen.getAllByText(outage).filter((element) => !element.classList.contains("sr-only"))).toHaveLength(1);
+    expect(screen.getByTestId("parse-next-action")).toBeDisabled();
+    expect(screen.getByTestId("parse-next-action")).toHaveAccessibleDescription(outage);
     expect(screen.getByTestId("parse-blocker")).toHaveAttribute("data-tone", "error");
   });
 
@@ -404,6 +408,16 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(screen.getByTestId("chunking-workspace")).toContainElement(screen.getByTestId("chunking-run-action"));
     expect(screen.getByTestId("chunking-config-card")).toContainElement(screen.getByTestId("chunk-compact-controls"));
     expect(screen.getByTestId("chunking-config-card")).toContainElement(screen.getByTestId("chunking-run-action"));
+  });
+
+  it("does not offer Embeddings as the next step while its lineage is blocked", () => {
+    // The selected chunk run is usable, but its parse run no longer matches the pipeline.
+    pipeline.value = { ...createPipelineValue(), activeDocument: { ...activeDocument, parseRuns: [{ ...parseRun, isCompatible: false }] } };
+    renderScreen(<ChunkingScreen />);
+
+    const next = screen.getByTestId("chunking-next-action");
+    expect(next).toBeDisabled();
+    expect(screen.queryByRole("link", { name: /Continue to Embeddings/ })).not.toBeInTheDocument();
   });
 
   it("does not offer a next step for an unselected inspected embedding", () => {
