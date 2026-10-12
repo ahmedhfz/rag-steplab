@@ -706,7 +706,7 @@ export function RetrievalScreen() {
                 <div aria-hidden="true" className="t-clear-mirror" /><div aria-hidden="true" className="t-clear-glow" />
                 {question ? <div className="absolute right-1.5 top-1.5"><Button aria-label={copy.clearQuestion} onClick={clearQuestion} size="icon-sm" type="button" variant="ghost"><AppIcon name="close" className="size-3.5" /></Button></div> : null}
               </div>
-              <Button aria-busy={experimentStatus === "processing"} aria-describedby={!canAsk ? "ask-disabled-reason" : undefined} className="min-w-[164px] max-md:w-full" data-testid="playground-run-cta" disabled={!canAsk} size="lg" title={copy.runShortcut} type="submit">
+              <Button aria-busy={experimentStatus === "processing"} aria-describedby={!canAsk ? "ask-disabled-reason" : undefined} className="h-11 min-w-[172px] max-md:w-full" data-testid="playground-run-cta" disabled={!canAsk} size="lg" title={copy.runShortcut} type="submit" variant="pearl">
                 <AppIcon name="generate" className="size-4" />{copy.run}
               </Button>
             </div>
