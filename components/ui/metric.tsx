@@ -33,8 +33,10 @@ export function MetricValue({ value, format, prefix, suffix, placeholder = "—"
   }
   // NumberFlow renders digits in shadow DOM, so assistive tech and text queries read the sr-only copy.
   const text = `${prefix ?? ""}${new Intl.NumberFormat(locale, format).format(value)}${suffix ?? ""}`;
+  // NumberFlow's fade mask pads its digits by --number-flow-mask-width (0.5em) each side and pulls
+  // them back with negative margins. Matching padding/margin here keeps that spill inside this box.
   return (
-    <span {...props} className={cn("tabular-nums", className)} data-slot="metric-value">
+    <span {...props} className={cn("-mx-[0.5em] px-[0.5em] tabular-nums", className)} data-overflow-intentional="" data-slot="metric-value">
       <span className="sr-only">{text}</span>
       <NumberFlow aria-hidden="true" format={format} locales={locale} prefix={prefix} suffix={suffix} value={value} willChange />
     </span>

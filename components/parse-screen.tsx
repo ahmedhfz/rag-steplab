@@ -164,7 +164,7 @@ function OutlineList({ entries, selectedId, onSelect, label }: { entries: Outlin
             >
               {selected ? <span aria-hidden="true" className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-fg-brand-primary" /> : null}
               <span className="min-w-0 flex-1 truncate">{entry.label}</span>
-              {entry.kind === "heading" && entry.pageNumber !== null ? <span className="shrink-0 text-xs font-normal text-quaternary tabular-nums">{copy.units.pageShort} {entry.pageNumber}</span> : null}
+              {entry.kind === "heading" && entry.pageNumber !== null ? <span className="shrink-0 text-xs font-normal text-tertiary tabular-nums">{copy.units.pageShort} {entry.pageNumber}</span> : null}
             </button>
           </li>
         );

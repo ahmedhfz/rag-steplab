@@ -1,19 +1,54 @@
 "use client";
 
-import { TransitionPanel } from "@/components/ui/transitions";
+import { SlidingTabs, TransitionPanel } from "@/components/ui/transitions";
 
+import { RadioGroup as RadioGroupPrimitive } from "radix-ui";
 import { useState, type ReactNode } from "react";
 
 import { usePreferences } from "@/components/preferences-provider";
+import { AppIcon, type SemanticIconName } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
-import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Switch } from "@/components/ui/switch";
 import { useCopy } from "@/lib/copy";
 import { cn } from "@/lib/utils";
 
 type ThemeValue = "system" | "light" | "dark";
 type LocaleValue = "en" | "tr";
+type PreferenceOption<T extends string> = { value: T; label: string; icon?: SemanticIconName };
+
+/**
+ * Settings' segmented choice: a radio group whose visible segments are <label for> elements and
+ * whose radios are sr-only, so focus shows on the segment (A3); the transitions.dev pill slides
+ * to the checked label. Full width on phones so the segments share the row instead of spilling.
+ */
+function PreferenceSegments<T extends string>({ disabled = false, idPrefix, labelledBy, onChange, options, value }: { disabled?: boolean; idPrefix: string; labelledBy: string; onChange: (value: T) => void; options: ReadonlyArray<PreferenceOption<T>>; value: T }) {
+  return (
+    <RadioGroupPrimitive.Root asChild aria-labelledby={labelledBy} disabled={disabled} onValueChange={(next) => onChange(next as T)} value={value}>
+      <SlidingTabs
+        className="flex w-full rounded-lg bg-tertiary p-0.5 ring-1 ring-secondary ring-inset sm:inline-flex sm:w-auto dark:bg-secondary_alt [&>.t-tabs-pill]:bg-primary [&>.t-tabs-pill]:shadow-sm [&>.t-tabs-pill]:ring-1 [&>.t-tabs-pill]:ring-secondary_alt dark:[&>.t-tabs-pill]:bg-quaternary"
+        value={value}
+      >
+        {options.map((option) => (
+          <label
+            className={cn(
+              "flex h-8 min-w-0 flex-1 cursor-pointer items-center justify-center gap-2 rounded-md px-3 text-sm font-semibold whitespace-nowrap text-tertiary transition-colors hover:text-secondary sm:flex-none",
+              "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-0 has-[:focus-visible]:outline-focus-ring",
+              value === option.value && "text-primary hover:text-primary",
+              disabled && "cursor-not-allowed opacity-60",
+            )}
+            htmlFor={`${idPrefix}-${option.value}`}
+            key={option.value}
+          >
+            <RadioGroupPrimitive.Item aria-label={option.label} className="sr-only" id={`${idPrefix}-${option.value}`} value={option.value} />
+            {option.icon ? <AppIcon className="size-4 shrink-0 max-sm:hidden" name={option.icon} /> : null}
+            <span>{option.label}</span>
+          </label>
+        ))}
+      </SlidingTabs>
+    </RadioGroupPrimitive.Root>
+  );
+}
 
 /**
  * One preference: title on the left, its control on the right; stacked on small screens.
@@ -32,7 +67,7 @@ function SettingRow({ title, titleId, description, descriptionId, control, testI
         <h2 className="text-sm font-semibold text-primary" id={titleId}>{title}</h2>
         {description ? <p className="sr-only" id={descriptionId}>{description}</p> : null}
       </div>
-      <div className="shrink-0">{control}</div>
+      <div className="min-w-0 sm:shrink-0">{control}</div>
     </div>
   );
 }
@@ -67,8 +102,9 @@ export function SettingsScreen() {
         >
           <SettingRow
             control={(
-              <SegmentedControl<LocaleValue>
-                aria-labelledby="settings-language-title"
+              <PreferenceSegments<LocaleValue>
+                idPrefix="locale"
+                labelledBy="settings-language-title"
                 onChange={(value) => { setLocale(value); setSavedNotice(true); }}
                 options={[
                   { value: "en", label: copy.settings.english },
@@ -84,9 +120,10 @@ export function SettingsScreen() {
 
           <SettingRow
             control={(
-              <SegmentedControl<ThemeValue>
-                aria-labelledby="settings-theme-title"
-                isDisabled={!isHydrated}
+              <PreferenceSegments<ThemeValue>
+                disabled={!isHydrated}
+                idPrefix="theme"
+                labelledBy="settings-theme-title"
                 onChange={(value) => { setTheme(value); setSavedNotice(true); }}
                 options={[
                   { value: "system", label: copy.settings.themeSystem, icon: "monitor" },

@@ -178,7 +178,7 @@ export function DocumentLibrary() {
                               <button aria-label={`${labels.select}: ${document.fileName}`} aria-pressed={isActive} className="flex w-full min-w-0 items-center gap-3 rounded-md text-left" onClick={() => void selectPersistedDocument(document.id)} title={document.fileName} type="button">
                                 <FileTile active={isActive} />
                                 <span className={cn("min-w-0 flex-1 truncate text-sm", isActive ? "font-semibold text-primary" : "font-medium text-secondary group-hover/row:text-primary")} data-testid="document-library-name">{document.fileName}</span>
-                                {isActive ? <Badge className="shrink-0" color="brand" size="sm">{labels.inUse}</Badge> : null}
+                                {isActive ? <Badge className="shrink-0" color="brand" data-tone="active" size="sm">{labels.inUse}</Badge> : null}
                               </button>
                             </th>
                             <TableCell className="text-tertiary" numeric>{pagesFor(document, status)}</TableCell>
@@ -224,7 +224,7 @@ export function DocumentLibrary() {
                               </div>
                               <div className="mt-1.5 flex flex-wrap items-center gap-2">
                                 <DocumentStatusBadge status={status} />
-                                {isActive ? <Badge color="brand" size="sm">{labels.inUse}</Badge> : null}
+                                {isActive ? <Badge color="brand" data-tone="active" size="sm">{labels.inUse}</Badge> : null}
                               </div>
                               <dl className="mt-3 grid grid-cols-3 gap-3">
                                 <div className="min-w-0"><dt className="text-xs text-quaternary">{labels.columns.pages}</dt><dd className="mt-0.5 truncate text-sm font-medium text-secondary tabular-nums">{pagesFor(document, status)}</dd></div>

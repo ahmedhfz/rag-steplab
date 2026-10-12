@@ -82,8 +82,10 @@ export function DocumentUploadPanel() {
         onDrop={(event) => { event.preventDefault(); setDragActive(false); void addFile(event.dataTransfer.files?.[0]); }}
         type="button"
       >
+        {/* The idle spinner rotates inside the swap, so its corners briefly exceed the 20px icon box. */}
         <span
           aria-hidden="true"
+          data-overflow-intentional=""
           className={cn(
             "relative grid size-10 shrink-0 place-items-center rounded-lg bg-primary text-fg-brand-primary shadow-xs ring-1 ring-secondary ring-inset transition-transform duration-200 ease-out",
             dragActive && "-translate-y-0.5 scale-105",

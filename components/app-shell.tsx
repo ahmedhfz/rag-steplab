@@ -464,7 +464,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen w-full min-w-0 bg-canvas text-primary">
       <a
-        className="sr-only rounded-lg bg-primary_alt px-3 py-2 text-sm font-semibold text-primary shadow-lg ring-1 ring-secondary_alt focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50"
+        // Parked above the viewport rather than sr-only: sr-only plus padding leaves a clipped 24px box.
+        className="fixed top-3 left-3 z-60 -translate-y-[calc(100%+1rem)] rounded-lg bg-primary_alt px-3 py-2 text-sm font-semibold text-primary shadow-lg ring-1 ring-secondary_alt focus:translate-y-0"
         data-testid="skip-to-content"
         href="#main-content"
         // Focus <main> directly: no hash entry in the router history.

@@ -194,10 +194,10 @@ function ChunkInspector({ run, documentId, parseResult }: { run: ChunkRun; docum
                 >
                   {selected ? <span aria-hidden="true" className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-fg-brand-primary" /> : null}
                   <span className="flex items-baseline justify-between gap-3">
-                    <span className="min-w-0 truncate text-sm font-medium text-primary"><span className="mr-2 text-xs text-quaternary tabular-nums">{String(displayOrdinal).padStart(2, "0")}</span>{chunk.headingPath.at(-1) || `${labels.chunk} ${displayOrdinal}`}</span>
+                    <span className="min-w-0 truncate text-sm font-medium text-primary"><span className="mr-2 text-xs text-tertiary tabular-nums">{String(displayOrdinal).padStart(2, "0")}</span>{chunk.headingPath.at(-1) || `${labels.chunk} ${displayOrdinal}`}</span>
                     <span className="shrink-0 text-xs text-tertiary tabular-nums" title={interpolate(labels.tokensOfTarget, { tokens: formatNumber(locale, chunk.tokenCount), size: formatNumber(locale, target) })}>{formatNumber(locale, chunk.tokenCount)}</span>
                   </span>
-                  <span className="mt-0.5 block truncate pl-7 text-xs text-quaternary">{[parents, pageLabel(copy, chunk)].filter(Boolean).join(" · ")}</span>
+                  <span className="mt-0.5 block truncate pl-7 text-xs text-tertiary">{[parents, pageLabel(copy, chunk)].filter(Boolean).join(" · ")}</span>
                   {/* Token length against the configured chunk size: how full each chunk is. */}
                   <span aria-hidden="true" className="mt-2 ml-7 block h-1 overflow-hidden rounded-full bg-tertiary">
                     <span className={cn("block h-full rounded-full transition-[width,background-color] duration-300 ease-out motion-reduce:transition-none", selected ? "bg-fg-brand-primary" : "bg-fg-quaternary group-hover/chunk:bg-fg-tertiary")} style={{ width: `${Math.max(2, fill * 100)}%` }} />
@@ -211,7 +211,7 @@ function ChunkInspector({ run, documentId, parseResult }: { run: ChunkRun; docum
       <TransitionPanel as="article" className="min-w-0" data-testid="chunk-inspector-detail" transitionKey={`${run.id}:${selectedChunk.id}`}>
         <header className="flex flex-wrap items-start justify-between gap-3 border-b border-secondary px-5 py-4 sm:px-6">
           <div className="min-w-0">
-            <p className="text-md font-semibold text-primary tabular-nums">{labels.chunk} {selectedChunk.ordinal + 1} <span className="font-normal text-quaternary">/ {formatNumber(locale, run.chunkCount)}</span></p>
+            <p className="text-md font-semibold text-primary tabular-nums"><span>{labels.chunk} {selectedChunk.ordinal + 1}</span> <span className="font-normal text-quaternary">/ {formatNumber(locale, run.chunkCount)}</span></p>
             {selectedChunk.headingPath.length ? <p className="mt-0.5 text-sm text-tertiary">{selectedChunk.headingPath.join(" › ")}</p> : null}
           </div>
           <div className="flex items-center gap-1">
