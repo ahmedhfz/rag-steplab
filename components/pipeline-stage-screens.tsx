@@ -46,7 +46,8 @@ export function ChunkingScreen() {
     persistenceStatus,
     workspaceStatus,
   });
-  const canContinue = Boolean(selectedParseRunId && selectedChunk && selectedChunk.status === "completed" && selectedChunk.isCompatible && chunkStatus !== "processing");
+  // A blocked next stage (incompatible lineage, outage) is never a destination, even from a usable run.
+  const canContinue = Boolean(selectedParseRunId && selectedChunk && selectedChunk.status === "completed" && selectedChunk.isCompatible && chunkStatus !== "processing") && nextAvailability.allowed;
   // A form that differs from the selected run makes "Run chunking" the primary
   // action, so the footer steps back to secondary until the form is applied.
   const [formDirty, setFormDirty] = useState(false);
@@ -95,7 +96,7 @@ export function EmbeddingsScreen() {
       <InspectionBand canUse={Boolean(activePipeline)} inspectedId={inspectedEmbeddingRunId} kind="embedding" onBack={inspectEmbeddingRun} onUse={setPipelineEmbeddingRun} runs={embeddingRuns} selectedId={selectedEmbeddingRunId} />
       <EmbeddingWorkspace />
       <RunHistory defaultId={activeDocument?.activeEmbeddingRunId} hasPipeline={Boolean(activePipeline)} inspectedId={inspectedEmbeddingRunId} kind="embedding" onInspect={selectEmbeddingRun} onUse={setPipelineEmbeddingRun} runs={embeddingRuns} selectedId={selectedEmbeddingRunId} />
-      <StageNextAction blocker={nextAvailability.allowed ? null : nextAvailability} disabled={!canContinue} href="/playground" label={copy.embeddings.next} reason={copy.embeddings.nextReason} stageBlocker={stageAvailability.allowed ? null : stageAvailability} testId="embeddings-next-action" />
+      <StageNextAction blocker={nextAvailability.allowed ? null : nextAvailability} disabled={!canContinue || !nextAvailability.allowed} href="/playground" label={copy.embeddings.next} reason={copy.embeddings.nextReason} stageBlocker={stageAvailability.allowed ? null : stageAvailability} testId="embeddings-next-action" />
     </StagePage>
   );
 }
