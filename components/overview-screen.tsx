@@ -3,7 +3,7 @@
 import { TransitionDetails, TransitionPanel } from "@/components/ui/transitions";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { SampleDocumentButton } from "@/components/sample-document-button";
@@ -32,10 +32,15 @@ import {
   deriveJourneyConnectorState,
   JOURNEY_CANVAS,
   JOURNEY_CONNECTOR_PAIRS,
+  JOURNEY_FILL_TRACK,
   journeyConnectorVisualForState,
+  journeyFillDelayMs,
+  journeyFillDurationMs,
+  journeyFillExtent,
   journeyGroupPosition,
   journeyNodePosition,
   journeyNodeVisualForState,
+  type JourneyFill,
   type JourneyGroupKey,
   type JourneyStepKey,
 } from "@/lib/overview-journey";
@@ -108,40 +113,90 @@ function JourneyGlyph({ stepKey, state }: { stepKey: JourneyStepKey; state: Pipe
   );
 }
 
-function JourneyConnectors({ stateFor }: { stateFor: (step: JourneyStepKey) => PipelineStepState }) {
+const journeyCanvasProps = {
+  "aria-hidden": true,
+  className: "pointer-events-none absolute left-0 top-px z-[1] h-50 w-full overflow-visible",
+  height: JOURNEY_CANVAS.height,
+  preserveAspectRatio: "none",
+  viewBox: `0 0 ${JOURNEY_CANVAS.width} ${JOURNEY_CANVAS.height}`,
+  width: "100%",
+} as const;
+
+/** clip-path insets (right edge, % of the canvas) the green fill sweeps between; 6px covers the round cap. */
+function journeyFillStyle(fill: JourneyFill): CSSProperties {
+  const rightInset = (x: number) => `${((1 - x / JOURNEY_CANVAS.width) * 100).toFixed(3)}%`;
+  return {
+    "--journey-fill-dur": `${journeyFillDurationMs(fill)}ms`,
+    "--journey-fill-from": rightInset(fill.startX),
+    "--journey-fill-to": `calc(${rightInset(fill.endX)} - 6px)`,
+  } as CSSProperties;
+}
+
+/**
+ * The wave keeps one canonical connector layer (state, testids, geometry). Completed connectors sit
+ * there as a neutral track; a second, clipped layer draws them green and sweeps left to right once
+ * on mount, up to the last completed stage. It remounts when that extent changes, so the fill also
+ * plays when pipeline data arrives after the first paint.
+ */
+function JourneyConnectors({ fill, stateFor }: { fill: JourneyFill | null; stateFor: (step: JourneyStepKey) => PipelineStepState }) {
+  const connectors = JOURNEY_CONNECTOR_PAIRS.map(({ destination, source }) => ({
+    d: buildJourneyConnectorPath(source, destination),
+    destination,
+    source,
+    state: deriveJourneyConnectorState(stateFor(source), stateFor(destination)),
+  }));
   return (
-    <svg
-      aria-hidden="true"
-      className="pointer-events-none absolute left-0 top-px z-[1] h-50 w-full overflow-visible"
-      data-testid="overview-journey-connectors"
-      height={JOURNEY_CANVAS.height}
-      preserveAspectRatio="none"
-      viewBox={`0 0 ${JOURNEY_CANVAS.width} ${JOURNEY_CANVAS.height}`}
-      width="100%"
-    >
-      {JOURNEY_CONNECTOR_PAIRS.map(({ destination, source }) => {
-        const state = deriveJourneyConnectorState(stateFor(source), stateFor(destination));
-        const visual = journeyConnectorVisualForState(state);
-        return (
-          <path
-            d={buildJourneyConnectorPath(source, destination)}
-            data-state={state}
-            data-testid={`overview-journey-connector-${source}-${destination}`}
-            fill="none"
-            key={`${source}-${destination}`}
-            stroke={visual.color}
-            strokeLinecap="round"
-            strokeOpacity={visual.opacity}
-            strokeWidth={visual.width}
-            vectorEffect="non-scaling-stroke"
-          />
-        );
-      })}
-    </svg>
+    <>
+      <svg {...journeyCanvasProps} data-testid="overview-journey-connectors">
+        {connectors.map(({ d, destination, source, state }) => {
+          const visual = state === "Completed" ? JOURNEY_FILL_TRACK : journeyConnectorVisualForState(state);
+          return (
+            <path
+              d={d}
+              data-state={state}
+              data-testid={`overview-journey-connector-${source}-${destination}`}
+              fill="none"
+              key={`${source}-${destination}`}
+              stroke={visual.color}
+              strokeLinecap="round"
+              strokeOpacity={visual.opacity}
+              strokeWidth={visual.width}
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        })}
+      </svg>
+      {fill ? (
+        <svg
+          {...journeyCanvasProps}
+          className={cn(journeyCanvasProps.className, "steplab-journey-fill")}
+          data-testid="overview-journey-fill"
+          key={`${fill.startX}-${fill.endX}`}
+          style={journeyFillStyle(fill)}
+        >
+          {connectors.filter(({ state }) => state === "Completed").map(({ d, destination, source }) => {
+            const visual = journeyConnectorVisualForState("Completed");
+            return (
+              <path
+                d={d}
+                fill="none"
+                key={`${source}-${destination}`}
+                stroke={visual.color}
+                strokeLinecap="round"
+                strokeOpacity={visual.opacity}
+                strokeWidth={visual.width}
+                vectorEffect="non-scaling-stroke"
+              />
+            );
+          })}
+        </svg>
+      ) : null}
+    </>
   );
 }
 
 function JourneyNode({
+  fillDelayMs,
   href,
   labels,
   reason,
@@ -149,6 +204,7 @@ function JourneyNode({
   step,
   onReveal,
 }: {
+  fillDelayMs: number;
   href: string;
   labels: Record<PipelineStepKey, string>;
   reason: string | null;
@@ -173,7 +229,12 @@ function JourneyNode({
       >
         <JourneyGlyph state={state} stepKey={step.key} />
         {completed ? (
-          <span aria-hidden="true" className="absolute -right-1 -top-1 grid size-3.5 place-items-center rounded-full bg-fg-tertiary text-bg-primary" data-testid={`overview-journey-check-${step.key}`}>
+          <span
+            aria-hidden="true"
+            className="steplab-journey-check absolute -right-1 -top-1 grid size-3.5 place-items-center rounded-full bg-fg-success-primary text-white"
+            data-testid={`overview-journey-check-${step.key}`}
+            style={{ animationDelay: `${fillDelayMs}ms` }}
+          >
             <AppIcon name="check" className="size-2.5" strokeWidth={2.5} />
           </span>
         ) : null}
@@ -371,6 +432,7 @@ export function OverviewScreen() {
   const continuation = overviewModel.continuation;
   const continuationException = exceptionStatus[continuation.state];
   const progress = countDoneJourneyStages(pipelineState);
+  const journeyFill = journeyFillExtent((step) => pipelineState[step]);
   const showProgress = persistenceStatus === "available" && continuation.kind !== "checking";
   const journeyLabels = copy.overview.journey.steps;
   const groupLabels = copy.navGroups;
@@ -553,7 +615,7 @@ export function OverviewScreen() {
                   <div className="flex items-center gap-3">
                     <span className="text-sm text-tertiary">{copy.overview.journey.progress}</span>
                     <span className="inline-flex items-baseline gap-0.5 text-sm font-semibold text-primary tabular-nums"><MetricValue value={progress.done} /><span className="font-normal text-quaternary">/</span><span className="font-normal text-quaternary">{progress.total}</span></span>
-                    <ProgressBar className="w-24" label={copy.overview.journey.progress} max={progress.total} tone="gray" value={progress.done} />
+                    <ProgressBar className="steplab-progress-grow w-24" label={copy.overview.journey.progress} max={progress.total} tone="success" value={progress.done} />
                   </div>
                 </div> : <span aria-hidden="true" />}
                 {continuation.kind === "checking" ? (
@@ -595,8 +657,8 @@ export function OverviewScreen() {
                   <div className="absolute top-1 h-48 rounded-lg border border-tertiary bg-secondary" data-testid="overview-group-prepare" style={journeyGroupPosition("prepare")}><span className="absolute left-3.5 top-3 text-xs font-medium text-tertiary">{groupLabels.prepare}</span></div>
                   <div className="absolute top-1 h-48 rounded-lg border border-tertiary bg-secondary" data-testid="overview-group-test" style={journeyGroupPosition("test")}><span className="absolute left-3.5 top-3 text-xs font-medium text-tertiary">{groupLabels.test}</span></div>
                   <div className="absolute top-1 h-48 rounded-lg border border-tertiary bg-secondary" data-testid="overview-group-measure" style={journeyGroupPosition("measure")}><span className="absolute left-3.5 top-3 text-xs font-medium text-tertiary">{groupLabels.measure}</span></div>
-                  <JourneyConnectors stateFor={(step) => pipelineState[step]} />
-                  {pipelineSteps.map((step) => <JourneyNode href={stageHref[step.key]} key={step.key} labels={journeyLabels} onReveal={setRevealedStep} reason={lockedReason(step.key)} state={pipelineState[step.key]} step={step} />)}
+                  <JourneyConnectors fill={journeyFill} stateFor={(step) => pipelineState[step]} />
+                  {pipelineSteps.map((step) => <JourneyNode fillDelayMs={journeyFillDelayMs(step.key, journeyFill)} href={stageHref[step.key]} key={step.key} labels={journeyLabels} onReveal={setRevealedStep} reason={lockedReason(step.key)} state={pipelineState[step.key]} step={step} />)}
                 </div>
               </div>
               <div className="pt-2 min-[1440px]:hidden">

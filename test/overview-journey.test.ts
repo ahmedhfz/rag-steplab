@@ -10,10 +10,14 @@ import {
   JOURNEY_NODE_ANCHORS,
   JOURNEY_NODE_VISUALS,
   JOURNEY_STAGE_KEYS,
+  journeyFillDelayMs,
+  journeyFillDurationMs,
+  journeyFillExtent,
   journeyNodeVisualForState,
   mapJourneyX,
   normalizeJourneyPipelineState,
   normalizeJourneyX,
+  type JourneyStepKey,
 } from "@/lib/overview-journey";
 import type { PipelineStepState } from "@/lib/rag-ui-types";
 
@@ -109,11 +113,12 @@ describe("Overview journey presentation", () => {
       expect(visual.borderColor).toBeTruthy();
       expect(visual.opacity).toBeGreaterThan(0);
     }
-    // Completed work is neutral; only the next step carries the brand colour.
-    expect(journeyNodeVisualForState("Completed").iconColor).toBe("var(--color-text-tertiary)");
-    expect(journeyNodeVisualForState("Completed").backgroundColor).toBe("var(--color-bg-primary)");
+    // Completed stages are green; only the next step carries the brand colour.
+    expect(journeyNodeVisualForState("Completed").iconColor).toBe("var(--color-text-success-primary)");
+    expect(journeyNodeVisualForState("Completed").backgroundColor).toBe("var(--color-bg-success-primary)");
+    expect(JOURNEY_CONNECTOR_VISUALS.Completed.color).toBe("var(--color-fg-success-secondary)");
     expect(journeyNodeVisualForState("Ready").iconColor).toBe("var(--color-text-brand-secondary)");
-    expect(Object.values(JOURNEY_NODE_VISUALS).some((visual) => /success/.test(visual.iconColor))).toBe(false);
+    expect(Object.entries(JOURNEY_NODE_VISUALS).filter(([, visual]) => /success/.test(visual.iconColor)).map(([state]) => state)).toEqual(["Completed"]);
     expect(JOURNEY_CONNECTOR_VISUALS.Completed.color).not.toBe(JOURNEY_CONNECTOR_VISUALS.Ready.color);
     expect(JOURNEY_CONNECTOR_VISUALS.Ready.color).toBe("var(--color-text-brand-secondary)");
     expect(journeyNodeVisualForState("Locked").iconColor).toBe("var(--color-text-quaternary)");
@@ -142,5 +147,36 @@ describe("Overview journey presentation", () => {
     const firstPath = buildJourneyConnectorPath("document", "parse");
     expect(firstPath).toContain(`${JOURNEY_NODE_ANCHORS.document.x} ${JOURNEY_NODE_ANCHORS.document.y}`);
     expect(firstPath).toContain(`${JOURNEY_NODE_ANCHORS.parse.x} ${JOURNEY_NODE_ANCHORS.parse.y}`);
+  });
+
+  it("fills completed connectors up to the last completed stage and paces badges with the sweep", () => {
+    const states: Record<JourneyStepKey, PipelineStepState> = {
+      document: "Completed",
+      parse: "Completed",
+      chunk: "Completed",
+      embed: "Ready",
+      retrieve: "Locked",
+      rerank: "Locked",
+      context: "Locked",
+      generate: "Locked",
+      evaluate: "Locked",
+    };
+    const fill = journeyFillExtent((step) => states[step]);
+    expect(fill).toEqual({ startX: JOURNEY_NODE_ANCHORS.document.x, endX: JOURNEY_NODE_ANCHORS.chunk.x });
+    const duration = journeyFillDurationMs(fill!);
+    expect(duration).toBeGreaterThanOrEqual(300);
+    expect(duration).toBeLessThan(1200);
+    expect(journeyFillDelayMs("document", fill)).toBe(0);
+    expect(journeyFillDelayMs("parse", fill)).toBeGreaterThan(0);
+    expect(journeyFillDelayMs("chunk", fill)).toBe(duration);
+
+    // Only the first stage done: nothing to sweep, the badge shows at once.
+    const onlyDocument = journeyFillExtent((step) => (step === "document" ? "Completed" : "Locked"));
+    expect(onlyDocument).toBeNull();
+    expect(journeyFillDelayMs("document", onlyDocument)).toBe(0);
+
+    const everything = journeyFillExtent(() => "Completed");
+    expect(everything?.endX).toBe(JOURNEY_NODE_ANCHORS.evaluate.x);
+    expect(journeyFillDurationMs(everything!)).toBe(1200);
   });
 });

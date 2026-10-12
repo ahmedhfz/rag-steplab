@@ -145,7 +145,7 @@ export type JourneyNodeVisual = {
   opacity: number;
 };
 
-// Emphasis discipline: completed work is neutral, only the next step carries
+// Emphasis discipline: completed stages are green, only the next step carries
 // the brand colour; amber/destructive are reserved for real exceptions.
 // Semantic tokens from app/theme.css (light and dark resolve through the same names).
 const CHERRY = "var(--color-text-brand-secondary)";
@@ -157,9 +157,11 @@ const BORDER = "var(--color-border-secondary)";
 const LINE = "var(--color-border-control)";
 const SURFACE = "var(--color-bg-primary)";
 const WELL = "var(--color-bg-secondary)";
+const SUCCESS = "var(--color-text-success-primary)";
+const SUCCESS_LINE = "var(--color-fg-success-secondary)";
 
 export const JOURNEY_NODE_VISUALS: Readonly<Record<PipelineStepState, JourneyNodeVisual>> = {
-  Completed: { borderColor: BORDER, backgroundColor: SURFACE, iconColor: SUBTLE, opacity: 1 },
+  Completed: { borderColor: "var(--color-utility-success-200)", backgroundColor: "var(--color-bg-success-primary)", iconColor: SUCCESS, opacity: 1 },
   Ready: { borderColor: "var(--color-utility-brand-200)", backgroundColor: "var(--color-bg-brand-secondary)", iconColor: CHERRY, opacity: 1 },
   Processing: { borderColor: "var(--color-utility-warning-200)", backgroundColor: "var(--color-bg-warning-primary)", iconColor: WARNING, opacity: 1 },
   Error: { borderColor: "var(--color-utility-error-200)", backgroundColor: "var(--color-bg-error-primary)", iconColor: ERROR, opacity: 1 },
@@ -180,7 +182,7 @@ export type JourneyConnectorVisual = {
 };
 
 export const JOURNEY_CONNECTOR_VISUALS: Readonly<Record<PipelineStepState, JourneyConnectorVisual>> = {
-  Completed: { color: LINE, opacity: 1, width: 2 },
+  Completed: { color: SUCCESS_LINE, opacity: 1, width: 2 },
   Ready: { color: CHERRY, opacity: 1, width: 2 },
   Processing: { color: WARNING, opacity: 0.9, width: 2 },
   Error: { color: ERROR, opacity: 0.9, width: 2 },
@@ -192,4 +194,37 @@ export const JOURNEY_CONNECTOR_VISUALS: Readonly<Record<PipelineStepState, Journ
 
 export function journeyConnectorVisualForState(state: PipelineStepState): JourneyConnectorVisual {
   return JOURNEY_CONNECTOR_VISUALS[state];
+}
+
+/** Neutral track drawn under the completed (green) connectors while the fill sweeps over it. */
+export const JOURNEY_FILL_TRACK: JourneyConnectorVisual = { color: LINE, opacity: 1, width: 2 };
+
+/** Horizontal span, in canvas units, that the completed fill covers: first stage to the last completed one. */
+export type JourneyFill = {
+  startX: number;
+  endX: number;
+};
+
+export function journeyFillExtent(stateFor: (step: JourneyStepKey) => PipelineStepState): JourneyFill | null {
+  let endX: number | null = null;
+  for (const { source, destination } of JOURNEY_CONNECTOR_PAIRS) {
+    if (deriveJourneyConnectorState(stateFor(source), stateFor(destination)) === "Completed") endX = JOURNEY_NODE_ANCHORS[destination].x;
+  }
+  return endX === null ? null : { startX: JOURNEY_NODE_ANCHORS[JOURNEY_STAGE_KEYS[0]].x, endX };
+}
+
+const FILL_MIN_MS = 300;
+const FILL_FULL_MS = 1200;
+
+/** The sweep keeps a constant speed, so a longer completed span takes proportionally longer. */
+export function journeyFillDurationMs(fill: JourneyFill): number {
+  const fullSpan = JOURNEY_NODE_ANCHORS[JOURNEY_STAGE_KEYS[JOURNEY_STAGE_KEYS.length - 1]].x - fill.startX;
+  return Math.round(Math.max(FILL_MIN_MS, (FILL_FULL_MS * (fill.endX - fill.startX)) / fullSpan));
+}
+
+/** When the linear sweep reaches a node, so its completion badge appears in step with the line. */
+export function journeyFillDelayMs(step: JourneyStepKey, fill: JourneyFill | null): number {
+  if (!fill || fill.endX <= fill.startX) return 0;
+  const progress = (JOURNEY_NODE_ANCHORS[step].x - fill.startX) / (fill.endX - fill.startX);
+  return Math.round(journeyFillDurationMs(fill) * Math.min(1, Math.max(0, progress)));
 }

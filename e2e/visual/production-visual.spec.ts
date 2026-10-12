@@ -213,8 +213,8 @@ async function assertOverviewGeometry(page: Page, theme: "light" | "dark") {
   const chunkGlyph = page.getByTestId("overview-journey-desktop").getByTestId("overview-journey-glyph-chunk");
   await expect(chunkGlyph).toHaveAttribute("data-state", "Completed");
   // Iconoir SVG'lerinde Journey state rengi currentColor/stroke üzerinden taşınır.
-  // Tamamlanan aşama nötrdür (--muted-foreground); marka yalnız sıradaki adımda.
-  expect(await chunkGlyph.evaluate((element) => getComputedStyle(element).color)).toBe(theme === "dark" ? "rgb(146, 137, 142)" : "rgb(96, 87, 92)");
+  // Tamamlanan aşama yeşildir (text-success-primary); marka yalnız sıradaki adımda.
+  expect(await chunkGlyph.evaluate((element) => getComputedStyle(element).color)).toBe(theme === "dark" ? "rgb(102, 186, 127)" : "rgb(53, 121, 75)");
   const evaluation = nodeGeometry.at(-1);
   expect(evaluation).toBeDefined();
   expect(evaluation!.x + evaluation!.width / 2).toBeGreaterThanOrEqual(measure.x);
