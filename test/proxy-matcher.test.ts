@@ -12,7 +12,8 @@ describe("proxy matcher", () => {
     for (const url of [
       "https://app.example/opengraph-image?4f1c",
       "https://app.example/apple-icon?9a2b",
-      "https://app.example/icon.svg?7c3d",
+      "https://app.example/icon1.png?7c3d",
+      "https://app.example/apple-icon.png?5e8f",
       "https://app.example/favicon.ico",
       "https://app.example/_next/static/chunks/app.js",
     ]) {

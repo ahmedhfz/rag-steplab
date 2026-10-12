@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { ImageResponse } from "next/og";
 
-import { BRAND_MARK_VIEWBOX, brandMarkShapes } from "@/components/brand-mark";
 import { UI_COPY } from "@/lib/copy";
 
 // Statically generated at build time: no request data, no network, only the font bundled with next/og.
@@ -22,6 +24,8 @@ const COLOR = {
 
 // Same names as the Overview journey and the login hero (English: the share card has no locale).
 const JOURNEY = UI_COPY.en.overview.journey.steps;
+// The same raster mark as the UI (components/brand-mark.tsx), embedded so the build needs no network.
+const BRAND_MARK = `data:image/png;base64,${readFileSync(path.join(process.cwd(), "components/brand/rag-steplab-mark.png")).toString("base64")}`;
 const STEPS = [JOURNEY.document, JOURNEY.parse, JOURNEY.chunk, JOURNEY.embed, JOURNEY.retrieve, JOURNEY.generate];
 
 export default function OpenGraphImage() {
@@ -40,9 +44,8 @@ export default function OpenGraphImage() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <svg fill="none" height={56} viewBox={BRAND_MARK_VIEWBOX} width={56}>
-            {brandMarkShapes(COLOR.brand)}
-          </svg>
+          {/* eslint-disable-next-line @next/next/no-img-element -- next/og renders intrinsic elements only */}
+          <img alt="" height={64} src={BRAND_MARK} width={64} />
           <div style={{ fontSize: 36, letterSpacing: -0.5 }}>RAG StepLab</div>
         </div>
 
