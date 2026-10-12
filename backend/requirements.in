@@ -9,7 +9,7 @@ SQLAlchemy>=2.0,<3
 psycopg[binary]>=3.3.6,<4
 pgvector>=0.5.0,<1
 supabase>=2.15,<3
-google-genai>=1.32,<2
+google-genai>=2.29.0,<3
 tiktoken>=0.8,<1
 # GHSA-42vr-xj54-vc7v (PyJWKClient.get_signing_key_from_jwt DoS) ve GHSA-x33g-cr3x-6449 2.15.0'da düzeltildi.
 PyJWT[crypto]>=2.15.1,<3
