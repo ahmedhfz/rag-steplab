@@ -326,13 +326,14 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
     await assertBelow(header, embeddingWorkspace, "embeddings workspace below header");
     expect((await rect(embeddingWorkspace)).height, `${state.key}-workspace-height`).toBeGreaterThan(stateKey === "embeddings-ready" ? 60 : 110);
     await expect(page.getByTestId("embedding-lineage")).toBeVisible();
-    expect((await rect(page.getByTestId("embedding-action-card"))).width).toBeLessThanOrEqual(760);
+    // The action card spans the workspace column (lineage strip + run footer), never past it.
+    expect((await rect(page.getByTestId("embedding-action-card"))).width).toBeLessThanOrEqual((await rect(embeddingWorkspace)).width + 1);
     const inputRect = await rect(page.getByTestId("embedding-primary-result"));
     const outputRect = await rect(page.getByTestId("embedding-output-result"));
     expect(outputRect.x - inputRect.x - inputRect.width).toBeLessThan(80);
   } else if (state.group === "playground") {
-    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: (await contentWidth(page)) - 248, height: 53 }, "playground-context-bar");
-    await assertRect(page.getByTestId("playground-page-header"), { x: 288, y: 93, width: 1113, fluid: 1 }, "playground-header");
+    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: (await contentWidth(page)) - 248, height: 49 }, "playground-context-bar");
+    await assertRect(page.getByTestId("playground-page-header"), { x: 288, y: 89, width: 1113, fluid: 1 }, "playground-header");
     await assertRect(page.getByTestId("playground-input"), { x: 288, width: 1113, fluid: 1 }, "playground-input");
     await assertBelow(page.getByTestId("playground-page-header"), page.getByTestId("playground-input"), "playground input below header");
     const primaryControls = [
@@ -354,8 +355,8 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
       await assertRect(page.getByTestId("playground-stage-content"), { x: 568, width: 833, fluid: 1 }, "playground-stage-content");
     }
   } else if (state.group === "evaluation") {
-    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: (await contentWidth(page)) - 248, height: 53 }, "evaluation-context-bar");
-    await assertRect(page.getByTestId("evaluation-page-header"), { x: 288, y: 93, width: 1113, fluid: 1 }, "evaluation-header");
+    await assertRect(page.getByTestId("pipeline-context-bar"), { x: 248, y: 0, width: (await contentWidth(page)) - 248, height: 49 }, "evaluation-context-bar");
+    await assertRect(page.getByTestId("evaluation-page-header"), { x: 288, y: 89, width: 1113, fluid: 1 }, "evaluation-header");
     await assertRect(page.getByTestId("evaluation-workspace-context"), { x: 288, width: 1113, fluid: 1 }, "evaluation-workspace-context");
     await assertBelow(page.getByTestId("evaluation-page-header"), page.getByTestId("evaluation-workspace-context"), "evaluation context below header");
     const panel = page.getByTestId(`evaluation-panel-${stateKey.replace("evaluation-", "")}`);
@@ -366,7 +367,8 @@ async function assertRouteGeometry(page: Page, state: VisualState) {
       const first = await rect(cards.nth(0));
       const second = await rect(cards.nth(1));
       expect(Math.abs(first.width - second.width), "evaluation compare card widths").toBeLessThanOrEqual(1);
-      expect(second.x - first.x).toBeGreaterThan(first.width);
+      // A and B share one panel with a hairline between them: adjacent, never overlapping.
+      expect(second.x - first.x, "evaluation compare cards side by side").toBeGreaterThanOrEqual(first.width - 1);
     }
   } else {
     await assertRect(page.getByTestId("settings-page-header"), { x: 288, y: 40, width: 1113, fluid: 1 }, "settings-header");
