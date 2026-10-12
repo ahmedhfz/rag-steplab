@@ -11,13 +11,23 @@ import {
   Circle,
   Clock,
   ClockRotateRight,
+  CloudUpload,
+  Code,
+  Computer,
   Copy,
   Database,
+  Download,
   Eye,
   EyeClosed,
+  Filter,
+  Flash,
+  HalfMoon,
   HelpCircle,
   HomeSimple,
+  Hourglass,
+  InfoCircle,
   LightBulb,
+  Link,
   ListSelect,
   Lock,
   LogOut,
@@ -25,6 +35,9 @@ import {
   Minus,
   MoreHoriz,
   NavArrowDown,
+  NavArrowLeft,
+  NavArrowRight,
+  NavArrowUp,
   Network,
   OnePointCircle,
   OpenBook,
@@ -33,6 +46,7 @@ import {
   PageSearch,
   Play,
   Plus,
+  Quote,
   Refresh,
   RefreshDouble,
   Search,
@@ -40,6 +54,8 @@ import {
   SortDown,
   Sparks,
   StatsReport,
+  SunLight,
+  Timer,
   Trash,
   UndoCircle,
   Upload,
@@ -47,8 +63,11 @@ import {
   WarningCircle,
   WarningTriangle,
   Xmark,
+  XmarkCircle,
 } from "iconoir-react";
 import type { ComponentProps, ElementType } from "react";
+
+import { cn } from "@/lib/utils";
 
 /**
  * Uygulamadaki ikonların tek semantic kaynağı.
@@ -75,16 +94,26 @@ export const SEMANTIC_ICONS = {
   check: Check,
   completed: CheckCircle,
   chevronDown: NavArrowDown,
+  chevronUp: NavArrowUp,
+  chevronLeft: NavArrowLeft,
+  chevronRight: NavArrowRight,
   circle: Circle,
   ready: OnePointCircle,
   help: HelpCircle,
+  info: InfoCircle,
   clock: Clock,
+  queued: Hourglass,
+  timer: Timer,
   copy: Copy,
   database: Database,
+  download: Download,
   externalLink: OpenNewWindow,
+  link: Link,
   eye: Eye,
   eyeOff: EyeClosed,
   fileSearch: PageSearch,
+  filter: Filter,
+  flash: Flash,
   history: ClockRotateRight,
   loading: Refresh,
   lock: Lock,
@@ -94,22 +123,41 @@ export const SEMANTIC_ICONS = {
   moreHorizontal: MoreHoriz,
   play: Play,
   plus: Plus,
+  quote: Quote,
   refresh: RefreshDouble,
   reset: UndoCircle,
   trash: Trash,
   warning: WarningCircle,
   warningTriangle: WarningTriangle,
+  xCircle: XmarkCircle,
   upload: Upload,
+  cloudUpload: CloudUpload,
   close: Xmark,
   lightBulb: LightBulb,
+  code: Code,
+  sun: SunLight,
+  moon: HalfMoon,
+  monitor: Computer,
 } as const;
 
 export type SemanticIconName = keyof typeof SEMANTIC_ICONS;
-export type AppIconProps = Omit<ComponentProps<(typeof SEMANTIC_ICONS)[SemanticIconName]>, "name"> & {
-  name: SemanticIconName;
+
+/** Icon size follows the text it sits next to: xs 14px (12–13px text), sm 16px (14px), md 20px (16px+/nav), lg 24px. */
+export type AppIconSize = "xs" | "sm" | "md" | "lg";
+
+const iconSizes: Record<AppIconSize, string> = {
+  xs: "size-3.5",
+  sm: "size-4",
+  md: "size-5",
+  lg: "size-6",
 };
 
-export function AppIcon({ name, strokeWidth = 1.5, ...props }: AppIconProps) {
+export type AppIconProps = Omit<ComponentProps<(typeof SEMANTIC_ICONS)[SemanticIconName]>, "name"> & {
+  name: SemanticIconName;
+  size?: AppIconSize;
+};
+
+export function AppIcon({ name, size, strokeWidth = 1.5, className, ...props }: AppIconProps) {
   const Icon = SEMANTIC_ICONS[name] as ElementType;
-  return <Icon aria-hidden={props["aria-hidden"] ?? true} strokeWidth={strokeWidth} {...props} />;
+  return <Icon aria-hidden={props["aria-hidden"] ?? true} className={cn(size && iconSizes[size], className)} strokeWidth={strokeWidth} {...props} />;
 }

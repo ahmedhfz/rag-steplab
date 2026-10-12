@@ -110,14 +110,14 @@ describe("Overview journey presentation", () => {
       expect(visual.opacity).toBeGreaterThan(0);
     }
     // Completed work is neutral; only the next step carries the brand colour.
-    expect(journeyNodeVisualForState("Completed").iconColor).toBe("var(--muted-foreground)");
-    expect(journeyNodeVisualForState("Completed").backgroundColor).toBe("var(--card)");
-    expect(journeyNodeVisualForState("Ready").iconColor).toBe("var(--brand)");
-    expect(Object.values(JOURNEY_NODE_VISUALS).some((visual) => visual.iconColor === "var(--success)")).toBe(false);
+    expect(journeyNodeVisualForState("Completed").iconColor).toBe("var(--color-text-tertiary)");
+    expect(journeyNodeVisualForState("Completed").backgroundColor).toBe("var(--color-bg-primary)");
+    expect(journeyNodeVisualForState("Ready").iconColor).toBe("var(--color-text-brand-secondary)");
+    expect(Object.values(JOURNEY_NODE_VISUALS).some((visual) => /success/.test(visual.iconColor))).toBe(false);
     expect(JOURNEY_CONNECTOR_VISUALS.Completed.color).not.toBe(JOURNEY_CONNECTOR_VISUALS.Ready.color);
-    expect(JOURNEY_CONNECTOR_VISUALS.Ready.color).toBe("var(--brand)");
-    expect(journeyNodeVisualForState("Locked").iconColor).toBe("var(--subtle-foreground)");
-    expect(journeyNodeVisualForState("Not started").iconColor).toBe("var(--muted-foreground)");
+    expect(JOURNEY_CONNECTOR_VISUALS.Ready.color).toBe("var(--color-text-brand-secondary)");
+    expect(journeyNodeVisualForState("Locked").iconColor).toBe("var(--color-text-quaternary)");
+    expect(journeyNodeVisualForState("Not started").iconColor).toBe("var(--color-text-tertiary)");
   });
 
   it("keeps canonical X values normalized and ordered while mapping to a real width", () => {

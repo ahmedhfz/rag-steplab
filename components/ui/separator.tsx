@@ -5,6 +5,7 @@ import { Separator as SeparatorPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
 
+/** Hairline divider (border-secondary). Prefer it over an extra box when splitting a Panel. */
 function Separator({
   className,
   orientation = "horizontal",
@@ -17,7 +18,7 @@ function Separator({
       decorative={decorative}
       orientation={orientation}
       className={cn(
-        "shrink-0 bg-border data-[orientation=horizontal]:h-px data-[orientation=horizontal]:w-full data-[orientation=vertical]:h-full data-[orientation=vertical]:w-px",
+        "shrink-0 bg-border-secondary data-[orientation=horizontal]:h-px data-[orientation=horizontal]:w-full data-[orientation=vertical]:h-full data-[orientation=vertical]:w-px",
         className
       )}
       {...props}

@@ -42,7 +42,7 @@ describe("LoginScreen", () => {
     expect(hero.querySelector("img")).toBeNull();
     expect(heroStepLabels()).toEqual(["Doküman", "Ayrıştırma", "Chunking", "Embedding", "Retrieval", "Cevap"]);
     // Only the answer step carries the brand accent; the icons are decorative.
-    expect(hero.querySelectorAll(".text-brand")).toHaveLength(1);
+    expect(hero.querySelectorAll(".text-fg-brand-primary")).toHaveLength(1);
     expect(within(screen.getByTestId("auth-hero-step-generate")).getByText("Cevap")).toBeInTheDocument();
     for (const icon of hero.querySelectorAll("svg")) expect(icon).toHaveAttribute("aria-hidden", "true");
   });

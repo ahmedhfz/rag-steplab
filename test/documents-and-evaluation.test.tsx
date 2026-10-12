@@ -55,7 +55,7 @@ describe("EvaluationScreen", () => {
     expect(screen.getByRole("heading", { name: "Evaluation" })).toBeInTheDocument();
     // Without a dataset the next step is creating one, so Dataset is the default tab.
     expect(screen.getByRole("tab", { name: "Dataset" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("No datasets yet; the first one you create appears here.")).toBeInTheDocument();
+    expect(screen.getByText("No datasets yet.")).toBeInTheDocument();
     expect(screen.queryByText(/active document has current chunks/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Recall|Precision|MRR|accuracy/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create dataset" })).toBeDisabled();
@@ -64,7 +64,7 @@ describe("EvaluationScreen", () => {
     return user.click(screen.getByRole("tab", { name: "Results" })).then(() => {
       expect(screen.getByRole("tab", { name: "Results" })).toHaveAttribute("aria-selected", "true");
       expect(screen.getByRole("heading", { name: "No evaluation data yet" })).toBeInTheDocument();
-      expect(screen.getByText("Create a dataset first; its questions are what an evaluation measures.")).toBeInTheDocument();
+      expect(screen.getByText("Evaluations run on a dataset of golden questions.")).toBeInTheDocument();
       expect(screen.getByTestId("evaluation-reranker-control")).toHaveTextContent("Off");
       expect(screen.getByRole("button", { name: "Run evaluation" })).toBeDisabled();
     });

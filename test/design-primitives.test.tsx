@@ -52,11 +52,11 @@ describe("design system primitives", () => {
     const { rerender } = render(<StageBlocker blocker={missingParse} data-testid="blocker" />);
     const blocker = screen.getByTestId("blocker");
     expect(blocker).toHaveAttribute("role", "status");
-    expect(blocker).toHaveClass("text-muted-foreground");
+    expect(blocker).toHaveAttribute("data-tone", "neutral");
     expect(within(blocker).getByRole("link", { name: /Go to Parsing/ })).toHaveAttribute("href", "/parse");
 
     rerender(<StageBlocker blocker={getPipelineAvailability("en", "chunk", { workspaceStatus: "unavailable" })} data-testid="blocker" />);
-    expect(screen.getByTestId("blocker")).toHaveClass("text-destructive");
+    expect(screen.getByTestId("blocker")).toHaveAttribute("data-tone", "error");
 
     rerender(<StageBlocker blocker={getPipelineAvailability("en", "chunk", { workspaceStatus: "loading" })} data-testid="blocker" />);
     expect(screen.queryByTestId("blocker")).not.toBeInTheDocument();

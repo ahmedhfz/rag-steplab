@@ -1,23 +1,41 @@
 "use client";
 
-import { SlidingTabs, TransitionPanel } from "@/components/ui/transitions";
+import { TransitionPanel } from "@/components/ui/transitions";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { usePreferences } from "@/components/preferences-provider";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Switch } from "@/components/ui/switch";
 import { useCopy } from "@/lib/copy";
 import { cn } from "@/lib/utils";
 
-// The selected pill gets its own edge so it reads against the track in both themes (E-8).
-const segmentedClass = "flex h-10 w-full shrink-0 items-center justify-center gap-0 rounded-md border border-border bg-secondary p-1 sm:w-auto [&>.t-tabs-pill]:shadow-sm [&>.t-tabs-pill]:ring-1 [&>.t-tabs-pill]:ring-border";
-// The radio itself is sr-only (its outline would be clipped), so the visible label carries focus (A3).
-const segmentClass = "flex h-8 min-w-0 flex-1 cursor-pointer items-center justify-center rounded-sm px-2 text-sm text-muted-foreground transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring sm:flex-none sm:px-3";
-const selectedSegmentClass = "bg-card font-medium text-foreground shadow-sm";
-const rowClass = "flex min-h-16 flex-col items-stretch justify-center gap-3 border-b border-border px-5 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6";
+type ThemeValue = "system" | "light" | "dark";
+type LocaleValue = "en" | "tr";
+
+/**
+ * One preference: title on the left, its control on the right; stacked on small screens.
+ * `description` is for assistive technology only (e.g. why a control is disabled).
+ */
+function SettingRow({ title, titleId, description, descriptionId, control, testId, stackOnMobile = true }: { title: string; titleId?: string; description?: ReactNode; descriptionId?: string; control: ReactNode; testId?: string; stackOnMobile?: boolean }) {
+  return (
+    <div
+      className={cn(
+        "flex gap-x-8 gap-y-3 px-5 py-4 sm:min-h-18 sm:flex-row sm:items-center sm:justify-between",
+        stackOnMobile ? "flex-col items-stretch" : "items-center justify-between",
+      )}
+      data-testid={testId}
+    >
+      <div className="min-w-0">
+        <h2 className="text-sm font-semibold text-primary" id={titleId}>{title}</h2>
+        {description ? <p className="sr-only" id={descriptionId}>{description}</p> : null}
+      </div>
+      <div className="shrink-0">{control}</div>
+    </div>
+  );
+}
 
 export function SettingsScreen() {
   const {
@@ -32,80 +50,81 @@ export function SettingsScreen() {
   // Announce only after a user change; hydrating stored preferences saves nothing (A10).
   const [savedNotice, setSavedNotice] = useState(false);
   const usesDefaults = preferences.locale === "en" && preferences.showLearningHints && preferences.theme === "system";
-  const themeOptions = [
-    { label: copy.settings.themeSystem, value: "system" },
-    { label: copy.settings.themeLight, value: "light" },
-    { label: copy.settings.themeDark, value: "dark" },
-  ] as const;
+  const resetUnavailable = !isHydrated || usesDefaults;
 
   return (
-    <div className="min-w-0 bg-background" data-testid="settings-screen">
-      <div className="mx-auto w-full max-w-[1280px] p-10 max-md:p-4">
+    <div className="min-w-0" data-testid="settings-screen">
+      <div className="mx-auto w-full max-w-container p-10 max-md:p-4">
         <PageHeader data-testid="settings-page-header" title={copy.settings.title} />
         <p aria-live="polite" className="sr-only" role="status">
           {savedNotice ? copy.settings.preferencesSaved : null}
         </p>
 
-        <TransitionPanel as="section" className="mt-6 max-w-[720px] overflow-hidden rounded-lg border border-border bg-card"
+        <TransitionPanel
+          as="section"
+          className="mt-8 max-w-180 divide-y divide-secondary rounded-xl bg-primary shadow-xs ring-1 ring-secondary"
           data-testid="settings-card"
         >
-          <div className={rowClass} data-testid="settings-language-row">
-            <h2 className="text-base font-medium text-foreground" id="settings-language-title">{copy.settings.languageTitle}</h2>
-            <RadioGroup asChild aria-labelledby="settings-language-title" className={segmentedClass} onValueChange={(value) => { setLocale(value as "en" | "tr"); setSavedNotice(true); }} value={preferences.locale}>
-              <SlidingTabs value={preferences.locale}>
-              <label className={cn(segmentClass, preferences.locale === "en" && selectedSegmentClass)} htmlFor="locale-en">
-                <RadioGroupItem aria-label={copy.settings.english} className="sr-only" id="locale-en" value="en" />
-                <span>{copy.settings.english}</span>
-              </label>
-              <label className={cn(segmentClass, preferences.locale === "tr" && selectedSegmentClass)} htmlFor="locale-tr">
-                <RadioGroupItem aria-label={copy.settings.turkish} className="sr-only" id="locale-tr" value="tr" />
-                <span>{copy.settings.turkish}</span>
-              </label>
-            </SlidingTabs></RadioGroup>
-          </div>
-
-          <div className={rowClass} data-testid="settings-theme-row">
-            <h2 className="text-base font-medium text-foreground" id="settings-theme-title">{copy.settings.themeTitle}</h2>
-            <RadioGroup asChild aria-labelledby="settings-theme-title" className={segmentedClass} onValueChange={(value) => { setTheme(value as "system" | "light" | "dark"); setSavedNotice(true); }} value={preferences.theme}>
-              <SlidingTabs value={preferences.theme}>
-              {themeOptions.map((option) => (
-                <label className={cn(segmentClass, preferences.theme === option.value && selectedSegmentClass, !isHydrated && "cursor-not-allowed opacity-60")} htmlFor={`theme-${option.value}`} key={option.value}>
-                  <RadioGroupItem aria-label={option.label} className="sr-only" disabled={!isHydrated} id={`theme-${option.value}`} value={option.value} />
-                  <span>{option.label}</span>
-                </label>
-              ))}
-            </SlidingTabs></RadioGroup>
-          </div>
-
-          <div className="flex min-h-16 items-center justify-between gap-6 border-b border-border px-5 py-3">
-            <div className="min-w-0">
-              <h2 className="text-base font-medium text-foreground">{copy.settings.hintsTitle}</h2>
-              <p className="mt-0.5 text-sm text-muted-foreground">{copy.settings.hintsDescription}</p>
-            </div>
-            <Switch aria-label={copy.settings.hintsEnabled} checked={preferences.showLearningHints} id="show-learning-hints" onCheckedChange={(checked) => { setShowLearningHints(checked); setSavedNotice(true); }} />
-          </div>
-
-          <div className="flex min-h-16 items-center justify-between gap-6 px-5 py-3">
-            <h2 className="text-base font-medium text-foreground">{copy.settings.resetTitle}</h2>
-            <Button
-              aria-describedby={!isHydrated || usesDefaults ? "reset-preferences-reason" : undefined}
-              disabled={!isHydrated || usesDefaults}
-              onClick={() => { resetPreferences(); setSavedNotice(true); }}
-              size="sm"
-              variant="outline"
-            >
-              {copy.settings.reset}
-            </Button>
-          </div>
-            {(!isHydrated || usesDefaults) && (
-              <p
-                className="sr-only"
-                id="reset-preferences-reason"
-                key={isHydrated ? "default" : "pending"}
-              >
-                {isHydrated ? copy.settings.nothingToReset : copy.common.storagePending}
-              </p>
+          <SettingRow
+            control={(
+              <SegmentedControl<LocaleValue>
+                aria-labelledby="settings-language-title"
+                onChange={(value) => { setLocale(value); setSavedNotice(true); }}
+                options={[
+                  { value: "en", label: copy.settings.english },
+                  { value: "tr", label: copy.settings.turkish },
+                ]}
+                value={preferences.locale}
+              />
             )}
+            testId="settings-language-row"
+            title={copy.settings.languageTitle}
+            titleId="settings-language-title"
+          />
+
+          <SettingRow
+            control={(
+              <SegmentedControl<ThemeValue>
+                aria-labelledby="settings-theme-title"
+                isDisabled={!isHydrated}
+                onChange={(value) => { setTheme(value); setSavedNotice(true); }}
+                options={[
+                  { value: "system", label: copy.settings.themeSystem, icon: "monitor" },
+                  { value: "light", label: copy.settings.themeLight, icon: "sun" },
+                  { value: "dark", label: copy.settings.themeDark, icon: "moon" },
+                ]}
+                value={preferences.theme}
+              />
+            )}
+            testId="settings-theme-row"
+            title={copy.settings.themeTitle}
+            titleId="settings-theme-title"
+          />
+
+          <SettingRow
+            control={<Switch aria-label={copy.settings.hintsEnabled} checked={preferences.showLearningHints} id="show-learning-hints" onCheckedChange={(checked) => { setShowLearningHints(checked); setSavedNotice(true); }} size="md" />}
+            stackOnMobile={false}
+            title={copy.settings.hintsTitle}
+          />
+
+          <SettingRow
+            control={(
+              <Button
+                aria-describedby={resetUnavailable ? "reset-preferences-reason" : undefined}
+                disabled={resetUnavailable}
+                iconLeading="reset"
+                onClick={() => { resetPreferences(); setSavedNotice(true); }}
+                size="sm"
+                variant="secondary"
+              >
+                {copy.settings.reset}
+              </Button>
+            )}
+            description={resetUnavailable ? <span key={isHydrated ? "default" : "pending"}>{isHydrated ? copy.settings.nothingToReset : copy.common.storagePending}</span> : undefined}
+            descriptionId="reset-preferences-reason"
+            stackOnMobile={false}
+            title={copy.settings.resetTitle}
+          />
         </TransitionPanel>
       </div>
     </div>

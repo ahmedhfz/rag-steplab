@@ -1,7 +1,7 @@
 "use client";
 
-import { forwardRef, useCallback, useRef, type ComponentProps } from "react";
-import { Dialog, Select } from "radix-ui";
+import { forwardRef, useCallback, useRef, type ComponentProps, type ForwardedRef } from "react";
+import { AlertDialog, Dialog, HoverCard, Select } from "radix-ui";
 
 import { cn } from "@/lib/utils";
 
@@ -26,22 +26,36 @@ export function useRadixTransition() {
   }, []);
 }
 
-export const TransitionDialogContent = forwardRef<HTMLDivElement, ComponentProps<typeof Dialog.Content>>(function TransitionDialogContent({ className, ...props }, forwardedRef) {
+function assignRef<T>(ref: ForwardedRef<T>, value: T) {
+  if (typeof ref === "function") ref(value);
+  else if (ref) ref.current = value;
+}
+
+/** Radix content node + transitions.dev recipe state classes, merged with the caller's ref. */
+function useTransitionRef(forwardedRef: ForwardedRef<HTMLDivElement>) {
   const setTransitionNode = useRadixTransition();
-  const ref = useCallback((element: HTMLDivElement | null) => {
+  return useCallback((element: HTMLDivElement | null) => {
     setTransitionNode(element);
-    if (typeof forwardedRef === "function") forwardedRef(element);
-    else if (forwardedRef) forwardedRef.current = element;
+    assignRef(forwardedRef, element);
   }, [forwardedRef, setTransitionNode]);
+}
+
+export const TransitionDialogContent = forwardRef<HTMLDivElement, ComponentProps<typeof Dialog.Content>>(function TransitionDialogContent({ className, ...props }, forwardedRef) {
+  const ref = useTransitionRef(forwardedRef);
   return <Dialog.Content {...props} className={cn("t-modal", className)} ref={ref} />;
 });
 
+export const TransitionAlertDialogContent = forwardRef<HTMLDivElement, ComponentProps<typeof AlertDialog.Content>>(function TransitionAlertDialogContent({ className, ...props }, forwardedRef) {
+  const ref = useTransitionRef(forwardedRef);
+  return <AlertDialog.Content {...props} className={cn("t-modal", className)} ref={ref} />;
+});
+
 export const TransitionSelectContent = forwardRef<HTMLDivElement, ComponentProps<typeof Select.Content>>(function TransitionSelectContent({ className, ...props }, forwardedRef) {
-  const setTransitionNode = useRadixTransition();
-  const ref = useCallback((element: HTMLDivElement | null) => {
-    setTransitionNode(element);
-    if (typeof forwardedRef === "function") forwardedRef(element);
-    else if (forwardedRef) forwardedRef.current = element;
-  }, [forwardedRef, setTransitionNode]);
+  const ref = useTransitionRef(forwardedRef);
   return <Select.Content {...props} className={cn("t-dropdown steplab-select", className)} ref={ref} />;
+});
+
+export const TransitionHoverCardContent = forwardRef<HTMLDivElement, ComponentProps<typeof HoverCard.Content>>(function TransitionHoverCardContent({ className, ...props }, forwardedRef) {
+  const ref = useTransitionRef(forwardedRef);
+  return <HoverCard.Content {...props} className={cn("t-dropdown steplab-hovercard", className)} ref={ref} />;
 });

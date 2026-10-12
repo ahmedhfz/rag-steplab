@@ -443,7 +443,8 @@ async function prepareState(page: Page, state: VisualState) {
     await expect(page.getByRole("button", { name: "Create embeddings", exact: true })).toBeEnabled();
     await expect(page.getByTestId("embedding-result-details")).toHaveCount(0);
   } else if (stateKey === "embeddings-result") {
-    await expect(page.getByTestId("embedding-result-details")).toContainText("dimensions");
+    await expect(page.getByTestId("embedding-result-details")).toBeVisible();
+    await expect(page.getByTestId("embedding-lineage")).toContainText("dimensions");
   } else if (stateKey === "documents-populated") {
     await expect(page.getByTestId("document-library")).toBeVisible();
     await expect(page.getByRole("button", { name: documentName }).first()).toBeVisible();
