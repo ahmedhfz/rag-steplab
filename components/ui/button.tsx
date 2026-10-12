@@ -83,7 +83,8 @@ const variants: Record<ButtonVariant, string> = {
     "disabled:text-disabled disabled:no-underline",
   ),
   // Visual recipe lives in globals.css (.steplab-pearl); pill shape always.
-  pearl: "steplab-pearl rounded-full! px-5 [&_svg]:text-current",
+  // The icon tilt (globals.css) needs transform in the transition; the base list only animates colour.
+  pearl: "steplab-pearl rounded-full! px-5 [&_svg]:text-current [&_svg]:transition-[color,transform] [&_svg]:duration-300",
 };
 
 export type ButtonStyleOptions = {
