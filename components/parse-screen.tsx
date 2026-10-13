@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { ApiErrorNotice } from "@/components/api-error-message";
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { OcrSourceDetails } from "@/components/ocr-source-details";
-import { hasVisibleBlocker, InspectionBand, PipelineErrorMessage, RunHistory, StageBlockerRow, StageNextAction } from "@/components/pipeline-learning-ui";
+import { hasVisibleBlocker, InspectionBand, RunHistory, StageBlockerRow, StageNextAction } from "@/components/pipeline-learning-ui";
 import { StageContext, StagePage } from "@/components/pipeline-stage-screens";
 import { usePreferences } from "@/components/preferences-provider";
 import { SourceInspector } from "@/components/source-inspector";
@@ -40,13 +41,10 @@ function isParsePhase(value: string | null | undefined): value is ParsePhase {
   return PHASE_ORDER.includes(value as ParsePhase);
 }
 
-function formatElapsed(startedAt: string | null | undefined, now: number, durationMs?: number | null) {
-  if (durationMs !== null && durationMs !== undefined) {
-    const seconds = Math.max(0, Math.floor(durationMs / 1000));
-    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-  }
-  if (!startedAt) return "—";
-  const seconds = Math.max(0, Math.floor((now - new Date(startedAt).getTime()) / 1000));
+/** m:ss for a duration; "—" when it is unknown. */
+function formatClock(durationMs: number | null | undefined) {
+  if (durationMs === null || durationMs === undefined || !Number.isFinite(durationMs)) return "—";
+  const seconds = Math.max(0, Math.floor(durationMs / 1000));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
@@ -360,16 +358,20 @@ export function ParseScreen() {
   // A parse started in this session is not in the summary list yet: never show the previous
   // run's number or duration as if it were the one running.
   const currentRun = inFlightRun ?? (isProcessing ? null : selectedRun);
-  const elapsed = currentRun
-    ? formatElapsed(currentRun.timing.startedAt, now, currentRun.status === "completed" ? currentRun.timing.durationMs : null)
-    : isProcessing && processingSince !== null ? formatElapsed(new Date(processingSince).toISOString(), now) : "—";
+  // "Elapsed" is wall-clock time since Parse was requested: queue, worker start-up and parsing.
+  // It keeps that meaning when the run ends (the clock stops at its last tick) instead of
+  // switching to the run's own processing time, which is shown separately as parser time.
+  const inFlightSince = inFlightRun ? Date.parse(inFlightRun.createdAt ?? inFlightRun.timing.startedAt ?? "") : Number.NaN;
+  const elapsed = formatClock(inFlightRun ? now - inFlightSince : processingSince !== null ? now - processingSince : null);
   const resultRun = parseResult?.parseRunId ? parseRuns.find((run) => run.id === parseResult.parseRunId) ?? null : null;
   const resultRunName = resultRun ? runName(copy, "parse", resultRun.runNumber) : null;
   const selection = { selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId };
   const availability = getPipelineAvailability(locale, "parse", { document: activeDocument, pipeline: activePipeline, selection, processing: isProcessing, persistenceStatus, workspaceStatus });
   const nextAvailability = getPipelineAvailability(locale, "chunk", { document: activeDocument, pipeline: activePipeline, selection, parseRun: selectedRun, persistenceStatus, workspaceStatus });
   const canParse = availability.allowed;
-  const hasParsed = Boolean(activeDocument?.activeParseRunId || selectedParseRunId);
+  // "Parse again" only when the current pipeline/lineage already has a parse; the document
+  // default from another pipeline does not count.
+  const hasParsed = Boolean(selectedParseRunId);
   const phase = parsePhase ?? currentRun?.phase ?? (parseStatus === "completed" ? "completed" : parseStatus === "queued" ? "queued" : null);
   const phaseIndex = isParsePhase(phase) ? PHASE_ORDER.indexOf(phase) : -1;
   const running = isProcessing || currentRun?.status === "queued" || currentRun?.status === "running";
@@ -394,7 +396,10 @@ export function ParseScreen() {
     [labels.summary.elements, parseResult.structured.elements.length],
   ] as const : [];
   const describedBy = [hasVisibleBlocker(canParse ? null : availability) ? "parse-action-disabled-reason" : null, hasParsed ? "parse-run-hint" : null].filter(Boolean).join(" ") || undefined;
-  const resultDuration = resultRun?.timing.durationMs != null ? formatElapsed(null, now, resultRun.timing.durationMs) : null;
+  const resultDuration = resultRun?.timing.durationMs != null ? formatClock(resultRun.timing.durationMs) : null;
+  const parserTime = parsed && currentRun?.status === "completed" && currentRun.timing.durationMs != null ? formatClock(currentRun.timing.durationMs) : null;
+  // Nothing parsed in this lineage yet: the empty state carries the one primary Parse action.
+  const showEmptyAction = !parseResult && !hasParsed && canParse && workspaceStatus !== "loading";
 
   // A parse that finishes while the page is open earns a small confirmation, named after
   // the run that actually finished (never the previous result that stays on screen meanwhile).
@@ -420,6 +425,11 @@ export function ParseScreen() {
     void reparseActiveDocument();
   }
 
+  function requestParse() {
+    if (reparseImpact.requiresConfirmation) setConfirmOpen(true);
+    else startParse();
+  }
+
   return (
     <StagePage testId="parse-screen">
       <PageHeader
@@ -428,7 +438,7 @@ export function ParseScreen() {
             <div className="flex flex-wrap items-center gap-3" data-testid="parse-document-status">
               {showStatusBadge ? <StatusBadge className="text-sm" status={status}>{statusLabel}</StatusBadge> : null}
               {/* Legacy variant names on purpose: `data-variant` carries the emphasis contract. */}
-              <Button aria-busy={isProcessing} aria-describedby={describedBy} data-testid="parse-run-action" disabled={!canParse} onClick={() => (reparseImpact.requiresConfirmation ? setConfirmOpen(true) : startParse())} variant={hasParsed ? "outline" : "default"}>
+              <Button aria-busy={isProcessing} aria-describedby={describedBy} data-testid="parse-run-action" disabled={!canParse} onClick={requestParse} variant={hasParsed || showEmptyAction ? "outline" : "default"}>
                 {isProcessing ? <AppIcon name="loading" className="size-4 animate-spin motion-reduce:animate-none" /> : <AppIcon name="refresh" className="size-4" />}
                 {isProcessing ? labels.actions.running : hasParsed ? labels.actions.reparse : labels.actions.parse}
               </Button>
@@ -462,6 +472,7 @@ export function ParseScreen() {
             <div className="text-right">
               <p className="text-sm font-medium text-tertiary">{labels.progress.elapsed}</p>
               <p className="mt-0.5 text-display-xs font-semibold text-primary tabular-nums" data-testid="parse-elapsed">{elapsed}</p>
+              {parserTime ? <p className="mt-0.5 text-xs text-tertiary tabular-nums" data-testid="parse-parser-time">{interpolate(labels.progress.parserTime, { duration: parserTime })}</p> : null}
             </div>
           </div>
           <ProgressBar className="mt-4" label={`${labels.progress.label} ${parseProgress}%`} size="md" tone={failed ? "error" : running ? "brand" : "gray"} value={Math.min(100, Math.max(0, parseProgress))} />
@@ -472,7 +483,7 @@ export function ParseScreen() {
         <Notice action={<Button onClick={() => void resumeParseTracking()} size="sm" variant="secondary">{labels.actions.resumeTracking}</Button>} className="mt-4 items-center" data-testid="parse-poll-timeout" icon="clock" tone="warning">
           <span className="text-secondary">{labels.pollTimeout}</span>
         </Notice>
-      ) : parseError ? <div className="mt-4"><PipelineErrorMessage message={parseError.message} /></div> : null}
+      ) : parseError ? <ApiErrorNotice className="mt-4" data-testid="parse-error" error={parseError} fallback={copy.errors.parseFailed} /> : null}
 
       {parseResult ? (
         <div className="mt-10">
@@ -502,7 +513,18 @@ export function ParseScreen() {
         <Skeleton className="mt-10" label={copy.overview.workspace.loading} rows={4} />
       ) : (
         <Panel className="mt-10 overflow-hidden" padding="none">
-          <EmptyState description={labels.noOutputDescription} icon="parse" title={labels.noOutput} titleAs="p" />
+          <EmptyState
+            action={showEmptyAction ? (
+              <Button data-testid="parse-empty-action" onClick={requestParse} size="lg" variant="primary">
+                <AppIcon name="play" className="size-4" />
+                {labels.actions.parse}
+              </Button>
+            ) : null}
+            description={labels.noOutputDescription}
+            icon="parse"
+            title={labels.noOutput}
+            titleAs="p"
+          />
         </Panel>
       )}
 

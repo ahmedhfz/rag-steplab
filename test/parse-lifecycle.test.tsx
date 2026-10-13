@@ -1,7 +1,8 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { DocumentLibrary } from "@/components/document-library";
 import { DocumentPipelineProvider } from "@/components/document-pipeline-provider";
 import { DocumentsScreen } from "@/components/documents-screen";
 import { ParseScreen } from "@/components/parse-screen";
@@ -121,8 +122,8 @@ describe("Parse ownership and lifecycle", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderScreen(<ParseScreen />);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Parse" })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Parse" }));
+    await waitFor(() => expect(screen.getByTestId("parse-run-action")).toBeEnabled());
+    await user.click(screen.getByTestId("parse-run-action"));
 
     await waitFor(() => expect(screen.getByRole("heading", { name: "Lesson" })).toBeInTheDocument(), { timeout: 5_000 });
     expect(fetchMock.mock.calls.filter(([url, request]) => String(url).endsWith("/documents/document-1/parse") && (request as RequestInit | undefined)?.method === "POST")).toHaveLength(1);
@@ -167,6 +168,74 @@ describe("Parse ownership and lifecycle", () => {
     expect(elapsed).not.toHaveTextContent("0:05");
   });
 
+  it("keeps Elapsed as wall-clock time after the run ends and shows the parser time separately", async () => {
+    const user = userEvent.setup();
+    prepareActiveDocument();
+    let summaryCalls = 0;
+    let pollCalls = 0;
+    // The worker's own processing time (13 s) is shorter than the time since Parse was requested.
+    const completedRun = { ...runSummary("completed"), runNumber: 1, createdAt: "2026-01-01T10:00:00Z", timing: { startedAt: "2026-01-01T10:00:05Z", completedAt: "2026-01-01T10:00:19Z", durationMs: 13_000 } };
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/capabilities")) return jsonResponse(capabilities);
+      if (url.endsWith("/documents") && init?.method !== "POST") return jsonResponse({ items: [documentItem] });
+      if (url.split("?")[0].endsWith("/documents/document-1/summary")) {
+        summaryCalls += 1;
+        return jsonResponse(summary(summaryCalls > 1 ? [completedRun] : [], summaryCalls > 1 ? "parse-1" : null));
+      }
+      if (url.endsWith("/documents/document-1/parse") && init?.method === "POST") return jsonResponse({ documentId: "document-1", parseRunId: "parse-1", status: "queued" }, 202);
+      if (url.endsWith("/parse-runs/parse-1")) {
+        pollCalls += 1;
+        return pollCalls === 1
+          ? jsonResponse({ id: "parse-1", documentId: "document-1", status: "running", progress: 40 })
+          : jsonResponse({ id: "parse-1", documentId: "document-1", status: "completed", result: parseResult });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderScreen(<ParseScreen />);
+
+    await waitFor(() => expect(screen.getByTestId("parse-run-action")).toBeEnabled());
+    await user.click(screen.getByTestId("parse-run-action"));
+    await waitFor(() => expect(screen.getByTestId("parse-parser-time")).toHaveTextContent("Parser time 0:13"), { timeout: 5_000 });
+    // The stopwatch did not jump to the worker duration (or any server timestamp difference).
+    const elapsed = screen.getByTestId("parse-elapsed");
+    expect(elapsed.textContent).toMatch(/^0:0\d$/);
+    expect(screen.getByTestId("parse-result-summary")).toBeInTheDocument();
+  });
+
+  it("updates the document library row when a parse completes", async () => {
+    const user = userEvent.setup();
+    prepareActiveDocument();
+    let summaryCalls = 0;
+    let pollCalls = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/capabilities")) return jsonResponse(capabilities);
+      if (url.endsWith("/documents") && init?.method !== "POST") return jsonResponse({ items: [documentItem] });
+      if (url.split("?")[0].endsWith("/documents/document-1/summary")) {
+        summaryCalls += 1;
+        return jsonResponse(summary(summaryCalls > 1 ? [runSummary("completed")] : [], summaryCalls > 1 ? "parse-1" : null));
+      }
+      if (url.endsWith("/documents/document-1/parse") && init?.method === "POST") return jsonResponse({ documentId: "document-1", parseRunId: "parse-1", status: "queued" }, 202);
+      if (url.endsWith("/parse-runs/parse-1")) {
+        pollCalls += 1;
+        return pollCalls === 1
+          ? jsonResponse({ id: "parse-1", documentId: "document-1", status: "running", progress: 40 })
+          : jsonResponse({ id: "parse-1", documentId: "document-1", status: "completed", result: parseResult });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderScreen(<><ParseScreen /><DocumentLibrary /></>);
+
+    const row = async () => within(await screen.findByTestId("document-library-table")).getByTestId("document-library-row");
+    await waitFor(async () => expect(await row()).toHaveTextContent("Not parsed"));
+    await waitFor(() => expect(screen.getByTestId("parse-run-action")).toBeEnabled());
+    await user.click(screen.getByTestId("parse-run-action"));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Lesson" })).toBeInTheDocument(), { timeout: 5_000 });
+    await waitFor(async () => expect(within(await row()).getByText("Parsed")).toBeInTheDocument());
+    expect(within(await row()).getByRole("cell", { name: "1" })).toBeInTheDocument();
+  });
+
   it("guards duplicate Parse clicks while the run is queued", async () => {
     prepareActiveDocument();
     let postCalls = 0;
@@ -194,8 +263,8 @@ describe("Parse ownership and lifecycle", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderScreen(<ParseScreen />);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Parse" })).toBeEnabled());
-    const parseButton = screen.getByRole("button", { name: "Parse" });
+    await waitFor(() => expect(screen.getByTestId("parse-run-action")).toBeEnabled());
+    const parseButton = screen.getByTestId("parse-run-action");
     fireEvent.click(parseButton);
     await waitFor(() => expect(screen.getByRole("button", { name: "Running" })).toBeDisabled());
     fireEvent.click(screen.getByRole("button", { name: "Running" }));
@@ -217,9 +286,13 @@ describe("Parse ownership and lifecycle", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderScreen(<ParseScreen />);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Parse" })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Parse" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("The parse worker could not be started.");
+    await waitFor(() => expect(screen.getByTestId("parse-run-action")).toBeEnabled());
+    await user.click(screen.getByTestId("parse-run-action"));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("The processing service couldn't start. This is usually temporary; try again in a minute.");
+    // The backend's own wording stays one click away.
+    expect(within(alert).getByTestId("api-error-details")).toHaveTextContent("Code: modal_dispatch_failed");
+    expect(within(alert).getByTestId("api-error-details")).toHaveTextContent("Message: The parse worker could not be started.");
     expect(screen.queryByRole("heading", { name: "Lesson" })).not.toBeInTheDocument();
   });
 
@@ -247,8 +320,8 @@ describe("Parse ownership and lifecycle", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderScreen(<ParseScreen />);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Parse" })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Parse" }));
+    await waitFor(() => expect(screen.getByTestId("parse-run-action")).toBeEnabled());
+    await user.click(screen.getByTestId("parse-run-action"));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Lesson" })).toBeInTheDocument(), { timeout: 5_000 });
     expect(pollCalls).toBeGreaterThanOrEqual(3);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -272,9 +345,12 @@ describe("Parse ownership and lifecycle", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderScreen(<ParseScreen />);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Parse" })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Parse" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("The parse run was interrupted before completion.");
+    await waitFor(() => expect(screen.getByTestId("parse-run-action")).toBeEnabled());
+    await user.click(screen.getByTestId("parse-run-action"));
+    // The queued run's first poll waits RUN_POLL_INTERVALS_MS[0] (1 s), as long as findByRole's default timeout.
+    const alert = await screen.findByRole("alert", {}, { timeout: 5_000 });
+    expect(alert).toHaveTextContent("Parsing stopped before it finished. Parse the document again.");
+    expect(within(alert).getByTestId("api-error-details")).toHaveTextContent("The parse run was interrupted before completion.");
   });
 
   it("resumes a queued parse after bootstrap without creating another run", async () => {

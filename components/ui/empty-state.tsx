@@ -24,7 +24,7 @@ export type EmptyStateProps = Omit<ComponentProps<"div">, "title"> & {
   description?: ReactNode;
   action?: ReactNode;
   /** Heading element for the title; keep the page's heading order intact. */
-  titleAs?: "h2" | "h3" | "p";
+  titleAs?: "h1" | "h2" | "h3" | "p";
   /** `md` for a page or panel body, `sm` for compact slots (cards, table bodies). */
   size?: "sm" | "md";
 };

@@ -4,6 +4,7 @@ import { IconSwap } from "@/components/ui/transitions";
 
 import { useRef, useState } from "react";
 
+import { ApiErrorText } from "@/components/api-error-message";
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { SampleDocumentButton } from "@/components/sample-document-button";
@@ -30,7 +31,7 @@ export function DocumentUploadPanel() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [validationError, setValidationError] = useState<DocumentFileValidationError | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<unknown>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const hasDocuments = documents.length > 0;
@@ -50,7 +51,7 @@ export function DocumentUploadPanel() {
       await addDocument(nextFile);
       setSelectedFile(null);
     } catch (error) {
-      setSubmitError(error instanceof Error && error.message ? error.message : labels.failed);
+      setSubmitError(error ?? new Error(labels.failed));
     } finally {
       setIsSubmitting(false);
     }
@@ -111,7 +112,11 @@ export function DocumentUploadPanel() {
         type="file"
       />
       {validationError ? <p className="mt-2 text-sm text-error-primary" id="document-upload-feedback" role="alert">{validationMessage(validationError, copy.errors)}</p> : null}
-      {submitError ? <p className="mt-2 text-sm text-error-primary" id="document-upload-feedback" role="alert">{submitError} <span className="block text-xs text-tertiary">{labels.retry}</span></p> : null}
+      {submitError ? (
+        <div className="mt-2 text-sm text-error-primary" id="document-upload-feedback" role="alert">
+          <ApiErrorText after={<span className="block text-xs text-tertiary">{labels.retry}</span>} error={submitError} fallback={labels.failed} />
+        </div>
+      ) : null}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <p className="flex max-w-xl items-start gap-1.5 text-xs text-tertiary" data-testid="upload-privacy-note">
           <AppIcon aria-hidden="true" className="mt-px size-3.5 shrink-0 text-fg-quaternary" name="lock" />

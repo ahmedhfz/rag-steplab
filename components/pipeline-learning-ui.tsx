@@ -12,18 +12,13 @@ import { Button } from "@/components/ui/button";
 import { Disclosure, TechnicalDetails } from "@/components/ui/disclosure";
 import { Notice } from "@/components/ui/notice";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { describeApiError } from "@/lib/api-errors";
 import type { PipelineAvailability } from "@/lib/blockers";
 import { type AppCopy, type AppLocale, interpolate, runName, useCopy } from "@/lib/copy";
 import { formatCount, formatMs } from "@/lib/format";
 import { completedCompatibleRun } from "@/lib/pipeline-lineage";
 import type { ChunkStrategy, RunSummary } from "@/lib/rag-api-types";
 import { cn } from "@/lib/utils";
-
-/** A failed stage request. Neutral layout, error tone, announced once (role="alert"). */
-export function PipelineErrorMessage({ message }: { message: string | null | undefined }) {
-  if (!message) return null;
-  return <Notice tone="error">{message}</Notice>;
-}
 
 export function DisabledReason({ id, children }: { id: string; children: React.ReactNode }) {
   return <p className="mt-2 text-sm text-tertiary" id={id}>{children}</p>;
@@ -221,6 +216,7 @@ export function RunHistory({ kind, runs, selectedId, inspectedId, defaultId, has
           const isSelected = run.id === selectedId;
           const isViewed = run.id === viewedId;
           const meta = runMeta(copy, preferences.locale, kind, run);
+          const runError = describeApiError(copy, run.error);
           const problem = run.status === "queued" || run.status === "running"
             ? <StatusBadge status="processing">{copy.runs.running}</StatusBadge>
             : run.status === "failed"
@@ -240,13 +236,15 @@ export function RunHistory({ kind, runs, selectedId, inspectedId, defaultId, has
                   {problem}
                 </div>
                 {meta ? <p className="mt-1 text-sm text-tertiary tabular-nums">{meta}</p> : null}
-                {run.error?.message ? <p className="mt-1 text-sm text-error-primary">{run.error.message}</p> : null}
+                {runError ? <p className="mt-1 text-sm text-error-primary">{runError.message}</p> : null}
                 {!run.isCompatible && run.compatibilityReason ? <p className="mt-1 text-sm text-warning-primary">{run.compatibilityReason}</p> : null}
                 <TechnicalDetails className="mt-1.5" summaryClassName="text-xs">
                   <dl className="grid gap-1 text-xs text-tertiary">
                     {/* Parse rows already show the duration in their meta line. */}
                     {kind !== "parse" && run.timing.durationMs != null ? <div className="flex gap-2"><dt>{copy.runs.duration}</dt><dd className="text-secondary tabular-nums">{formatMs(preferences.locale, run.timing.durationMs)}</dd></div> : null}
                     <div className="flex min-w-0 gap-2"><dt className="shrink-0">{copy.runs.runId}</dt><dd className="min-w-0 font-mono text-secondary wrap-anywhere">{run.id}</dd></div>
+                    {runError?.technical ? <div className="flex min-w-0 gap-2"><dt className="shrink-0">{copy.common.errorCode}</dt><dd className="min-w-0 font-mono text-secondary wrap-anywhere">{runError.technical.code}</dd></div> : null}
+                    {runError?.technical?.message ? <div className="flex min-w-0 gap-2"><dt className="shrink-0">{copy.common.errorMessage}</dt><dd className="min-w-0 text-secondary break-words">{runError.technical.message}</dd></div> : null}
                   </dl>
                 </TechnicalDetails>
               </div>

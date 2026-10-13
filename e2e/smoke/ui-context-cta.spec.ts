@@ -235,6 +235,13 @@ test("Creating a pipeline resets its lineage and Journey state", async ({ page }
   );
   expect(states).toEqual(["Completed", "Ready", "Locked", "Locked", "Locked", "Locked", "Locked", "Locked", "Locked"]);
   await expect(page.getByTestId("overview-continue-action")).toHaveAttribute("href", "/parse");
+
+  // The document's parse in another pipeline does not count: this pipeline offers Parse, not Parse again.
+  await page.getByTestId("overview-continue-action").click();
+  await expect(page).toHaveURL(/\/parse$/);
+  await expect(page.getByText("Nothing parsed yet", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("parse-run-action")).toHaveText("Parse");
+  await expect(page.getByTestId("parse-empty-action")).toBeVisible();
   quality.assertClean();
 });
 

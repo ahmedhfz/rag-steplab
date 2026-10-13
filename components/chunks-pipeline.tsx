@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
+import { ApiErrorNotice } from "@/components/api-error-message";
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
-import { hasVisibleBlocker, PipelineErrorMessage, StageBlockerRow } from "@/components/pipeline-learning-ui";
+import { hasVisibleBlocker, StageBlockerRow } from "@/components/pipeline-learning-ui";
 import { usePreferences } from "@/components/preferences-provider";
 import { SourceInspector } from "@/components/source-inspector";
 import { AppIcon, type SemanticIconName } from "@/components/ui/app-icon";
@@ -464,7 +465,7 @@ export function ChunksPipeline({ showAction = true, stage, onFormStateChange }: 
       <EmbeddingsStage
         canEmbed={canEmbed}
         chunkCount={selectedChunkCount}
-        error={embeddingError?.message}
+        error={embeddingError}
         model={embeddingRun?.model || capabilities?.embeddingModel || null}
         onCreate={() => void handleEmbedding()}
         reused={reuseNotice === "embedding"}
@@ -527,9 +528,9 @@ export function ChunksPipeline({ showAction = true, stage, onFormStateChange }: 
           </Button>
         </footer>
       </Panel>
-      {chunkError?.message || reuseNotice === "chunk" ? (
+      {chunkError || reuseNotice === "chunk" ? (
         <div className="mt-3 flex flex-col gap-3">
-          <PipelineErrorMessage message={chunkError?.message} />
+          <ApiErrorNotice error={chunkError} fallback={copy.errors.chunkingFailed} />
           {reuseNotice === "chunk" ? <Notice data-testid="chunk-reuse-notice" icon="refresh">{labels.reuseNotice}</Notice> : null}
         </div>
       ) : null}
@@ -581,7 +582,7 @@ function EmbeddingsStage({ run, status, chunkCount, sourceRunNumber, sourceChunk
   canEmbed: boolean;
   upToDate: boolean;
   blocker: Parameters<typeof StageBlockerRow>[0]["blocker"];
-  error: string | null | undefined;
+  error: unknown;
   reused: boolean;
   showAction: boolean;
   onCreate: () => void;
@@ -648,7 +649,7 @@ function EmbeddingsStage({ run, status, chunkCount, sourceRunNumber, sourceChunk
           ) : null}
         </footer>
       </Panel>
-      <PipelineErrorMessage message={error} />
+      <ApiErrorNotice error={error} fallback={copy.errors.embeddingFailed} />
       {reused ? <Notice data-testid="embedding-reuse-notice" icon="refresh">{labels.reuseNotice}</Notice> : null}
       {run ? (
         // Model, vector count, dimensions and duration are on the lineage card above; only storage details remain.

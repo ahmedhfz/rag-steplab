@@ -8,6 +8,7 @@ import { usePreferences } from "@/components/preferences-provider";
 import { UI_COPY } from "@/lib/copy";
 import { DocumentApiError } from "@/lib/document-api";
 import { validatePdfFile } from "@/lib/document-file";
+import { upsertUploadedDocument, withSummaryProjection } from "@/lib/document-list";
 import { withLineageFlagsFrom, withSelectionLineageFlags } from "@/lib/lineage-flags";
 import {
   createChunkRun,
@@ -492,6 +493,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       updatedAt: snapshot.detail.updatedAt,
     });
     setActiveDocument(snapshot.detail);
+    // The library row follows the authoritative summary (latest parse state, pages).
+    setDocuments((current) => withSummaryProjection(current, snapshot.detail));
     applySelectedLineage(snapshot.selection);
     resetInspection(snapshot.selection);
     setPersistenceError(null);
@@ -1078,7 +1081,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     try {
       const response = await uploadDocument(file, controller.signal);
       setUploadNotice(response.reusedDocument ? "reused" : "created");
-      setDocuments((current) => [response.document, ...current.filter((item) => item.id !== response.document.id)]);
+      setDocuments((current) => upsertUploadedDocument(current, response.document, response.reusedDocument));
       // Keep an upload race from stealing focus from a document selected while
       // the storage request was in flight.
       if (selectionRequestRef.current === selectionToken) {
@@ -1149,13 +1152,6 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       setParseProgress(100);
       setParsePhase("completed");
       setEvaluationRun(null);
-      setDocuments((current) => current.map((document) => document.id === documentId ? {
-        ...document,
-        pageCount: snapshot.detail.pageCount,
-        activeParseRunId: snapshot.detail.activeParseRunId,
-        activeChunkRunId: snapshot.detail.activeChunkRunId,
-        activeEmbeddingRunId: snapshot.detail.activeEmbeddingRunId,
-      } : document));
     } catch (error) {
       if (!isCurrentRun() || isAbortError(error)) return;
       const apiError = asApiError(error, errorCopyRef.current.parseFailed);

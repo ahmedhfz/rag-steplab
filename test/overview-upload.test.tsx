@@ -62,6 +62,48 @@ describe("Overview document ownership", () => {
     await waitFor(() => expect(screen.getByTestId("workspace-control-plane")).toBeInTheDocument());
   });
 
+  it("keeps a parsed sample's library row when the sample is added again", async () => {
+    const user = userEvent.setup();
+    const listed = { id: "sample-1", fileName: "rag-steplab-sample-city-bikes.pdf", mediaType: "application/pdf", sizeBytes: 100, pageCount: 4, sha256: "sample-sha", activeParseRunId: "parse-1", activeChunkRunId: null, activeEmbeddingRunId: null, latestParseStatus: "completed", latestParseError: null, createdAt: null, updatedAt: null };
+    // The upload response is the bare document row: the list endpoint alone projects the parse state.
+    const uploadRow = { ...listed, latestParseStatus: undefined, latestParseError: undefined };
+    const parseRun = { id: "parse-1", runNumber: 1, status: "completed", progress: 100, isStale: false, isCompatible: true, compatibilityReason: null, historicalLineage: false, upstream: { documentId: "sample-1" }, config: {}, timing: { startedAt: null, completedAt: null, durationMs: 1000 }, error: null };
+    let releaseSummary: () => void = () => undefined;
+    const summaryGate = new Promise<void>((resolve) => { releaseSummary = resolve; });
+    const json = (payload: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } }));
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "/samples/rag-steplab-sample-city-bikes.pdf") return new Response("%PDF-1.4 sample", { status: 200, headers: { "Content-Type": "application/pdf" } });
+      if (url.endsWith("/capabilities")) return json(capabilities);
+      if (url.endsWith("/documents") && init?.method === "POST") return json({ document: uploadRow, reusedDocument: true });
+      if (url.endsWith("/documents")) return json({ items: [listed] });
+      if (url.endsWith("/documents/sample-1/pipelines")) return json([]);
+      if (url.split("?")[0].endsWith("/documents/sample-1/summary")) {
+        await summaryGate;
+        // The summary is the fresher source; here the stored page count changed meanwhile.
+        return json({ ...uploadRow, pageCount: 5, parseRuns: [parseRun], chunkRuns: [], embeddingRuns: [], experiments: [], evaluationDatasets: [] });
+      }
+      return json({ error: { code: "not_found", message: `unexpected request: ${url}` } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithPipeline(<DocumentsScreen />);
+
+    const table = await screen.findByTestId("document-library-table");
+    const row = () => within(table).getByTestId("document-library-row");
+    await waitFor(() => expect(within(row()).getByText("Parsed")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Try a sample PDF" }));
+    expect(await screen.findByText("This PDF is already in your library.")).toBeInTheDocument();
+    // Before the selected document's summary arrives, the row keeps what the list already knew.
+    expect(within(row()).getByText("Parsed")).toBeInTheDocument();
+    expect(within(row()).getByRole("cell", { name: "4" })).toBeInTheDocument();
+
+    releaseSummary();
+    // Once the summary is committed, the row follows it and still says Parsed.
+    await waitFor(() => expect(within(row()).getByRole("cell", { name: "5" })).toBeInTheDocument());
+    expect(within(row()).getByText("Parsed")).toBeInTheDocument();
+    expect(within(row()).queryByText("Not parsed")).not.toBeInTheDocument();
+    expect(within(row()).getByRole("button", { name: /Select document/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("uploads from the clickable drop zone without parsing", async () => {
     const user = userEvent.setup();
     const documentItem = { id: "document-1", fileName: "lesson.pdf", mediaType: "application/pdf", sizeBytes: 8, pageCount: 0, sha256: "sha", activeParseRunId: null, activeChunkRunId: null, activeEmbeddingRunId: null, createdAt: null, updatedAt: null };
@@ -110,7 +152,11 @@ describe("Overview document ownership", () => {
     const input = screen.getByLabelText("Choose PDF");
     const file = new File(["%PDF-1.4"], "retry.pdf", { type: "application/pdf" });
     await user.upload(input, file);
-    expect(await screen.findByRole("alert")).toHaveTextContent("Upload failed. Try again.");
+    const alert = await screen.findByRole("alert");
+    // Unknown backend code: the surface's own copy first, the backend wording under Technical details.
+    expect(alert).toHaveTextContent("The PDF could not be added. Try again.");
+    expect(within(alert).getByTestId("api-error-details")).toHaveTextContent("Code: storage_unavailable");
+    expect(within(alert).getByTestId("api-error-details")).toHaveTextContent("Message: Upload failed. Try again.");
     expect(screen.getByText("retry.pdf", { exact: false })).toBeInTheDocument();
 
     await user.upload(input, file);

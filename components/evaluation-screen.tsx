@@ -3,6 +3,7 @@
 import NumberFlow, { NumberFlowGroup, useIsSupported } from "@number-flow/react";
 import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
+import { ApiErrorNotice, ApiErrorText } from "@/components/api-error-message";
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { SourceInspector } from "@/components/source-inspector";
@@ -869,7 +870,7 @@ function EvaluationWorkspace() {
                 ) : <p className="mt-3 px-1 text-sm text-tertiary">{copy.noDatasets}</p>}
               </aside>
             </div>
-            {evaluationError && activeTab === "dataset" ? <Notice className="mt-4" tone="error">{evaluationError.message}</Notice> : null}
+            {evaluationError && activeTab === "dataset" ? <ApiErrorNotice className="mt-4" error={evaluationError} fallback={allCopy.errors.datasetCreateFailed} /> : null}
           </TransitionPanel>
         ) : null}
 
@@ -918,7 +919,9 @@ function EvaluationWorkspace() {
               {!canRun ? <span className="sr-only" id="evaluation-disabled-reason">{runAvailability.message}</span> : null}
             </Panel>
             <StageBlocker blocker={showRunBlocker ? runAvailability : null} className="mt-3 px-1" data-testid="evaluation-blocker" />
-            {evaluationError ? <Notice className="mt-4" tone="error">{evaluationError.code === "run_poll_timeout" ? copy.trackingPaused : evaluationError.message}</Notice> : null}
+            {evaluationError ? (evaluationError.code === "run_poll_timeout"
+              ? <Notice className="mt-4" tone="error">{copy.trackingPaused}</Notice>
+              : <ApiErrorNotice className="mt-4" error={evaluationError} fallback={allCopy.errors.evaluationFailed} />) : null}
             {runInFlight && !processing ? <Button className="mt-3" iconLeading="refresh" onClick={() => void resumeRunTracking("evaluation")} size="sm" variant="secondary">{copy.resumeTracking}</Button> : null}
 
             {evaluationRun ? (() => {
@@ -1080,7 +1083,7 @@ function EvaluationWorkspace() {
                                       <p className="min-w-0 text-sm font-medium text-primary">{item.question}</p>
                                       <span className="inline-flex items-center text-xs"><span className="sr-only">{copy.errorCode}: </span><code className="rounded-sm bg-error-primary px-1.5 py-0.5 font-mono text-xs text-error-primary">{item.errorCode ?? "—"}</code></span>
                                     </div>
-                                    {item.errorMessage ? <p className="mt-1 text-sm break-words text-tertiary">{item.errorMessage}</p> : null}
+                                    {item.errorCode || item.errorMessage ? <div className="mt-1 text-sm break-words text-tertiary"><ApiErrorText error={{ code: item.errorCode, message: item.errorMessage }} /></div> : null}
                                   </div>
                                 </li>
                               ))}

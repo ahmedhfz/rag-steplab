@@ -22,7 +22,8 @@ test("tek gerçek Docling + Gemini golden path kalıcı RAG lifecycle'ını doğ
 
   // Upload sonrası document detail hydration kısa süre sonra parse aksiyonunu
   // enable eder; retry'da backend checkpoint'i zaten tamamlanmış olabilir.
-  const parseButton = page.getByRole("button", { name: /^Parse$/ });
+  // The header action; the empty state offers the same Parse action until the first parse.
+  const parseButton = page.getByTestId("parse-run-action").and(page.getByRole("button", { name: /^Parse$/ }));
   const reparsedDocumentButton = page.getByRole("button", { name: "Parse again", exact: true });
   const completedProgress = page.getByRole("progressbar", { name: /Progress 100%/ });
   await expect.poll(async () => {
