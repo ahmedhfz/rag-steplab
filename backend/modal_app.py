@@ -75,6 +75,15 @@ worker_env = {
     "RAG_OCR_MODEL_PATH": OCR_MODEL_PATH,
 }
 
+# Capacity: every Function scales to zero except one warm API container, so
+# max_containers only bounds burst parallelism (different users' runs; one
+# user is limited to one active heavy run by the database admission lock).
+# No Function uses @modal.concurrent: each container handles one input at a
+# time, so a container holds at most one pooled Postgres connection in
+# practice (app.db pool_size=2 is the hard per-container ceiling).
+# Full scale, in practice: api_eu 4 + pipeline_worker 3 + parse_worker 2 +
+# maintenance_sweeper 1 = 10 connections (ceiling 20); the legacy ``api``
+# rollback and manual ``benchmark_parse`` add at most 4 more (ceiling 8).
 worker_options: dict[str, Any] = {
     "image": worker_image,
     "secrets": worker_secrets,
@@ -83,7 +92,8 @@ worker_options: dict[str, Any] = {
     "cpu": 2.0,
     "memory": 4096,
     "min_containers": 0,
-    "max_containers": 1,
+    # Two concurrent Docling parses; each container keeps its own 4 GiB.
+    "max_containers": 2,
     "timeout": PARSE_WORKER_TIMEOUT_SECONDS,
     "startup_timeout": PARSE_WORKER_STARTUP_TIMEOUT_SECONDS,
 }
@@ -103,6 +113,9 @@ api_routing_region = os.getenv("MODAL_API_ROUTING_REGION", "eu-west")
 api_options: dict[str, Any] = {
     **legacy_api_options,
     "min_containers": 1,
+    # Sync endpoints with a 2-connection pool: scale out rather than run
+    # concurrent inputs (and CPU-bound chunking) inside one 0.5-CPU container.
+    "max_containers": 4,
     "region": api_compute_region,
     "routing_region": api_routing_region,
 }
@@ -112,7 +125,9 @@ pipeline_options: dict[str, Any] = {
     "cpu": 1.0,
     "memory": 2048,
     "min_containers": 0,
-    "max_containers": 1,
+    # Embedding/experiment/evaluation runs of different users in parallel;
+    # lease fencing is per run in the database, independent of containers.
+    "max_containers": 3,
     "timeout": max(60, int(os.getenv("PIPELINE_WORKER_TIMEOUT_SECONDS", "1800"))),
     "startup_timeout": max(30, int(os.getenv("PIPELINE_WORKER_STARTUP_TIMEOUT_SECONDS", "300"))),
 }
@@ -263,21 +278,31 @@ def local_manifest() -> dict[str, Any]:
             "api_eu", "api", "parse_worker", "pipeline_worker", "maintenance_sweeper",
             "benchmark_parse", "prefetch_docling_models",
         ],
-        "workerProfile": {"cpu": 2.0, "memoryMiB": 4096, "minContainers": 0, "maxContainers": 1, "timeoutSeconds": 900},
+        "workerProfile": {
+            "cpu": worker_options["cpu"],
+            "memoryMiB": worker_options["memory"],
+            "minContainers": worker_options["min_containers"],
+            "maxContainers": worker_options["max_containers"],
+            "timeoutSeconds": worker_options["timeout"],
+        },
         "pipelineWorkerProfile": {
-            "cpu": 1.0,
-            "memoryMiB": 2048,
-            "minContainers": 0,
-            "maxContainers": 1,
+            "cpu": pipeline_options["cpu"],
+            "memoryMiB": pipeline_options["memory"],
+            "minContainers": pipeline_options["min_containers"],
+            "maxContainers": pipeline_options["max_containers"],
             "timeoutSeconds": pipeline_options["timeout"],
             "startupTimeoutSeconds": pipeline_options["startup_timeout"],
         },
         "apiProfile": {
-            "cpu": 0.5,
-            "memoryMiB": 1024,
-            "minContainers": 1,
-            "maxContainers": 2,
+            "cpu": api_options["cpu"],
+            "memoryMiB": api_options["memory"],
+            "minContainers": api_options["min_containers"],
+            "maxContainers": api_options["max_containers"],
             "computeRegion": api_compute_region,
+        },
+        "maintenanceProfile": {
+            "minContainers": maintenance_options["min_containers"],
+            "maxContainers": maintenance_options["max_containers"],
         },
         "routingRegion": api_routing_region,
     }

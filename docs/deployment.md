@@ -40,10 +40,24 @@ Tek `rag-steplab-api` Modal App dört farklı compute profili kullanır
 
 | Bileşen | Function | CPU | Bellek | Timeout | Min/Max |
 | --- | --- | ---: | ---: | ---: | ---: |
-| FastAPI ASGI | `api_eu` | 0.5 | 1024 MiB | 300 s | 1 / 2 |
-| Full Docling parse worker | `parse_worker` (`benchmark_parse` aynı profili kullanır) | 2.0 | 4096 MiB | 900 s | 0 / 1 |
-| Pipeline worker (embedding, experiment, evaluation) | `pipeline_worker` | 1.0 | 2048 MiB | 1800 s | 0 / 1 |
+| FastAPI ASGI | `api_eu` | 0.5 | 1024 MiB | 300 s | 1 / 4 |
+| Full Docling parse worker | `parse_worker` (`benchmark_parse` aynı profili kullanır) | 2.0 | 4096 MiB | 900 s | 0 / 2 |
+| Pipeline worker (embedding, experiment, evaluation) | `pipeline_worker` | 1.0 | 2048 MiB | 1800 s | 0 / 3 |
 | Bakım tarayıcısı (10 dakikada bir, Modal schedule) | `maintenance_sweeper` | 0.25 | 512 MiB | 300 s | 0 / 1 |
+
+Yalnız bir `api_eu` container'ı sıcak kalır; Max değerleri yalnız eşzamanlı
+yükte farklı kullanıcıların işlerini paralel çalıştırır, boşta maliyet eklemez.
+Kullanıcı başına tek aktif ağır iş kuralı ve run lease/fencing'i veritabanında
+uygulandığından container sayısından bağımsızdır. `@modal.concurrent`
+kullanılmaz: her container aynı anda tek input işler, böylece senkron endpoint'ler
+ve CPU-yoğun chunking aynı 0.5 CPU'yu paylaşmaz. Her süreç en çok
+`POOL_SIZE + MAX_OVERFLOW` = 2 Postgres bağlantısı açabilir (`backend/app/db.py`);
+sıralı çalışan container pratikte bir bağlantı kullanır. Tam ölçekte `api_eu` +
+`pipeline_worker` + `parse_worker` + `maintenance_sweeper` = 10 container: pratikte
+10, tavan 20 bağlantı (legacy `api` ve manuel `benchmark_parse` en çok 4 container
+ekler). Supavisor session modunda eşzamanlı client sayısı pool size ile sınırlıdır;
+Max değerleri artırılmadan önce Supabase Dashboard'daki pool size'ın bu tavanı
+karşıladığı doğrulanır.
 
 Pipeline worker ve bakım tarayıcısı API image'ını kullanır (Docling taşımaz).
 Hosted ortamda embedding run'ları durable `pipeline_worker` üzerinde çalışır;

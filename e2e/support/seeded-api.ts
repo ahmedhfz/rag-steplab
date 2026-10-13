@@ -628,6 +628,9 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
     if (pathname === `/documents/${documentId}/embeddings` && method === "POST") {
       await new Promise((resolve) => setTimeout(resolve, 300));
       embeddingAvailable = true;
+      // Hosted contract: `?async=true` answers 202 after dispatch and the client polls
+      // GET /embedding-runs/{id} (completed below); without it the request waits for the run.
+      if (url.searchParams.get("async") === "true") return json(route, { ...embedding, status: "queued", embeddingCount: 0, reusedArtifact: false }, 202);
       return json(route, embedding);
     }
     // Run tracking polls the lightweight /status endpoint and reads the detail only on progress changes.
