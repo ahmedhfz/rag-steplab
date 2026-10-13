@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
-from .config import Settings, get_settings
+from .config import Settings, get_settings, text_request_timeout_seconds
 from .errors import ApiProblem
 
 
@@ -197,7 +197,7 @@ class GeminiService:
 
     def _text_request_options(self) -> dict[str, Any]:
         # Per-request override; the client-level timeout stays the embedding one.
-        return {"http_options": {"timeout": max(1, self.settings.gemini_text_timeout_seconds) * 1000}}
+        return {"http_options": {"timeout": text_request_timeout_seconds(self.settings) * 1000}}
 
     def _with_retry(
         self,

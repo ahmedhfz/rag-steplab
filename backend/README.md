@@ -176,7 +176,9 @@ ile sınırlandırılır, ancak uygulama tarafındaki JSON parse ve semantic
 validation katmanı korunur.
 
 Text çağrıları (generation, reranking, judge) istek başına
-`GEMINI_TEXT_TIMEOUT_SECONDS` (varsayılan 20 sn; sağlıklı çağrı 1–5 sn) kullanır;
+`GEMINI_TEXT_TIMEOUT_SECONDS` (varsayılan 20 sn; sağlıklı çağrı 1–5 sn; SDK bunu
+sunucu deadline'ı olarak gönderir ve Gemini 10 sn altını 400 ile reddettiği için
+en az 10 sn uygulanır) kullanır;
 embedding `GEMINI_TIMEOUT_SECONDS` (60 sn) ile kalır. Yapılandırılmış model
 429/5xx, timeout veya bağlantı hatası verirse çağrı beklemeden
 `GEMINI_TEXT_FALLBACK_MODELS` sırasındaki modele (varsayılan

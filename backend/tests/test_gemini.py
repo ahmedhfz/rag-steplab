@@ -384,6 +384,16 @@ def test_text_calls_carry_their_own_shorter_request_timeout(monkeypatch):
     assert types.GenerateContentConfig(**calls[0]["config"]).http_options.timeout == 20_000
 
 
+def test_text_request_timeout_never_goes_below_the_gemini_minimum_deadline(monkeypatch):
+    ok = SimpleNamespace(text=_ANSWER, model_version="primary-v1")
+    service, calls = _service(iter([ok]), sleeps=[], monkeypatch=monkeypatch, gemini_text_timeout_seconds=5)
+
+    service.generate_json("prompt")
+
+    # Gemini answers a sub-10 s deadline with 400, which would skip the fallback.
+    assert calls[0]["config"]["http_options"] == {"timeout": 10_000}
+
+
 def test_embeddings_never_fall_back_to_another_model(monkeypatch):
     import pytest
 

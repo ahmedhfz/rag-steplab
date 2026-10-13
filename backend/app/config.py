@@ -75,6 +75,13 @@ DEFAULT_GEMINI_TEXT_FALLBACK_MODELS: tuple[str, ...] = ("gemini-3.1-flash-lite",
 # 1–5 s (a 4096-token answer stays well below this); an overloaded model can
 # take 40–60 s, so the call moves to the fallback instead of waiting it out.
 DEFAULT_GEMINI_TEXT_TIMEOUT_SECONDS = 20
+# The SDK forwards the timeout as the server deadline; Gemini rejects deadlines
+# under 10 s with 400 INVALID_ARGUMENT, which would bypass the fallback.
+MIN_GEMINI_TEXT_TIMEOUT_SECONDS = 10
+
+
+def text_request_timeout_seconds(settings: Settings) -> int:
+    return max(MIN_GEMINI_TEXT_TIMEOUT_SECONDS, settings.gemini_text_timeout_seconds)
 
 
 @dataclass(frozen=True)
@@ -170,7 +177,7 @@ def pipeline_lease_duration_seconds(settings: Settings) -> int:
     provider_attempts = retry_attempts**3
     # Every attempt may take the longest request timeout (embedding or text)
     # and then wait up to the provider client's maximum backoff.
-    request_timeout = max(1, settings.gemini_timeout_seconds, settings.gemini_text_timeout_seconds)
+    request_timeout = max(1, settings.gemini_timeout_seconds, text_request_timeout_seconds(settings))
     provider_budget = provider_attempts * (request_timeout + _provider_max_retry_delay_seconds())
     operation_budget = max(settings.pipeline_worker_timeout_seconds, provider_budget)
     return (
@@ -253,7 +260,10 @@ def get_settings() -> Settings:
         gemini_judge_model=os.getenv("GEMINI_JUDGE_MODEL", DEFAULT_GEMINI_TEXT_MODEL),
         gemini_text_fallback_models=_csv("GEMINI_TEXT_FALLBACK_MODELS", DEFAULT_GEMINI_TEXT_FALLBACK_MODELS),
         gemini_timeout_seconds=_int("GEMINI_TIMEOUT_SECONDS", 60),
-        gemini_text_timeout_seconds=max(1, _int("GEMINI_TEXT_TIMEOUT_SECONDS", DEFAULT_GEMINI_TEXT_TIMEOUT_SECONDS)),
+        gemini_text_timeout_seconds=max(
+            MIN_GEMINI_TEXT_TIMEOUT_SECONDS,
+            _int("GEMINI_TEXT_TIMEOUT_SECONDS", DEFAULT_GEMINI_TEXT_TIMEOUT_SECONDS),
+        ),
         gemini_max_retries=_int("GEMINI_MAX_RETRIES", 2),
         cors_origins=origins,
         cors_origin_regex=os.getenv("CORS_ORIGIN_REGEX") or None,
