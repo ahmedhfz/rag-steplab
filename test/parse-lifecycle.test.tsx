@@ -347,7 +347,8 @@ describe("Parse ownership and lifecycle", () => {
 
     await waitFor(() => expect(screen.getByTestId("parse-run-action")).toBeEnabled());
     await user.click(screen.getByTestId("parse-run-action"));
-    const alert = await screen.findByRole("alert");
+    // The queued run's first poll waits RUN_POLL_INTERVALS_MS[0] (1 s), as long as findByRole's default timeout.
+    const alert = await screen.findByRole("alert", {}, { timeout: 5_000 });
     expect(alert).toHaveTextContent("Parsing stopped before it finished. Parse the document again.");
     expect(within(alert).getByTestId("api-error-details")).toHaveTextContent("The parse run was interrupted before completion.");
   });
