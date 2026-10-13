@@ -98,3 +98,15 @@ test("seeded state reload sonrası korunur ve responsive gezinme çalışır", a
 
   quality.assertClean();
 });
+
+test("bilinmeyen rota uygulama kabuğunda markalı 404 gösterir ve Overview'a döner", async ({ page }) => {
+  const response = await page.goto("/this-route-does-not-exist");
+  expect(response?.status()).toBe(404);
+  await expect(page.getByRole("heading", { name: "Page not found", level: 1 })).toBeVisible();
+  await expect(page.getByTestId("app-shell-sidebar")).toBeVisible();
+  await expect(page).toHaveTitle("Page not found · RAG StepLab");
+
+  await page.getByTestId("route-fallback-overview-link").click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("heading", { name: "Build your RAG, one step at a time.", level: 1 })).toBeVisible();
+});

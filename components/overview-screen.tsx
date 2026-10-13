@@ -5,6 +5,7 @@ import { TransitionDetails, TransitionPanel } from "@/components/ui/transitions"
 import Link from "next/link";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 
+import { ApiErrorText } from "@/components/api-error-message";
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { SampleDocumentButton } from "@/components/sample-document-button";
 import { usePreferences } from "@/components/preferences-provider";
@@ -590,7 +591,7 @@ export function OverviewScreen() {
 
               {persistenceStatus === "unavailable" ? (
                 <div className="px-5 pb-5">
-                  <Notice role="alert" title={labels.unavailable} tone="error">{persistenceError?.message}</Notice>
+                  <Notice role="alert" title={labels.unavailable} tone="error">{persistenceError ? <ApiErrorText error={persistenceError} fallback={copy.errors.workspaceLoadFailed} /> : null}</Notice>
                 </div>
               ) : null}
 

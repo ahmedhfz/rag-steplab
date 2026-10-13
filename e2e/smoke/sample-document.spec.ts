@@ -38,11 +38,13 @@ for (const locale of ["tr", "en"] as const) {
     await expect(page.getByTestId("pipeline-context-document-selector")).toContainText(sample.fileName);
     await expect(page.getByTestId("parse-result-summary")).toHaveCount(0);
     await expect(page.getByTestId("parse-run-action")).toBeEnabled();
+    await expect(page.getByTestId("parse-run-action")).toHaveText(locale === "tr" ? "Ayrıştır" : "Parse");
     // Chunking stays visible but locked until this document is parsed.
     await expect(page.getByTestId("parse-next-action")).toBeDisabled();
     expect(api.parseRequests).toEqual([]);
 
-    await page.getByTestId("parse-run-action").click();
+    // Nothing parsed yet: the empty state carries the primary Parse action.
+    await page.getByTestId("parse-empty-action").click();
     await expect(page.getByTestId("parse-result-summary")).toBeVisible();
     expect(api.parseRequests).toEqual(["e2e-uploaded-1"]);
 

@@ -1,5 +1,23 @@
 # RAG StepLab
 
+> **In English.** RAG StepLab is an interactive learning lab that makes every
+> step of a retrieval-augmented generation (RAG) pipeline visible on a real PDF,
+> with the evidence behind each result.
+>
+> - **Live app:** <https://rag-steplab.vercel.app> (sign-in required; a fictional
+>   sample PDF is one click away).
+> - **What you can do:** parse a PDF with Docling and inspect its structure and
+>   OCR provenance, compare chunking strategies, create embeddings, ask questions
+>   with dense/keyword/hybrid retrieval and optional reranking, trace the grounded
+>   answer back to its citations, and evaluate runs against golden questions side
+>   by side. The interface is available in English and Turkish.
+> - **Screenshots:** [Ekran görüntüleri](#ekran-görüntüleri) below.
+> - **Run it locally:** [Yerel kurulum](#yerel-kurulum) (Node.js, Python and a
+>   Supabase project).
+> - **License:** [MIT](LICENSE).
+>
+> The rest of this README is in Turkish and is the canonical reference.
+
 **RAG'in her adımını gerçek dokümanınızla, kanıtıyla birlikte görün, değiştirin ve
 karşılaştırın.** RAG StepLab, geliştiricilerin retrieval-augmented generation
 akışını aşama aşama incelediği etkileşimli bir öğrenme laboratuvarıdır.
@@ -125,3 +143,7 @@ garantisi veren bir değerlendirme sistemi değildir. OCR confidence ve
 citation geçerliliği gibi skorlar tanısaldır, doğruluk kanıtı değildir.
 Seeded testler hosted provider kalitesini kanıtlamaz; gerçek Docling, Gemini ve
 corpus davranışı ayrı yetkili doğrulama gerektirir.
+
+## Lisans
+
+[MIT](LICENSE).

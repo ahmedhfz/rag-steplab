@@ -290,6 +290,20 @@ describe("Playground presentation states", () => {
     expect(error.querySelector("p")).not.toHaveTextContent("worker diagnostic detail");
   });
 
+  it("says a busy model provider is temporary and keeps the raw problem under Technical details", () => {
+    state().experimentRun = null;
+    state().experimentError = { code: "gemini_generation_failed", message: "Gemini generation failed." };
+    renderRetrieval();
+
+    const error = screen.getByTestId("playground-error");
+    expect(within(error).getByTestId("playground-error-message")).toHaveTextContent("The AI model provider is busy right now. This is usually temporary; try again in a minute.");
+    const details = within(error).getByTestId("api-error-details");
+    expect(within(details).getByText("Technical details")).toBeInTheDocument();
+    expect(details).not.toHaveAttribute("open");
+    expect(details).toHaveTextContent("Code: gemini_generation_failed");
+    expect(details).toHaveTextContent("Message: Gemini generation failed.");
+  });
+
   it("uses the Turkish glossary for stages, history and citations", () => {
     const answered = buildRun({ answer: "Kod ORBIT-731.", insufficientContext: false, outcome: "answered", segments: [{ text: "Kod ORBIT-731.", citationIds: ["C1"] }], citations: [citation("C1", "chunk-a")] });
     state().experimentRun = answered;

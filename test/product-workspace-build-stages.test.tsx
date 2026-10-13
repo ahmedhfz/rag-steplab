@@ -350,6 +350,48 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(screen.getByTestId("parse-next-action")).toHaveTextContent("Continue to Chunking");
   });
 
+  it("offers Parse, not Parse again, when the selected pipeline has no parse yet", () => {
+    const freshPipeline = { ...savedPipeline, id: "pipeline-2", name: "Fresh", parseRunId: null, chunkRunId: null, embeddingRunId: null, isDefault: false };
+    pipeline.value = {
+      ...createPipelineValue(),
+      // The document still has a default parse from another pipeline; it does not count here.
+      activePipeline: freshPipeline,
+      activePipelineId: freshPipeline.id,
+      pipelines: [savedPipeline, freshPipeline],
+      selectedParseRunId: null,
+      selectedChunkRunId: null,
+      selectedEmbeddingRunId: null,
+      selectedChunkRun: null,
+      selectedEmbeddingRun: null,
+      chunkRun: null,
+      embeddingRun: null,
+      parseStatus: "not-started",
+      parsePhase: null,
+      parseProgress: 0,
+      reparseImpact: { target: "pipeline", pipelineId: freshPipeline.id, pipelineName: freshPipeline.name, clearsChunk: false, clearsEmbedding: false, requiresConfirmation: false },
+    };
+    renderScreen(<ParseScreen />);
+
+    const header = screen.getByTestId("parse-run-action");
+    expect(header).toHaveTextContent(/^Parse$/);
+    // One primary action per page: the empty state carries it.
+    expect(header).toHaveAttribute("data-variant", "outline");
+    expect(header).not.toHaveAccessibleDescription(/Runs the parser service again/);
+    expect(screen.getByText("Nothing parsed yet")).toBeInTheDocument();
+    const emptyAction = screen.getByTestId("parse-empty-action");
+    expect(emptyAction).toHaveTextContent(/^Parse$/);
+    expect(emptyAction).toHaveAttribute("data-variant", "primary");
+    fireEvent.click(emptyAction);
+    expect(call("reparseActiveDocument")).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps Parse again and no empty-state action once the pipeline has a parse", () => {
+    pipeline.value = createPipelineValue();
+    renderScreen(<ParseScreen />);
+    expect(screen.getByTestId("parse-run-action")).toHaveTextContent("Parse again");
+    expect(screen.queryByTestId("parse-empty-action")).not.toBeInTheDocument();
+  });
+
   it("shows the active document on Embeddings with one dominant Playground CTA", () => {
     renderScreen(<EmbeddingsScreen />);
 

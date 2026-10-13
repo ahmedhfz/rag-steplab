@@ -578,7 +578,8 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
         ...request.postDataJSON(), revision: 2 });
     }
     if (pathname === "/documents" && method === "GET") return json(route, { items: documentDeleted || scenario === "fresh" ? [] : [current.document] });
-    if (pathname === "/documents" && method === "POST") return json(route, { document: current.document, reusedDocument: true }, 200);
+    // Like the backend, the upload response is the bare document row: only GET /documents projects the parse state.
+    if (pathname === "/documents" && method === "POST") return json(route, { document: { ...current.document, latestParseStatus: null, latestParseError: null }, reusedDocument: true }, 200);
     if (pathname === `/documents/${documentId}` && method === "DELETE") {
       documentDeleted = true;
       return route.fulfill({ status: 204, body: "" });

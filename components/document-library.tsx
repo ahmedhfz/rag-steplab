@@ -5,6 +5,7 @@ import { TransitionDetails } from "@/components/ui/transitions";
 import Link from "next/link";
 import { Fragment, useEffect, useRef, useState } from "react";
 
+import { ApiErrorText } from "@/components/api-error-message";
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { SampleDocumentButton } from "@/components/sample-document-button";
@@ -82,7 +83,7 @@ export function DocumentLibrary() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const deleteOrigin = useRef<HTMLElement | null>(null);
   const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<unknown>(null);
   const mobileListRef = useRef<HTMLUListElement>(null);
 
   // Row menus are <details> dropdowns: an outside press closes any open one.
@@ -113,7 +114,7 @@ export function DocumentLibrary() {
       setDeleteDialogOpen(false);
       toast.success(labels.deleted, { description: target.fileName });
     } catch (error) {
-      setDeleteError(error instanceof Error && error.message ? error.message : labels.deleteFailed);
+      setDeleteError(error ?? new Error(labels.deleteFailed));
     } finally {
       setDeletingDocumentId(null);
     }
@@ -136,7 +137,7 @@ export function DocumentLibrary() {
       <div className="mt-4">
         {persistenceStatus === "checking" ? <Skeleton label={labels.loading} rowClassName="h-14" /> :
           persistenceStatus === "unavailable" ? (
-            <Notice role="alert" title={labels.unavailable} tone="error">{persistenceError?.message}</Notice>
+            <Notice role="alert" title={labels.unavailable} tone="error">{persistenceError ? <ApiErrorText error={persistenceError} fallback={copy.errors.workspaceLoadFailed} /> : null}</Notice>
           ) :
             documents.length === 0 ? (
               <TableCard>
@@ -260,7 +261,7 @@ export function DocumentLibrary() {
                       size="sm"
                       title={labels.deleteTitle}
                     >
-                      {deleteError ? <p className="px-6 pt-4 text-sm text-error-primary" role="alert">{deleteError}</p> : null}
+                      {deleteError ? <div className="px-6 pt-4 text-sm text-error-primary" role="alert"><ApiErrorText error={deleteError} fallback={labels.deleteFailed} /></div> : null}
                       <ModalFooter>
                         <ModalClose asChild>
                           <Button disabled={deleting} size="lg" type="button" variant="secondary">{copy.common.cancel}</Button>

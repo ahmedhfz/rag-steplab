@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
+import { ApiErrorDetails } from "@/components/api-error-message";
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { SourceInspector } from "@/components/source-inspector";
@@ -29,8 +30,9 @@ import { toast } from "@/components/ui/toast";
 import { InfoTip } from "@/components/ui/info-tip";
 import { IconSwap, SuccessCheck, ThinkingText, TransitionPanel, TransitionText } from "@/components/ui/transitions";
 import { useSlidingIndicator } from "@/components/ui/use-sliding-indicator";
+import { describeApiError } from "@/lib/api-errors";
 import { getPipelineAvailability, type PipelineAvailability } from "@/lib/blockers";
-import { type AppCopy, type AppLocale, interpolate, runName, UI_COPY } from "@/lib/copy";
+import { type AppCopy, type AppLocale, interpolate, runName, UI_COPY, useCopy } from "@/lib/copy";
 import type { DocumentParseResponse } from "@/lib/document-parse-types";
 import { formatCount, formatMs, formatNumber, formatScore } from "@/lib/format";
 import type {
@@ -665,23 +667,19 @@ function StagePending({ copy, stage, status }: { copy: RetrievalCopy; stage: Pla
 /* Surrounding states                                                  */
 
 function ExperimentErrorSurface({ copy, error }: { copy: RetrievalCopy; error: { code?: string | null; message?: string | null } | null }) {
+  const appCopy = useCopy();
   if (error?.code === "run_poll_timeout") {
     return <Notice className="mt-6" data-testid="playground-tracking-paused" role="status" tone="warning">{copy.trackingPaused}</Notice>;
   }
+  // Known codes explain themselves (e.g. a busy model provider); anything else keeps the generic body.
+  const described = describeApiError(appCopy, error, copy.errorBody);
   return (
     <section aria-live="assertive" className="mt-6 flex items-start gap-3 rounded-xl bg-error-primary px-4 py-4 ring-1 ring-utility-error-200 ring-inset" data-testid="playground-error" role="alert">
       <AppIcon className="mt-0.5 size-5 shrink-0 text-fg-error-primary" name="warning" />
       <div className="min-w-0 flex-1">
         <h2 className="text-sm font-semibold text-primary">{copy.errorTitle}</h2>
-        <p className="mt-0.5 text-sm text-tertiary">{copy.errorBody}</p>
-        {error?.code || error?.message ? (
-          <TechnicalDetails className="mt-2">
-            <dl className="grid gap-1.5 text-xs text-tertiary">
-              <div><dt className="inline font-medium">{copy.errorCode}: </dt><dd className="inline font-mono">{error.code || "—"}</dd></div>
-              <div><dt className="inline font-medium">{copy.errorMessage}: </dt><dd className="inline break-words">{error.message || "—"}</dd></div>
-            </dl>
-          </TechnicalDetails>
-        ) : null}
+        <p className="mt-0.5 text-sm text-tertiary" data-testid="playground-error-message">{described?.message ?? copy.errorBody}</p>
+        {described?.technical ? <ApiErrorDetails className="mt-2" technical={described.technical} /> : null}
       </div>
     </section>
   );

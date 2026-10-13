@@ -36,6 +36,12 @@ test("@critical click upload, drag/drop ve duplicate reuse notice birlikte Ã§alÄ
 
   await dropFile(page, "e2e-seeded-golden.pdf", "application/pdf", pdf);
   await expect(page.getByRole("status").filter({ hasText: "This PDF is already in your library." })).toBeVisible();
+  // The reused document keeps its parse state and page count in the library (no reload needed).
+  const row = page.getByTestId("document-library-row").filter({ hasText: "e2e-seeded-golden.pdf" });
+  await expect(row.getByRole("button", { name: "Select document: e2e-seeded-golden.pdf" })).toHaveAttribute("aria-pressed", "true");
+  await expect(row).toContainText("Parsed");
+  await expect(row).not.toContainText("Not parsed");
+  await expect(row.getByRole("cell", { name: "2", exact: true })).toBeVisible();
 
   quality.assertClean();
 });
