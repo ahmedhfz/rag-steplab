@@ -1299,7 +1299,7 @@ describe("Accepted (202) embedding runs", () => {
           : summary);
       }
       if (url.endsWith("/documents/document-old/pipelines")) return respond([pipeline]);
-      if (url.endsWith("/documents/document-old/embeddings") && init?.method === "POST") return respond(accepted, 202);
+      if (url.endsWith("/documents/document-old/embeddings?async=true") && init?.method === "POST") return respond(accepted, 202);
       if (url.endsWith("/embedding-runs/embedding-accepted")) return poll.then((payload) => new Response(JSON.stringify(payload), { status: 200 }));
       if (url.endsWith("/document-pipelines/pipeline-1") && init?.method === "PATCH") {
         const body = JSON.parse(String(init.body)) as Record<string, unknown>;

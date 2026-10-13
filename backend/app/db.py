@@ -15,6 +15,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .config import get_settings
 
+# Per-process connection ceiling. Modal containers handle one input at a
+# time, so the Postgres connection budget is max_containers x this ceiling
+# (see backend/modal_app.py and docs/deployment.md).
+POOL_SIZE = 2
+MAX_OVERFLOW = 0
+
 
 def _normalise_database_url(url: str) -> str:
     if url.startswith("postgres://"):
@@ -38,8 +44,8 @@ def build_engine(database_url: str | None = None):
         url,
         connect_args=connect_args,
         pool_pre_ping=True,
-        pool_size=2,
-        max_overflow=0,
+        pool_size=POOL_SIZE,
+        max_overflow=MAX_OVERFLOW,
         future=True,
     )
 

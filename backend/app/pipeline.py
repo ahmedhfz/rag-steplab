@@ -167,18 +167,49 @@ def _model_provenance(
     *,
     required: bool = True,
     role: str,
+    fallback_model: str | None = None,
 ) -> dict[str, Any]:
     configured = str(configured_model or "").strip()
     mutable = configured.lower().endswith("-latest") or configured.lower().endswith(":latest")
-    return {
+    provenance = {
         "role": role,
         "required": required,
         "configuredModel": configured or None,
         "modelVersion": configured or None,
         "effectiveModel": effective_model,
         "mutable": mutable,
-        "cacheable": bool(configured) and not mutable and (not required or bool(effective_model)),
+        # Fallback output is never reused under the configured model's identity.
+        "cacheable": bool(configured) and not mutable and not fallback_model and (not required or bool(effective_model)),
     }
+    if fallback_model:
+        provenance["fallbackModel"] = fallback_model
+    return provenance
+
+
+def _log_run_failure(kind: str, run_id: str | None, exc: ApiProblem) -> None:
+    """Log a failed pipeline run like ``parse_worker_failed``.
+
+    Only the public code, the provider cause's type/message (truncated) and
+    the models tried are logged: never prompt or document text, never secrets.
+    """
+
+    cause = exc.__cause__
+    logger.warning(
+        "pipeline_run_failed kind=%s run_id=%s error_code=%s cause_type=%s cause=%s models_tried=%s",
+        kind,
+        run_id,
+        exc.code,
+        type(cause).__name__ if cause is not None else None,
+        str(cause)[:500] if cause is not None else None,
+        ",".join(getattr(exc, "models_tried", ()) or ()) or None,
+    )
+
+
+def _fallback_fields(metadata: Any | None) -> dict[str, Any]:
+    """Stage fields naming the fallback model that produced the output, if any."""
+
+    fallback = getattr(metadata, "fallback_model", None)
+    return {"fallbackModel": fallback} if fallback else {}
 
 
 def _provenance_reusable(value: Any) -> bool:
@@ -1031,7 +1062,8 @@ def run_embedding_worker(run_id: str, lease_token: str, *, repository: Repositor
         return None
     try:
         return _embed_claimed_run(repository, started, lease_token, settings)
-    except ApiProblem:
+    except ApiProblem as exc:
+        _log_run_failure("embedding", run_id, exc)
         return None
 
 
@@ -1245,6 +1277,7 @@ def _rerank_stage(
         "truncatedCandidateCount": len(truncated_ids),
         "configuredModel": metadata.configured_model,
         "effectiveModel": metadata.effective_model,
+        **_fallback_fields(metadata),
         "rerankScoreSemantics": RERANK_SCORE_SEMANTICS,
         # Keep both sides of the reranker contract explicit. ``results`` is
         # the ordered output consumed by context; ``inputCandidates`` is the
@@ -1421,6 +1454,7 @@ def _empty_generation(service: GeminiService, metadata: Any | None, *, outcome: 
         "citationCoverage": {"segmentCount": 0, "citedSegmentCount": 0, "ratio": 1.0},
         "configuredModel": service.settings.gemini_generation_model,
         "effectiveModel": getattr(metadata, "effective_model", None),
+        **_fallback_fields(metadata),
     }
 
 
@@ -1535,6 +1569,7 @@ def _generation_stage(query: str, context: dict[str, Any], config: Any, service:
         },
         "configuredModel": metadata.configured_model,
         "effectiveModel": metadata.effective_model,
+        **_fallback_fields(metadata),
     }
 
 
@@ -2014,7 +2049,13 @@ def _run_experiment_stages(
                 )
                 metadata_model = reranking.get("effectiveModel")
                 configured_model = reranking.get("configuredModel")
-                model = _model_provenance(configured_model, metadata_model, required=True, role="reranker")
+                model = _model_provenance(
+                    configured_model,
+                    metadata_model,
+                    required=True,
+                    role="reranker",
+                    fallback_model=reranking.get("fallbackModel"),
+                )
             else:
                 reranking = {
                     "status": "skipped",
@@ -2111,6 +2152,7 @@ def _run_experiment_stages(
                     generation.get("effectiveModel"),
                     required=True,
                     role="generation",
+                    fallback_model=generation.get("fallbackModel"),
                 )
             else:
                 model = {"role": "generation", "cacheable": True, "notUsed": True}
@@ -2216,6 +2258,7 @@ def _create_experiment(
             generation_rerun=force_generation,
         )
     except ApiProblem as exc:
+        _log_run_failure("experiment", claimed["id"], exc)
         repository.fail_experiment(claimed["id"], exc.code, exc.message, lease_token)
         # Lets an evaluation record the failed child and its persisted stages.
         exc.experiment_id = claimed["id"]  # type: ignore[attr-defined]
@@ -2376,12 +2419,18 @@ def run_queued_experiment(
             generation_rerun=bool(execution.get("forceGeneration", False)),
         ) if completed else None
     except ApiProblem as exc:
+        _log_run_failure("experiment", experiment_id, exc)
         if lease_token:
             repository.fail_pipeline_worker("experiment", experiment_id, lease_token, exc.code, exc.message)
         else:
             repository.fail_experiment(experiment_id, exc.code, exc.message)
         return None
-    except Exception:
+    except Exception as exc:
+        logger.error(
+            "pipeline_run_failed kind=experiment run_id=%s error_code=experiment_failed exception_type=%s",
+            experiment_id,
+            type(exc).__name__,
+        )
         if lease_token:
             repository.fail_pipeline_worker("experiment", experiment_id, lease_token, "experiment_failed", "The experiment failed before completion.")
         else:
@@ -2891,6 +2940,27 @@ def _evaluation_provenance(request: EvaluationRunRequest, settings: Settings) ->
     }
 
 
+def _evaluation_model_summary(case_results: list[dict[str, Any]], judge: bool) -> dict[str, Any]:
+    """Aggregate model fields: the judge model(s) that actually scored cases.
+
+    Without a fallback this is the configured judge model, as before. When a
+    fallback scored some cases its ID is named, so fallback scores are never
+    presented as the configured judge's.
+    """
+
+    configured = get_settings().gemini_judge_model if judge else None
+    used: list[str] = []
+    for case in case_results:
+        metrics = case.get("generationMetrics") or {}
+        model = metrics.get("fallbackModel") or metrics.get("configuredModel")
+        if model and model not in used:
+            used.append(model)
+    return {
+        "judgeModel": ", ".join(used) if used else configured,
+        "fallbackModelUsed": any(case.get("fallbackModelUsed") for case in case_results),
+    }
+
+
 def _evaluation_reusable(row: dict[str, Any], provenance: dict[str, Any]) -> bool:
     """Reuse only complete, fully successful runs pinned to immutable models."""
 
@@ -2898,6 +2968,10 @@ def _evaluation_reusable(row: dict[str, Any], provenance: dict[str, Any]) -> boo
         return False
     aggregate = (row.get("results") or {}).get("aggregate") or {}
     if aggregate.get("failedCaseCount"):
+        return False
+    if aggregate.get("fallbackModelUsed"):
+        # Results partly produced by a fallback model do not represent the
+        # configured models this evaluation's identity names.
         return False
     return not any(
         _model_provenance(model, role=role)["mutable"]
@@ -2992,6 +3066,7 @@ def run_queued_evaluation(
             lineage_snapshot=bool(persisted.get("config")),
         ))
     except ApiProblem as exc:
+        _log_run_failure("evaluation", evaluation_id, exc)
         completed_at = now_utc()
         if lease_token:
             repository.fail_pipeline_worker("evaluation", evaluation_id, lease_token, exc.code, exc.message)
@@ -3002,7 +3077,12 @@ def run_queued_evaluation(
                 "identity_claimed": None,
             })
         return None
-    except Exception:
+    except Exception as exc:
+        logger.error(
+            "pipeline_run_failed kind=evaluation run_id=%s error_code=evaluation_failed exception_type=%s",
+            evaluation_id,
+            type(exc).__name__,
+        )
         completed_at = now_utc()
         if lease_token:
             repository.fail_pipeline_worker("evaluation", evaluation_id, lease_token, "evaluation_failed", "The evaluation failed before completing all cases.")
@@ -3246,6 +3326,7 @@ def create_evaluation(
                 "claimResults": _judge_claim_results(judge_value.get("claimResults")),
                 "configuredModel": judge_metadata.configured_model,
                 "effectiveModel": judge_metadata.effective_model,
+                **_fallback_fields(judge_metadata),
                 "promptVersion": JUDGE_PROMPT_VERSION,
             }
             generation_metrics.update({
@@ -3254,6 +3335,7 @@ def create_evaluation(
                 "answerCorrectness": answer_correctness,
                 "configuredModel": judge_metadata.configured_model,
                 "effectiveModel": judge_metadata.effective_model,
+                **_fallback_fields(judge_metadata),
                 "promptVersion": JUDGE_PROMPT_VERSION,
             })
         return {
@@ -3285,6 +3367,12 @@ def create_evaluation(
             "groundedness": groundedness["score"],
             "groundednessDetail": groundedness,
             "generationMetrics": generation_metrics,
+            # A fallback model produced part of this case; such an evaluation
+            # is never reused under the configured models' identity.
+            "fallbackModelUsed": any(
+                (value or {}).get("fallbackModel")
+                for value in (stage_results.get("reranking"), generation, generation_metrics)
+            ),
             "experimentId": experiment["id"],
         }
 
@@ -3335,9 +3423,12 @@ def create_evaluation(
                 if exc.code not in CASE_LEVEL_FAILURE_CODES:
                     fail_evaluation(exc.code, exc.message)
                     raise
+                # A judge failure happens outside the child experiment (which
+                # logs its own failures) and does not fail the evaluation.
+                _log_run_failure("evaluation_case", evaluation_id, exc)
                 case_results.append(failed_case(case, expected, expected_outcome, exc, experiment["id"]))
         partial_aggregate = _evaluation_metrics(case_results)
-        partial_aggregate["judgeModel"] = get_settings().gemini_judge_model if request.judge else None
+        partial_aggregate.update(_evaluation_model_summary(case_results, request.judge))
         partial_aggregate["evaluationProvenance"] = provenance
         if repository.update_evaluation(evaluation_id, {
             "child_experiment_ids": child_ids,
@@ -3350,7 +3441,7 @@ def create_evaluation(
         fail_evaluation("evaluation_cases_failed", f"Every evaluation case failed; last error: {last['errorCode']}.")
         raise ApiProblem(503, "evaluation_cases_failed", f"Every evaluation case failed; last error: {last['errorCode']}.")
     aggregate = _evaluation_metrics(case_results)
-    aggregate["judgeModel"] = get_settings().gemini_judge_model if request.judge else None
+    aggregate.update(_evaluation_model_summary(case_results, request.judge))
     aggregate["evaluationProvenance"] = provenance
     completed_at = now_utc()
     completed = repository.update_evaluation(evaluation_id, {

@@ -1083,10 +1083,11 @@ export async function createChunkRun(documentId: string, strategy: ChunkStrategy
 
 /**
  * Creates (or reuses) an embedding run and resolves only with a completed run.
- * A synchronous 200 returns the completed run as-is; an accepted 202 run
- * (durable worker still computing) is polled via `GET /embedding-runs/{id}`
- * until it is terminal. A failed run rejects, so callers never record a
- * non-completed embedding in the lineage.
+ * `?async=true` lets the hosted API answer with 202 right after dispatch
+ * instead of holding an API container while the worker computes; the
+ * accepted run is polled via `GET /embedding-runs/{id}` until it is terminal.
+ * A reused or locally computed run still arrives as a completed 200. A failed
+ * run rejects, so callers never record a non-completed embedding in the lineage.
  */
 export async function createEmbeddingRun(
   documentId: string,
@@ -1094,7 +1095,7 @@ export async function createEmbeddingRun(
   signal?: AbortSignal,
   onProgress?: (run: EmbeddingRun) => void,
 ): Promise<EmbeddingRun> {
-  const payload = await request(`/documents/${encodeURIComponent(documentId)}/embeddings`, {
+  const payload = await request(`/documents/${encodeURIComponent(documentId)}/embeddings?async=true`, {
     method: "POST",
     body: JSON.stringify({ chunkRunId }),
     signal,

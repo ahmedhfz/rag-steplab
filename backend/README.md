@@ -175,6 +175,23 @@ metriklerdir. Gemini generation, reranking ve judge çağrıları resmi JSON sch
 ile sınırlandırılır, ancak uygulama tarafındaki JSON parse ve semantic
 validation katmanı korunur.
 
+Text çağrıları (generation, reranking, judge) istek başına
+`GEMINI_TEXT_TIMEOUT_SECONDS` (varsayılan 20 sn; sağlıklı çağrı 1–5 sn; SDK bunu
+sunucu deadline'ı olarak gönderir ve Gemini 10 sn altını 400 ile reddettiği için
+en az 10 sn uygulanır) kullanır;
+embedding `GEMINI_TIMEOUT_SECONDS` (60 sn) ile kalır. Yapılandırılmış model
+429/5xx, timeout veya bağlantı hatası verirse çağrı beklemeden
+`GEMINI_TEXT_FALLBACK_MODELS` sırasındaki modele (varsayılan
+`gemini-3.1-flash-lite`) geçer; aynı `GEMINI_MAX_RETRIES` bütçesi harcanır ve
+aynı run'daki sonraki çağrılar yanıt veren modelle başlar. 400/401/403/404
+yapılandırılmış modelde fallback'e geçmez; fallback'te yalnız o fallback'i
+devreden çıkarır. Embedding'de fallback yoktur (farklı vektör uzayı). Fallback
+çıktısı `configuredModel` yanında `effectiveModel` ve `fallbackModel` ile
+kaydedilir, cacheable değildir ve yapılandırılmış modelin sonucu olarak yeniden
+kullanılmaz; evaluation `judgeModel` alanı skoru gerçekten üreten modeli adlandırır.
+Başarısız run'lar `pipeline_run_failed` log'unda hata kodu, sağlayıcı neden tipi,
+kısaltılmış neden mesajı ve denenen modellerle görünür; prompt/doküman metni loglanmaz.
+
 Evaluation sözleşmesi (`generation-metrics-v2`, `evaluation-fingerprint-v2`):
 
 - Üst düzey Hit/Precision/Recall/MRR rerank öncesi retrieval listesini ölçer
@@ -193,8 +210,8 @@ Evaluation sözleşmesi (`generation-metrics-v2`, `evaluation-fingerprint-v2`):
 - Citation/provider kaynaklı tek case hatası evaluation'ı düşürmez: case
   `status=failed` ve `errorCode` ile kaydedilir, `citation_invalid` için
   `citationValidity=0`. Tüm case'ler başarısızsa evaluation
-  `evaluation_cases_failed` ile failed olur. Başarısız case içeren veya mutable
-  (`-latest`) model kullanan evaluation yeniden kullanılmaz.
+  `evaluation_cases_failed` ile failed olur. Başarısız case içeren, mutable
+  (`-latest`) model veya fallback model kullanan evaluation yeniden kullanılmaz.
 
 Hybrid retrieval sıralaması aday havuzu içinde min-max normalize edilmiş dense
 (0.7) ve keyword (0.3) skorlarının ağırlıklı toplamıdır; `score` göreli bir
@@ -247,8 +264,9 @@ Hosted ortamda embedding de experiment/evaluation gibi durable `pipeline_worker`
 üzerinde çalışır; API isteği yalnız claim + dispatch yapar. `?async=true` olmadan
 istek en fazla `EMBEDDING_SYNC_WAIT_SECONDS` (varsayılan 100) bekler ve run bu
 sürede biterse önceki 200 sözleşmesini korur, aksi halde 202 döner
-(`GET /embedding-runs/{id}` ile izlenir). Dispatch edilmiş ama worker'ı henüz
-başlamamış run'lar (tek `pipeline_worker` kuyruğunda diğer kullanıcıların işlerini
+(`GET /embedding-runs/{id}` ile izlenir). Frontend `?async=true` kullanır; böylece
+API container'ı worker beklerken tutulmaz. Dispatch edilmiş ama worker'ı henüz
+başlamamış run'lar (`pipeline_worker` kuyruğunda diğer kullanıcıların işlerini
 bekleyenler) execution lease'iyle değil `PIPELINE_QUEUE_TIMEOUT_SECONDS` (varsayılan
 6 sa) ile sınırlanır; ölü kuyruk girdisi Modal call durumu üzerinden ayrıca yakalanır.
 Lease worker başladığında başlar ve her sağlayıcı batch'inden önce, deneme başına

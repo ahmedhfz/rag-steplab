@@ -57,7 +57,31 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+def _csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Ordered, de-duplicated list; a set but empty variable means "none"."""
+
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return tuple(dict.fromkeys(item.strip() for item in value.split(",") if item.strip()))
+
+
 DEFAULT_GEMINI_TEXT_MODEL = "gemini-3.5-flash-lite"
+# Text calls (generation, rerank, judge) move to these models, in order, when
+# the configured model fails with a retryable provider error. Embeddings never
+# fall back: another embedding model is a different vector space.
+DEFAULT_GEMINI_TEXT_FALLBACK_MODELS: tuple[str, ...] = ("gemini-3.1-flash-lite",)
+# Per-request timeout for text calls. A healthy structured call answers in
+# 1–5 s (a 4096-token answer stays well below this); an overloaded model can
+# take 40–60 s, so the call moves to the fallback instead of waiting it out.
+DEFAULT_GEMINI_TEXT_TIMEOUT_SECONDS = 20
+# The SDK forwards the timeout as the server deadline; Gemini rejects deadlines
+# under 10 s with 400 INVALID_ARGUMENT, which would bypass the fallback.
+MIN_GEMINI_TEXT_TIMEOUT_SECONDS = 10
+
+
+def text_request_timeout_seconds(settings: Settings) -> int:
+    return max(MIN_GEMINI_TEXT_TIMEOUT_SECONDS, settings.gemini_text_timeout_seconds)
 
 
 @dataclass(frozen=True)
@@ -80,7 +104,11 @@ class Settings:
     gemini_generation_model: str = DEFAULT_GEMINI_TEXT_MODEL
     gemini_rerank_model: str = DEFAULT_GEMINI_TEXT_MODEL
     gemini_judge_model: str = DEFAULT_GEMINI_TEXT_MODEL
+    gemini_text_fallback_models: tuple[str, ...] = DEFAULT_GEMINI_TEXT_FALLBACK_MODELS
+    # Client default, used by embeddings; text calls use their own timeout.
     gemini_timeout_seconds: int = 60
+    gemini_text_timeout_seconds: int = DEFAULT_GEMINI_TEXT_TIMEOUT_SECONDS
+    # Retries per provider call; a fallback model switch uses this same budget.
     gemini_max_retries: int = 2
     cors_origins: tuple[str, ...] = ("http://localhost:3000", "http://127.0.0.1:3000")
     cors_origin_regex: str | None = None
@@ -94,9 +122,10 @@ class Settings:
     # without ?async=true waits at most this long for the terminal state
     # (well below the 150 s Modal web redirect and 300 s function limits).
     embedding_sync_wait_seconds: int = 100
-    # A dispatched run waits in the single pipeline_worker queue behind other
-    # users' jobs. That wait is bounded separately from the execution lease;
-    # dead queue entries are still detected via Modal's call status.
+    # A dispatched run waits in the pipeline_worker queue behind other users'
+    # jobs while every worker container is busy. That wait is bounded
+    # separately from the execution lease; dead queue entries are still
+    # detected via Modal's call status.
     pipeline_queue_timeout_seconds: int = 6 * 3600
     # Re-dispatch a queued run whose "dispatching-*" reservation was never
     # replaced by a real Modal call id (API container died in between).
@@ -143,10 +172,13 @@ def pipeline_lease_duration_seconds(settings: Settings) -> int:
     # A structured generation can retry the provider call for transport
     # errors, invalid JSON, and (for citations) invalid output. Bound the
     # nested envelope conservatively so a reduced worker timeout cannot make
-    # a healthy provider operation outlive its fencing lease.
+    # a healthy provider operation outlive its fencing lease. A text-model
+    # fallback switch spends the same transport attempts, it adds none.
     provider_attempts = retry_attempts**3
-    # Every attempt may wait up to the provider client's maximum backoff.
-    provider_budget = provider_attempts * (max(1, settings.gemini_timeout_seconds) + _provider_max_retry_delay_seconds())
+    # Every attempt may take the longest request timeout (embedding or text)
+    # and then wait up to the provider client's maximum backoff.
+    request_timeout = max(1, settings.gemini_timeout_seconds, text_request_timeout_seconds(settings))
+    provider_budget = provider_attempts * (request_timeout + _provider_max_retry_delay_seconds())
     operation_budget = max(settings.pipeline_worker_timeout_seconds, provider_budget)
     return (
         settings.pipeline_worker_startup_timeout_seconds
@@ -226,7 +258,12 @@ def get_settings() -> Settings:
         gemini_generation_model=os.getenv("GEMINI_GENERATION_MODEL", DEFAULT_GEMINI_TEXT_MODEL),
         gemini_rerank_model=os.getenv("GEMINI_RERANK_MODEL", DEFAULT_GEMINI_TEXT_MODEL),
         gemini_judge_model=os.getenv("GEMINI_JUDGE_MODEL", DEFAULT_GEMINI_TEXT_MODEL),
+        gemini_text_fallback_models=_csv("GEMINI_TEXT_FALLBACK_MODELS", DEFAULT_GEMINI_TEXT_FALLBACK_MODELS),
         gemini_timeout_seconds=_int("GEMINI_TIMEOUT_SECONDS", 60),
+        gemini_text_timeout_seconds=max(
+            MIN_GEMINI_TEXT_TIMEOUT_SECONDS,
+            _int("GEMINI_TEXT_TIMEOUT_SECONDS", DEFAULT_GEMINI_TEXT_TIMEOUT_SECONDS),
+        ),
         gemini_max_retries=_int("GEMINI_MAX_RETRIES", 2),
         cors_origins=origins,
         cors_origin_regex=os.getenv("CORS_ORIGIN_REGEX") or None,

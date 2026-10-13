@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 import uuid
@@ -103,12 +104,16 @@ def test_pipeline_lease_budget_includes_worker_startup_provider_and_grace():
         pipeline_worker_timeout_seconds=100,
         pipeline_lease_grace_seconds=10,
         gemini_timeout_seconds=5,
+        gemini_text_timeout_seconds=5,
         gemini_max_retries=1,
     )
-    # Nested provider envelope: (1 + 1)^3 = 8 attempts, each up to the 5 s
-    # timeout plus the client's 20 s maximum backoff = 200 s, which exceeds
-    # the 100 s worker timeout: 30 + 200 + 10.
-    assert pipeline_lease_duration_seconds(settings) == 240
+    # Nested provider envelope: (1 + 1)^3 = 8 attempts, each up to the text
+    # timeout (5 s raised to the 10 s Gemini minimum) plus the client's 20 s
+    # maximum backoff = 240 s, which exceeds the 100 s worker timeout: 30 + 240 + 10.
+    assert pipeline_lease_duration_seconds(settings) == 280
+    # The longest request timeout bounds every attempt, whether it is the
+    # embedding (client) timeout or the text-call timeout: 30 + 8 * (15 + 20) + 10.
+    assert pipeline_lease_duration_seconds(replace(settings, gemini_text_timeout_seconds=15)) == 320
 
 
 def test_fencing_token_blocks_reclaimed_worker_and_dispatch_reservation_is_atomic():

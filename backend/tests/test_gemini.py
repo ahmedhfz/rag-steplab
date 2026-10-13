@@ -104,7 +104,7 @@ def test_current_google_genai_sdk_accepts_all_adapter_schemas():
         assert config.response_json_schema == schema
 
 
-def _service(responses, *, max_retries=2, sleeps=None, monkeypatch=None):
+def _service(responses, *, max_retries=2, sleeps=None, monkeypatch=None, **settings):
     if monkeypatch is not None:
         monkeypatch.setattr("app.gemini.time.sleep", lambda seconds: sleeps.append(seconds))
         monkeypatch.setattr("app.gemini.random.uniform", lambda _low, _high: 0.0)
@@ -118,7 +118,16 @@ def _service(responses, *, max_retries=2, sleeps=None, monkeypatch=None):
                 raise value
             return value
 
-    return GeminiService(Settings(gemini_max_retries=max_retries), client=SimpleNamespace(models=Models())), calls
+    service = GeminiService(Settings(gemini_max_retries=max_retries, **settings), client=SimpleNamespace(models=Models()))
+    return service, calls
+
+
+class ProviderError(Exception):
+    """Mimics google.genai errors.APIError: an HTTP status in ``code``."""
+
+    def __init__(self, code: int, message: str = "provider error") -> None:
+        super().__init__(f"{code} {message}")
+        self.code = code
 
 
 def test_timeout_is_retried_once_not_until_retry_budget(monkeypatch):
@@ -149,7 +158,10 @@ def test_quota_error_honours_retry_after(monkeypatch):
 
     sleeps = []
     ok = SimpleNamespace(text='{"orderedCandidateIds":[]}', model_version="m")
-    service, calls = _service(iter([QuotaError(), ok]), sleeps=sleeps, monkeypatch=monkeypatch)
+    # Without a fallback the same model is retried after the provider's hint.
+    service, calls = _service(
+        iter([QuotaError(), ok]), sleeps=sleeps, monkeypatch=monkeypatch, gemini_text_fallback_models=()
+    )
 
     service.rerank("prompt")
 
@@ -201,3 +213,228 @@ def test_judge_uses_zero_temperature_and_defaults_are_pinned_models():
     defaults = Settings()
     for model in (defaults.gemini_generation_model, defaults.gemini_rerank_model, defaults.gemini_judge_model):
         assert not model.endswith("-latest")
+
+
+# --- Text-model fallback -------------------------------------------------
+
+_FALLBACK_SETTINGS = {
+    "gemini_generation_model": "primary-v1",
+    "gemini_rerank_model": "primary-v1",
+    "gemini_judge_model": "primary-v1",
+    "gemini_text_fallback_models": ("fallback-v1",),
+}
+_ANSWER = '{"insufficientContext":true,"segments":[]}'
+
+
+def test_overloaded_primary_moves_to_the_fallback_at_once_and_records_who_answered(monkeypatch):
+    sleeps = []
+    ok = SimpleNamespace(text=_ANSWER, model_version="fallback-v1-001")
+    service, calls = _service(iter([ProviderError(503, "UNAVAILABLE"), ok]), sleeps=sleeps, monkeypatch=monkeypatch, **_FALLBACK_SETTINGS)
+
+    _value, metadata = service.generate_json("prompt", {"temperature": 0.1})
+
+    assert [call["model"] for call in calls] == ["primary-v1", "fallback-v1"]
+    assert sleeps == []  # no backoff on the overloaded model before switching
+    assert metadata.configured_model == "primary-v1"
+    assert metadata.fallback_model == "fallback-v1"
+    assert metadata.effective_model == "fallback-v1-001"
+
+
+def test_fallback_output_without_a_provider_version_is_attributed_to_the_requested_fallback(monkeypatch):
+    ok = SimpleNamespace(text=_ANSWER)
+    service, _calls = _service(iter([ProviderError(429), ok]), sleeps=[], monkeypatch=monkeypatch, **_FALLBACK_SETTINGS)
+
+    _value, metadata = service.judge("prompt")
+
+    assert metadata.effective_model == "fallback-v1"
+    assert metadata.fallback_model == "fallback-v1"
+
+
+def test_primary_answer_is_not_marked_as_fallback(monkeypatch):
+    ok = SimpleNamespace(text='{"orderedCandidateIds":["a"]}', model_version="primary-v1")
+    service, calls = _service(iter([ok]), sleeps=[], monkeypatch=monkeypatch, **_FALLBACK_SETTINGS)
+
+    _ids, metadata = service.rerank("prompt")
+
+    assert [call["model"] for call in calls] == ["primary-v1"]
+    assert metadata.fallback_model is None
+    assert metadata.effective_model == "primary-v1"
+
+
+def test_timeout_moves_to_the_fallback_and_a_second_timeout_stops(monkeypatch):
+    import httpx
+    import pytest
+
+    from app.errors import ApiProblem
+
+    ok = SimpleNamespace(text='{"orderedCandidateIds":["a"]}', model_version="fallback-v1")
+    service, calls = _service(iter([httpx.ReadTimeout("slow"), ok]), sleeps=[], monkeypatch=monkeypatch, **_FALLBACK_SETTINGS)
+    assert service.rerank("prompt")[1].fallback_model == "fallback-v1"
+    assert [call["model"] for call in calls] == ["primary-v1", "fallback-v1"]
+
+    service, calls = _service(
+        iter([httpx.ReadTimeout("slow"), httpx.ReadTimeout("slow"), ok]), sleeps=[], monkeypatch=monkeypatch, **_FALLBACK_SETTINGS
+    )
+    with pytest.raises(ApiProblem) as error:
+        service.rerank("prompt")
+    assert error.value.code == "gemini_rerank_failed"
+    assert [call["model"] for call in calls] == ["primary-v1", "fallback-v1"]
+
+
+def test_non_retryable_primary_errors_fail_without_fallback(monkeypatch):
+    import pytest
+
+    from app.gemini import GeminiCallFailed
+
+    for status in (400, 401, 403, 404):
+        service, calls = _service(iter([ProviderError(status)]), sleeps=[], monkeypatch=monkeypatch, **_FALLBACK_SETTINGS)
+        with pytest.raises(GeminiCallFailed) as error:
+            service.generate_json("prompt")
+        assert error.value.code == "gemini_generation_failed"
+        assert error.value.status_code == 503
+        assert error.value.models_tried == ("primary-v1",)
+        assert [call["model"] for call in calls] == ["primary-v1"]
+
+
+def test_unusable_fallback_is_dropped_and_the_primary_retried_with_backoff(monkeypatch):
+    sleeps = []
+    ok = SimpleNamespace(text=_ANSWER, model_version="primary-v1")
+    service, calls = _service(
+        iter([ProviderError(503), ProviderError(404, "model retired"), ok, ok]), sleeps=sleeps, monkeypatch=monkeypatch, **_FALLBACK_SETTINGS
+    )
+
+    _value, metadata = service.generate_json("prompt")
+
+    assert [call["model"] for call in calls] == ["primary-v1", "fallback-v1", "primary-v1"]
+    assert len(sleeps) == 1
+    assert metadata.fallback_model is None
+    # A later call on the same service does not request the retired fallback again.
+    service.generate_json("prompt")
+    assert calls[-1]["model"] == "primary-v1"
+
+
+def test_later_calls_of_one_service_start_with_the_model_that_answered(monkeypatch):
+    ok = SimpleNamespace(text='{"orderedCandidateIds":["a"]}', model_version="fallback-v1")
+    service, calls = _service(iter([ProviderError(503), ok, ok]), sleeps=[], monkeypatch=monkeypatch, **_FALLBACK_SETTINGS)
+
+    service.rerank("prompt")
+    service.rerank("prompt")
+
+    assert [call["model"] for call in calls] == ["primary-v1", "fallback-v1", "fallback-v1"]
+
+
+def test_fallback_equal_to_the_configured_model_is_skipped(monkeypatch):
+    sleeps = []
+    ok = SimpleNamespace(text='{"orderedCandidateIds":["a"]}', model_version="primary-v1")
+    service, calls = _service(
+        iter([ProviderError(503), ok]),
+        sleeps=sleeps,
+        monkeypatch=monkeypatch,
+        **{**_FALLBACK_SETTINGS, "gemini_text_fallback_models": ("primary-v1",)},
+    )
+
+    service.rerank("prompt")
+
+    assert [call["model"] for call in calls] == ["primary-v1", "primary-v1"]
+    assert len(sleeps) == 1
+
+
+def test_exhausted_fallback_chain_reports_the_models_tried_within_the_retry_budget(monkeypatch):
+    import pytest
+
+    from app.gemini import GeminiCallFailed
+
+    service, calls = _service(iter([ProviderError(503)] * 10), sleeps=[], monkeypatch=monkeypatch, **_FALLBACK_SETTINGS)
+
+    with pytest.raises(GeminiCallFailed) as error:
+        service.judge("prompt")
+
+    assert error.value.code == "gemini_judge_failed"
+    assert error.value.models_tried == ("primary-v1", "fallback-v1")
+    assert len(calls) == 3  # gemini_max_retries + 1, not multiplied by the fallback
+
+
+def test_invalid_json_retry_with_fallback_stays_within_the_structured_budget(monkeypatch):
+    import pytest
+
+    from app.errors import ApiProblem
+
+    bad = SimpleNamespace(text="not-json", model_version="fallback-v1")
+    service, calls = _service(iter([ProviderError(503), bad, bad, bad]), sleeps=[], monkeypatch=monkeypatch, **_FALLBACK_SETTINGS)
+
+    with pytest.raises(ApiProblem) as error:
+        service.generate_json("prompt")
+
+    assert error.value.code == "gemini_invalid_json"
+    # The invalid-JSON retry starts on the model that answered, not on the overloaded primary.
+    assert [call["model"] for call in calls] == ["primary-v1", "fallback-v1", "fallback-v1"]
+
+
+def test_text_calls_carry_their_own_shorter_request_timeout(monkeypatch):
+    from google.genai import types
+
+    ok = SimpleNamespace(text=_ANSWER, model_version="primary-v1")
+    service, calls = _service(iter([ok]), sleeps=[], monkeypatch=monkeypatch, gemini_text_timeout_seconds=20, gemini_timeout_seconds=60)
+
+    service.generate_json("prompt", {"temperature": 0.1})
+
+    assert calls[0]["config"]["http_options"] == {"timeout": 20_000}
+    assert calls[0]["config"]["temperature"] == 0.1
+    # The installed SDK accepts the per-request override in the request config.
+    assert types.GenerateContentConfig(**calls[0]["config"]).http_options.timeout == 20_000
+
+
+def test_text_request_timeout_never_goes_below_the_gemini_minimum_deadline(monkeypatch):
+    ok = SimpleNamespace(text=_ANSWER, model_version="primary-v1")
+    service, calls = _service(iter([ok]), sleeps=[], monkeypatch=monkeypatch, gemini_text_timeout_seconds=5)
+
+    service.generate_json("prompt")
+
+    # Gemini answers a sub-10 s deadline with 400, which would skip the fallback.
+    assert calls[0]["config"]["http_options"] == {"timeout": 10_000}
+
+
+def test_embeddings_never_fall_back_to_another_model(monkeypatch):
+    import pytest
+
+    from app.errors import ApiProblem
+
+    monkeypatch.setattr("app.gemini.time.sleep", lambda _seconds: None)
+    calls = []
+
+    class Models:
+        def embed_content(self, *, model, contents, config):
+            calls.append((model, config))
+            raise ProviderError(503)
+
+    service = GeminiService(
+        Settings(gemini_embedding_dimensions=3, gemini_max_retries=2, **_FALLBACK_SETTINGS),
+        client=SimpleNamespace(models=Models()),
+    )
+
+    with pytest.raises(ApiProblem) as error:
+        service.embed_documents(["text"])
+
+    assert error.value.code == "gemini_embedding_failed"
+    assert [model for model, _config in calls] == ["gemini-embedding-2"] * 3
+    assert all("http_options" not in config for _model, config in calls)
+
+
+def test_fallback_models_are_read_from_the_environment(monkeypatch):
+    from app.config import DEFAULT_GEMINI_TEXT_FALLBACK_MODELS, clear_settings_cache, get_settings
+
+    try:
+        monkeypatch.delenv("GEMINI_TEXT_FALLBACK_MODELS", raising=False)
+        clear_settings_cache()
+        assert get_settings().gemini_text_fallback_models == DEFAULT_GEMINI_TEXT_FALLBACK_MODELS == ("gemini-3.1-flash-lite",)
+
+        monkeypatch.setenv("GEMINI_TEXT_FALLBACK_MODELS", " model-a, model-b ,model-a,, ")
+        clear_settings_cache()
+        assert get_settings().gemini_text_fallback_models == ("model-a", "model-b")
+
+        monkeypatch.setenv("GEMINI_TEXT_FALLBACK_MODELS", "")
+        clear_settings_cache()
+        assert get_settings().gemini_text_fallback_models == ()
+    finally:
+        monkeypatch.undo()
+        clear_settings_cache()

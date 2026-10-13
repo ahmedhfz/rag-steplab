@@ -3,22 +3,27 @@
 from __future__ import annotations
 
 import json
+import logging
 import random
 import time
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
-from .config import Settings, get_settings
+from .config import Settings, get_settings, text_request_timeout_seconds
 from .errors import ApiProblem
 
+
+logger = logging.getLogger(__name__)
 
 EMBEDDING_FORMAT_VERSION = "gemini-embedding-2-qa-prefix-v1"
 
 RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
-# A timeout already consumed the full request budget; retry it at most once.
+# A timeout already consumed the full request budget; retry it at most once
+# (a switch to a fallback model after a timeout counts as that retry).
 MAX_TIMEOUT_RETRIES = 1
 # Invalid structured JSON is retried once. Together with the transport retry
-# this bounds one structured call to (gemini_max_retries + 1) * 2 requests.
+# this bounds one structured call to (gemini_max_retries + 1) * 2 requests,
+# whether or not a fallback model was used.
 STRUCTURED_OUTPUT_ATTEMPTS = 2
 MAX_RETRY_DELAY_SECONDS = 20.0
 
@@ -66,7 +71,24 @@ JUDGE_RESPONSE_SCHEMA = {
 @dataclass(frozen=True)
 class GeminiCallMetadata:
     configured_model: str
+    # The model that produced the output (provider-reported version when
+    # available, otherwise the requested model ID).
     effective_model: str | None = None
+    # Set only when a text fallback produced the output: the model ID that
+    # was requested instead of ``configured_model``.
+    fallback_model: str | None = None
+
+
+class GeminiCallFailed(ApiProblem):
+    """A provider call that exhausted its retry/fallback budget.
+
+    Public code/message are the existing ``gemini_<action>_failed`` contract;
+    ``models_tried`` is diagnostic data for logs only.
+    """
+
+    def __init__(self, action: str, models_tried: Sequence[str] = ()) -> None:
+        super().__init__(503, f"gemini_{action}_failed", f"Gemini {action} failed.")
+        self.models_tried = tuple(models_tried)
 
 
 def document_embedding_text(text: str, heading_path: Sequence[str] | None = None) -> str:
@@ -82,6 +104,12 @@ class GeminiService:
     def __init__(self, settings: Settings | None = None, client: Any | None = None) -> None:
         self.settings = settings or get_settings()
         self._client = client
+        # Text models that failed transiently, or fallbacks that are unusable,
+        # during this service's lifetime (one experiment run, or one
+        # evaluation's judge). Later calls try the remaining models first
+        # instead of waiting on an overloaded model again.
+        self._degraded_models: set[str] = set()
+        self._unusable_models: set[str] = set()
 
     @property
     def client(self) -> Any:
@@ -158,32 +186,100 @@ class GeminiService:
             base = 0.5 * (2**attempt)
         return min(MAX_RETRY_DELAY_SECONDS, base + random.uniform(0, base * 0.25))
 
-    def _with_retry(self, function, *, action: str):
+    def _text_model_chain(self, configured: str) -> list[str]:
+        """Configured model, then distinct usable fallbacks; healthy models lead."""
+
+        fallbacks = (model for model in self.settings.gemini_text_fallback_models if model not in self._unusable_models)
+        chain = list(dict.fromkeys([configured, *fallbacks]))
+        return [model for model in chain if model not in self._degraded_models] + [
+            model for model in chain if model in self._degraded_models
+        ]
+
+    def _text_request_options(self) -> dict[str, Any]:
+        # Per-request override; the client-level timeout stays the embedding one.
+        return {"http_options": {"timeout": text_request_timeout_seconds(self.settings) * 1000}}
+
+    def _with_retry(
+        self,
+        function: Callable[[str | None], Any],
+        *,
+        action: str,
+        text_model: str | None = None,
+    ) -> tuple[Any, str | None]:
         """The only transport retry layer for provider calls.
 
         Retries retryable HTTP statuses, connection errors and (once) timeouts,
         with exponential backoff, jitter and ``Retry-After`` for quota errors.
+        ``function`` receives the model ID to request (``None`` when the
+        caller fixes its own model) and the result is ``(response, model)``.
+
+        ``text_model`` (generation, rerank and judge only; never embeddings)
+        enables the fallback chain. A transient failure moves to the next
+        model at once instead of backing off on an overloaded one; only a
+        model that already failed in this call is retried, after backoff. The
+        request count stays ``gemini_max_retries + 1`` either way. A
+        non-retryable error (400/401/403/404 ...) from the configured model
+        fails as before; from a fallback it only removes that fallback, so a
+        retired fallback cannot turn a transient primary failure into a hard one.
         """
 
+        chain: list[str | None] = list(self._text_model_chain(text_model)) if text_model else [None]
         attempts = max(0, self.settings.gemini_max_retries) + 1
+        failed: set[str | None] = set()
+        tried: list[str] = []
         timeouts = 0
+        index = 0
         for attempt in range(attempts):
+            model = chain[index]
             try:
-                return function()
+                response = function(model)
             except ApiProblem:
                 raise
             except Exception as exc:
+                failed.add(model)
+                if model is not None and model not in tried:
+                    tried.append(model)
                 timed_out = self._is_timeout(exc)
                 timeouts += int(timed_out)
-                retryable = (
+                transient = (
                     self._status(exc) in RETRYABLE_STATUS_CODES
                     or self._is_connection_error(exc)
-                    or (timed_out and timeouts <= MAX_TIMEOUT_RETRIES)
+                    or timed_out
                 )
-                if not retryable or attempt + 1 >= attempts:
-                    raise ApiProblem(503, f"gemini_{action}_failed", f"Gemini {action} failed.") from exc
-                time.sleep(self._retry_delay(exc, attempt))
-        raise ApiProblem(503, f"gemini_{action}_failed", f"Gemini {action} failed.")
+                unusable_fallback = not transient and model is not None and model != text_model
+                if transient and model is not None:
+                    self._degraded_models.add(model)
+                if unusable_fallback:
+                    logger.warning(
+                        "gemini_fallback_unusable action=%s model=%s status=%s cause_type=%s",
+                        action,
+                        model,
+                        self._status(exc),
+                        type(exc).__name__,
+                    )
+                    self._unusable_models.add(str(model))
+                if attempt + 1 >= attempts or (timed_out and timeouts > MAX_TIMEOUT_RETRIES):
+                    raise GeminiCallFailed(action, tried) from exc
+                if transient:
+                    index = min(index + 1, len(chain) - 1)
+                elif unusable_fallback:
+                    chain.pop(index)
+                    index = min(index, len(chain) - 1)
+                else:
+                    raise GeminiCallFailed(action, tried) from exc
+                if chain[index] in failed:
+                    time.sleep(self._retry_delay(exc, attempt))
+                continue
+            if model is not None and model != text_model:
+                logger.warning(
+                    "gemini_fallback_used action=%s configured_model=%s model=%s failed_models=%s",
+                    action,
+                    text_model,
+                    model,
+                    ",".join(tried) or None,
+                )
+            return response, model
+        raise GeminiCallFailed(action, tried)
 
     @staticmethod
     def _embedding_values(response: Any) -> list[list[float]]:
@@ -228,11 +324,13 @@ class GeminiService:
             for text in texts
         ]
 
-        def call():
+        def call(_model: str | None) -> Any:
             config: dict[str, Any] = {"output_dimensionality": dimensions}
             return self.client.models.embed_content(model=model, contents=contents, config=config)
 
-        response = self._with_retry(call, action="embedding")
+        # No fallback chain: another embedding model would silently change the
+        # vector space and break lineage compatibility.
+        response, _ = self._with_retry(call, action="embedding")
         response_values = self._embedding_values(response)
         if len(response_values) != len(contents) or any(len(values) != dimensions for values in response_values):
             raise ApiProblem(
@@ -250,11 +348,11 @@ class GeminiService:
         return values[0], metadata
 
     def count_tokens(self, model: str, contents: str) -> int | None:
-        def call():
+        def call(_model: str | None) -> Any:
             return self.client.models.count_tokens(model=model, contents=contents)
 
         try:
-            response = self._with_retry(call, action="token_count")
+            response, _ = self._with_retry(call, action="token_count")
         except ApiProblem:
             return None
         value = getattr(response, "total_tokens", None)
@@ -275,16 +373,29 @@ class GeminiService:
 
     def _structured_json(
         self,
-        function,
+        configured_model: str,
+        prompt: str,
+        request_config: dict[str, Any],
         *,
         action: str,
         error_code: str,
         error_message: str,
-    ) -> tuple[Any, Any]:
+    ) -> tuple[Any, GeminiCallMetadata]:
+        """One structured text call over the configured model's fallback chain.
+
+        The returned metadata names the model that produced the parsed output.
+        """
+
+        config = {**request_config, **self._text_request_options()}
+
+        def call(model: str | None) -> Any:
+            return self.client.models.generate_content(model=model, contents=prompt, config=config)
+
         for attempt in range(STRUCTURED_OUTPUT_ATTEMPTS):
-            response = self._with_retry(function, action=action)
+            response, requested = self._with_retry(call, action=action, text_model=configured_model)
+            model = requested or configured_model
             try:
-                return json.loads(self._response_text(response)), response
+                value = json.loads(self._response_text(response))
             except (TypeError, ValueError) as exc:
                 if self._hit_output_limit(response):
                     # The same token limit would truncate the JSON again.
@@ -295,45 +406,41 @@ class GeminiService:
                     ) from exc
                 if attempt + 1 >= STRUCTURED_OUTPUT_ATTEMPTS:
                     raise ApiProblem(503, error_code, error_message) from exc
+                continue
+            return value, GeminiCallMetadata(
+                configured_model=configured_model,
+                effective_model=self._effective_model(response, model),
+                fallback_model=model if model != configured_model else None,
+            )
         raise ApiProblem(503, error_code, error_message)
 
     def generate_json(self, prompt: str, config: dict[str, Any] | None = None) -> tuple[dict[str, Any], GeminiCallMetadata]:
-        model = self.settings.gemini_generation_model
         request_config = {
             "response_mime_type": "application/json",
             "response_json_schema": GENERATION_RESPONSE_SCHEMA,
             **(config or {}),
         }
-
-        def call():
-            return self.client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=request_config,
-            )
-
-        value, response = self._structured_json(
-            call,
+        value, metadata = self._structured_json(
+            self.settings.gemini_generation_model,
+            prompt,
+            request_config,
             action="generation",
             error_code="gemini_invalid_json",
             error_message="Gemini returned invalid structured output.",
         )
         if not isinstance(value, dict):
             raise ApiProblem(503, "gemini_invalid_json", "Gemini returned invalid structured output.")
-        return value, GeminiCallMetadata(configured_model=model, effective_model=self._effective_model(response, model))
+        return value, metadata
 
     def rerank(self, prompt: str) -> tuple[list[str], GeminiCallMetadata]:
-        model = self.settings.gemini_rerank_model
         request_config = {
             "response_mime_type": "application/json",
             "response_json_schema": RERANK_RESPONSE_SCHEMA,
         }
-
-        def call():
-            return self.client.models.generate_content(model=model, contents=prompt, config=request_config)
-
-        value, response = self._structured_json(
-            call,
+        value, metadata = self._structured_json(
+            self.settings.gemini_rerank_model,
+            prompt,
+            request_config,
             action="rerank",
             error_code="gemini_invalid_rerank",
             error_message="Gemini returned invalid reranking output.",
@@ -341,26 +448,23 @@ class GeminiService:
         ids = value.get("orderedCandidateIds") if isinstance(value, dict) else value
         if not isinstance(ids, list) or not all(isinstance(item, str) for item in ids):
             raise ApiProblem(503, "gemini_invalid_rerank", "Gemini returned invalid reranking output.")
-        return ids, GeminiCallMetadata(configured_model=model, effective_model=self._effective_model(response, model))
+        return ids, metadata
 
     def judge(self, prompt: str) -> tuple[dict[str, Any], GeminiCallMetadata]:
-        model = self.settings.gemini_judge_model
         request_config = {
             "response_mime_type": "application/json",
             "response_json_schema": JUDGE_RESPONSE_SCHEMA,
             # Scores should vary with the answer, not with sampling.
             "temperature": 0.0,
         }
-
-        def call():
-            return self.client.models.generate_content(model=model, contents=prompt, config=request_config)
-
-        value, response = self._structured_json(
-            call,
+        value, metadata = self._structured_json(
+            self.settings.gemini_judge_model,
+            prompt,
+            request_config,
             action="judge",
             error_code="gemini_invalid_judge",
             error_message="Gemini returned invalid judge output.",
         )
         if not isinstance(value, dict):
             raise ApiProblem(503, "gemini_invalid_judge", "Gemini returned invalid judge output.")
-        return value, GeminiCallMetadata(configured_model=model, effective_model=self._effective_model(response, model))
+        return value, metadata
