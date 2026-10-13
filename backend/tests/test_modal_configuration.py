@@ -1,3 +1,4 @@
+import ast
 from pathlib import Path
 
 import modal_app
@@ -10,12 +11,53 @@ def test_interactive_api_is_warm_in_europe_without_warming_docling_worker():
         "cpu": 0.5,
         "memoryMiB": 1024,
         "minContainers": 1,
-        "maxContainers": 2,
+        "maxContainers": 4,
         "computeRegion": "eu",
     }
     assert manifest["routingRegion"] == "eu-west"
     assert manifest["workerProfile"]["minContainers"] == 0
     assert "api_eu" in manifest["functions"]
+
+
+def test_burst_capacity_scales_out_within_the_postgres_connection_budget():
+    from app.db import MAX_OVERFLOW, POOL_SIZE
+
+    manifest = modal_app.local_manifest()
+    # Only the interactive API stays warm; the burst limits cost nothing idle.
+    assert manifest["pipelineWorkerProfile"]["minContainers"] == 0
+    assert manifest["maintenanceProfile"]["minContainers"] == 0
+    assert (
+        manifest["apiProfile"]["maxContainers"],
+        manifest["pipelineWorkerProfile"]["maxContainers"],
+        manifest["workerProfile"]["maxContainers"],
+        manifest["maintenanceProfile"]["maxContainers"],
+    ) == (4, 3, 2, 1)
+    # The legacy rollback endpoint is not scaled with api_eu.
+    assert modal_app.legacy_api_options["max_containers"] == 2
+
+    # One input per container: no Function opts into concurrent inputs, so a
+    # container never needs more than its own small pool.
+    tree = ast.parse(Path(modal_app.__file__).read_text(encoding="utf-8"))
+    decorators = [
+        ast.unparse(decorator)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        for decorator in node.decorator_list
+    ]
+    assert not any("concurrent" in decorator for decorator in decorators)
+
+    # docs/deployment.md budget: at most 20 pooled connections at full scale
+    # for api_eu + pipeline_worker + parse_worker + maintenance_sweeper.
+    containers = sum(
+        options["max_containers"]
+        for options in (
+            modal_app.api_options,
+            modal_app.pipeline_options,
+            modal_app.worker_options,
+            modal_app.maintenance_options,
+        )
+    )
+    assert containers * (POOL_SIZE + MAX_OVERFLOW) <= 20
 
 
 def test_api_requirements_do_not_initialize_docling_runtime():
