@@ -17,10 +17,6 @@ import { PreferencesProvider } from "@/components/preferences-provider";
 
 afterEach(() => cleanup());
 
-function heroStepLabels() {
-  return within(screen.getByTestId("auth-hero")).getAllByRole("listitem").map((item) => item.textContent);
-}
-
 describe("LoginScreen", () => {
   it("renders the reference login structure with the custom auth entry points", () => {
     render(<LoginScreen />);
@@ -34,30 +30,28 @@ describe("LoginScreen", () => {
     expect(screen.queryByText("RAG'inizin her adımını anlayın.")).not.toBeInTheDocument();
   });
 
-  it("draws the pipeline hero in code instead of a raster image", () => {
+  it("shows decorative pipeline art above the localized hero headline", () => {
     render(<LoginScreen />);
 
     const hero = screen.getByRole("region", { name: "PDF'den cevaba" });
     expect(hero).toBe(screen.getByTestId("auth-hero"));
-    expect(hero.querySelector("img")).toBeNull();
-    expect(heroStepLabels()).toEqual(["Doküman", "Ayrıştırma", "Chunking", "Embedding", "Retrieval", "Cevap"]);
-    // Only the answer step carries the brand accent; the icons are decorative.
-    expect(hero.querySelectorAll(".text-fg-brand-primary")).toHaveLength(1);
-    expect(within(screen.getByTestId("auth-hero-step-generate")).getByText("Cevap")).toBeInTheDocument();
-    for (const icon of hero.querySelectorAll("svg")) expect(icon).toHaveAttribute("aria-hidden", "true");
+    // The art is decorative: the headline and description carry the meaning.
+    const art = within(hero).getByTestId("auth-hero-art");
+    expect(art).toHaveAttribute("alt", "");
+    expect(art).toHaveAttribute("aria-hidden", "true");
+    expect(within(hero).queryByRole("img")).not.toBeInTheDocument();
+    expect(hero.firstElementChild).toBe(art);
   });
 
   it("switches the hero and first-use explanation with the selected language", async () => {
     const user = userEvent.setup();
     render(<PreferencesProvider><LoginScreen /></PreferencesProvider>);
     await user.click(screen.getByRole("button", { name: "TR" }));
-    await waitFor(() => expect(heroStepLabels()).toEqual(["Doküman", "Ayrıştırma", "Chunking", "Embedding", "Retrieval", "Cevap"]));
-    expect(screen.getByRole("region", { name: "PDF'den cevaba" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("region", { name: "PDF'den cevaba" })).toBeInTheDocument());
     expect(screen.getByTestId("auth-intro")).toHaveTextContent(/^PDF'den cevaba/);
 
     await user.click(screen.getByRole("button", { name: "EN" }));
-    await waitFor(() => expect(heroStepLabels()).toEqual(["Document", "Parsing", "Chunking", "Embeddings", "Retrieval", "Answer"]));
-    expect(screen.getByRole("region", { name: "From PDF to answer" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("region", { name: "From PDF to answer" })).toBeInTheDocument());
     expect(screen.getByTestId("auth-intro")).toHaveTextContent(/^From PDF to answer/);
     // E2E helpers sign in through these exact English names.
     expect(screen.getByRole("heading", { level: 1 })).toHaveAccessibleName("Sign in");

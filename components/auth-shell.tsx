@@ -56,8 +56,8 @@ function DotGrid() {
 }
 
 /**
- * Split auth layout: the code-drawn pipeline hero on a dotted canvas (md+) and the form on the
- * panel surface. Both halves are theme tokens, so dark mode is the same composition, not a raster.
+ * Split auth layout: the pipeline hero (transparent art + headline) on a dotted canvas (md+) and
+ * the form on the panel surface. Surfaces are theme tokens; the art is made to read on both themes.
  */
 export function AuthShell({ children }: { children: React.ReactNode }) {
   const copy = useCopy().auth;
