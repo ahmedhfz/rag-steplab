@@ -124,6 +124,13 @@ type PipelineMutationContext = {
   documentEpoch: number;
 };
 
+/** A lineage saved to the active pipeline and the snapshot that shows it, committed together. */
+type SavedLineage = {
+  snapshot: DocumentSnapshot;
+  /** Applies the saved pipeline to React state; idempotent and safe after the scope changed. */
+  applyPipeline: () => void;
+};
+
 type EvaluationRunInput = {
   datasetId: string;
   pipelineId?: string | null;
@@ -307,7 +314,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const artifactCacheRef = useRef(new Map<string, ParseRun | ChunkRun | EmbeddingRun | ExperimentRun | EvaluationDataset | EvaluationRun>());
   const pipelineRevisionRef = useRef(new Map<string, number>());
   const pipelineMutationQueueRef = useRef(new Map<string, Promise<boolean>>());
-  const persistActivePipelineSelectionRef = useRef<(selection: DocumentLineageSelection, expectedPipelineId?: string | null) => Promise<boolean>>(async () => false);
+  const persistActivePipelineSelectionRef = useRef<(selection: DocumentLineageSelection, expectedPipelineId?: string | null, deferPipelineState?: boolean) => Promise<(() => void) | null>>(async () => null);
 
   const applySelectedLineage = useCallback((selection: DocumentLineageSelection) => {
     selectedLineageRef.current = selection;
@@ -440,6 +447,9 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const applyParseRunStatus = useCallback((run: ParseRun, expectedRunId: number) => {
     if (runIdRef.current !== expectedRunId) return;
     activeParseRunIdRef.current = run.id;
+    // Completion shows only with its committed lineage (result, selection and pipeline in one
+    // render); until then the run still reads as in flight, never as "not parsed".
+    if (run.status === "completed") return;
     setParseStatus(run.status);
     setLastReportedParseProgress(run.progress);
     setParseProgress((current) => Math.max(current, run.progress));
@@ -770,11 +780,35 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   }, [parseStatus]);
 
   /**
+   * Saves a finished run's lineage and loads the snapshot that shows it. The
+   * saved pipeline reaches React state only through `applyPipeline`, which the
+   * caller runs in the same synchronous block as `commitDocumentSnapshot`: a
+   * pipeline that already names the new run while the selection still shows
+   * the old one reads as an incompatible lineage. Null when nothing was saved.
+   */
+  const saveAndLoadLineage = useCallback(async (
+    documentId: string,
+    selection: DocumentLineageSelection,
+    signal: AbortSignal,
+    expectedPipelineId?: string | null,
+  ): Promise<SavedLineage | null> => {
+    const applyPipeline = await persistActivePipelineSelectionRef.current(selection, expectedPipelineId, true);
+    if (!applyPipeline) return null;
+    try {
+      return { snapshot: await loadDocumentSnapshot(documentId, signal, selection, Boolean(activePipelineRef.current)), applyPipeline };
+    } catch (error) {
+      // Saved but not shown: state still follows the saved pipeline.
+      applyPipeline();
+      throw error;
+    }
+  }, [loadDocumentSnapshot]);
+
+  /**
    * A parse result belongs to the lineage that was active when the parse
    * started. If the user switched pipeline or selection meanwhile, the new
    * run only appears in history: nothing is PATCHed and the current lineage
-   * is refreshed as-is. Returns a snapshot only when the caller should commit
-   * the new parse as the working lineage.
+   * is refreshed as-is. Returns the saved lineage only when the caller should
+   * commit the new parse as the working lineage.
    */
   const commitCompletedParse = useCallback(async (
     documentId: string,
@@ -782,16 +816,28 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     startScope: { pipelineId: string | null; selectionRequest: number },
     signal: AbortSignal,
     isCurrentRun: () => boolean,
-  ): Promise<DocumentSnapshot | null> => {
+  ): Promise<SavedLineage | null> => {
     const lineageUnchanged = (activePipelineRef.current?.id ?? null) === startScope.pipelineId
       && selectionRequestRef.current === startScope.selectionRequest
       && activeDocumentRef.current?.id === documentId;
     if (lineageUnchanged) {
       const selection = { selectedParseRunId: parseRunId, selectedChunkRunId: null, selectedEmbeddingRunId: null };
-      if (!await persistActivePipelineSelectionRef.current(selection, startScope.pipelineId)) return null;
-      const snapshot = await loadDocumentSnapshot(documentId, signal, selection, Boolean(activePipelineRef.current));
-      if (!isCurrentRun() || activeDocumentRef.current?.id !== documentId) return null;
-      return snapshot;
+      const saved = await saveAndLoadLineage(documentId, selection, signal, startScope.pipelineId);
+      if (!saved) {
+        // Not saved to the lineage (that failure is reported). Unless a commit
+        // has settled it since, the finished run must not stay "in flight".
+        if (isCurrentRun() && activeParseRunIdRef.current === parseRunId) {
+          setParseStatus("completed");
+          setLastReportedParseProgress(100);
+          setParseProgress(100);
+          setParsePhase("completed");
+          setParseError(null);
+        }
+        return null;
+      }
+      if (isCurrentRun() && activeDocumentRef.current?.id === documentId) return saved;
+      saved.applyPipeline();
+      return null;
     }
     const pipeline = activePipelineRef.current;
     const currentSelection = pipeline ? pipelineSelection(pipeline) : lineageSelectionsRef.current[documentId];
@@ -801,7 +847,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     parseInFlightRef.current = false;
     commitDocumentSnapshot(snapshot, false);
     return null;
-  }, [captureScope, commitDocumentSnapshot, loadDocumentSnapshot]);
+  }, [captureScope, commitDocumentSnapshot, loadDocumentSnapshot, saveAndLoadLineage]);
 
   const resumeParseRun = useCallback(async (
     documentId: string,
@@ -821,11 +867,13 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         (run) => applyParseRunStatus(run, expectedRunId),
       );
       if (!isCurrentRun() || activeDocumentRef.current?.id !== documentId || activeParseRunIdRef.current !== parseRunId) return;
-      const snapshot = await commitCompletedParse(documentId, parseRunId, startScope, controller.signal, isCurrentRun);
-      if (!snapshot) return;
+      const saved = await commitCompletedParse(documentId, parseRunId, startScope, controller.signal, isCurrentRun);
+      if (!saved) return;
+      // Before the scope bump below, while the pipeline write is still current.
+      saved.applyPipeline();
       documentEpochRef.current += 1;
       selectionRequestRef.current += 1;
-      commitDocumentSnapshot(snapshot);
+      commitDocumentSnapshot(saved.snapshot);
       setSelectedParseResult(completedResult);
       setParseStatus("completed");
     } catch (error) {
@@ -1138,14 +1186,16 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       );
       if (!isCurrentRun() || !result.parseRunId) return;
       activeParseRunIdRef.current = result.parseRunId;
-      const snapshot = await commitCompletedParse(documentId, result.parseRunId, startScope, controller.signal, isCurrentRun);
-      if (!snapshot) return;
+      const saved = await commitCompletedParse(documentId, result.parseRunId, startScope, controller.signal, isCurrentRun);
+      if (!saved) return;
+      // Before the scope bump below, while the pipeline write is still current.
+      saved.applyPipeline();
       parseInFlightRef.current = false;
       runIdRef.current += 1;
       documentEpochRef.current += 1;
       selectionRequestRef.current += 1;
       removeControllerIfCurrent(controllersRef.current, "reparse", controller);
-      commitDocumentSnapshot(snapshot);
+      commitDocumentSnapshot(saved.snapshot);
       setParseStatus("completed");
       setSelectedParseResult(result);
       setLastReportedParseProgress(100);
@@ -1220,20 +1270,25 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   /**
    * Persists the working lineage to the active saved pipeline (or the scratch
    * selection). With `expectedPipelineId`, nothing is written unless that
-   * pipeline (or scratch, for `null`) is still the active one.
+   * pipeline (or scratch, for `null`) is still the active one. Resolves null
+   * when nothing was persisted, otherwise with the function that applies the
+   * saved pipeline to React state: a no-op unless `deferPipelineState`, whose
+   * caller runs it together with the snapshot commit (see saveAndLoadLineage).
    */
   const persistActivePipelineSelection = useCallback(async (
     selection: DocumentLineageSelection,
     expectedPipelineId?: string | null,
-  ): Promise<boolean> => {
+    deferPipelineState = false,
+  ): Promise<(() => void) | null> => {
     const current = activePipelineRef.current;
-    if (expectedPipelineId !== undefined && (current?.id ?? null) !== expectedPipelineId) return false;
+    if (expectedPipelineId !== undefined && (current?.id ?? null) !== expectedPipelineId) return null;
     if (!current) {
       if (activeDocumentRef.current) {
         rememberSelection(activeDocumentRef.current.id, selection);
-        applyLineageFlags(withSelectionLineageFlags(activeDocumentRef.current, selection));
+        // A deferring caller commits a snapshot that carries these flags with its selection.
+        if (!deferPipelineState) applyLineageFlags(withSelectionLineageFlags(activeDocumentRef.current, selection));
       }
-      return true;
+      return () => undefined;
     }
     const context: PipelineMutationContext = {
       documentId: current.documentId,
@@ -1242,6 +1297,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       documentEpoch: documentEpochRef.current,
     };
     pipelineRevisionRef.current.set(current.id, pipelineRevisionRef.current.get(current.id) ?? current.revision);
+    // A deferred response: only its revision is recorded until the caller applies it.
+    let deferred: DocumentPipeline | null = null;
 
     const persist = async (): Promise<boolean> => {
       const expectedRevision = pipelineRevisionRef.current.get(context.pipelineId) ?? current.revision;
@@ -1252,7 +1309,13 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         embeddingRunId: selection.selectedEmbeddingRunId,
       };
       try {
-        recordPipelineResponse(await updateDocumentPipeline(context.pipelineId, input), context);
+        const saved = await updateDocumentPipeline(context.pipelineId, input);
+        if (deferPipelineState) {
+          pipelineRevisionRef.current.set(saved.id, saved.revision);
+          deferred = saved;
+        } else {
+          recordPipelineResponse(saved, context);
+        }
         return true;
       } catch (error) {
         const conflict = error instanceof DocumentApiError && error.code === "pipeline_conflict";
@@ -1315,7 +1378,15 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         pipelineMutationQueueRef.current.delete(current.id);
       }
     });
-    return queued;
+    if (!await queued) return null;
+    let applied = false;
+    return () => {
+      if (applied || !deferred) return;
+      applied = true;
+      // A newer write to this pipeline may have reached state meanwhile; never roll it back.
+      if ((pipelineRevisionRef.current.get(deferred.id) ?? deferred.revision) > deferred.revision) return;
+      recordPipelineResponse(deferred, context);
+    };
   }, [applyLineageFlags, buildDocumentSnapshot, commitDocumentSnapshot, loadDocumentSnapshot, pipelineMutationIsCurrent, recordPipelineResponse, rememberSelection, replaceController]);
   useEffect(() => {
     persistActivePipelineSelectionRef.current = persistActivePipelineSelection;
@@ -1656,10 +1727,11 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         selectedChunkRunId: result.id,
         selectedEmbeddingRunId: null,
       };
-      if (!await persistActivePipelineSelection(selection)) return null;
-      const snapshot = await loadDocumentSnapshot(documentId, controller.signal, selection, Boolean(activePipelineRef.current));
+      const saved = await saveAndLoadLineage(documentId, selection, controller.signal);
+      if (!saved) return null;
+      saved.applyPipeline();
       if (!scope.isCurrent()) return null;
-      commitDocumentSnapshot(snapshot);
+      commitDocumentSnapshot(saved.snapshot);
       cacheArtifact("chunk", result.id, result);
       setSelectedChunkRun(result);
       setChunkStatus("completed");
@@ -1672,7 +1744,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     } finally {
       removeControllerIfCurrent(controllersRef.current, "chunk", controller);
     }
-  }, [cacheArtifact, captureScope, chunkStatus, commitDocumentSnapshot, loadDocumentSnapshot, persistActivePipelineSelection, replaceController]);
+  }, [cacheArtifact, captureScope, chunkStatus, commitDocumentSnapshot, replaceController, saveAndLoadLineage]);
 
   const runEmbedding = useCallback(async (): Promise<EmbeddingRun | null> => {
     const documentId = activeDocumentRef.current?.id;
@@ -1692,10 +1764,11 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
         selectedChunkRunId: chunkRunId,
         selectedEmbeddingRunId: result.id,
       };
-      if (!await persistActivePipelineSelection(selection)) return null;
-      const snapshot = await loadDocumentSnapshot(documentId, controller.signal, selection, Boolean(activePipelineRef.current));
+      const saved = await saveAndLoadLineage(documentId, selection, controller.signal);
+      if (!saved) return null;
+      saved.applyPipeline();
       if (!scope.isCurrent()) return null;
-      commitDocumentSnapshot(snapshot);
+      commitDocumentSnapshot(saved.snapshot);
       cacheArtifact("embedding", result.id, result);
       setSelectedEmbeddingRun(result);
       setEmbeddingStatus("completed");
@@ -1708,7 +1781,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     } finally {
       removeControllerIfCurrent(controllersRef.current, "embedding", controller);
     }
-  }, [cacheArtifact, captureScope, commitDocumentSnapshot, embeddingStatus, loadDocumentSnapshot, persistActivePipelineSelection, replaceController]);
+  }, [cacheArtifact, captureScope, commitDocumentSnapshot, embeddingStatus, replaceController, saveAndLoadLineage]);
 
   const commitExperimentResult = useCallback((result: ExperimentRun) => {
     setExperimentRun(result);
