@@ -114,6 +114,12 @@ function JourneyGlyph({ stepKey, state }: { stepKey: JourneyStepKey; state: Pipe
   );
 }
 
+/**
+ * The group name sits as a legend on its frame's top edge, clear of the first stage label
+ * below it (inside the frame the two read as one crowded block).
+ */
+const journeyGroupLegendClass = "absolute -top-2.5 left-3 rounded-md border border-tertiary bg-primary px-1.5 text-xs font-medium leading-4 text-tertiary";
+
 const journeyCanvasProps = {
   "aria-hidden": true,
   className: "pointer-events-none absolute left-0 top-px z-[1] h-50 w-full overflow-visible",
@@ -655,9 +661,9 @@ export function OverviewScreen() {
               {/* Node labels and check badges sit outside their 40px node boxes by design, inside this canvas. */}
               <div className="relative hidden h-54 w-full pt-3 min-[1440px]:block" data-overflow-intentional="" data-testid="overview-journey-desktop">
                 <div className="relative h-50 w-full">
-                  <div className="absolute top-1 h-48 rounded-lg border border-tertiary bg-secondary" data-testid="overview-group-prepare" style={journeyGroupPosition("prepare")}><span className="absolute left-3.5 top-3 text-xs font-medium text-tertiary">{groupLabels.prepare}</span></div>
-                  <div className="absolute top-1 h-48 rounded-lg border border-tertiary bg-secondary" data-testid="overview-group-test" style={journeyGroupPosition("test")}><span className="absolute left-3.5 top-3 text-xs font-medium text-tertiary">{groupLabels.test}</span></div>
-                  <div className="absolute top-1 h-48 rounded-lg border border-tertiary bg-secondary" data-testid="overview-group-measure" style={journeyGroupPosition("measure")}><span className="absolute left-3.5 top-3 text-xs font-medium text-tertiary">{groupLabels.measure}</span></div>
+                  <div className="absolute top-1 h-48 rounded-lg border border-tertiary bg-secondary" data-testid="overview-group-prepare" style={journeyGroupPosition("prepare")}><span className={journeyGroupLegendClass}>{groupLabels.prepare}</span></div>
+                  <div className="absolute top-1 h-48 rounded-lg border border-tertiary bg-secondary" data-testid="overview-group-test" style={journeyGroupPosition("test")}><span className={journeyGroupLegendClass}>{groupLabels.test}</span></div>
+                  <div className="absolute top-1 h-48 rounded-lg border border-tertiary bg-secondary" data-testid="overview-group-measure" style={journeyGroupPosition("measure")}><span className={journeyGroupLegendClass}>{groupLabels.measure}</span></div>
                   <JourneyConnectors fill={journeyFill} stateFor={(step) => pipelineState[step]} />
                   {pipelineSteps.map((step) => <JourneyNode fillDelayMs={journeyFillDelayMs(step.key, journeyFill)} href={stageHref[step.key]} key={step.key} labels={journeyLabels} onReveal={setRevealedStep} reason={lockedReason(step.key)} state={pipelineState[step.key]} step={step} />)}
                 </div>
