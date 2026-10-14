@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 
+from app.errors import ApiProblem
 from app.gemini import GeminiCallFailed, GeminiCallMetadata
 from app.pipeline import (
     _evaluation_model_summary,
     _evaluation_reusable,
+    _log_run_failure,
     _model_provenance,
     _provenance_reusable,
     queue_experiment,
@@ -46,11 +48,19 @@ class FallbackGemini(Phase5FakeGemini):
         )
 
 
+class ProviderOverloaded(RuntimeError):
+    """Shaped like google.genai's APIError: numeric code, status token, free-text message."""
+
+    code = 503
+    status = "UNAVAILABLE"
+
+
 class OverloadedGemini(Phase5FakeGemini):
     def rerank(self, _prompt):
         type(self).calls["rerank"] += 1
         try:
-            raise RuntimeError("503 UNAVAILABLE. The model is overloaded.")
+            # Provider messages can quote request content; it must never reach the logs.
+            raise ProviderOverloaded("503 UNAVAILABLE. Retrieval finds relevant chunks")
         except RuntimeError as cause:
             raise GeminiCallFailed("rerank", ("gemini-rerank-v1", "fallback-v1")) from cause
 
@@ -169,10 +179,29 @@ def test_failed_experiment_logs_code_cause_and_models_without_document_text(monk
     message = record.getMessage()
     assert "kind=experiment" in message
     assert "error_code=gemini_rerank_failed" in message
-    assert "cause_type=RuntimeError" in message
-    assert "cause=503 UNAVAILABLE. The model is overloaded." in message
+    assert "cause_type=ProviderOverloaded" in message
+    assert "cause_code=503" in message
+    assert "cause_status=UNAVAILABLE" in message
     assert "models_tried=gemini-rerank-v1,fallback-v1" in message
     assert "Retrieval finds relevant chunks" not in message
+
+
+def test_run_failure_log_never_carries_free_text_from_the_cause(caplog):
+    caplog.set_level(logging.WARNING, logger="app.pipeline")
+    try:
+        try:
+            float("The confidential clause from page 3")
+        except ValueError as cause:
+            raise ApiProblem(503, "invalid_generation_metrics", "The generation judge returned a non-numeric metric.") from cause
+    except ApiProblem as exc:
+        _log_run_failure("evaluation_case", "evaluation-1", exc)
+
+    [record] = [record for record in caplog.records if record.getMessage().startswith("pipeline_run_failed")]
+    message = record.getMessage()
+    assert "error_code=invalid_generation_metrics" in message
+    assert "cause_type=ValueError" in message
+    assert "cause_code=None cause_status=None" in message
+    assert "confidential clause" not in message
 
 
 def test_failed_queued_experiment_worker_logs_the_provider_cause(monkeypatch, caplog):

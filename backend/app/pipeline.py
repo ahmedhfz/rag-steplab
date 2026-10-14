@@ -186,21 +186,29 @@ def _model_provenance(
     return provenance
 
 
-def _log_run_failure(kind: str, run_id: str | None, exc: ApiProblem) -> None:
-    """Log a failed pipeline run like ``parse_worker_failed``.
+_PROVIDER_STATUS = re.compile(r"[A-Z][A-Z_]{0,39}")
 
-    Only the public code, the provider cause's type/message (truncated) and
-    the models tried are logged: never prompt or document text, never secrets.
+
+def _log_run_failure(kind: str, run_id: str | None, exc: ApiProblem) -> None:
+    """Log a failed pipeline run: public code, cause type and the models tried.
+
+    Free-text cause messages are never logged: a provider or parsing error can
+    quote model output, prompt or document text (e.g. ``float()`` on a judge
+    metric) or a malformed credential header. Only the provider's numeric HTTP
+    code and status token (``UNAVAILABLE``, ``DEADLINE_EXCEEDED``) are kept.
     """
 
     cause = exc.__cause__
+    code = getattr(cause, "code", getattr(cause, "status_code", None))
+    status = getattr(cause, "status", None)
     logger.warning(
-        "pipeline_run_failed kind=%s run_id=%s error_code=%s cause_type=%s cause=%s models_tried=%s",
+        "pipeline_run_failed kind=%s run_id=%s error_code=%s cause_type=%s cause_code=%s cause_status=%s models_tried=%s",
         kind,
         run_id,
         exc.code,
         type(cause).__name__ if cause is not None else None,
-        str(cause)[:500] if cause is not None else None,
+        code if isinstance(code, int) and not isinstance(code, bool) else None,
+        status if isinstance(status, str) and _PROVIDER_STATUS.fullmatch(status) else None,
         ",".join(getattr(exc, "models_tried", ()) or ()) or None,
     )
 

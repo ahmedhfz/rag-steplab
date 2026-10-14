@@ -189,8 +189,10 @@ devreden çıkarır. Embedding'de fallback yoktur (farklı vektör uzayı). Fall
 çıktısı `configuredModel` yanında `effectiveModel` ve `fallbackModel` ile
 kaydedilir, cacheable değildir ve yapılandırılmış modelin sonucu olarak yeniden
 kullanılmaz; evaluation `judgeModel` alanı skoru gerçekten üreten modeli adlandırır.
-Başarısız run'lar `pipeline_run_failed` log'unda hata kodu, sağlayıcı neden tipi,
-kısaltılmış neden mesajı ve denenen modellerle görünür; prompt/doküman metni loglanmaz.
+Başarısız run'lar `pipeline_run_failed` log'unda hata kodu, neden tipi, sağlayıcının
+sayısal HTTP kodu ve durum token'ı (`UNAVAILABLE` gibi) ve denenen modellerle görünür.
+Neden mesajı serbest metin olduğu için (model çıktısı, prompt veya doküman metni
+içerebilir) loglanmaz.
 
 Evaluation sözleşmesi (`generation-metrics-v2`, `evaluation-fingerprint-v2`):
 
