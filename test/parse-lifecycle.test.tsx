@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DocumentLibrary } from "@/components/document-library";
-import { DocumentPipelineProvider } from "@/components/document-pipeline-provider";
+import { DocumentPipelineProvider, useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { DocumentsScreen } from "@/components/documents-screen";
 import { ParseScreen } from "@/components/parse-screen";
 import { PreferencesProvider } from "@/components/preferences-provider";
@@ -85,6 +85,11 @@ function renderScreen(node: React.ReactNode) {
       ? jsonResponse([])
       : testFetch(input, init)));
   return render(<PreferencesProvider><DocumentPipelineProvider>{node}</DocumentPipelineProvider></PreferencesProvider>);
+}
+
+function SwitchDocument({ to }: { to: string }) {
+  const { selectPersistedDocument } = useDocumentPipeline();
+  return <button onClick={() => void selectPersistedDocument(to)} type="button">Switch document</button>;
 }
 
 function prepareActiveDocument() {
@@ -201,6 +206,45 @@ describe("Parse ownership and lifecycle", () => {
     const elapsed = screen.getByTestId("parse-elapsed");
     expect(elapsed.textContent).toMatch(/^0:0\d$/);
     expect(screen.getByTestId("parse-result-summary")).toBeInTheDocument();
+  });
+
+  it("does not carry a parse started here over to another selected document", async () => {
+    const user = userEvent.setup();
+    prepareActiveDocument();
+    const otherDocument = { ...documentItem, id: "document-2", fileName: "other.pdf", sha256: "sha-2", activeParseRunId: "parse-b", pageCount: 1 };
+    const otherRun = { ...runSummary("completed"), id: "parse-b", upstream: { documentId: "document-2" }, createdAt: "2026-01-01T09:00:00Z", timing: { startedAt: "2026-01-01T09:00:00Z", completedAt: "2026-01-01T09:00:07Z", durationMs: 7_000 } };
+    let summaryCalls = 0;
+    let pollCalls = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/capabilities")) return jsonResponse(capabilities);
+      if (url.endsWith("/documents") && init?.method !== "POST") return jsonResponse({ items: [documentItem, otherDocument] });
+      if (url.split("?")[0].endsWith("/documents/document-1/summary")) {
+        summaryCalls += 1;
+        return jsonResponse(summary(summaryCalls > 1 ? [runSummary("completed")] : [], summaryCalls > 1 ? "parse-1" : null));
+      }
+      if (url.split("?")[0].endsWith("/documents/document-2/summary")) return jsonResponse({ ...summary([otherRun], "parse-b"), ...otherDocument });
+      if (url.endsWith("/documents/document-1/parse") && init?.method === "POST") return jsonResponse({ documentId: "document-1", parseRunId: "parse-1", status: "queued" }, 202);
+      if (url.endsWith("/parse-runs/parse-1")) {
+        pollCalls += 1;
+        return pollCalls === 1
+          ? jsonResponse({ id: "parse-1", documentId: "document-1", status: "running", progress: 40 })
+          : jsonResponse({ id: "parse-1", documentId: "document-1", status: "completed", result: parseResult });
+      }
+      if (url.endsWith("/parse-runs/parse-b")) return jsonResponse({ id: "parse-b", documentId: "document-2", status: "completed", result: { ...parseResult, documentId: "document-2", parseRunId: "parse-b" } });
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderScreen(<><ParseScreen /><SwitchDocument to="document-2" /></>);
+
+    await waitFor(() => expect(screen.getByTestId("parse-run-action")).toBeEnabled());
+    await user.click(screen.getByTestId("parse-run-action"));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Lesson" })).toBeInTheDocument(), { timeout: 5_000 });
+    expect(screen.getByTestId("parse-lifecycle")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Switch document" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).split("?")[0].endsWith("/documents/document-2/summary"))).toBe(true));
+    // Document 2 was parsed elsewhere: no stopwatch from document 1's parse.
+    await waitFor(() => expect(screen.queryByTestId("parse-lifecycle")).not.toBeInTheDocument());
   });
 
   it("updates the document library row when a parse completes", async () => {

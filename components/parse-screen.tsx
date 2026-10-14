@@ -340,11 +340,14 @@ export function ParseScreen() {
     selectParseRun, inspectParseRun, setPipelineParseRun, reparseActiveDocument, resumeParseTracking,
   } = useDocumentPipeline();
   const [now, setNow] = useState(() => Date.now());
-  const [showLifecycle, setShowLifecycle] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   // When the user started the parse here; the run summary that carries its server start time
-  // only arrives once the document summary refreshes after the run finishes.
-  const [processingSince, setProcessingSince] = useState<number | null>(null);
+  // only arrives once the document summary refreshes after the run finishes. Scoped to the
+  // document and pipeline it was started for, so switching the selection never shows its clock.
+  const lineageKey = `${activeDocument?.id ?? ""}:${activePipeline?.id ?? ""}`;
+  const [startedHere, setStartedHere] = useState<{ lineageKey: string; since: number } | null>(null);
+  const processingSince = startedHere?.lineageKey === lineageKey ? startedHere.since : null;
+  const showLifecycle = processingSince !== null;
   const isProcessing = parseStatus === "queued" || parseStatus === "running";
   useEffect(() => {
     if (!isProcessing) return;
@@ -419,9 +422,8 @@ export function ParseScreen() {
   }, [finishedRunId, toastTitle, toastDescription]);
 
   function startParse() {
-    setProcessingSince(Date.now());
+    setStartedHere({ lineageKey, since: Date.now() });
     setConfirmOpen(false);
-    setShowLifecycle(true);
     void reparseActiveDocument();
   }
 
