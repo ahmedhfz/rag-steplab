@@ -23,6 +23,9 @@ export function LoginHero({ className }: { className?: string }) {
         data-testid="auth-hero-art"
         draggable={false}
         height={602}
+        // Above the fold on desktop; eager also lets it complete inside the hidden phone panel,
+        // where `sizes` makes the browser fetch only the smallest variant.
+        loading="eager"
         // Visible only from md up (the panel is hidden on phones), at most the section width.
         sizes="(min-width: 768px) 24rem, 1px"
         src={heroArt}
