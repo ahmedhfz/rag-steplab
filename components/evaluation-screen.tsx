@@ -317,7 +317,7 @@ function SourcePicker({ copy, elementTypes, elements, hasParse, inputId, locale,
         </div>
       ) : null}
       <TechnicalDetails className="mt-3" title={copy.technicalSources}>
-        <Input aria-describedby={`${inputId}-hint`} aria-label={copy.technicalSources} className="font-mono text-xs" id={inputId} onChange={(event) => onChange(event.target.value)} placeholder="element-1, element-4" size="sm" value={value} />
+        <Input aria-describedby={`${inputId}-hint`} aria-label={copy.technicalSources} className="font-mono" id={inputId} onChange={(event) => onChange(event.target.value)} placeholder="element-1, element-4" size="sm" value={value} />
       </TechnicalDetails>
     </div>
   );

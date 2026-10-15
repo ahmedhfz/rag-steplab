@@ -247,6 +247,8 @@ jobs:
           E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           set -euo pipefail
@@ -259,6 +261,14 @@ jobs:
             # Dependabot PR'ları yalnız Dependabot secret'larını alır.
             [ "$PR_AUTHOR" = "dependabot[bot]" ] && store="Settings > Secrets and variables > Dependabot"
             echo "::error::Browser E2E needs ${missing[*]}. Add the low-privilege E2E secrets under $store."
+            exit 1
+          fi
+          # Programmatic E2E sign-in needs the browser-safe project ref and publishable key.
+          for name in SUPABASE_PROJECT_REF SUPABASE_PUBLISHABLE_KEY; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Browser E2E needs the ${missing[*]} repository variable(s) under Settings > Secrets and variables > Actions > Variables."
             exit 1
           fi
 
@@ -290,6 +300,9 @@ jobs:
       - name: Run minimum real auth E2E
         if: steps.classify.outputs.auth_e2e == 'true'
         env:
+          # Programmatic E2E sign-in (e2e/support/auth.ts): browser-safe values only.
+          NEXT_PUBLIC_SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_REF }}.supabase.co
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
           E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
           E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
@@ -299,6 +312,9 @@ jobs:
       - name: Run seeded smoke suite
         if: steps.classify.outputs.seeded_e2e == 'true'
         env:
+          # Programmatic E2E sign-in (e2e/support/auth.ts): browser-safe values only.
+          NEXT_PUBLIC_SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_REF }}.supabase.co
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
           E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
           E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
@@ -309,6 +325,9 @@ jobs:
       - name: Run production visual suite
         if: steps.classify.outputs.production_visual == 'true'
         env:
+          # Programmatic E2E sign-in (e2e/support/auth.ts): browser-safe values only.
+          NEXT_PUBLIC_SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_REF }}.supabase.co
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
           E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
           E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}

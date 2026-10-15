@@ -6,7 +6,6 @@ const session = vi.hoisted(() => ({ authenticated: false }));
 const oauth = vi.hoisted(() => ({
   signInWithOAuth: vi.fn(),
   exchangeCodeForSession: vi.fn(),
-  verifyOtp: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/proxy", async (importOriginal) => {
@@ -23,7 +22,6 @@ vi.mock("@/lib/supabase/server", () => ({
 
 import { GET as googleGet } from "@/app/auth/google/route";
 import { GET as callbackGet } from "@/app/auth/callback/route";
-import { GET as confirmGet } from "@/app/auth/confirm/route";
 import { AUTH_NEXT_COOKIE, safeNextPath } from "@/lib/auth-redirect";
 import { proxy } from "@/proxy";
 
@@ -93,6 +91,16 @@ describe("proxy deep links", () => {
     expect((await proxy(new NextRequest("https://app.example/", { headers: linkedIn }))).headers.get("x-middleware-rewrite")).toBeNull();
   });
 
+  it("keeps only the Google OAuth routes public under /auth", async () => {
+    for (const url of ["https://app.example/auth/google", "https://app.example/auth/callback?code=abc"]) {
+      expect((await proxy(new NextRequest(url))).headers.get("location"), url).toBeNull();
+    }
+    // The removed email confirmation/reset routes are ordinary protected paths now.
+    for (const url of ["https://app.example/auth/confirm?token_hash=hash&type=email", "https://app.example/auth/reset-password"]) {
+      expect((await proxy(new NextRequest(url))).headers.get("location"), url).toBe("https://app.example/login");
+    }
+  });
+
   it("serves metadata images and robots.txt to anonymous link-preview crawlers", async () => {
     for (const url of ["https://app.example/opengraph-image?4f1c", "https://app.example/apple-icon?9a2b", "https://app.example/robots.txt"]) {
       expect((await proxy(new NextRequest(url))).headers.get("location"), url).toBeNull();
@@ -139,34 +147,5 @@ describe("Google OAuth next path", () => {
       headers: { cookie: `${AUTH_NEXT_COOKIE}=%2F%2Fevil.example` },
     }));
     expect(finished.headers.get("location")).toBe("https://app.example/");
-  });
-});
-
-describe("email confirmation next path", () => {
-  const confirm = (next: string) => confirmGet(new Request(`https://app.example/auth/confirm?token_hash=hash&type=email&next=${next}`));
-
-  it("returns a confirmed user to the same-origin deep link", async () => {
-    oauth.verifyOtp.mockResolvedValue({ error: null });
-    const response = await confirm(encodeURIComponent("/evaluation?tab=results"));
-    expect(response.headers.get("location")).toBe("https://app.example/evaluation?tab=results");
-  });
-
-  it.each([
-    "//evil.example",
-    "%2F%2Fevil.example",
-    "%252F%252Fevil.example",
-    "%2F%5Cevil.example",
-    encodeURIComponent("https://evil.example/"),
-    encodeURIComponent("/login?next=/playground"),
-  ])("falls back to the root for a hostile next %s", async (next) => {
-    oauth.verifyOtp.mockResolvedValue({ error: null });
-    const response = await confirm(next);
-    expect(response.headers.get("location")).toBe("https://app.example/");
-  });
-
-  it("keeps the recovery flow on the reset-password page", async () => {
-    oauth.verifyOtp.mockResolvedValue({ error: null });
-    const response = await confirmGet(new Request("https://app.example/auth/confirm?token_hash=hash&type=recovery&next=/auth/reset-password"));
-    expect(response.headers.get("location")).toBe("https://app.example/auth/reset-password");
   });
 });

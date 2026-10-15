@@ -9,7 +9,7 @@ export type PageTitleKey = AppNavKey | keyof AppCopy["documentTitles"];
 export const TITLE_TEMPLATE = `%s · ${UI_COPY.en.productName}`;
 
 export function pageTitle(copy: AppCopy, key: PageTitleKey): string {
-  return key === "signIn" || key === "resetPassword" ? copy.documentTitles[key] : copy.nav[key];
+  return key === "signIn" ? copy.documentTitles[key] : copy.nav[key];
 }
 
 /**
@@ -30,7 +30,6 @@ export function pageTitleKey(pathname: string): PageTitleKey | null {
   if (pathname === "/evaluation") return "evaluation";
   if (pathname === "/settings") return "settings";
   if (pathname === "/login") return "signIn";
-  if (pathname === "/auth/reset-password") return "resetPassword";
   return null;
 }
 

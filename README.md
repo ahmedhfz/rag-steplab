@@ -94,8 +94,9 @@ PDF'leri public deployment'a yüklemeyin. Ayrıntılar:
 
 Gereksinimler: Node.js 22 (CI'daki sürüm), Python 3.13
 ([.python-version](.python-version)) ve bir Supabase projesi. Uygulamadaki tüm
-rotalar giriş ister; bu yüzden hosted bir Supabase projesi ya da `supabase start`
-ile ayağa kalkan local stack (Supabase CLI) üzerinde Auth gerekir.
+rotalar giriş ister ve tek giriş yöntemi Google'dır; bu yüzden Google provider'ı
+etkin ve `http://localhost:3000/auth/callback` redirect URL'sine izin veren bir
+Supabase Auth (hosted proje ya da `supabase start` ile local stack) gerekir.
 
 1. Frontend bağımlılıklarını kurun ve environment şablonunu kopyalayın:
 
@@ -119,8 +120,9 @@ ile ayağa kalkan local stack (Supabase CLI) üzerinde Auth gerekir.
    npm run dev
    ```
 
-Uygulama <http://localhost:3000> adresinde açılır; hesap oluşturma ve giriş
-Supabase Auth üzerinden yapılır. `NEXT_PUBLIC_API_BASE_URL` hosted bir API'yi
+Uygulama <http://localhost:3000> adresinde açılır; giriş (ilk girişte hesap
+oluşturma dahil) Supabase Auth üzerinden **Google ile devam et** ile yapılır.
+`NEXT_PUBLIC_API_BASE_URL` hosted bir API'yi
 gösteriyorsa yalnız frontend başlar; seçim ayrıntıları
 [backend/README.md](backend/README.md#çalıştırma) içindedir.
 

@@ -227,7 +227,8 @@ export function DocumentLibrary() {
                                 <DocumentStatusBadge status={status} />
                                 {isActive ? <Badge color="brand" data-tone="active" size="sm">{labels.inUse}</Badge> : null}
                               </div>
-                              <dl className="mt-3 grid grid-cols-3 gap-3">
+                              {/* Equal thirds while they fit; on narrow phones the date column keeps its full width. */}
+                              <dl className="mt-3 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(max-content,1fr)] gap-3">
                                 <div className="min-w-0"><dt className="text-xs text-quaternary">{labels.columns.pages}</dt><dd className="mt-0.5 truncate text-sm font-medium text-secondary tabular-nums">{pagesFor(document, status)}</dd></div>
                                 <div className="min-w-0"><dt className="text-xs text-quaternary">{labels.columns.size}</dt><dd className="mt-0.5 truncate text-sm font-medium text-secondary tabular-nums">{formatDocumentFileSize(document.sizeBytes, locale)}</dd></div>
                                 <div className="min-w-0"><dt className="text-xs text-quaternary">{labels.columns.uploaded}</dt><dd className="mt-0.5 truncate text-sm font-medium text-secondary">{formatUpdatedAt(document.createdAt ?? document.updatedAt, locale)}</dd></div>

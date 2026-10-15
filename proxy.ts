@@ -3,7 +3,7 @@ import { userAgent, type NextRequest } from "next/server";
 import { loginPathWithNext, safeNextPath } from "@/lib/auth-redirect";
 import { redirectWithSessionCookies, rewriteWithSessionCookies, updateSupabaseSession } from "@/lib/supabase/proxy";
 
-const publicRoutes = new Set(["/login", "/auth/google", "/auth/callback", "/auth/confirm"]);
+const publicRoutes = new Set(["/login", "/auth/google", "/auth/callback"]);
 // Browser icons, robots.txt and the share image (Next metadata file routes) stay public: link-preview crawlers have no session.
 const publicAssetRoutes = new Set(["/favicon.ico", "/robots.txt", "/opengraph-image", "/apple-icon"]);
 

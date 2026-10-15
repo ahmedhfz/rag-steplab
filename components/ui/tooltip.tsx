@@ -25,9 +25,10 @@ export type TooltipProps = Omit<AriaTooltipProps, "children"> & {
   isDisabled?: boolean;
 };
 
-export function Tooltip({ children, title, description, shortcut, arrow = false, delay = 300, closeDelay = 0, isDisabled, placement = "top", offset = 6, className, ...props }: TooltipProps) {
+/** `isOpen`/`defaultOpen`/`onOpenChange` control the trigger state, so `aria-describedby` follows it. */
+export function Tooltip({ children, title, description, shortcut, arrow = false, delay = 300, closeDelay = 0, isDisabled, isOpen, defaultOpen, onOpenChange, placement = "top", offset = 6, className, ...props }: TooltipProps) {
   return (
-    <AriaTooltipTrigger closeDelay={closeDelay} delay={delay} isDisabled={isDisabled}>
+    <AriaTooltipTrigger closeDelay={closeDelay} defaultOpen={defaultOpen} delay={delay} isDisabled={isDisabled} isOpen={isOpen} onOpenChange={onOpenChange}>
       <Focusable>{children as ReactElement<Record<string, unknown>, string>}</Focusable>
       <AriaTooltip
         {...props}

@@ -1,20 +1,13 @@
 "use client";
 
-import { IconSwap, TransitionForm, TransitionText } from "@/components/ui/transitions";
+import { TransitionText } from "@/components/ui/transitions";
 
-import { useRouter } from "next/navigation";
-import { useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
-import { shakeValidation } from "@/lib/transitions";
-import { AuthShell, MIN_PASSWORD_LENGTH } from "@/components/auth-shell";
-import { AppIcon } from "@/components/ui/app-icon";
+import { AuthShell } from "@/components/auth-shell";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { usePreferences } from "@/components/preferences-provider";
 import { safeNextPath } from "@/lib/auth-redirect";
-import { getSupabaseBrowserClient, supabaseAuthErrorMessage } from "@/lib/supabase/browser";
-import { type AppCopy, type AppLocale, interpolate, useCopy } from "@/lib/copy";
+import { type AppCopy, useCopy } from "@/lib/copy";
 
 function GoogleMark() {
   return (
@@ -27,16 +20,14 @@ function GoogleMark() {
   );
 }
 
-type Mode = "signin" | "signup" | "forgot";
+const subscribeToLocation = () => () => undefined;
 
-const subscribeToAuthError = () => () => undefined;
-
-function getAuthErrorMessage() {
+function getAuthErrorCode() {
   if (typeof window === "undefined") return "";
   return new URLSearchParams(window.location.search).get("auth_error") ?? "";
 }
 
-function getServerAuthErrorMessage() {
+function getServerAuthErrorCode() {
   return "";
 }
 
@@ -55,147 +46,24 @@ function linkErrorMessage(code: string, linkErrors: AppCopy["auth"]["linkErrors"
   return Object.hasOwn(linkErrors, code) ? linkErrors[code as keyof typeof linkErrors] : "";
 }
 
-function friendlyAuthError(error: unknown, errors: AppCopy["auth"]["errors"], locale: AppLocale) {
-  const message = error instanceof Error ? error.message.toLowerCase() : "";
-  if (message.includes("invalid login credentials")) return errors.invalidCredentials;
-  if (message.includes("user already registered") || message.includes("already been registered")) return errors.alreadyRegistered;
-  if (message.includes("email not confirmed")) return errors.emailNotConfirmed;
-  if (message.includes("password")) return errors.passwordRequirements;
-  if (message.includes("rate limit") || message.includes("too many")) return errors.rateLimited;
-  return supabaseAuthErrorMessage(error, locale);
-}
-
+/** Google OAuth is the only sign-in method; `/auth/google` starts it on the server. */
 export function LoginScreen() {
-  const { preferences } = usePreferences();
   const auth = useCopy().auth;
   const labels = auth.login;
-  const router = useRouter();
-  const urlAuthErrorCode = useSyncExternalStore(subscribeToAuthError, getAuthErrorMessage, getServerAuthErrorMessage);
-  const nextPath = useSyncExternalStore(subscribeToAuthError, getNextPath, getServerNextPath);
+  const authErrorCode = useSyncExternalStore(subscribeToLocation, getAuthErrorCode, getServerAuthErrorCode);
+  const nextPath = useSyncExternalStore(subscribeToLocation, getNextPath, getServerNextPath);
   const googleHref = nextPath === "/" ? "/auth/google" : `/auth/google?${new URLSearchParams({ next: nextPath }).toString()}`;
-  const [mode, setMode] = useState<Mode>("signin");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmation, setConfirmation] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  function setAuthMode(nextMode: Mode) {
-    setMode(nextMode);
-    setStatusMessage("");
-    setPassword("");
-    setConfirmation("");
-  }
-
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
-    setStatusMessage("");
-    try {
-      const supabase = getSupabaseBrowserClient();
-      if (mode === "forgot") {
-        const { error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/auth/confirm?next=/auth/reset-password`,
-        });
-        if (error) throw error;
-        setStatusMessage(auth.messages.resetLinkSent);
-        return;
-      }
-      if (mode === "signup") {
-        if (password.length < MIN_PASSWORD_LENGTH) {
-          setStatusMessage(interpolate(auth.messages.passwordTooShort, { min: MIN_PASSWORD_LENGTH }));
-          return;
-        }
-        if (password !== confirmation) {
-          shakeValidation(document.getElementById("login-password-confirm"));
-          setStatusMessage(auth.messages.passwordMismatch);
-          return;
-        }
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          // The validated deep link survives email confirmation; /auth/confirm re-validates it.
-          options: { emailRedirectTo: `${window.location.origin}/auth/confirm${nextPath === "/" ? "" : `?${new URLSearchParams({ next: nextPath }).toString()}`}` },
-        });
-        if (error) throw error;
-        if (data.session) {
-          router.replace(nextPath);
-          router.refresh();
-        } else setStatusMessage(auth.messages.accountCreated);
-        return;
-      }
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      router.replace(nextPath);
-      // Auth cookie değişikliğinin stale App Router cache'inde kalmasını engeller.
-      router.refresh();
-    } catch (error) {
-      setStatusMessage(friendlyAuthError(error, auth.errors, preferences.locale));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const title = mode === "signup" ? labels.titleSignUp : mode === "forgot" ? labels.titleForgot : labels.titleSignIn;
-  const submitLabel = mode === "signup" ? labels.submitSignUp : mode === "forgot" ? labels.submitForgot : labels.submitSignIn;
-  const urlStatusMessage = linkErrorMessage(urlAuthErrorCode, auth.linkErrors);
-  const visibleStatus = statusMessage || urlStatusMessage;
+  const status = linkErrorMessage(authErrorCode, auth.linkErrors);
 
   return (
     <AuthShell>
-      <section aria-label={labels.form} className="w-full max-w-sm">
-        <h1 className="text-display-xs font-semibold text-primary">{title}</h1>
-        {/* Sign-in/up titles speak for themselves; the reset mode says what happens next. Small
-            screens hide the hero, so its one-line pitch moves under the title there. */}
-        {mode === "forgot"
-          ? <p className="mt-2 text-md text-tertiary">{labels.subtitleForgot}</p>
-          : <p className="mt-2 text-md text-tertiary md:hidden" data-testid="auth-intro">{labels.intro}</p>}
+      <section aria-labelledby="login-title" className="w-full max-w-sm">
+        <h1 className="text-display-xs font-semibold text-primary" id="login-title">{labels.title}</h1>
+        {/* Small screens hide the hero, so its one-line pitch moves under the title there. */}
+        <p className="mt-2 text-md text-tertiary md:hidden" data-testid="auth-intro">{labels.intro}</p>
 
-        <TransitionForm aria-describedby="login-status" className="mt-8" onSubmit={submit}>
-          <div className="flex flex-col gap-5">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="login-email">{labels.email}</Label>
-            <Input autoComplete="email" id="login-email" onChange={(event) => setEmail(event.target.value)} placeholder={mode === "signup" || mode === "forgot" ? labels.emailPlaceholderSignup : labels.emailPlaceholder} required size="lg" type="email" value={email} />
-          </div>
-
-          {mode !== "forgot" ? <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between gap-3">
-              <Label htmlFor="login-password">{labels.password}</Label>
-              {mode === "signin" ? <Button onClick={() => setAuthMode("forgot")} size="sm" type="button" variant="link">{labels.forgot}</Button> : null}
-            </div>
-            <Input
-              autoComplete={mode === "signup" ? "new-password" : "current-password"}
-              id="login-password"
-              minLength={mode === "signup" ? MIN_PASSWORD_LENGTH : undefined}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder={labels.passwordPlaceholder}
-              required
-              size="lg"
-              trailing={<button aria-label={showPassword ? labels.hidePassword : labels.showPassword} className="grid size-7 cursor-pointer place-items-center rounded-md text-fg-quaternary transition-colors hover:bg-primary_hover hover:text-fg-quaternary_hover" onClick={() => setShowPassword((current) => !current)} type="button"><IconSwap active={showPassword} first={<AppIcon name="eye" className="size-4" />} second={<AppIcon name="eyeOff" className="size-4" />} /></button>}
-              type={showPassword ? "text" : "password"}
-              value={password}
-            />
-          </div> : null}
-
-          {mode === "signup" ? <div className="flex flex-col gap-1.5">
-            <Label htmlFor="login-password-confirm">{labels.confirm}</Label>
-            <Input autoComplete="new-password" id="login-password-confirm" minLength={MIN_PASSWORD_LENGTH} onChange={(event) => setConfirmation(event.target.value)} placeholder={labels.passwordPlaceholder} required size="lg" type="password" value={confirmation} />
-          </div> : null}
-
-          <Button className="mt-1 w-full" disabled={busy} size="lg" type="submit"><TransitionText>{busy ? labels.wait : submitLabel}</TransitionText>{mode === "signin" && !busy ? <AppIcon name="arrowRight" className="size-4" /> : null}</Button>
-          </div>
-        </TransitionForm>
-
-        {mode !== "forgot" ? <>
-          <div className="my-6 flex items-center gap-3 text-xs font-medium text-quaternary"><span aria-hidden="true" className="h-px flex-1 bg-border-secondary" /><span>{labels.or}</span><span aria-hidden="true" className="h-px flex-1 bg-border-secondary" /></div>
-          <Button asChild className="w-full" size="lg" variant="secondary"><a href={googleHref}><GoogleMark />{labels.google}</a></Button>
-        </> : null}
-
-        {mode === "forgot" ? <div className="mt-6 flex justify-center"><Button iconLeading="arrowLeft" onClick={() => setAuthMode("signin")} size="sm" type="button" variant="link-gray">{labels.back}</Button></div> : null}
-        <p aria-live="polite" className={visibleStatus ? "mt-5 rounded-lg bg-secondary px-3.5 py-2.5 text-center text-sm text-secondary" : "sr-only"} id="login-status" role="status"><TransitionText>{visibleStatus}</TransitionText></p>
-        {mode === "signin" ? <p className="mt-8 text-center text-sm text-tertiary"><span>{labels.noAccount}</span>{" "}<Button onClick={() => setAuthMode("signup")} size="sm" type="button" variant="link">{labels.submitSignUp}</Button></p> : null}
-        {mode === "signup" ? <p className="mt-8 text-center text-sm text-tertiary"><span>{labels.alreadyAccount}</span>{" "}<Button onClick={() => setAuthMode("signin")} size="sm" type="button" variant="link">{labels.submitSignIn}</Button></p> : null}
+        <Button asChild className="mt-8 w-full" size="lg" variant="secondary"><a aria-describedby="login-status" href={googleHref}><GoogleMark />{labels.google}</a></Button>
+        <p aria-live="polite" className={status ? "mt-5 rounded-lg bg-secondary px-3.5 py-2.5 text-center text-sm text-secondary" : "sr-only"} id="login-status" role="status"><TransitionText>{status}</TransitionText></p>
       </section>
     </AuthShell>
   );

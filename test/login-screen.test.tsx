@@ -8,25 +8,24 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn() }),
-}));
-
 import { LoginScreen } from "@/components/login-screen";
 import { PreferencesProvider } from "@/components/preferences-provider";
 
 afterEach(() => cleanup());
 
 describe("LoginScreen", () => {
-  it("renders the reference login structure with the custom auth entry points", () => {
-    render(<LoginScreen />);
+  it("offers Google as the only sign-in method", () => {
+    const { container } = render(<LoginScreen />);
 
     // A10: the visible title is the heading's only accessible name.
-    expect(screen.getByRole("heading", { level: 1 })).toHaveAccessibleName("Hesabınıza giriş yapın");
-    expect(screen.getByLabelText("E-posta")).toHaveAttribute("placeholder", "ornek@firma.com");
-    expect(screen.getByLabelText("Şifre")).toHaveAttribute("type", "password");
-    expect(screen.getByRole("link", { name: "Google ile devam et" }))
-      .toHaveAttribute("href", "/auth/google");
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading).toHaveAccessibleName("Giriş yap");
+    expect(screen.getByRole("region", { name: "Giriş yap" })).toContainElement(heading);
+    expect(screen.getByRole("link", { name: "Google ile devam et" })).toHaveAttribute("href", "/auth/google");
+    // No email/password sign-in, sign-up or reset entry points remain.
+    expect(container.querySelector("form, input")).toBeNull();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByText(/E-posta|Şifre|Kayıt ol/)).not.toBeInTheDocument();
     expect(screen.queryByText("RAG'inizin her adımını anlayın.")).not.toBeInTheDocument();
   });
 
@@ -53,23 +52,8 @@ describe("LoginScreen", () => {
     await user.click(screen.getByRole("button", { name: "EN" }));
     await waitFor(() => expect(screen.getByRole("region", { name: "From PDF to answer" })).toBeInTheDocument());
     expect(screen.getByTestId("auth-intro")).toHaveTextContent(/^From PDF to answer/);
-    // E2E helpers sign in through these exact English names.
+    // E2E and visual specs find the screen through these exact English names.
     expect(screen.getByRole("heading", { level: 1 })).toHaveAccessibleName("Sign in");
-    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Email")).toBeInTheDocument();
-    expect(screen.getByLabelText("Password", { exact: true })).toBeInTheDocument();
-  });
-
-  it("supports password visibility and maps missing local auth configuration safely", async () => {
-    const user = userEvent.setup();
-    render(<LoginScreen />);
-
-    await user.type(screen.getByLabelText("E-posta"), "user@example.com");
-    await user.type(screen.getByLabelText("Şifre"), "password1234");
-    await user.click(screen.getByRole("button", { name: "Şifreyi göster" }));
-    expect(screen.getByLabelText("Şifre")).toHaveAttribute("type", "text");
-
-    await user.click(screen.getByRole("button", { name: "Giriş yap" }));
-    expect(screen.getByRole("status")).toHaveTextContent("Kimlik doğrulama yapılandırması eksik");
+    expect(screen.getByRole("link", { name: "Continue with Google" })).toHaveAttribute("href", "/auth/google");
   });
 });

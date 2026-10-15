@@ -457,12 +457,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   }
 
-  if (pathname === "/login" || pathname === "/auth/reset-password") {
+  if (pathname === "/login") {
     return <PageTransition>{children}</PageTransition>;
   }
 
   return (
-    <div className="min-h-screen w-full min-w-0 bg-canvas text-primary">
+    <div className="min-h-dvh w-full min-w-0 bg-canvas text-primary">
       <a
         // Parked above the viewport rather than sr-only: sr-only plus padding leaves a clipped 24px box.
         className="fixed top-3 left-3 z-60 -translate-y-[calc(100%+1rem)] rounded-lg bg-primary_alt px-3 py-2 text-sm font-semibold text-primary shadow-lg ring-1 ring-secondary_alt focus:translate-y-0"

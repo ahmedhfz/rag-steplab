@@ -15,7 +15,6 @@ const routes = [
   ["@/app/evaluation/page", "/evaluation", "Evaluation"],
   ["@/app/settings/page", "/settings", "Settings"],
   ["@/app/login/page", "/login", "Sign in"],
-  ["@/app/auth/reset-password/page", "/auth/reset-password", "Reset password"],
 ] as const;
 
 const pageModules: Record<string, () => Promise<{ metadata?: { title?: unknown } }>> = {
@@ -28,7 +27,6 @@ const pageModules: Record<string, () => Promise<{ metadata?: { title?: unknown }
   "@/app/evaluation/page": () => import("@/app/evaluation/page"),
   "@/app/settings/page": () => import("@/app/settings/page"),
   "@/app/login/page": () => import("@/app/login/page"),
-  "@/app/auth/reset-password/page": () => import("@/app/auth/reset-password/page"),
 };
 
 describe("page titles", () => {

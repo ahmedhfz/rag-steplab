@@ -19,7 +19,8 @@ const sizes: Record<InputSize, { field: string; icon: string; padLeading: string
 
 /** Shared surface for text-entry controls (Input, Textarea, Select trigger). */
 export const fieldSurface = cn(
-  "w-full min-w-0 rounded-lg bg-primary text-md text-primary shadow-xs ring-1 ring-control ring-inset sm:text-sm",
+  // 16px on touch screens (iOS zooms into smaller fields on focus); 14px from sm with a mouse/trackpad.
+  "w-full min-w-0 rounded-lg bg-primary text-md text-primary shadow-xs ring-1 ring-control ring-inset sm:not-pointer-coarse:text-sm",
   "transition-[box-shadow,background-color] duration-100 ease-out outline-none focus-visible:outline-none",
   "placeholder:text-placeholder hover:ring-control_hover",
   "focus:ring-2 focus:ring-brand",
