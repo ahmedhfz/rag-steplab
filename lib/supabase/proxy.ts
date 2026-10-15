@@ -29,8 +29,15 @@ export async function updateSupabaseSession(request: NextRequest) {
   return { response, authenticated: Boolean(data?.claims) };
 }
 
+function withSessionCookies(target: NextResponse, response: NextResponse) {
+  response.cookies.getAll().forEach((cookie) => target.cookies.set(cookie));
+  return target;
+}
+
 export function redirectWithSessionCookies(response: NextResponse, request: NextRequest, path: string) {
-  const redirect = NextResponse.redirect(new URL(path, request.url));
-  response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie));
-  return redirect;
+  return withSessionCookies(NextResponse.redirect(new URL(path, request.url)), response);
+}
+
+export function rewriteWithSessionCookies(response: NextResponse, request: NextRequest, path: string) {
+  return withSessionCookies(NextResponse.rewrite(new URL(path, request.url)), response);
 }

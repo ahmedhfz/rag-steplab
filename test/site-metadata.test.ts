@@ -27,11 +27,17 @@ describe("root metadata", () => {
     expect(metadata.openGraph).toMatchObject({
       type: "website",
       siteName: "RAG StepLab",
-      title: "RAG StepLab",
-      description: metadata.description,
+      title: "RAG StepLab: From PDF to answer",
+      description: "An open-source learning lab that makes every step of a RAG pipeline visible on a real PDF.",
       locale: "en_US",
     });
+    expect(metadata.description).toBe((metadata.openGraph as { description?: string }).description);
     expect(metadata.twitter).toMatchObject({ card: "summary_large_image" });
+  });
+
+  it("serves crawlers a robots.txt that allows the share pages", async () => {
+    const robots = (await import("@/app/robots")).default();
+    expect(robots.rules).toEqual({ userAgent: "*", allow: "/" });
   });
 
   it("uses a configured site URL and ignores an invalid one", async () => {

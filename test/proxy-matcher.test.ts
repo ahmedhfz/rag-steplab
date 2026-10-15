@@ -15,6 +15,7 @@ describe("proxy matcher", () => {
       "https://app.example/icon1.png?7c3d",
       "https://app.example/apple-icon.png?5e8f",
       "https://app.example/favicon.ico",
+      "https://app.example/robots.txt",
       "https://app.example/_next/static/chunks/app.js",
     ]) {
       expect(unstable_doesMiddlewareMatch({ config, url }), url).toBe(false);
@@ -27,6 +28,7 @@ describe("proxy matcher", () => {
       "https://app.example/playground",
       "https://app.example/opengraph-image-admin",
       "https://app.example/apple-icons",
+      "https://app.example/robots.txt.bak",
     ]) {
       expect(unstable_doesMiddlewareMatch({ config, url }), url).toBe(true);
     }

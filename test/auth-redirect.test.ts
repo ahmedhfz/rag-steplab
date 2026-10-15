@@ -80,8 +80,21 @@ describe("proxy deep links", () => {
     expect(hostile.headers.get("location")).toBe("https://app.example/");
   });
 
-  it("serves metadata images to anonymous link-preview crawlers", async () => {
-    for (const url of ["https://app.example/opengraph-image?4f1c", "https://app.example/apple-icon?9a2b"]) {
+  it("answers an anonymous link-preview crawler at the root without a redirect", async () => {
+    const linkedIn = { "user-agent": "LinkedInBot/1.0 (compatible; Mozilla/5.0; Apache-HttpClient +http://www.linkedin.com)" };
+    const root = await proxy(new NextRequest("https://app.example/", { headers: linkedIn }));
+    expect(root.headers.get("location")).toBeNull();
+    expect(root.headers.get("x-middleware-rewrite")).toBe("https://app.example/login");
+
+    // Deep links and signed-in crawlers keep the regular flow.
+    const deepLink = await proxy(new NextRequest("https://app.example/playground", { headers: linkedIn }));
+    expect(deepLink.headers.get("location")).toBe("https://app.example/login?next=%2Fplayground");
+    session.authenticated = true;
+    expect((await proxy(new NextRequest("https://app.example/", { headers: linkedIn }))).headers.get("x-middleware-rewrite")).toBeNull();
+  });
+
+  it("serves metadata images and robots.txt to anonymous link-preview crawlers", async () => {
+    for (const url of ["https://app.example/opengraph-image?4f1c", "https://app.example/apple-icon?9a2b", "https://app.example/robots.txt"]) {
       expect((await proxy(new NextRequest(url))).headers.get("location"), url).toBeNull();
     }
     // Prefix lookalikes stay protected routes.
