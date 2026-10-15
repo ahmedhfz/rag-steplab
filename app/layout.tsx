@@ -6,6 +6,7 @@ import { AuthProvider } from "@/components/auth-provider";
 import { DocumentPipelineProvider } from "@/components/document-pipeline-provider";
 import { PreferencesProvider } from "@/components/preferences-provider";
 import { UiProvider } from "@/components/ui/ui-provider";
+import { UI_COPY } from "@/lib/copy";
 import { TITLE_TEMPLATE } from "@/lib/page-titles";
 import { DEFAULT_LOCALE, LOCALE_BOOTSTRAP_SCRIPT, THEME_BOOTSTRAP_SCRIPT } from "@/lib/theme";
 
@@ -21,8 +22,10 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const SITE_NAME = "RAG StepLab";
-const SITE_DESCRIPTION = "Explore each RAG stage, inspect source evidence, and compare real pipeline results in a hands-on learning lab.";
+const SITE_NAME = UI_COPY.en.productName;
+const SITE_DESCRIPTION = "An open-source learning lab that makes every step of a RAG pipeline visible on a real PDF.";
+// Link-preview cards often show only the title, so it carries the login hero's tagline too.
+const SHARE_TITLE = `${SITE_NAME}: ${UI_COPY.en.auth.hero.title}`;
 
 /** Absolute base for OG/Twitter URLs; an unset or invalid override falls back to production. */
 function siteUrl() {
@@ -44,7 +47,7 @@ export const metadata: Metadata = {
     type: "website",
     url: "/",
     siteName: SITE_NAME,
-    title: SITE_NAME,
+    title: SHARE_TITLE,
     description: SITE_DESCRIPTION,
     locale: "en_US",
     alternateLocale: ["tr_TR"],
