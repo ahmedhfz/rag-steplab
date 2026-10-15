@@ -232,7 +232,7 @@ function RawOutput({ result }: { result: DocumentParseResponse }) {
   const labels = copy.parse.content;
   const [view, setView] = useState<"markdown" | "json">("markdown");
   const content = view === "markdown" ? result.markdown : JSON.stringify(result.structured, null, 2);
-  const codeSurface = "max-h-[min(70vh,48rem)] overflow-auto rounded-lg bg-secondary p-4 font-mono text-xs leading-5 whitespace-pre-wrap text-secondary";
+  const codeSurface = "max-h-[min(70dvh,48rem)] overflow-auto rounded-lg bg-secondary p-4 font-mono text-xs leading-5 whitespace-pre-wrap text-secondary";
 
   async function copyContent() {
     try {

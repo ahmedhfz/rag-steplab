@@ -98,7 +98,6 @@
 .steplab-source-content:not([data-ready="true"]) { pointer-events: none; }
 .steplab-clear .t-clear-mirror { white-space: pre-wrap; align-items: start; padding: 8px 12px; }
 .dark .t-clear-glow { mix-blend-mode: screen; }
-.steplab-form.t-resize { interpolate-size: allow-keywords; }
 
 @media (prefers-reduced-motion: reduce) {
   .steplab-disclosure:not(.t-acc):not([open]) > div { transition: none; }

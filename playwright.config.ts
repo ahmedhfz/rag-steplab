@@ -1,7 +1,19 @@
+import { readFileSync } from "node:fs";
+import { parseEnv } from "node:util";
+
 import { defineConfig, devices } from "@playwright/test";
 
 try {
   process.loadEnvFile?.(".env.e2e.local");
+} catch {}
+
+// Programmatic E2E sign-in (e2e/support/auth.ts) uses the app's browser-safe Supabase URL and
+// publishable key. Locally only these two come from .env, so other app settings never change E2E.
+try {
+  const appEnv = parseEnv(readFileSync(".env", "utf8"));
+  for (const name of ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"]) {
+    if (!process.env[name] && appEnv[name]) process.env[name] = appEnv[name];
+  }
 } catch {}
 
 const baseURL = process.env.E2E_BASE_URL ?? "http://localhost:3000";

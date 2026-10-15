@@ -50,7 +50,8 @@ export function Disclosure({ title, meta, variant = "section", defaultOpen, clas
           "flex cursor-pointer list-none items-center gap-2 transition-colors duration-150 select-none [&::-webkit-details-marker]:hidden",
           variant === "section" && "min-h-11 rounded-[inherit] px-4 py-2.5 text-sm font-semibold text-primary hover:bg-primary_hover group-data-[open=true]/disclosure:rounded-b-none",
           variant === "plain" && "min-h-11 py-2.5 text-sm font-semibold text-primary hover:text-secondary_hover",
-          inline && "w-fit rounded-sm text-sm font-medium text-tertiary hover:text-secondary",
+          // ::before grows the 18–23px text row to a >=24px hit area (WCAG 2.5.8) without moving layout.
+          inline && "relative w-fit rounded-sm text-sm font-medium text-tertiary before:absolute before:inset-x-0 before:-inset-y-1 hover:text-secondary",
           summaryClassName,
         )}
       >

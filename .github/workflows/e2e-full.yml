@@ -71,6 +71,9 @@ jobs:
       - name: Run seeded smoke suite
         if: inputs.suite == 'seeded-smoke'
         env:
+          # Programmatic E2E sign-in (e2e/support/auth.ts): browser-safe values only.
+          NEXT_PUBLIC_SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_REF }}.supabase.co
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
           E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
           E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
@@ -80,6 +83,9 @@ jobs:
       - name: Run real auth E2E
         if: inputs.suite == 'auth'
         env:
+          # Programmatic E2E sign-in (e2e/support/auth.ts): browser-safe values only.
+          NEXT_PUBLIC_SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_REF }}.supabase.co
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
           E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
           E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
@@ -89,6 +95,9 @@ jobs:
       - name: Run production React visual suite
         if: inputs.suite == 'production-visual'
         env:
+          # Programmatic E2E sign-in (e2e/support/auth.ts): browser-safe values only.
+          NEXT_PUBLIC_SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_REF }}.supabase.co
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
           E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
           E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
@@ -98,6 +107,9 @@ jobs:
       - name: Regenerate production visual references on Linux
         if: inputs.suite == 'production-visual-update'
         env:
+          # Programmatic E2E sign-in (e2e/support/auth.ts): browser-safe values only.
+          NEXT_PUBLIC_SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_REF }}.supabase.co
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
           E2E_BASE_URL: ${{ steps.deployment.outputs.url }}
           E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
@@ -209,6 +221,9 @@ jobs:
 
       - name: Run real provider full-RAG E2E
         env:
+          # Programmatic E2E sign-in (e2e/support/auth.ts): browser-safe values only.
+          NEXT_PUBLIC_SUPABASE_URL: https://${{ vars.SUPABASE_PROJECT_REF }}.supabase.co
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
           E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}

@@ -163,20 +163,3 @@ export function SlidingTabs({ children, value, className, underline = false, ref
 export function TransitionCheckbox({ className, ...props }: ComponentProps<"input">) {
   return <span className="steplab-checkbox"><input {...props} className={cn("steplab-checkbox-input", className)} type="checkbox" /><span aria-checked={Boolean(props.checked)} aria-hidden="true" className="t-check steplab-checkbox-mark"><svg fill="none" viewBox="0 0 12 12"><path d="M2 6l3 3 5-6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" /></svg></span></span>;
 }
-
-/** Resize the real form from its inner content, without retaining old fields. */
-export function TransitionForm({ children, className, ...props }: ComponentProps<"form">) {
-  const formRef = useRef<HTMLFormElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const form = formRef.current;
-    const content = contentRef.current;
-    if (!form || !content || typeof ResizeObserver === "undefined") return;
-    const resize = () => { form.style.height = `${content.getBoundingClientRect().height}px`; };
-    resize();
-    const observer = new ResizeObserver(resize);
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, []);
-  return <form {...props} className={cn("t-resize steplab-form", className)} ref={formRef}><div className="flow-root" ref={contentRef}>{children}</div></form>;
-}

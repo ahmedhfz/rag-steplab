@@ -63,6 +63,40 @@ for (const theme of ["light", "dark"] as const) {
   });
 }
 
+test.describe("touch", () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test("a tap opens an InfoTip explanation; a second tap, an outside tap or Escape closes it", async ({ page }) => {
+    const quality = installBrowserQualityGuards(page);
+    await installSeededApi(page, { scenario: "evaluation-results" });
+    await page.goto("/parse");
+    await selectSeededDocument(page);
+    await page.goto("/evaluation");
+    await expect(page.getByTestId("evaluation-panel-results")).toBeVisible();
+
+    // Touch has neither hover nor focus-visible, so the tap itself must open the tooltip.
+    const info = page.getByRole("button", { name: "About Citation validity" });
+    const tooltip = page.getByRole("tooltip");
+    await info.tap();
+    await expect(tooltip).toContainText("A citation confirms the source is in the context");
+    await expect(info).toHaveAttribute("aria-describedby", (await tooltip.getAttribute("id"))!);
+    await info.tap();
+    await expect(tooltip).toHaveCount(0);
+
+    await info.tap();
+    await expect(tooltip).toBeVisible();
+    const box = (await info.boundingBox())!;
+    await page.touchscreen.tap(8, box.y + box.height / 2);
+    await expect(tooltip).toHaveCount(0);
+
+    await info.tap();
+    await expect(tooltip).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(tooltip).toHaveCount(0);
+    quality.assertClean();
+  });
+});
+
 test.describe("axe login", () => {
   // Anonymous, but keeps the protected Preview's bypass cookie (see the visual suite).
   test.use({ storageState: "output/playwright/.auth/vercel-bypass.json" });

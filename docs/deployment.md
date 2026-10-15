@@ -187,7 +187,10 @@ Advanced Security gerektiren bir gate zorunlu kılınmaz.
    değişikliği gerektirmedikçe her deploy'da prefetch yapmayın.
 8. `.github/workflows/e2e-full.yml` yalnız manuel Heavy validation workflow'udur;
    schedule yoktur. Seeded/auth/visual profilleri düşük yetkili E2E secret'larıyla
-   çalışır; `full-rag` yalnız `production-e2e` environment'ında, global tek koşu
+   çalışır. Arayüz yalnız Google OAuth sunduğundan dedicated kullanıcının oturumu
+   test runner'da şifresiyle açılır; Playwright adımları bunun için browser-safe
+   `SUPABASE_PROJECT_REF` ve `SUPABASE_PUBLISHABLE_KEY` repository variable'larını
+   kullanır. `full-rag` yalnız `production-e2e` environment'ında, global tek koşu
    olarak ve kendi `E2E_RUN_ID` namespace'ini temizleyerek çalışır.
    `production-visual-update` referans PNG'lerini CI ile aynı Linux ortamında üretip
    değişen/yeni/orphan listesiyle artifact olarak verir. Deployment başarı kanıtı ile

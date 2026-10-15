@@ -174,7 +174,7 @@ export function SourceInspector({ documentId, parseResult, pageNumbers = [], sou
             </DialogPrimitive.Close>
           </header>
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
-            <div className="order-last flex h-[min(45vh,420px)] min-h-64 shrink-0 flex-col bg-secondary lg:order-first lg:h-auto lg:min-h-0 lg:flex-1" data-testid="source-inspector-preview">
+            <div className="order-last flex h-[min(45dvh,420px)] min-h-64 shrink-0 flex-col bg-secondary lg:order-first lg:h-auto lg:min-h-0 lg:flex-1" data-testid="source-inspector-preview">
               {error ? (
                 <div className="p-5">
                   <Notice action={<Button onClick={() => void loadSource()} size="sm" variant="secondary">{labels.retry}</Button>} tone="error">{error}</Notice>
@@ -194,7 +194,7 @@ export function SourceInspector({ documentId, parseResult, pageNumbers = [], sou
             </div>
             <TransitionPanel
               as="aside"
-              className="technical-scrollbar order-first max-h-[40vh] shrink-0 overflow-y-auto border-b border-secondary p-5 lg:order-last lg:max-h-none lg:min-h-0 lg:w-96 lg:border-b-0 lg:border-l"
+              className="technical-scrollbar order-first max-h-[40dvh] shrink-0 overflow-y-auto border-b border-secondary p-5 lg:order-last lg:max-h-none lg:min-h-0 lg:w-96 lg:border-b-0 lg:border-l"
               data-testid="source-inspector-evidence"
               transitionKey={selectedRegion?.pageNumber ?? selectedPage}
             >

@@ -4,16 +4,16 @@ Source: [Jakubantalik/transitions.dev](https://github.com/Jakubantalik/transitio
 
 | Source recipe | Application |
 | --- | --- |
-| 01-card-resize | Progress/context-budget widths and auth form surface |
+| 01-card-resize | Progress/context-budget widths |
 | 02-number-pop-in | Parse summaries, progress and evaluation counts |
 | 04-text-states-swap | Pipeline status, auth feedback, actions and copy feedback |
 | 05-menu-dropdown | Account/document management menus and Radix Select |
 | 06-modal | Delete confirmation, source inspector and mobile backdrop |
 | 07-panel-reveal | Current pipeline/stage results, chunk detail, settings, overview editor and mobile sidebar |
 | 08-page-side-by-side | Current route entrance |
-| 09-icon-swap | Upload, password visibility and completed status |
+| 09-icon-swap | Upload and completed status |
 | 10-success-check | Completed pipeline indicators |
-| 12-error-state-shake | Invalid upload and password confirmation |
+| 12-error-state-shake | Invalid upload |
 | 13-input-clear-dissolve | Playground question clear mirror/glow |
 | 14-skeleton-reveal | PDF preview, driven by the iframe load event; `components/ui/skeleton.tsx` loading rows (in-flow, repeating pulse via `.steplab-skeleton`) |
 | 16-tabs-sliding | Language/theme, parsed-view, chunk strategy and evaluation controls |

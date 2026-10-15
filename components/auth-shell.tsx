@@ -8,9 +8,6 @@ import { usePreferences } from "@/components/preferences-provider";
 import { useSlidingIndicator } from "@/components/ui/use-sliding-indicator";
 import { useCopy } from "@/lib/copy";
 
-/** Client-side minimum for new passwords; the copy interpolates the same value. */
-export const MIN_PASSWORD_LENGTH = 10;
-
 /**
  * EN/TR toggle. Buttons with aria-pressed (not radios): one press switches the whole page.
  * Same look and sliding pill as the SegmentedControl.
@@ -57,13 +54,13 @@ function DotGrid() {
 
 /**
  * Split auth layout: the pipeline hero (transparent art + headline) on a dotted canvas (md+) and
- * the form on the panel surface. Surfaces are theme tokens; the art is made to read on both themes.
+ * the sign-in column on the panel surface. Surfaces are theme tokens; the art is made to read on both themes.
  */
 export function AuthShell({ children }: { children: React.ReactNode }) {
   const copy = useCopy().auth;
 
   return (
-    <div className="relative min-h-screen bg-primary text-primary">
+    <div className="relative min-h-dvh bg-primary text-primary">
       <header className="absolute inset-x-0 top-0 z-10 flex h-18 items-center justify-between px-6 md:px-10">
         <Link aria-label={copy.home} className="flex items-center gap-2.5 rounded-md" href="/">
           <BrandMark />
@@ -72,7 +69,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
         <LocaleSwitch />
       </header>
 
-      <div className="grid min-h-screen md:grid-cols-2">
+      <div className="grid min-h-dvh md:grid-cols-2">
         <div className="relative hidden min-w-0 items-center justify-center overflow-hidden border-r border-secondary bg-canvas px-10 pt-24 pb-16 md:flex lg:px-16" data-testid="auth-hero-panel">
           <DotGrid />
           <LoginHero className="relative" />
