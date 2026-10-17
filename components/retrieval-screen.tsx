@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
-import { ApiErrorDetails } from "@/components/api-error-message";
+import { ApiErrorNotice, toastApiError } from "@/components/api-error-message";
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { SourceInspector } from "@/components/source-inspector";
@@ -30,7 +30,7 @@ import { toast } from "@/components/ui/toast";
 import { InfoTip } from "@/components/ui/info-tip";
 import { IconSwap, SuccessCheck, ThinkingText, TransitionPanel, TransitionText } from "@/components/ui/transitions";
 import { useSlidingIndicator } from "@/components/ui/use-sliding-indicator";
-import { describeApiError } from "@/lib/api-errors";
+import { isTrackingPaused } from "@/lib/api-errors";
 import { getPipelineAvailability, type PipelineAvailability } from "@/lib/blockers";
 import { type AppCopy, type AppLocale, interpolate, runName, UI_COPY, useCopy } from "@/lib/copy";
 import type { DocumentParseResponse } from "@/lib/document-parse-types";
@@ -666,22 +666,34 @@ function StagePending({ copy, stage, status }: { copy: RetrievalCopy; stage: Pla
 /* ------------------------------------------------------------------ */
 /* Surrounding states                                                  */
 
-function ExperimentErrorSurface({ copy, error }: { copy: RetrievalCopy; error: { code?: string | null; message?: string | null } | null }) {
+/**
+ * One notice for whatever stopped the experiment. A failed run names its cause under the run
+ * title; a failed request (start, load, continue) names itself; a browser poll timeout is a
+ * paused-tracking warning with "Resume tracking", never a failure.
+ */
+function ExperimentErrorSurface({ copy, error, failedRun, onRetry, onResume }: {
+  copy: RetrievalCopy;
+  error: unknown;
+  /** The shown run failed and `error`, when present, is its own cause. */
+  failedRun: boolean;
+  onRetry?: () => void;
+  onResume: () => void;
+}) {
   const appCopy = useCopy();
-  if (error?.code === "run_poll_timeout") {
-    return <Notice className="mt-6" data-testid="playground-tracking-paused" role="status" tone="warning">{copy.trackingPaused}</Notice>;
-  }
-  // Known codes explain themselves (e.g. a busy model provider); anything else keeps the generic body.
-  const described = describeApiError(appCopy, error, copy.errorBody);
+  // A failed run without a recorded cause still says what to do, without empty Technical details
+  // (`unknown` without an HTTP status is already-localized copy).
+  const shown = error ?? (failedRun ? { code: "unknown", message: copy.errorNoDetails } : null);
+  const paused = isTrackingPaused(shown);
   return (
-    <section aria-live="assertive" className="mt-6 flex items-start gap-3 rounded-xl bg-error-primary px-4 py-4 ring-1 ring-utility-error-200 ring-inset" data-testid="playground-error" role="alert">
-      <AppIcon className="mt-0.5 size-5 shrink-0 text-fg-error-primary" name="warning" />
-      <div className="min-w-0 flex-1">
-        <h2 className="text-sm font-semibold text-primary">{copy.errorTitle}</h2>
-        <p className="mt-0.5 text-sm text-tertiary" data-testid="playground-error-message">{described?.message ?? copy.errorBody}</p>
-        {described?.technical ? <ApiErrorDetails className="mt-2" technical={described.technical} /> : null}
-      </div>
-    </section>
+    <ApiErrorNotice
+      className="mt-6"
+      data-testid={paused ? "playground-tracking-paused" : "playground-error"}
+      error={shown}
+      fallback={failedRun ? copy.errorBody : appCopy.errors.experimentFailed}
+      onResume={onResume}
+      onRetry={onRetry}
+      title={failedRun && !paused ? copy.errorTitle : undefined}
+    />
   );
 }
 
@@ -921,7 +933,7 @@ export function RetrievalScreen() {
   const [targetStage, setTargetStage] = useState<ExperimentTargetStage>("generation");
   const [activeStage, setActiveStage] = useState<PlaygroundStage>("retrieval");
   const [compareIds, setCompareIds] = useState<string[]>([]);
-  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied">("idle");
   const draftRunIdRef = useRef<string | null>(null);
   const historySelectionRef = useRef<string | null>(null);
   const watchedRunRef = useRef<string | null>(null);
@@ -960,7 +972,7 @@ export function RetrievalScreen() {
     const timeout = window.setTimeout(() => setCopyStatus("idle"), 2_000);
     return () => window.clearTimeout(timeout);
   }, [copyStatus]);
-  // A run watched while queued/running announces itself once when it completes.
+  // A run watched while queued/running announces itself once when it completes or fails.
   useEffect(() => {
     if (!experimentRun) return;
     if (isInProgress(experimentRun)) {
@@ -969,6 +981,10 @@ export function RetrievalScreen() {
     }
     if (watchedRunRef.current !== experimentRun.id) return;
     watchedRunRef.current = null;
+    if (experimentRun.status === "failed") {
+      toastApiError(allCopy, copy.errorTitle, experimentRun.error, allCopy.errors.experimentFailed);
+      return;
+    }
     if (experimentRun.status !== "completed") return;
     const generation = experimentRun.stageResults.generation;
     const outcome = generation ? generationOutcome(generation) : null;
@@ -980,7 +996,7 @@ export function RetrievalScreen() {
       description: [result, typeof experimentRun.timing.durationMs === "number" ? formatMs(locale, experimentRun.timing.durationMs) : null].filter(Boolean).join(" · "),
       icon: <AppIcon className="size-5 text-fg-tertiary" name="completed" />,
     });
-  }, [copy, experimentRun, locale]);
+  }, [allCopy, copy, experimentRun, locale]);
 
   async function copyTrace() {
     setCopyStatus("idle");
@@ -988,7 +1004,7 @@ export function RetrievalScreen() {
       await navigator.clipboard.writeText(JSON.stringify(experimentRun, null, 2));
       setCopyStatus("copied");
     } catch {
-      setCopyStatus("failed");
+      toast.error(copy.copyFailed);
     }
   }
 
@@ -1014,6 +1030,14 @@ export function RetrievalScreen() {
   const showBlocker = !availability.allowed && availability.code !== "loading" && availability.code !== "processing";
   const results = experimentRun?.stageResults;
   const hasRunError = Boolean(experimentError || experimentRun?.status === "failed");
+  // The run's own cause, not a later request that failed while this failed run stayed on screen.
+  const failedRun = experimentRun?.status === "failed" && (!experimentError || experimentError.code === experimentRun.error?.code);
+  // An in-flight run this page no longer polls: recovering means resuming its tracking.
+  const trackingLost = Boolean(experimentRun && isInProgress(experimentRun) && !processing);
+  // Lost tracking of a run that is still working retries by resuming it. A failed run is retried by
+  // running its question again (the draft on screen). A failed load, continue or regenerate keeps
+  // the control the user pressed, so the notice adds no second one.
+  const retryError = trackingLost ? () => void resumeRunTracking("experiment") : failedRun && canAsk ? submit : undefined;
   const savedRunMatches = experimentRun ? savedRunMatchesDraft(experimentRun, { question, topK, mode, rerankerEnabled, candidateCount, tokenBudget, temperature, targetStage }) : false;
   const canContinue = Boolean(experimentRun && experimentRun.status === "completed" && experimentRun.targetStage !== "generation" && !processing);
   const canRerunGeneration = Boolean(experimentRun && experimentRun.status === "completed" && results?.generation && !processing);
@@ -1229,7 +1253,7 @@ export function RetrievalScreen() {
         </Panel>
 
         {showBlocker ? <PlaygroundBlocker availability={availability} compact={Boolean(experimentRun || hasRunError)} /> : null}
-        {hasRunError ? <ExperimentErrorSurface copy={copy} error={experimentError} /> : null}
+        {hasRunError ? <ExperimentErrorSurface copy={copy} error={experimentError} failedRun={failedRun} onResume={() => void resumeRunTracking("experiment")} onRetry={retryError} /> : null}
         {!experimentRun && !hasRunError && availability.code === "loading" ? <Skeleton className="mt-6" label={copy.loading} rows={3} rowClassName="h-14 rounded-xl" /> : null}
         {!experimentRun && !hasRunError && availability.allowed ? (
           <EmptyState action={<StagePreview copy={copy} />} className="mt-10 py-16" icon="generate" title={copy.readyTitle} titleAs="h2" />
@@ -1245,8 +1269,9 @@ export function RetrievalScreen() {
               ) : null}
             </p>
             <div className="flex flex-wrap items-center gap-2" data-testid="playground-current-actions">
-              {copyStatus !== "idle" ? <span className="text-sm text-tertiary" role="status"><TransitionText>{copyStatus === "copied" ? copy.traceCopied : copy.copyFailed}</TransitionText></span> : null}
-              {isInProgress(experimentRun) && !processing ? <Button onClick={() => void resumeRunTracking("experiment")} size="sm" variant="secondary">{copy.resumeTracking}</Button> : null}
+              {copyStatus === "copied" ? <span className="text-sm text-tertiary" role="status"><TransitionText>{copy.traceCopied}</TransitionText></span> : null}
+              {/* An untracked in-flight run without an error; with one, the error notice carries the recovery. */}
+              {trackingLost && !experimentError ? <Button iconLeading="refresh" onClick={() => void resumeRunTracking("experiment")} size="sm" variant="secondary">{copy.resumeTracking}</Button> : null}
               {canContinue ? <Button iconLeading="play" onClick={() => void continueExperiment()} size="sm" variant="secondary">{copy.runNextStage}</Button> : null}
               {results?.generation ? <Button disabled={!canRerunGeneration} iconLeading="refresh" onClick={() => void rerunGeneration()} size="sm" variant="tertiary">{copy.regenerate}</Button> : null}
               <Button onClick={() => void copyTrace()} size="sm" variant="tertiary">

@@ -195,7 +195,11 @@ denenir: text çağrılarında en fazla 20 sn, embedding çağrılarında dakika
 penceresi için en fazla 65 sn. Gemini Free tier embedding kotası batch'teki her
 input'u ayrı istek sayar (`gemini-embedding-2` için dakikada 100 input); büyük
 dokümanlar bu yüzden pencere başına ~96 chunk ilerler. Bildirilen süre bu sınırı
-aşarsa (ör. günlük kota) çağrı beklemeden başarısız olur.
+aşarsa çağrı beklemeden başarısız olur; süre dakikalık pencereden de uzunsa (ör.
+günlük kota) hata kodu `gemini_quota_exhausted` olur ve UI "bir dakika sonra" yerine
+kotanın daha sonra yenileneceğini söyler. `/capabilities` `limits.embeddingInputsPerMinute`
+(`GEMINI_EMBEDDING_INPUTS_PER_MINUTE`, varsayılan 100, 0 = bilinmiyor) değerini
+taşır; UI büyük dokümanlarda embedding süresini bununla tahmin eder.
 Her başarısız sağlayıcı isteği `gemini_call_failed` log'unda HTTP kodu, durum
 token'ı (`RESOURCE_EXHAUSTED` gibi), hata sınıfı, quota ID'si ve bekleme süresiyle;
 başarısız run'lar `pipeline_run_failed` log'unda hata kodu, neden tipi, sağlayıcının

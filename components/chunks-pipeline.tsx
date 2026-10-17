@@ -26,6 +26,7 @@ import { toast } from "@/components/ui/toast";
 import { InfoTip } from "@/components/ui/info-tip";
 import { Tooltip } from "@/components/ui/tooltip";
 import { TransitionNumber, TransitionPanel, TransitionText } from "@/components/ui/transitions";
+import { apiErrorCode, isTrackingPaused } from "@/lib/api-errors";
 import { type AppCopy, interpolate, runName, useCopy } from "@/lib/copy";
 import type { ChunkItem, ChunkRun, ChunkStrategy, EmbeddingRun } from "@/lib/rag-api-types";
 import { getPipelineAvailability } from "@/lib/blockers";
@@ -384,7 +385,7 @@ export function ChunksPipeline({ showAction = true, stage, onFormStateChange }: 
   const copy = useCopy();
   const { preferences } = usePreferences();
   const locale = preferences.locale;
-  const { activeDocument, activePipeline, capabilities, selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId, selectedParseResult, selectedChunkRun, persistenceStatus, workspaceStatus, chunkStatus, chunkRun, chunkError, embeddingStatus, embeddingRun, embeddingError, runChunking, runEmbedding } = useDocumentPipeline();
+  const { activeDocument, activePipeline, capabilities, selectedParseRunId, selectedChunkRunId, selectedEmbeddingRunId, selectedParseResult, selectedChunkRun, persistenceStatus, workspaceStatus, chunkStatus, chunkRun, chunkError, embeddingStatus, embeddingRun, embeddingError, runChunking, runEmbedding, resumeEmbeddingTracking } = useDocumentPipeline();
   const selectedChunkSummary = activeDocument?.chunkRuns.find((run) => run.id === selectedChunkRunId) ?? null;
   // The form starts from the selected chunk run so it describes the result on screen.
   const initialForm = chunkFormConfigFromRun(selectedChunkSummary);
@@ -466,8 +467,10 @@ export function ChunksPipeline({ showAction = true, stage, onFormStateChange }: 
         canEmbed={canEmbed}
         chunkCount={selectedChunkCount}
         error={embeddingError}
+        inputsPerMinute={capabilities?.limits.embeddingInputsPerMinute ?? null}
         model={embeddingRun?.model || capabilities?.embeddingModel || null}
         onCreate={() => void handleEmbedding()}
+        onResume={() => void resumeEmbeddingTracking()}
         reused={reuseNotice === "embedding"}
         run={embeddingRun}
         selectedEmbeddingRunId={selectedEmbeddingRunId}
@@ -571,10 +574,20 @@ export function ChunksPipeline({ showAction = true, stage, onFormStateChange }: 
   );
 }
 
-function EmbeddingsStage({ run, status, chunkCount, sourceRunNumber, sourceChunkRuns, selectedEmbeddingRunId, model, canEmbed, upToDate, blocker, error, reused, showAction, onCreate }: {
+/**
+ * Minutes a run of `chunkCount` inputs needs at the provider's per-minute embedding quota, or null
+ * when it fits in one window (or the quota is unknown). Every chunk counts as one input.
+ */
+function embeddingQuotaMinutes(chunkCount: number | null, inputsPerMinute: number | null | undefined): number | null {
+  if (chunkCount === null || !inputsPerMinute || inputsPerMinute <= 0 || chunkCount <= inputsPerMinute) return null;
+  return Math.ceil(chunkCount / inputsPerMinute);
+}
+
+function EmbeddingsStage({ run, status, chunkCount, inputsPerMinute, sourceRunNumber, sourceChunkRuns, selectedEmbeddingRunId, model, canEmbed, upToDate, blocker, error, reused, showAction, onCreate, onResume }: {
   run: EmbeddingRun | null;
   status: string;
   chunkCount: number | null;
+  inputsPerMinute: number | null;
   sourceRunNumber: number | null | undefined;
   sourceChunkRuns: ReadonlyArray<{ id: string; runNumber?: number | null }>;
   selectedEmbeddingRunId: string | null;
@@ -586,12 +599,25 @@ function EmbeddingsStage({ run, status, chunkCount, sourceRunNumber, sourceChunk
   reused: boolean;
   showAction: boolean;
   onCreate: () => void;
+  onResume: () => void;
 }) {
   const copy = useCopy();
   const { preferences } = usePreferences();
   const locale = preferences.locale;
   const labels = copy.embeddings;
-  const processing = status === "processing";
+  // A paused poll keeps the run "processing" on the server, but nothing is being tracked: no spinner.
+  const processing = status === "processing" && !isTrackingPaused(error);
+  const quotaMinutes = embeddingQuotaMinutes(chunkCount, inputsPerMinute);
+  const quotaEstimate = quotaMinutes !== null && chunkCount !== null && inputsPerMinute
+    ? {
+      chunks: formatCount(locale, chunkCount, copy.units.chunk),
+      duration: formatCount(locale, quotaMinutes, copy.units.minute),
+      rate: formatCount(locale, inputsPerMinute, copy.units.chunk),
+    }
+    : null;
+  const progressLabel = quotaEstimate ? interpolate(labels.progressEstimate, quotaEstimate) : labels.progress;
+  // Retrying an exhausted quota fails the same way; its message already says when to come back.
+  const canRetry = canEmbed && !processing && apiErrorCode(error) !== "gemini_quota_exhausted";
   const showHint = upToDate && !processing && !hasVisibleBlocker(blocker);
   const describedBy = [hasVisibleBlocker(blocker) ? "embedding-run-disabled-reason" : null, showHint ? "embedding-run-hint" : null].filter(Boolean).join(" ") || undefined;
   const sourceChunkRunId = run?.chunkRunId ?? run?.upstream.chunkRunId ?? null;
@@ -631,8 +657,8 @@ function EmbeddingsStage({ run, status, chunkCount, sourceRunNumber, sourceChunk
             {processing ? (
               // The button and the connector already show the work; the sentence is for screen readers.
               <div className="max-w-xl" role="status">
-                <ProgressBar label={labels.progress} />
-                <span className="sr-only">{labels.progress}</span>
+                <ProgressBar label={progressLabel} />
+                <span className="sr-only">{progressLabel}</span>
               </div>
             ) : (
               <StageBlockerRow blocker={blocker} id="embedding-run-disabled-reason" kind="embedding" testId="embedding-blocker" />
@@ -649,7 +675,12 @@ function EmbeddingsStage({ run, status, chunkCount, sourceRunNumber, sourceChunk
           ) : null}
         </footer>
       </Panel>
-      <ApiErrorNotice error={error} fallback={copy.errors.embeddingFailed} />
+      {quotaEstimate && canEmbed && !upToDate && !processing && !error ? (
+        <Notice data-testid="embedding-quota-notice" icon="clock" title={interpolate(labels.largeDocumentTitle, quotaEstimate)} tone="info">
+          {interpolate(labels.largeDocumentBody, quotaEstimate)}
+        </Notice>
+      ) : null}
+      <ApiErrorNotice data-testid="embedding-error" error={error} fallback={copy.errors.embeddingFailed} onResume={onResume} onRetry={canRetry ? onCreate : undefined} />
       {reused ? <Notice data-testid="embedding-reuse-notice" icon="refresh">{labels.reuseNotice}</Notice> : null}
       {run ? (
         // Model, vector count, dimensions and duration are on the lineage card above; only storage details remain.

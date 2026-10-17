@@ -103,6 +103,7 @@ CASE_LEVEL_FAILURE_CODES = frozenset({
     "gemini_judge_failed",
     "gemini_embedding_failed",
     "gemini_embedding_invalid",
+    "gemini_quota_exhausted",
 })
 
 

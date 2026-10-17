@@ -20,6 +20,7 @@ import { StatusBadge, type Status } from "@/components/ui/status-badge";
 import { Table, TableBody, TableCard, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
+import { describeApiError } from "@/lib/api-errors";
 import { type AppLocale, useCopy } from "@/lib/copy";
 import { formatDocumentFileSize } from "@/lib/document-file";
 import type { ParseRunStatus } from "@/lib/document-parse-types";
@@ -78,7 +79,7 @@ export function DocumentLibrary() {
   const { preferences } = usePreferences();
   const locale = preferences.locale;
   const labels = copy.documents.library;
-  const { documents, activeDocumentId, persistenceStatus, persistenceError, selectPersistedDocument, deletePersistedDocument } = useDocumentPipeline();
+  const { documents, activeDocumentId, persistenceStatus, persistenceError, selectPersistedDocument, deletePersistedDocument, refreshPersistence } = useDocumentPipeline();
   const [documentPendingDelete, setDocumentPendingDelete] = useState<PersistedDocument | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const deleteOrigin = useRef<HTMLElement | null>(null);
@@ -121,6 +122,8 @@ export function DocumentLibrary() {
   };
 
   const pagesFor = (document: PersistedDocument, status: DocumentStatus) => status === "completed" && document.pageCount > 0 ? formatNumber(locale, document.pageCount) : "—";
+  /** Why the latest parse failed, in words; the badge already says that it failed. */
+  const parseFailureFor = (document: PersistedDocument, status: DocumentStatus) => status === "failed" ? describeApiError(copy, document.latestParseError, copy.errors.parseFailed)?.message ?? null : null;
   const deleting = deletingDocumentId !== null;
 
   return (
@@ -137,7 +140,7 @@ export function DocumentLibrary() {
       <div className="mt-4">
         {persistenceStatus === "checking" ? <Skeleton label={labels.loading} rowClassName="h-14" /> :
           persistenceStatus === "unavailable" ? (
-            <Notice role="alert" title={labels.unavailable} tone="error">{persistenceError ? <ApiErrorText error={persistenceError} fallback={copy.errors.workspaceLoadFailed} /> : null}</Notice>
+            <Notice action={<Button iconLeading="refresh" onClick={() => void refreshPersistence()} size="sm" variant="secondary">{copy.common.retry}</Button>} role="alert" title={labels.unavailable} tone="error">{persistenceError ? <ApiErrorText error={persistenceError} fallback={copy.errors.workspaceLoadFailed} /> : null}</Notice>
           ) :
             documents.length === 0 ? (
               <TableCard>
@@ -172,15 +175,19 @@ export function DocumentLibrary() {
                       {documents.map((document) => {
                         const isActive = document.id === activeDocumentId;
                         const status = getDocumentStatus(document.latestParseStatus);
+                        const parseFailure = parseFailureFor(document, status);
+                        const parseFailureId = `document-parse-failure-${document.id}`;
                         return (
                           <TableRow className="group/row" data-state={isActive ? "selected" : undefined} data-testid="document-library-row" key={document.id}>
                             <th className="relative min-w-0 px-5 py-3 text-left align-middle font-medium" scope="row">
                               {isActive ? <span aria-hidden="true" className="absolute inset-y-0 left-0 w-0.5 bg-fg-brand-primary" /> : null}
-                              <button aria-label={`${labels.select}: ${document.fileName}`} aria-pressed={isActive} className="flex w-full min-w-0 items-center gap-3 rounded-md text-left" onClick={() => void selectPersistedDocument(document.id)} title={document.fileName} type="button">
+                              <button aria-describedby={parseFailure ? parseFailureId : undefined} aria-label={`${labels.select}: ${document.fileName}`} aria-pressed={isActive} className="flex w-full min-w-0 items-center gap-3 rounded-md text-left" onClick={() => void selectPersistedDocument(document.id)} title={document.fileName} type="button">
                                 <FileTile active={isActive} />
                                 <span className={cn("min-w-0 flex-1 truncate text-sm", isActive ? "font-semibold text-primary" : "font-medium text-secondary group-hover/row:text-primary")} data-testid="document-library-name">{document.fileName}</span>
                                 {isActive ? <Badge className="shrink-0" color="brand" data-tone="active" size="sm">{labels.inUse}</Badge> : null}
                               </button>
+                              {/* One line under the name (aligned past the file tile); the full sentence is its tooltip. */}
+                              {parseFailure ? <p className="mt-0.5 truncate pl-12 text-xs font-normal text-tertiary" data-testid="document-library-parse-failure" id={parseFailureId} title={parseFailure}>{parseFailure}</p> : null}
                             </th>
                             <TableCell className="text-tertiary" numeric>{pagesFor(document, status)}</TableCell>
                             <TableCell className="text-tertiary" numeric>{formatDocumentFileSize(document.sizeBytes, locale)}</TableCell>
@@ -203,6 +210,8 @@ export function DocumentLibrary() {
                     {documents.map((document) => {
                       const isActive = document.id === activeDocumentId;
                       const status = getDocumentStatus(document.latestParseStatus);
+                      const parseFailure = parseFailureFor(document, status);
+                      const parseFailureId = `document-parse-failure-card-${document.id}`;
                       return (
                         <li className={cn("relative p-4", isActive && "bg-active")} data-testid="document-library-mobile-item" key={document.id}>
                           {isActive ? <span aria-hidden="true" className="absolute inset-y-0 left-0 w-0.5 bg-fg-brand-primary" /> : null}
@@ -227,13 +236,14 @@ export function DocumentLibrary() {
                                 <DocumentStatusBadge status={status} />
                                 {isActive ? <Badge color="brand" data-tone="active" size="sm">{labels.inUse}</Badge> : null}
                               </div>
+                              {parseFailure ? <p className="mt-1.5 line-clamp-2 text-xs break-words text-tertiary" data-testid="document-library-parse-failure" id={parseFailureId} title={parseFailure}>{parseFailure}</p> : null}
                               {/* Equal thirds while they fit; on narrow phones the date column keeps its full width. */}
                               <dl className="mt-3 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(max-content,1fr)] gap-3">
                                 <div className="min-w-0"><dt className="text-xs text-quaternary">{labels.columns.pages}</dt><dd className="mt-0.5 truncate text-sm font-medium text-secondary tabular-nums">{pagesFor(document, status)}</dd></div>
                                 <div className="min-w-0"><dt className="text-xs text-quaternary">{labels.columns.size}</dt><dd className="mt-0.5 truncate text-sm font-medium text-secondary tabular-nums">{formatDocumentFileSize(document.sizeBytes, locale)}</dd></div>
                                 <div className="min-w-0"><dt className="text-xs text-quaternary">{labels.columns.uploaded}</dt><dd className="mt-0.5 truncate text-sm font-medium text-secondary">{formatUpdatedAt(document.createdAt ?? document.updatedAt, locale)}</dd></div>
                               </dl>
-                              <Button aria-label={`${labels.select}: ${document.fileName}`} aria-pressed={isActive} className="mt-4 w-full aria-pressed:bg-active" iconLeading={isActive ? "check" : undefined} onClick={() => void selectPersistedDocument(document.id)} type="button" variant="secondary">
+                              <Button aria-describedby={parseFailure ? parseFailureId : undefined} aria-label={`${labels.select}: ${document.fileName}`} aria-pressed={isActive} className="mt-4 w-full aria-pressed:bg-active" iconLeading={isActive ? "check" : undefined} onClick={() => void selectPersistedDocument(document.id)} type="button" variant="secondary">
                                 {labels.select}
                               </Button>
                             </div>

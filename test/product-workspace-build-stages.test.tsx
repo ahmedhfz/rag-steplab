@@ -2,16 +2,19 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pipeline = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
+const toastMock = vi.hoisted(() => Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }));
 
 vi.mock("@/components/document-pipeline-provider", () => ({
   useDocumentPipeline: () => pipeline.value,
 }));
+vi.mock("@/components/ui/toast", () => ({ toast: toastMock }));
 
 import { ChunkingScreen, EmbeddingsScreen } from "@/components/pipeline-stage-screens";
 import { ParseScreen } from "@/components/parse-screen";
 import { OverviewScreen } from "@/components/overview-screen";
 import { PipelineContextBar } from "@/components/pipeline-context-bar";
 import { PreferencesProvider } from "@/components/preferences-provider";
+import { UI_COPY } from "@/lib/copy";
 
 type MockFn = ReturnType<typeof vi.fn>;
 const call = (name: string) => pipeline.value[name] as MockFn;
@@ -331,6 +334,87 @@ describe("Product workspace and build-stage semantic contract", () => {
     expect(dialog).toBeVisible();
   });
 
+  it("names the real cause when a pipeline rename fails", async () => {
+    const renamePipeline = vi.fn(async () => {
+      pipeline.value = { ...pipeline.value, persistenceError: { code: "pipeline_name_conflict", message: "A pipeline named Taken already exists." } };
+      return null;
+    });
+    pipeline.value = { ...createPipelineValue(), renamePipeline };
+    renderScreen(<OverviewScreen />);
+    fireEvent.click(screen.getByText("Manage pipeline"));
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    fireEvent.change(screen.getByPlaceholderText("Pipeline name"), { target: { value: "Taken" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const alert = await screen.findByTestId("pipeline-management-error");
+    expect(alert).toHaveAttribute("role", "alert");
+    expect(alert).toHaveTextContent("A pipeline with this name already exists. Choose another name.");
+    expect(alert).not.toHaveTextContent("The pipeline could not be saved");
+    expect(within(alert).getByTestId("api-error-details")).toHaveTextContent("Code: pipeline_name_conflict");
+    expect(screen.getByTestId("pipeline-name-editor")).toBeVisible();
+  });
+
+  it("does not present an earlier, unrelated error as the cause of a failed delete", async () => {
+    const earlier = { code: "pipeline_name_conflict", message: "Earlier failure." };
+    pipeline.value = { ...createPipelineValue(), persistenceError: earlier, deletePipeline: vi.fn(async () => false) };
+    renderScreen(<OverviewScreen />);
+    fireEvent.click(screen.getByText("Manage pipeline"));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    const dialog = screen.getByTestId("delete-pipeline-dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent("The pipeline could not be deleted"));
+    expect(within(dialog).getByRole("alert")).not.toHaveTextContent("already exists");
+  });
+
+  it("offers Try again when the workspace is unavailable", () => {
+    pipeline.value = { ...createPipelineValue(), persistenceStatus: "unavailable", workspaceStatus: "unavailable", persistenceError: { code: "backend_unavailable", message: "Service down." } };
+    renderScreen(<OverviewScreen />);
+    const alert = within(screen.getByTestId("workspace-control-plane")).getByRole("alert");
+    expect(alert).toHaveTextContent("The RAG service is temporarily unavailable.");
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(call("refreshPersistence")).toHaveBeenCalledTimes(1);
+  });
+
+  it("explains failed and unusable runs in history in words, never with the raw reason code", () => {
+    const failedParse = { ...parseRun, id: "parse-2", runNumber: 2, status: "failed", isCompatible: false, isStale: true, compatibilityReason: "run_not_completed", error: { code: "docling_timeout", message: "Docling timed out after 900 s." } };
+    const staleParse = { ...parseRun, id: "parse-3", runNumber: 3, isCompatible: false, isStale: true, compatibilityReason: "lineage_incompatible" };
+    pipeline.value = { ...createPipelineValue(), activeDocument: { ...activeDocument, parseRuns: [parseRun, failedParse, staleParse] } };
+    renderScreen(<ParseScreen />);
+
+    const history = screen.getByTestId("parse-history");
+    expect(history).not.toHaveTextContent("run_not_completed");
+    const rows = within(history).getAllByTestId("parse-history-row");
+    const failedRow = rows.find((row) => row.textContent?.includes("Parse #2"))!;
+    expect(within(failedRow).getByText("Failed")).toBeInTheDocument();
+    expect(within(failedRow).getByTestId("run-history-error")).toHaveTextContent("Parsing took too long and was stopped. Try again, or use a shorter PDF.");
+    // The code is said once, inside the row's single Technical details.
+    expect(failedRow.textContent?.match(/docling_timeout/g)).toHaveLength(1);
+    expect(within(failedRow).getAllByText("Technical details")).toHaveLength(1);
+    const staleRow = rows.find((row) => row.textContent?.includes("Parse #3"))!;
+    // The badge says it can't be used; the raw reason is only in Technical details, never as a sentence.
+    expect(within(staleRow).getByText(UI_COPY.en.runs.incompatible)).toBeInTheDocument();
+    expect(staleRow.textContent?.match(/lineage_incompatible/g)).toHaveLength(1);
+    expect(within(staleRow).queryByText(UI_COPY.en.runs.incompatibleLineage)).not.toBeInTheDocument();
+  });
+
+  it("announces a parse that fails while it is watched once, but not an old failure on load", () => {
+    const failure = { code: "docling_timeout", message: "Docling timed out." };
+    pipeline.value = { ...createPipelineValue(), parseStatus: "running", parseError: null };
+    const view = renderScreen(<ParseScreen />);
+    pipeline.value = { ...pipeline.value, parseStatus: "failed", parseError: failure };
+    view.rerender(<PreferencesProvider><ParseScreen /></PreferencesProvider>);
+    view.rerender(<PreferencesProvider><ParseScreen /></PreferencesProvider>);
+    expect(toastMock.error).toHaveBeenCalledTimes(1);
+    expect(toastMock.error).toHaveBeenCalledWith(UI_COPY.en.parse.failedToast, { description: "Parsing took too long and was stopped. Try again, or use a shorter PDF." });
+    expect(screen.getAllByTestId("parse-error")).toHaveLength(1);
+    view.unmount();
+
+    toastMock.error.mockClear();
+    pipeline.value = { ...createPipelineValue(), parseStatus: "failed", parseError: failure };
+    renderScreen(<ParseScreen />);
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
   it("keeps the active document and pipeline context visible on Parsing", () => {
     renderScreen(<ParseScreen />);
 
@@ -577,11 +661,16 @@ describe("Build-stage UX safety nets", () => {
       resumeParseTracking: vi.fn(asyncNoop),
     };
     renderScreen(<ParseScreen />);
+    // One notice: a warning, never also an error notice.
     const notice = screen.getByTestId("parse-poll-timeout");
+    expect(notice).toHaveAttribute("data-tone", "warning");
+    expect(screen.queryByTestId("parse-error")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(notice).toHaveTextContent("Status tracking paused after 15 minutes; parsing may still be running.");
     expect(notice).not.toHaveTextContent("Refresh");
     fireEvent.click(within(notice).getByRole("button", { name: "Resume tracking" }));
     expect(call("resumeParseTracking")).toHaveBeenCalledTimes(1);
+    expect(toastMock.error).not.toHaveBeenCalled();
   });
 
   it("continues to Evaluation once a matching experiment is complete", () => {

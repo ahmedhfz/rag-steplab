@@ -41,6 +41,10 @@ export type SeededApiOptions = {
   ocrDiagnostics?: boolean;
   locale?: "tr" | "en";
   sampleUpload?: boolean;
+  /** Chunk count of the seeded chunk run summary (default 1); large values exercise the embedding quota estimate. */
+  chunkCount?: number;
+  /** An accepted embedding run that then fails with this provider problem. */
+  embeddingFailure?: { code: string; message: string };
 };
 
 export const seededStressNames = {
@@ -399,7 +403,7 @@ function stageStatuses(targetStage: ScenarioDefinition["experiment"]) {
   return statuses;
 }
 
-function scenarioState(scenario: SeededScenario, includeEmbedding = true) {
+function scenarioState(scenario: SeededScenario, includeEmbedding = true, chunkCount = 1) {
   const definition = definitionFor(scenario);
   const hasEmbedding = definition.embedding && includeEmbedding;
   const stateDocument = {
@@ -430,7 +434,7 @@ function scenarioState(scenario: SeededScenario, includeEmbedding = true) {
     summary: {
       ...stateDocument,
       parseRuns: [{ ...runBase, id: parseRunId, runNumber: 1, phase: "completed", progress: 100, upstream: { documentId, parseRunId: null, chunkRunId: null, embeddingRunId: null } }],
-      chunkRuns: definition.chunk ? [{ ...runBase, id: chunkRunId, runNumber: 1, strategy: "structure_aware", chunkCount: 1, upstream: { documentId, parseRunId, chunkRunId: null, embeddingRunId: null } }] : [],
+      chunkRuns: definition.chunk ? [{ ...runBase, id: chunkRunId, runNumber: 1, strategy: "structure_aware", chunkCount, upstream: { documentId, parseRunId, chunkRunId: null, embeddingRunId: null } }] : [],
       embeddingRuns: hasEmbedding ? [{ ...runBase, id: embeddingRunId, runNumber: 1, model: embedding.model, dimensions: 768, embeddingCount: 1, embeddingFormatVersion: embedding.embeddingFormatVersion, upstream: { documentId, parseRunId, chunkRunId, embeddingRunId: null } }] : [],
       experiments: selectedExperiment ? [{ ...runBase, id: experimentId, runNumber: 1, documentId, chunkRunId, embeddingRunId, query: experiment.query, targetStage: selectedExperiment.targetStage, candidateCount: 1, experimentFingerprint: experiment.experimentFingerprint, stageStatuses: stageStatuses(selectedExperiment.targetStage), upstream: { documentId, parseRunId, chunkRunId, embeddingRunId } }] : [],
       evaluationDatasets: definition.dataset ? [{ ...dataset, cases: undefined }] : [],
@@ -508,7 +512,7 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
       ? url.pathname.slice("/api/rag".length)
       : url.pathname;
     const method = request.method();
-    const seededState = scenarioState(scenario, embeddingAvailable);
+    const seededState = scenarioState(scenario, embeddingAvailable, options.chunkCount);
     const current = options.longNames
       ? {
           ...seededState,
@@ -526,7 +530,7 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
       return;
     }
 
-    if (pathname === "/capabilities") return json(route, { embeddingModel: embedding.model, embeddingDimensions: 768, generationModel: experiment.stageResults.generation.model, rerankModel: "gemini-flash-lite-latest", judgeModel: "gemini-flash-lite-latest", embeddingFormatVersion: embedding.embeddingFormatVersion, limits: { maxTopK: 20 } });
+    if (pathname === "/capabilities") return json(route, { embeddingModel: embedding.model, embeddingDimensions: 768, generationModel: experiment.stageResults.generation.model, rerankModel: "gemini-flash-lite-latest", judgeModel: "gemini-flash-lite-latest", embeddingFormatVersion: embedding.embeddingFormatVersion, limits: { maxTopK: 20, embeddingInputsPerMinute: 100 } });
     if (options.sampleUpload) {
       if (pathname === "/documents" && method === "GET") return json(route, { items: uploadedDocuments });
       if (pathname === "/documents" && method === "POST") {
@@ -621,14 +625,16 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
     }
     if (pathname === `/documents/${documentId}/parse` && method === "POST") return json(route, { id: "e2e-seeded-reparse", parseRunId: "e2e-seeded-reparse", documentId, status: "queued", progress: 0, phase: "queued", reusedDocument: true }, 202);
     if (pathname === `/chunk-runs/${chunkRunId}`) return json(route, chunk);
-    if (pathname === `/embedding-runs/${embeddingRunId}`) return json(route, embedding);
+    if (pathname === `/embedding-runs/${embeddingRunId}`) {
+      return json(route, options.embeddingFailure ? { ...embedding, status: "failed", embeddingCount: 0, error: options.embeddingFailure } : embedding);
+    }
     if (pathname === `/documents/${documentId}/chunks` && method === "POST") {
       embeddingAvailable = false;
       return json(route, chunk);
     }
     if (pathname === `/documents/${documentId}/embeddings` && method === "POST") {
       await new Promise((resolve) => setTimeout(resolve, 300));
-      embeddingAvailable = true;
+      embeddingAvailable = !options.embeddingFailure;
       // Hosted contract: `?async=true` answers 202 after dispatch and the client polls
       // GET /embedding-runs/{id} (completed below); without it the request waits for the run.
       if (url.searchParams.get("async") === "true") return json(route, { ...embedding, status: "queued", embeddingCount: 0, reusedArtifact: false }, 202);
