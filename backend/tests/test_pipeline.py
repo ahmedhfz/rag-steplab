@@ -51,12 +51,12 @@ def _parsed() -> ParseResponse:
     )
 
 
-def _queue_and_run(monkeypatch, *, file_name: str = "lesson.pdf"):
+def _queue_and_run(monkeypatch, *, file_name: str = "lesson.pdf", parsed: ParseResponse | None = None):
     from app.config import Settings
 
     monkeypatch.setattr("app.main.get_settings", lambda: Settings(app_env="development", local_parse_worker_enabled=False))
     monkeypatch.setattr("app.main.dispatch_parse_run", lambda *_args: "dispatch-test")
-    monkeypatch.setattr("app.parser.parse_pdf_file", lambda *_args, **_kwargs: _parsed())
+    monkeypatch.setattr("app.parser.parse_pdf_file", lambda *_args, **_kwargs: parsed or _parsed())
     response = client.post(
         "/documents/parse",
         files={"file": (file_name, b"%PDF-1.7", "application/pdf")},
@@ -524,6 +524,90 @@ def test_embedding_identity_reuses_completed_artifact_without_gemini_call(monkey
     assert first.json()["effectiveModel"] == "gemini-embedding-2-001"
     assert second.json()["effectiveModel"] == "gemini-embedding-2-001"
     assert FakeGemini.calls == 1
+
+
+def test_embedding_run_waits_out_the_per_minute_input_quota_instead_of_failing(monkeypatch):
+    """Production 2026-10-15: a 166-chunk document failed four times.
+
+    The free tier counts every input of a batch against 100 inputs/minute and
+    names the reset in a RetryInfo body; the client ignored it and gave up.
+    """
+
+    from types import SimpleNamespace
+
+    from google.genai import errors
+
+    from app.gemini import GeminiService
+
+    # A fake clock: the window resets only once the named delay has passed.
+    window = {"used": 0, "now": 0.0, "resets_at": 41.0}
+    sleeps: list[float] = []
+    batch_sizes: list[int] = []
+
+    class QuotaModels:
+        def embed_content(self, *, model, contents, config):
+            batch_sizes.append(len(contents))
+            if window["now"] >= window["resets_at"]:
+                window.update(used=0, resets_at=window["now"] + 60)
+            if window["used"] + len(contents) > 100:
+                raise errors.ClientError(
+                    429,
+                    {
+                        "error": {
+                            "code": 429,
+                            "status": "RESOURCE_EXHAUSTED",
+                            "message": "quota",
+                            "details": [
+                                {
+                                    "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                                    "retryDelay": f"{window['resets_at'] - window['now']:g}s",
+                                }
+                            ],
+                        }
+                    },
+                )
+            window["used"] += len(contents)
+            dimensions = config["output_dimensionality"]
+            return SimpleNamespace(embeddings=[SimpleNamespace(values=[1.0] + [0.0] * (dimensions - 1)) for _ in contents])
+
+    def wait(seconds: float) -> None:
+        sleeps.append(seconds)
+        window["now"] += seconds
+
+    monkeypatch.setattr("app.gemini.time.sleep", wait)
+    monkeypatch.setattr("app.gemini.random.uniform", lambda _low, _high: 0.0)
+    monkeypatch.setattr(
+        "app.pipeline.GeminiService",
+        lambda settings: GeminiService(settings, client=SimpleNamespace(models=QuotaModels())),
+    )
+    elements = [
+        ParsedElement(
+            id=f"element-{index}",
+            type="paragraph",
+            text=f"Paragraph {index} explains how retrieval, chunking and embedding batches interact with quotas.",
+            page_numbers=[1 + index // 20],
+        )
+        for index in range(340)
+    ]
+    large = _parsed().model_copy(
+        update={"structured": StructuredContent(pages=[ParsedPage(page_number=1, elements=elements)], elements=elements)}
+    )
+    document_id = _queue_and_run(monkeypatch, parsed=large)["documentId"]
+    chunk = client.post(
+        f"/documents/{document_id}/chunks",
+        json={"strategy": "fixed_token", "config": {"chunkSizeTokens": 32, "overlapTokens": 0}},
+    ).json()
+    assert chunk["chunkCount"] > 150
+
+    response = client.post(f"/documents/{document_id}/embeddings", json={"chunkRunId": chunk["id"]})
+
+    assert response.status_code == 200, response.json()
+    assert response.json()["status"] == "completed"
+    assert response.json()["embeddingCount"] == chunk["chunkCount"]
+    # Batches 1-6 use 96 of 100 inputs; the 7th waits the named 41 s once, later windows 60 s.
+    assert sleeps[0] == 41.0 and set(sleeps[1:]) <= {60.0}
+    # Each quota rejection repeats exactly one batch after the wait.
+    assert len(batch_sizes) == -(-chunk["chunkCount"] // 16) + len(sleeps)
 
 
 def test_failed_embedding_artifact_is_released_and_recomputed(monkeypatch):

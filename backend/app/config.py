@@ -179,6 +179,8 @@ def pipeline_lease_duration_seconds(settings: Settings) -> int:
     # and then wait up to the provider client's maximum backoff.
     request_timeout = max(1, settings.gemini_timeout_seconds, text_request_timeout_seconds(settings))
     provider_budget = provider_attempts * (request_timeout + _provider_max_retry_delay_seconds())
+    # A retrieval stage's query embedding may instead wait out a quota window.
+    provider_budget = max(provider_budget, _embedding_call_budget_seconds(settings))
     operation_budget = max(settings.pipeline_worker_timeout_seconds, provider_budget)
     return (
         settings.pipeline_worker_startup_timeout_seconds
@@ -204,16 +206,23 @@ def _provider_max_retry_delay_seconds() -> int:
     return math.ceil(MAX_RETRY_DELAY_SECONDS)
 
 
-def embedding_batch_lease_seconds(settings: Settings) -> int:
-    """Lease renewed before every provider batch: one batch's full retry envelope + grace.
+def _embedding_call_budget_seconds(settings: Settings) -> int:
+    """One embedding call's full retry envelope.
 
-    Each attempt may take the request timeout and then wait up to the client's
-    maximum backoff before the next attempt.
+    Each attempt may take the request timeout and then wait up to the
+    embedding client's maximum backoff (a quota window) before the next attempt.
     """
 
+    from .gemini import EMBEDDING_MAX_RETRY_DELAY_SECONDS
+
     attempts = max(0, settings.gemini_max_retries) + 1
-    per_attempt = max(1, settings.gemini_timeout_seconds) + _provider_max_retry_delay_seconds()
-    return attempts * per_attempt + settings.pipeline_lease_grace_seconds
+    return attempts * (max(1, settings.gemini_timeout_seconds) + math.ceil(EMBEDDING_MAX_RETRY_DELAY_SECONDS))
+
+
+def embedding_batch_lease_seconds(settings: Settings) -> int:
+    """Lease renewed before every provider batch: one batch's full retry envelope + grace."""
+
+    return _embedding_call_budget_seconds(settings) + settings.pipeline_lease_grace_seconds
 
 
 def embedding_claim_lease_seconds(settings: Settings) -> int:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
@@ -26,6 +27,17 @@ MAX_TIMEOUT_RETRIES = 1
 # whether or not a fallback model was used.
 STRUCTURED_OUTPUT_ATTEMPTS = 2
 MAX_RETRY_DELAY_SECONDS = 20.0
+# Gemini counts every input of an embedding batch against a per-minute,
+# per-model quota (the free tier allows 100 inputs/min for gemini-embedding-2)
+# and its 429 names the wait until that window resets, up to a minute.
+# Embedding calls wait that out instead of failing the whole run.
+EMBEDDING_MAX_RETRY_DELAY_SECONDS = 65.0
+
+# Provider diagnostics that are safe to log or persist: identifiers only, never
+# the free-text message (it can quote prompt, document text or model output).
+_PROVIDER_STATUS = re.compile(r"[A-Z][A-Z_]{0,39}")
+_QUOTA_ID = re.compile(r"[A-Za-z0-9_.-]{1,128}")
+_RETRY_DELAY = re.compile(r"(\d{1,6}(?:\.\d{1,9})?)s")
 
 # The SDK/provider constrain the JSON shape, while pipeline code below still
 # performs parsing and semantic validation for IDs, citations, and scores.
@@ -82,13 +94,53 @@ class GeminiCallMetadata:
 class GeminiCallFailed(ApiProblem):
     """A provider call that exhausted its retry/fallback budget.
 
-    Public code/message are the existing ``gemini_<action>_failed`` contract;
+    Public code is the existing ``gemini_<action>_failed`` contract. The
+    message names the provider's HTTP code and status token when known, so a
+    failed run row stays diagnosable after the worker logs expire;
     ``models_tried`` is diagnostic data for logs only.
     """
 
-    def __init__(self, action: str, models_tried: Sequence[str] = ()) -> None:
-        super().__init__(503, f"gemini_{action}_failed", f"Gemini {action} failed.")
+    def __init__(self, action: str, models_tried: Sequence[str] = (), cause: Exception | None = None) -> None:
+        provider = " ".join(
+            str(value) for value in (_provider_code(cause), _provider_status(cause)) if value is not None
+        )
+        message = f"Gemini {action} failed (provider {provider})." if provider else f"Gemini {action} failed."
+        super().__init__(503, f"gemini_{action}_failed", message)
         self.models_tried = tuple(models_tried)
+
+
+def _provider_code(exc: Exception | None) -> int | None:
+    value = getattr(exc, "status_code", getattr(exc, "code", None))
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _provider_status(exc: Exception | None) -> str | None:
+    status = getattr(exc, "status", None)
+    return status if isinstance(status, str) and _PROVIDER_STATUS.fullmatch(status) else None
+
+
+def _provider_error_details(exc: Exception) -> list[dict[str, Any]]:
+    """``google.rpc`` detail objects of a Gemini error body (``APIError.details``)."""
+
+    body = getattr(exc, "details", None)
+    error = body.get("error") if isinstance(body, dict) else None
+    details = error.get("details") if isinstance(error, dict) else None
+    return [item for item in details if isinstance(item, dict)] if isinstance(details, list) else []
+
+
+def _quota_id(exc: Exception) -> str | None:
+    for item in _provider_error_details(exc):
+        if str(item.get("@type", "")).endswith("google.rpc.QuotaFailure"):
+            for violation in item.get("violations") or []:
+                quota_id = violation.get("quotaId") if isinstance(violation, dict) else None
+                if isinstance(quota_id, str) and _QUOTA_ID.fullmatch(quota_id):
+                    return quota_id
+    return None
 
 
 def document_embedding_text(text: str, heading_path: Sequence[str] | None = None) -> str:
@@ -137,11 +189,7 @@ class GeminiService:
 
     @staticmethod
     def _status(exc: Exception) -> int | None:
-        value = getattr(exc, "status_code", getattr(exc, "code", None))
-        try:
-            return int(value) if value is not None else None
-        except (TypeError, ValueError):
-            return None
+        return _provider_code(exc)
 
     @staticmethod
     def _is_timeout(exc: Exception) -> bool:
@@ -168,15 +216,23 @@ class GeminiService:
     @staticmethod
     def _retry_after_seconds(exc: Exception) -> float | None:
         headers = getattr(getattr(exc, "response", None), "headers", None)
-        if not headers:
-            return None
-        try:
-            value = float(headers.get("retry-after") or headers.get("Retry-After"))
-        except (TypeError, ValueError, AttributeError):
-            return None
-        return value if value >= 0 else None
+        if headers:
+            try:
+                value = float(headers.get("retry-after") or headers.get("Retry-After"))
+            except (TypeError, ValueError, AttributeError):
+                value = None
+            if value is not None and value >= 0:
+                return value
+        # Gemini sends no Retry-After header: the wait is google.rpc.RetryInfo
+        # ("retryDelay": "27s") in the error body.
+        for item in _provider_error_details(exc):
+            if str(item.get("@type", "")).endswith("google.rpc.RetryInfo"):
+                match = _RETRY_DELAY.fullmatch(str(item.get("retryDelay", "")))
+                if match:
+                    return float(match.group(1))
+        return None
 
-    def _retry_delay(self, exc: Exception, attempt: int) -> float:
+    def _retry_delay(self, exc: Exception, attempt: int, max_delay: float = MAX_RETRY_DELAY_SECONDS) -> float:
         status = self._status(exc)
         if status == 429:
             # Quota errors need real backoff; honour the provider hint first.
@@ -184,7 +240,35 @@ class GeminiService:
             base = hinted if hinted is not None else 1.0 * (2**attempt)
         else:
             base = 0.5 * (2**attempt)
-        return min(MAX_RETRY_DELAY_SECONDS, base + random.uniform(0, base * 0.25))
+        return min(max_delay, base + random.uniform(0, base * 0.25))
+
+    def _log_failed_attempt(
+        self,
+        exc: Exception,
+        *,
+        action: str,
+        model: str | None,
+        attempt: int,
+        attempts: int,
+        retry_in: float | None,
+    ) -> None:
+        """One line per failed provider request: status, error class and quota, never message text."""
+
+        hinted = self._retry_after_seconds(exc) if self._status(exc) == 429 else None
+        logger.warning(
+            "gemini_call_failed action=%s model=%s attempt=%d/%d status=%s provider_status=%s cause_type=%s "
+            "quota_id=%s provider_retry_after=%s retry_in=%s",
+            action,
+            model,
+            attempt + 1,
+            attempts,
+            self._status(exc),
+            _provider_status(exc),
+            type(exc).__name__,
+            _quota_id(exc),
+            f"{hinted:.1f}" if hinted is not None else None,
+            f"{retry_in:.1f}" if retry_in is not None else None,
+        )
 
     def _text_model_chain(self, configured: str) -> list[str]:
         """Configured model, then distinct usable fallbacks; healthy models lead."""
@@ -205,13 +289,19 @@ class GeminiService:
         *,
         action: str,
         text_model: str | None = None,
+        max_retry_delay: float = MAX_RETRY_DELAY_SECONDS,
     ) -> tuple[Any, str | None]:
         """The only transport retry layer for provider calls.
 
         Retries retryable HTTP statuses, connection errors and (once) timeouts,
-        with exponential backoff, jitter and ``Retry-After`` for quota errors.
+        with exponential backoff and jitter. A quota error (429) waits the
+        provider's hint (``Retry-After`` or ``RetryInfo``) up to
+        ``max_retry_delay``; when the provider asks for longer (e.g. a daily
+        quota) the call fails at once instead of retrying into the same quota.
         ``function`` receives the model ID to request (``None`` when the
         caller fixes its own model) and the result is ``(response, model)``.
+        Every failed request is logged with its HTTP code, provider status,
+        error class and quota ID.
 
         ``text_model`` (generation, rerank and judge only; never embeddings)
         enables the fallback chain. A transient failure moves to the next
@@ -258,17 +348,31 @@ class GeminiService:
                         type(exc).__name__,
                     )
                     self._unusable_models.add(str(model))
-                if attempt + 1 >= attempts or (timed_out and timeouts > MAX_TIMEOUT_RETRIES):
-                    raise GeminiCallFailed(action, tried) from exc
-                if transient:
-                    index = min(index + 1, len(chain) - 1)
-                elif unusable_fallback:
-                    chain.pop(index)
-                    index = min(index, len(chain) - 1)
-                else:
-                    raise GeminiCallFailed(action, tried) from exc
-                if chain[index] in failed:
-                    time.sleep(self._retry_delay(exc, attempt))
+                give_up = (
+                    attempt + 1 >= attempts
+                    or (timed_out and timeouts > MAX_TIMEOUT_RETRIES)
+                    or not (transient or unusable_fallback)
+                )
+                if not give_up:
+                    if transient:
+                        index = min(index + 1, len(chain) - 1)
+                    else:
+                        chain.pop(index)
+                        index = min(index, len(chain) - 1)
+                retry_in: float | None = None
+                if not give_up and chain[index] in failed:
+                    hinted = self._retry_after_seconds(exc) if self._status(exc) == 429 else None
+                    if hinted is not None and hinted > max_retry_delay:
+                        give_up = True
+                    else:
+                        retry_in = self._retry_delay(exc, attempt, max_retry_delay)
+                self._log_failed_attempt(
+                    exc, action=action, model=model, attempt=attempt, attempts=attempts, retry_in=retry_in
+                )
+                if give_up:
+                    raise GeminiCallFailed(action, tried, exc) from exc
+                if retry_in is not None:
+                    time.sleep(retry_in)
                 continue
             if model is not None and model != text_model:
                 logger.warning(
@@ -330,7 +434,7 @@ class GeminiService:
 
         # No fallback chain: another embedding model would silently change the
         # vector space and break lineage compatibility.
-        response, _ = self._with_retry(call, action="embedding")
+        response, _ = self._with_retry(call, action="embedding", max_retry_delay=EMBEDDING_MAX_RETRY_DELAY_SECONDS)
         response_values = self._embedding_values(response)
         if len(response_values) != len(contents) or any(len(values) != dimensions for values in response_values):
             raise ApiProblem(
