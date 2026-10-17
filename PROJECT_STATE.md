@@ -15,5 +15,6 @@ davranışı kod, yapılandırma ve release kanıtından doğrulayın.
 - Docling `2.117.0`'da tutuluyor: bu sürümün on advisory'si CI audit'inde
   gerekçeli muaf (`docs/deployment.md`). Düzeltilmiş 2.132.0/2.135.0 sürümleri
   TR örnek PDF'inin 4. sayfasında ham çıktıda iki paragraf kaybettiği için
-  alınmadı; yeni Docling sürümü içerik kaybı olmadan doğrulanınca muafiyet
-  kaldırılmalıdır.
+  alınmadı. 2.140.0 metni koruyor ama TR örnekte paragrafları cümle ortasından
+  bölüyor. Yeni Docling sürümü içerik ve paragraf sınırlarını koruduğu
+  doğrulanınca muafiyet kaldırılmalıdır.
