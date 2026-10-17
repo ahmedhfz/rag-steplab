@@ -170,15 +170,17 @@ jobs:
           python -m venv "$RUNNER_TEMP/pip-audit"
           "$RUNNER_TEMP/pip-audit/bin/python" -m pip install --disable-pip-version-check --quiet pip-audit==2.10.0
           # Lock'lar tam ve hash'li olduğu için yeniden çözümleme yapılmaz; deploy edilen pin'ler denetlenir.
-          # Docling 2.117.0 muafiyetleri: düzeltilmiş sürümler (>=2.131/2.132) örnek TR PDF'inde
-          # içerik düşürdüğü için yükseltme bekliyor (docs/deployment.md). PDF-only akışta erişilemeyen
-          # backend'ler (HTML/LaTeX/ODF/JATS/Docling JSON/KServe/plugin) muaf. PYSEC-2026-4194
-          # (METS-GBS format tespitinde bellek tüketimi) muafiyeti, upload'ın `%PDF-` imzasını offset 0'da
-          # zorunlu kılıp gzip/zip magic'ini reddetmesine dayanır (backend/app/main.py `_ensure_file`);
-          # bu kontrol gevşetilirse muafiyet geçersizdir.
+          # Docling 2.117.0 muafiyetleri: düzeltilmiş sürümler örnek TR PDF'inde içerik ya da paragraf
+          # sınırlarını bozduğu için yükseltme bekliyor (docs/deployment.md). Muafiyetler CVE ile tutulur;
+          # pip-audit alias'ları da eşlediği için her CVE aynı açığın docling ve docling-slim PYSEC/GHSA
+          # kayıtlarını kapsar. PDF-only akışta erişilemeyen yollar (HTML/LaTeX/ODF/JATS/Docling JSON
+          # backend'leri, uzak kaynak çekme, KServe, üçüncü taraf plugin) muaf. CVE-2026-105747 (METS-GBS
+          # format tespitinde bellek tüketimi) muafiyeti, upload'ın gzip/zip magic'ini reddedip `%PDF-`
+          # öncesinde yalnız BOM/ASCII boşluk kabul etmesine dayanır (backend/app/main.py
+          # `_pdf_signature_ok`); bu kontrol gevşetilirse muafiyet geçersizdir.
           docling_ignores=(
-            PYSEC-2026-4189 PYSEC-2026-4190 PYSEC-2026-4191 PYSEC-2026-4192 PYSEC-2026-4193
-            PYSEC-2026-4194 PYSEC-2026-4195 PYSEC-2026-4196 CVE-2026-105748 CVE-2026-105751
+            CVE-2026-105742 CVE-2026-105743 CVE-2026-105744 CVE-2026-105745 CVE-2026-105746
+            CVE-2026-105747 CVE-2026-105748 CVE-2026-105749 CVE-2026-105750 CVE-2026-105751
           )
           audit=("$RUNNER_TEMP/pip-audit/bin/python" -m pip_audit --progress-spinner off --disable-pip)
           "${audit[@]}" -r backend/requirements-ci.txt

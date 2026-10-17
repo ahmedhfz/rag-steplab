@@ -142,15 +142,24 @@ CI, production npm dependency audit'i ile worker/base ve CI Python lock
 audit'lerini çalıştırır. Python bağımlılıkları `backend/requirements*.in`
 girdilerinden üretilen hash'li `uv` lock'larıdır (`backend/requirements*.txt`);
 Modal image'ları ve CI aynı lock'ları kurar, audit deploy edilen pin'leri denetler. Worker audit'i `docling==2.117.0` için yayımlanan on
-advisory'yi (`ci.yml` içindeki liste) bilinçli olarak muaf tutar: bunlar HTML,
-LaTeX, OpenDocument, METS-GBS, Docling JSON backend'leri, KServe OCR ve plugin
-yükleme yollarını etkiler. Upload `%PDF-` imzası ister ve converter
-`allowed_formats=[PDF]` ile kısıtlıdır. PYSEC-2026-4194 (METS-GBS format tespiti)
-muafiyeti ayrıca upload'ın `%PDF-` imzasını offset 0'da zorunlu kılıp gzip/zip
-magic'ini reddetmesine dayanır; bu kontrol gevşetilirse muafiyet geçersizdir. Düzeltilmiş sürümler (2.132.0 ve
-2.135.0, `docling-ibm-models` 4.x) örnek TR PDF'inin 4. sayfasındaki iki
-paragrafı ham Docling çıktısında düşürdüğünden yükseltme yapılmadı; yeni Docling
-sürümü aynı örnekte içerik kaybetmediği doğrulanınca muafiyet kaldırılır.
+advisory'yi CVE ID'siyle (`ci.yml` içindeki liste) bilinçli olarak muaf tutar.
+Her CVE, aynı açığın `docling` ve `docling-slim` paketleri için ayrı yayımlanan
+PYSEC/GHSA kayıtlarını alias üzerinden kapsar. Bunlar HTML, LaTeX (Tectonic
+TikZ), OpenDocument, METS-GBS ve Docling JSON backend'lerini, uzak kaynak
+çekmeyi (`enable_remote_fetch`, HTML render), KServe OCR'ı ve plugin yüklemeyi
+etkiler. Upload `%PDF-` imzası ister ve converter `allowed_formats=[PDF]` ile
+kısıtlıdır. Worker image'ında `playwright` ve `tectonic` yoktur. Lock'taki tek
+Docling plugin entry point'i ise Docling'in kendi `docling_defaults`'udur.
+CVE-2026-105747 (METS-GBS format tespiti) muafiyeti ayrıca upload'ın gzip/zip
+magic'ini reddedip `%PDF-` öncesinde yalnız en çok 8 bayt BOM/ASCII boşluk kabul
+etmesine dayanır (`_pdf_signature_ok`). Docling tar'ı yalnız gzip olarak
+tespit edilen girdide açar. Bu kontrol gevşetilirse muafiyet geçersizdir.
+Düzeltilmiş sürümler örnek TR PDF'inde regresyon gösterdiği için yükseltme
+yapılmadı. 2.132.0 ve 2.135.0 (`docling-ibm-models` 4.x), 4. sayfadaki iki
+paragrafı ham Docling çıktısında düşürür. 2.140.0 metni kelime düzeyinde korur,
+ama paragrafları cümle ortasından böler ve 4. sayfadaki üç paragrafı birleştirir.
+EN örnekte normalize çıktı birebir aynıdır. Yeni Docling sürümü aynı örnekte
+içerik ve paragraf sınırlarını koruduğu doğrulanınca muafiyet kaldırılır.
 Dependabot npm, Python (`uv` lock'ları) ve SHA ile pinli GitHub Actions için haftalık,
 bounded PR üretir. Repository private ve GitHub Code Scanning etkin olmadığı
 için CodeQL workflow'u bilinçli olarak yoktur; ücretsiz uygunluk doğrulanmadan
