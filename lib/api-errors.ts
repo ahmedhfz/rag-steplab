@@ -26,8 +26,10 @@ function codes(list: string[], resolve: CopyResolver): Record<string, CopyResolv
 
 const COPY_BY_CODE: Record<string, CopyResolver> = {
   // AI model provider (Gemini). `gemini_<action>_failed` is handled as a family below.
-  ...codes(["gemini_invalid_json", "gemini_invalid_rerank", "gemini_invalid_judge", "gemini_embedding_invalid", "embedding_result_invalid", "invalid_generation_metrics"], api("providerInvalidOutput")),
+  ...codes(["gemini_invalid_json", "gemini_invalid_rerank", "gemini_invalid_judge", "gemini_embedding_invalid", "embedding_result_invalid", "invalid_generation_metrics", "invalid_rerank", "citation_invalid"], api("providerInvalidOutput")),
   gemini_output_truncated: api("providerOutputTruncated"),
+  // A quota that renews later than a minute: not "busy", so it must win over the `gemini_*` families.
+  gemini_quota_exhausted: api("providerQuotaExhausted"),
   ...codes(["gemini_not_configured", "gemini_dependency_missing", "gemini_unavailable"], api("providerUnavailable")),
   provider_error: api("providerBusy"),
   // Per-user admission: one expensive run at a time.
@@ -47,17 +49,18 @@ const COPY_BY_CODE: Record<string, CopyResolver> = {
   ...codes(["docling_timeout", "parse_timeout", "document_timeout"], api("parseTimeout")),
   parse_interrupted: api("parseInterrupted"),
   ...codes(["parse_failed", "parse_worker_error"], (copy) => copy.errors.parseFailed),
-  ...codes(["worker_interrupted", "worker_lease_expired", "worker_lease_lost", "worker_lease_missing"], api("runInterrupted")),
-  ...codes(["modal_dispatch_failed", "pipeline_dispatch_failed", "worker_queue_timeout"], api("workerStartFailed")),
+  ...codes(["worker_interrupted", "worker_lease_expired", "worker_lease_lost", "worker_lease_missing", "worker_terminated"], api("runInterrupted")),
+  ...codes(["modal_dispatch_failed", "pipeline_dispatch_failed", "pipeline_dispatch_lost", "worker_queue_timeout"], api("workerStartFailed")),
   ...codes(["docling_unavailable", "ocr_configuration_unavailable", "ocr_runtime_incompatible", "ocr_assets_unavailable"], api("parserUnavailable")),
   parse_poll_timeout: (copy) => copy.parse.pollTimeout,
-  run_poll_timeout: (copy) => copy.retrieval.trackingPaused,
+  run_poll_timeout: api("trackingPaused"),
   // Run outcomes without a more specific cause.
   chunk_run_failed: (copy) => copy.errors.chunkingFailed,
   embedding_run_failed: (copy) => copy.errors.embeddingFailed,
   experiment_failed: (copy) => copy.errors.experimentFailed,
   evaluation_failed: (copy) => copy.errors.evaluationFailed,
   evaluation_cases_failed: api("allCasesFailed"),
+  ...codes(["parse_run_incomplete", "chunk_run_incomplete", "embedding_run_incomplete", "artifact_incomplete"], api("artifactIncomplete")),
   // Service, transport and configuration.
   ...codes(["backend_unavailable", "database_unavailable", "database_not_configured", "storage_not_configured", "internal_error", "persistence_failed", "storage_upload_failed", "storage_delete_failed"], api("serviceUnavailable")),
   request_timeout: api("requestTimeout"),
@@ -74,6 +77,9 @@ const COPY_BY_CODE: Record<string, CopyResolver> = {
   pipeline_name_conflict: api("pipelineNameTaken"),
   pipeline_conflict: (copy) => copy.errors.pipelineConflict,
 };
+
+/** Browser tracking stopped after its deadline; the run itself may still be working. */
+const TRACKING_PAUSED_CODES = new Set(["parse_poll_timeout", "run_poll_timeout"]);
 
 /** Codes created in the browser whose message is already localized copy (lineage guards). */
 const LOCALIZED_CLIENT_CODES = new Set(["incompatible_lineage"]);
@@ -118,4 +124,15 @@ export function describeApiError(copy: AppCopy, error: unknown, fallback?: strin
     : unstructuredServerError ? copy.apiErrors.serviceUnavailable : fallback || copy.apiErrors.generic;
   const rawMessage = problem.message && problem.message !== message ? problem.message : null;
   return { message, technical: code || rawMessage ? { code: code ?? "—", message: rawMessage } : null };
+}
+
+/** The API error code of any caught value, or `null`. */
+export function apiErrorCode(error: unknown): string | null {
+  return toApiErrorLike(error)?.code ?? null;
+}
+
+/** True when browser tracking paused, not the run: show a resume action, never a failure. */
+export function isTrackingPaused(error: unknown): boolean {
+  const code = apiErrorCode(error);
+  return code !== null && TRACKING_PAUSED_CODES.has(code);
 }

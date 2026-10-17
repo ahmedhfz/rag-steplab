@@ -26,6 +26,11 @@ export function formatCount(locale: AppLocale, count: number, forms: CountForms)
   return `${formatNumber(locale, count)} ${category === "one" ? forms.one : forms.other}`;
 }
 
+/** Locale-aware "a and b" list: "100 chunks and 30,000 tokens" (en) / "100 chunk ve 30.000 token" (tr). */
+export function formatList(locale: AppLocale, items: string[]): string {
+  return new Intl.ListFormat(intlLocales[locale], { type: "conjunction" }).format(items);
+}
+
 /** Diagnostic score with fixed precision (metrics default to 2 decimals). */
 export function formatScore(value: number | null | undefined, digits = 2): string {
   return finite(value) ? value.toFixed(digits) : EMPTY;

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -24,12 +24,30 @@ describe("SourceInspector", () => {
     expect(evidence).toHaveTextContent("Kaynak kanıtı");
     expect(evidence).toHaveTextContent("Sayfa 2");
     expect(evidence).not.toHaveTextContent("Citation");
-    expect(await screen.findByRole("alert")).toHaveTextContent("Kaynak PDF açılamadı");
-    expect(screen.queryByText(/internal object storage/)).not.toBeInTheDocument();
+    // The shared error notice names the failure; the raw cause stays under Technical details only.
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Kaynak PDF açılamadı");
+    expect(alert).toHaveAttribute("data-slot", "notice");
+    const details = within(alert).getByTestId("api-error-details");
+    expect(details).not.toHaveAttribute("open");
+    expect(details).toHaveTextContent("internal object storage error");
+    expect(alert.textContent?.replace(details.textContent ?? "", "")).not.toContain("internal object storage");
 
     await user.click(screen.getByRole("button", { name: "Tekrar dene" }));
     await waitFor(() => expect(screen.getByTitle("Kaynak denetleyicisi")).toHaveAttribute("src", "blob:http://localhost/source-pdf#page=2"));
     expect(preview.get).toHaveBeenCalledTimes(2);
+  });
+
+  it("still names a failure that carries no cause, without empty Technical details", async () => {
+    const user = userEvent.setup();
+    preview.get.mockRejectedValueOnce("offline");
+    render(<SourceInspector documentId="doc-1" pageNumbers={[2]} parseResult={null} />);
+
+    await user.click(screen.getByRole("button", { name: "Kaynağı incele" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Kaynak PDF açılamadı.");
+    expect(within(alert).queryByTestId("api-error-details")).not.toBeInTheDocument();
+    expect(within(alert).getByRole("button", { name: "Tekrar dene" })).toBeInTheDocument();
   });
 
   it("names the icon-only trigger and still opens the inspector", async () => {

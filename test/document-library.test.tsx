@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const LONG_NAME = "Karaman_RAG_StepLab_long_filename_for_single_line_select_geometry_validation-2026.pdf";
@@ -50,6 +50,55 @@ describe("Document library layout", () => {
     const mobile = within(screen.getByTestId("document-library-mobile")).getAllByTitle(LONG_NAME)[0];
     expect(mobile.querySelectorAll("wbr").length).toBeGreaterThan(5);
     expect(mobile).toHaveTextContent(LONG_NAME);
+  });
+
+  it("says why the latest parse failed in one clamped line, on the table and on the cards", () => {
+    const failed = { ...documentItem("document-failed", "broken.pdf"), latestParseStatus: "failed", latestParseError: { code: "docling_error", message: "Docling conversion error: page tree missing." } };
+    const unknown = { ...documentItem("document-expired", "expired.pdf"), latestParseStatus: "failed", latestParseError: { code: "expired", message: "Run lease expired." } };
+    pipeline.value = {
+      documents: [failed, unknown, documentItem("document-ok", "fine.pdf")],
+      activeDocumentId: "document-ok",
+      persistenceStatus: "available",
+      persistenceError: null,
+      selectPersistedDocument: vi.fn(),
+      deletePersistedDocument: vi.fn(),
+    };
+    render(<PreferencesProvider><DocumentLibrary /></PreferencesProvider>);
+
+    const reason = "The parser couldn't read this PDF. It may be damaged, password-protected or have no readable content.";
+    const [failedRow, unknownRow, okRow] = within(screen.getByTestId("document-library-table")).getAllByTestId("document-library-row");
+    const line = within(failedRow).getByTestId("document-library-parse-failure");
+    expect(line).toHaveTextContent(reason);
+    expect(line).toHaveClass("truncate");
+    expect(line).toHaveAttribute("title", reason);
+    expect(line).not.toHaveTextContent("docling_error");
+    expect(within(failedRow).getByRole("button", { name: "Select document: broken.pdf" })).toHaveAccessibleDescription(reason);
+    // An unmapped code falls back to the parse failure sentence, never the raw code.
+    expect(within(unknownRow).getByTestId("document-library-parse-failure")).toHaveTextContent("The document could not be parsed. Try again.");
+    expect(within(okRow).queryByTestId("document-library-parse-failure")).not.toBeInTheDocument();
+
+    const [failedCard] = within(screen.getByTestId("document-library-mobile")).getAllByTestId("document-library-mobile-item");
+    const cardLine = within(failedCard).getByTestId("document-library-parse-failure");
+    expect(cardLine).toHaveTextContent(reason);
+    expect(cardLine).toHaveClass("line-clamp-2");
+  });
+
+  it("offers Try again when the document service is unavailable", () => {
+    const refreshPersistence = vi.fn(async () => undefined);
+    pipeline.value = {
+      documents: [],
+      activeDocumentId: null,
+      persistenceStatus: "unavailable",
+      persistenceError: { code: "backend_unavailable", message: "Service down." },
+      selectPersistedDocument: vi.fn(),
+      deletePersistedDocument: vi.fn(),
+      refreshPersistence,
+    };
+    render(<PreferencesProvider><DocumentLibrary /></PreferencesProvider>);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("The document service is unavailable.");
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(refreshPersistence).toHaveBeenCalledTimes(1);
   });
 
   it("states the library size with a correct plural and links the next step", () => {

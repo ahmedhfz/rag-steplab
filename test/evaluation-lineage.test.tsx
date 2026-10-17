@@ -3,10 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const pipeline = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
+const toastMock = vi.hoisted(() => Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }));
 
 vi.mock("@/components/document-pipeline-provider", () => ({
   useDocumentPipeline: () => pipeline.value,
 }));
+vi.mock("@/components/ui/toast", () => ({ toast: toastMock }));
 vi.mock("@/lib/rag-api", () => ({ getDocumentSourcePreviewUrl: vi.fn().mockRejectedValue(new Error("not needed")) }));
 
 import { EvaluationScreen } from "@/components/evaluation-screen";
@@ -93,6 +95,7 @@ function renderEvaluation() {
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  vi.clearAllMocks();
 });
 
 describe("Evaluation lineage and dataset form", () => {
@@ -255,8 +258,14 @@ describe("Evaluation results and comparison", () => {
     expect(cases[0]).toHaveTextContent("Word overlap 0.80 · Citation 1.00");
     expect(cases[1]).toHaveAttribute("data-state", "notMeasured");
     expect(within(cases[1]).getByTitle("Not measured")).toBeInTheDocument();
-    expect(screen.getByTestId("evaluation-failed-cases")).toHaveTextContent("Which value failed?");
-    expect(screen.getByTestId("evaluation-failed-cases")).toHaveTextContent("citation_invalid");
+    const failedCases = screen.getByTestId("evaluation-failed-cases");
+    expect(failedCases).toHaveTextContent("Which value failed?");
+    // The cause in words once; the code appears only inside its Technical details.
+    expect(within(failedCases).getByTestId("evaluation-failed-case-cause")).toHaveTextContent("The AI model returned an incomplete response. Try again.");
+    const details = within(failedCases).getAllByTestId("api-error-details");
+    expect(details).toHaveLength(1);
+    expect(details[0]).toHaveTextContent("Code: citation_invalid");
+    expect(failedCases.textContent?.match(/citation_invalid/g)).toHaveLength(1);
 
     await user.click(screen.getByRole("tab", { name: "Compare" }));
     // Fewer than two selected runs: the history is open so runs can be picked.
@@ -288,6 +297,66 @@ describe("Evaluation results and comparison", () => {
     expect(context).toHaveTextContent("Settings differ");
     expect(within(context).getByRole("table", { name: "Changed settings" })).toHaveTextContent("Retrieval modeHybridDense");
     expect(context).not.toHaveTextContent("RUN A:");
+  });
+
+  it("shows a browser poll timeout as paused tracking with one Resume tracking action", async () => {
+    const user = userEvent.setup();
+    const running = { ...evaluationRun("evaluation-1"), status: "running" as const, caseResults: [] };
+    pipeline.value = value({ evaluationDatasets: [dataset], evaluationStatus: "error", evaluationRun: running, evaluationHistory: [running], evaluationError: { code: "run_poll_timeout", message: "Browser tracking paused after 15 minutes." } });
+    renderEvaluation();
+
+    const paused = screen.getByTestId("evaluation-error");
+    expect(paused).toHaveAttribute("data-tone", "warning");
+    expect(paused).toHaveAttribute("data-error-kind", "tracking-paused");
+    expect(paused).toHaveTextContent("The run may still be working");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Resume tracking" })).toHaveLength(1);
+    await user.click(within(paused).getByRole("button", { name: "Resume tracking" }));
+    expect(pipeline.value.resumeRunTracking).toHaveBeenCalledWith("evaluation");
+  });
+
+  it("keeps Resume tracking for an in-flight run without an error", () => {
+    const running = { ...evaluationRun("evaluation-1"), status: "running" as const, caseResults: [] };
+    pipeline.value = value({ evaluationDatasets: [dataset], evaluationStatus: "ready", evaluationRun: running, evaluationHistory: [running] });
+    renderEvaluation();
+    expect(screen.queryByTestId("evaluation-error")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resume tracking" })).toBeInTheDocument();
+  });
+
+  it("announces a tracked run that stops with its localized cause", () => {
+    const running = { ...evaluationRun("evaluation-1"), status: "running" as const, caseResults: [] };
+    pipeline.value = value({ evaluationDatasets: [dataset], evaluationStatus: "processing", evaluationRun: running, evaluationHistory: [running] });
+    const view = renderEvaluation();
+    const failed = { ...evaluationRun("evaluation-1"), status: "failed" as const, error: { code: "evaluation_cases_failed", message: "All cases failed." } };
+    pipeline.value = { ...pipeline.value, evaluationStatus: "error", evaluationRun: failed, evaluationHistory: [failed], evaluationError: failed.error };
+    view.rerender(<PreferencesProvider><EvaluationScreen /></PreferencesProvider>);
+
+    expect(toastMock.error).toHaveBeenCalledTimes(1);
+    expect(toastMock.error).toHaveBeenCalledWith("Evaluation #1 stopped", { description: "None of the questions could be evaluated. Try again shortly." });
+  });
+
+  it("shows a failed dataset create on the Dataset tab, and other evaluation errors only on Results", async () => {
+    const user = userEvent.setup();
+    const createDataset = vi.fn(() => {
+      pipeline.value = { ...pipeline.value, evaluationStatus: "error", evaluationError: { code: "evaluation_dataset_too_large", message: "Too many cases." } };
+      return Promise.resolve();
+    });
+    pipeline.value = value({ createDataset });
+    const view = renderEvaluation();
+    await user.type(screen.getByLabelText("Dataset name"), "Golden set");
+    await user.type(screen.getByLabelText("Golden question"), "What is the heading?");
+    await user.click(screen.getByRole("button", { name: /Choose sources/ }));
+    await user.click(within(screen.getByRole("list", { name: "Parsed source elements" })).getByRole("button", { name: /Current heading/ }));
+    await user.click(screen.getByRole("button", { name: "Create dataset" }));
+    view.rerender(<PreferencesProvider><EvaluationScreen /></PreferencesProvider>);
+    expect(screen.getByRole("alert")).toHaveTextContent("This dataset has too many questions.");
+
+    // A history load failure is not the form's error.
+    pipeline.value = { ...pipeline.value, evaluationError: { code: "unknown", message: "Evaluation history could not be loaded." } };
+    view.rerender(<PreferencesProvider><EvaluationScreen /></PreferencesProvider>);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Results" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Evaluation history could not be loaded.");
   });
 
   it("names the evaluation progress bar", () => {

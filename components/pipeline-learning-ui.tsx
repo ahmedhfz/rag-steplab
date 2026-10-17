@@ -27,6 +27,12 @@ export function DisabledReason({ id, children }: { id: string; children: React.R
 export type RunKind = "parse" | "chunk" | "embedding";
 
 const historyTestId: Record<RunKind, string> = { parse: "parse-history", chunk: "chunk-history", embedding: "embedding-history" };
+/** What a failed run of this stage means when its code has no copy of its own. */
+const runFailedCopy: Record<RunKind, (copy: AppCopy) => string> = {
+  parse: (copy) => copy.errors.parseFailed,
+  chunk: (copy) => copy.errors.chunkingFailed,
+  embedding: (copy) => copy.errors.embeddingFailed,
+};
 
 /** Opens a stage's run history and brings it into view (the incompatible-lineage way out). */
 export function revealRunHistory(kind: RunKind) {
@@ -216,7 +222,10 @@ export function RunHistory({ kind, runs, selectedId, inspectedId, defaultId, has
           const isSelected = run.id === selectedId;
           const isViewed = run.id === viewedId;
           const meta = runMeta(copy, preferences.locale, kind, run);
-          const runError = describeApiError(copy, run.error);
+          const runError = describeApiError(copy, run.error, runFailedCopy[kind](copy));
+          // The "can't be used" badge says it in words; the raw reason of a completed run stays under
+          // Technical details. Failed and in-flight runs are "not completed", which their badge says.
+          const incompatibleReason = run.status === "completed" && !run.isCompatible && run.compatibilityReason ? run.compatibilityReason : null;
           const problem = run.status === "queued" || run.status === "running"
             ? <StatusBadge status="processing">{copy.runs.running}</StatusBadge>
             : run.status === "failed"
@@ -236,14 +245,15 @@ export function RunHistory({ kind, runs, selectedId, inspectedId, defaultId, has
                   {problem}
                 </div>
                 {meta ? <p className="mt-1 text-sm text-tertiary tabular-nums">{meta}</p> : null}
-                {runError ? <p className="mt-1 text-sm text-error-primary">{runError.message}</p> : null}
-                {!run.isCompatible && run.compatibilityReason ? <p className="mt-1 text-sm text-warning-primary">{run.compatibilityReason}</p> : null}
+                {/* The badge carries the colour; the sentence names the cause. One Technical details per
+                    row holds the run ID and the raw code/message, so the code is never shown twice. */}
+                {runError ? <p className="mt-1 text-sm text-tertiary" data-testid="run-history-error">{runError.message}</p> : null}
                 <TechnicalDetails className="mt-1.5" summaryClassName="text-xs">
                   <dl className="grid gap-1 text-xs text-tertiary">
                     {/* Parse rows already show the duration in their meta line. */}
                     {kind !== "parse" && run.timing.durationMs != null ? <div className="flex gap-2"><dt>{copy.runs.duration}</dt><dd className="text-secondary tabular-nums">{formatMs(preferences.locale, run.timing.durationMs)}</dd></div> : null}
                     <div className="flex min-w-0 gap-2"><dt className="shrink-0">{copy.runs.runId}</dt><dd className="min-w-0 font-mono text-secondary wrap-anywhere">{run.id}</dd></div>
-                    {runError?.technical ? <div className="flex min-w-0 gap-2"><dt className="shrink-0">{copy.common.errorCode}</dt><dd className="min-w-0 font-mono text-secondary wrap-anywhere">{runError.technical.code}</dd></div> : null}
+                    {runError?.technical || incompatibleReason ? <div className="flex min-w-0 gap-2"><dt className="shrink-0">{copy.common.errorCode}</dt><dd className="min-w-0 font-mono text-secondary wrap-anywhere">{runError?.technical?.code ?? incompatibleReason}</dd></div> : null}
                     {runError?.technical?.message ? <div className="flex min-w-0 gap-2"><dt className="shrink-0">{copy.common.errorMessage}</dt><dd className="min-w-0 text-secondary break-words">{runError.technical.message}</dd></div> : null}
                   </dl>
                 </TechnicalDetails>

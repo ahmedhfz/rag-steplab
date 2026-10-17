@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeApiError } from "@/lib/api-errors";
+import { apiErrorCode, describeApiError, isTrackingPaused } from "@/lib/api-errors";
 import { UI_COPY } from "@/lib/copy";
 import { DocumentApiError } from "@/lib/document-api";
 
@@ -54,9 +54,34 @@ describe("describeApiError", () => {
     ["experiment_not_found", "notFound"],
     ["chunks_required", "missingUpstream"],
     ["evaluation_cases_failed", "allCasesFailed"],
+    ["worker_terminated", "runInterrupted"],
+    ["pipeline_dispatch_lost", "workerStartFailed"],
+    ["citation_invalid", "providerInvalidOutput"],
+    ["invalid_rerank", "providerInvalidOutput"],
+    ["artifact_incomplete", "artifactIncomplete"],
+    ["embedding_run_incomplete", "artifactIncomplete"],
+    ["run_poll_timeout", "trackingPaused"],
   ] as const)("maps %s to its own localized sentence", (code, key) => {
     expect(describeApiError(en, { code, message: "raw backend text" })).toEqual({ message: en.apiErrors[key], technical: { code, message: "raw backend text" } });
     expect(describeApiError(tr, { code, message: "raw backend text" })?.message).toBe(tr.apiErrors[key]);
+  });
+
+  it("says an exhausted provider quota renews later instead of calling the provider busy", () => {
+    const error = new DocumentApiError("gemini_quota_exhausted", "Gemini embedding quota exhausted (provider 429 RESOURCE_EXHAUSTED).", 503);
+    // An explicit code wins over the `gemini_*` families ("busy, try again in a minute").
+    expect(describeApiError(en, error)?.message).toBe(en.apiErrors.providerQuotaExhausted);
+    expect(describeApiError(tr, error)?.message).toBe(tr.apiErrors.providerQuotaExhausted);
+    expect(en.apiErrors.providerQuotaExhausted).not.toMatch(/minute/);
+    expect(describeApiError(en, error)?.technical).toEqual({ code: "gemini_quota_exhausted", message: error.message });
+  });
+
+  it("recognizes paused browser tracking as distinct from a failed run", () => {
+    expect(isTrackingPaused(new DocumentApiError("run_poll_timeout", "Tracking paused."))).toBe(true);
+    expect(isTrackingPaused({ code: "parse_poll_timeout", message: "x" })).toBe(true);
+    expect(isTrackingPaused(new DocumentApiError("gemini_embedding_failed", "x"))).toBe(false);
+    expect(isTrackingPaused(null)).toBe(false);
+    expect(apiErrorCode({ code: "artifact_incomplete", message: "x" })).toBe("artifact_incomplete");
+    expect(apiErrorCode("boom")).toBeNull();
   });
 
   it("reuses existing copy for upload rejections and stage failures", () => {
