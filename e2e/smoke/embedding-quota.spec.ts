@@ -17,8 +17,10 @@ test("Büyük doküman embedding kotası için süre uyarısı ve tükenmiş kot
   await page.goto("/embeddings");
   await selectSeededDocument(page);
   const quotaNotice = page.getByTestId("embedding-quota-notice");
-  await expect(quotaNotice).toContainText("Embedding takes about 2 minutes");
-  await expect(quotaNotice).toContainText("166 chunks to embed, and the AI provider accepts up to 100 chunks a minute.");
+  // The seeded chunk run has no detail loaded here, so tokens use the 512-token chunk size as an upper bound:
+  // 166 x (512 + 12) = 86,984 tokens -> 3 minutes at 30,000 tokens/min, longer than 2 minutes by inputs.
+  await expect(quotaNotice).toContainText("Embedding takes about 3 minutes");
+  await expect(quotaNotice).toContainText("166 chunks to embed, and the AI provider accepts at most 100 chunks and 30,000 tokens a minute.");
   await expectNoHorizontalOverflow(page, "embeddings quota notice desktop");
   await testInfo.attach("embedding-quota-notice-desktop", { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
 

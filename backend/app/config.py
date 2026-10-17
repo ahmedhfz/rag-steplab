@@ -110,10 +110,11 @@ class Settings:
     gemini_text_timeout_seconds: int = DEFAULT_GEMINI_TEXT_TIMEOUT_SECONDS
     # Retries per provider call; a fallback model switch uses this same budget.
     gemini_max_retries: int = 2
-    # The provider's embedding quota in inputs per minute (Gemini free tier:
-    # 100; every chunk of a batch counts). Only shown to the UI so it can
-    # estimate how long a large document takes; 0 means unknown.
+    # The provider's embedding quota per minute (Gemini free tier: 100 inputs,
+    # every chunk of a batch counts, and 30K input tokens). Only shown to the UI
+    # so it can estimate how long a large document takes; 0 means unknown.
     gemini_embedding_inputs_per_minute: int = 100
+    gemini_embedding_tokens_per_minute: int = 30_000
     cors_origins: tuple[str, ...] = ("http://localhost:3000", "http://127.0.0.1:3000")
     cors_origin_regex: str | None = None
     write_enabled: bool = True
@@ -279,6 +280,7 @@ def get_settings() -> Settings:
         ),
         gemini_max_retries=_int("GEMINI_MAX_RETRIES", 2),
         gemini_embedding_inputs_per_minute=max(0, _int("GEMINI_EMBEDDING_INPUTS_PER_MINUTE", 100)),
+        gemini_embedding_tokens_per_minute=max(0, _int("GEMINI_EMBEDDING_TOKENS_PER_MINUTE", 30_000)),
         cors_origins=origins,
         cors_origin_regex=os.getenv("CORS_ORIGIN_REGEX") or None,
         write_enabled=_bool("WRITE_ENABLED", True),

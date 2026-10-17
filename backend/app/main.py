@@ -631,6 +631,7 @@ def capabilities(_: CurrentUser = Depends(get_current_user)) -> CapabilitiesResp
             "maxBenchmarkEvaluationCases": MAX_BENCHMARK_EVALUATION_CASES,
             "maxRerankCandidates": 200,
             "embeddingInputsPerMinute": current_settings.gemini_embedding_inputs_per_minute,
+            "embeddingTokensPerMinute": current_settings.gemini_embedding_tokens_per_minute,
         },
     )
 

@@ -530,7 +530,7 @@ export async function installSeededApi(page: Page, options: SeededApiOptions = {
       return;
     }
 
-    if (pathname === "/capabilities") return json(route, { embeddingModel: embedding.model, embeddingDimensions: 768, generationModel: experiment.stageResults.generation.model, rerankModel: "gemini-flash-lite-latest", judgeModel: "gemini-flash-lite-latest", embeddingFormatVersion: embedding.embeddingFormatVersion, limits: { maxTopK: 20, embeddingInputsPerMinute: 100 } });
+    if (pathname === "/capabilities") return json(route, { embeddingModel: embedding.model, embeddingDimensions: 768, generationModel: experiment.stageResults.generation.model, rerankModel: "gemini-flash-lite-latest", judgeModel: "gemini-flash-lite-latest", embeddingFormatVersion: embedding.embeddingFormatVersion, limits: { maxTopK: 20, embeddingInputsPerMinute: 100, embeddingTokensPerMinute: 30000 } });
     if (options.sampleUpload) {
       if (pathname === "/documents" && method === "GET") return json(route, { items: uploadedDocuments });
       if (pathname === "/documents" && method === "POST") {

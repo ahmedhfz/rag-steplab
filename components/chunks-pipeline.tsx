@@ -31,7 +31,7 @@ import { type AppCopy, interpolate, runName, useCopy } from "@/lib/copy";
 import type { ChunkItem, ChunkRun, ChunkStrategy, EmbeddingRun } from "@/lib/rag-api-types";
 import { getPipelineAvailability } from "@/lib/blockers";
 import { splitChunkText } from "@/lib/chunk-text";
-import { formatCount, formatMs, formatNumber } from "@/lib/format";
+import { formatCount, formatList, formatMs, formatNumber } from "@/lib/format";
 import { chunkFormConfigFromRun, chunkStageState, completedCompatibleRun, type ChunkStageState } from "@/lib/pipeline-lineage";
 import { cn } from "@/lib/utils";
 
@@ -434,6 +434,11 @@ export function ChunksPipeline({ showAction = true, stage, onFormStateChange }: 
   const embeddingUpToDate = Boolean(selectedEmbeddingSummary && completedCompatibleRun(selectedEmbeddingSummary) && selectedEmbeddingSummary.upstream.chunkRunId === selectedChunkRunId);
   // Embeddings are always built from the selected chunk run, never an inspected one.
   const selectedChunkCount = selectedChunkRun?.chunkCount ?? selectedChunkSummary?.chunkCount ?? null;
+  // Its tokens for the quota estimate: exact once the chunk detail is loaded, otherwise the configured
+  // chunk size as an upper bound, so the estimate may run long but never short.
+  const selectedChunkTokens = selectedChunkRun?.id === selectedChunkRunId && selectedChunkRun.chunks.length > 0
+    ? selectedChunkRun.chunks.reduce((sum, chunk) => sum + chunk.tokenCount, 0)
+    : selectedChunkCount !== null ? selectedChunkCount * initialForm.config.chunkSizeTokens : null;
   // Source evidence is only resolvable against the parse run the viewed chunks came from.
   const chunkParseResult = chunkRun && selectedParseResult?.parseRunId === chunkRun.parseRunId ? selectedParseResult : null;
   const chunks = chunkRun?.chunks ?? [];
@@ -466,8 +471,10 @@ export function ChunksPipeline({ showAction = true, stage, onFormStateChange }: 
       <EmbeddingsStage
         canEmbed={canEmbed}
         chunkCount={selectedChunkCount}
+        chunkTokens={selectedChunkTokens}
         error={embeddingError}
         inputsPerMinute={capabilities?.limits.embeddingInputsPerMinute ?? null}
+        tokensPerMinute={capabilities?.limits.embeddingTokensPerMinute ?? null}
         model={embeddingRun?.model || capabilities?.embeddingModel || null}
         onCreate={() => void handleEmbedding()}
         onResume={() => void resumeEmbeddingTracking()}
@@ -574,20 +581,31 @@ export function ChunksPipeline({ showAction = true, stage, onFormStateChange }: 
   );
 }
 
+/** Tokens the "title: … | text: …" embedding format adds to every chunk. */
+const EMBEDDING_FORMAT_TOKENS = 12;
+
 /**
- * Minutes a run of `chunkCount` inputs needs at the provider's per-minute embedding quota, or null
- * when it fits in one window (or the quota is unknown). Every chunk counts as one input.
+ * Minutes a run needs at the provider's per-minute embedding quota, whichever limit fills first:
+ * inputs (every chunk counts as one) or input tokens. Null when it fits in one window or both
+ * limits are unknown.
  */
-function embeddingQuotaMinutes(chunkCount: number | null, inputsPerMinute: number | null | undefined): number | null {
-  if (chunkCount === null || !inputsPerMinute || inputsPerMinute <= 0 || chunkCount <= inputsPerMinute) return null;
-  return Math.ceil(chunkCount / inputsPerMinute);
+function embeddingQuotaMinutes(chunkCount: number | null, chunkTokens: number | null, inputsPerMinute: number | null, tokensPerMinute: number | null): number | null {
+  if (chunkCount === null) return null;
+  const byInputs = inputsPerMinute && inputsPerMinute > 0 ? chunkCount / inputsPerMinute : 0;
+  const byTokens = tokensPerMinute && tokensPerMinute > 0 && chunkTokens !== null
+    ? (chunkTokens + chunkCount * EMBEDDING_FORMAT_TOKENS) / tokensPerMinute
+    : 0;
+  const minutes = Math.max(byInputs, byTokens);
+  return minutes > 1 ? Math.ceil(minutes) : null;
 }
 
-function EmbeddingsStage({ run, status, chunkCount, inputsPerMinute, sourceRunNumber, sourceChunkRuns, selectedEmbeddingRunId, model, canEmbed, upToDate, blocker, error, reused, showAction, onCreate, onResume }: {
+function EmbeddingsStage({ run, status, chunkCount, chunkTokens, inputsPerMinute, tokensPerMinute, sourceRunNumber, sourceChunkRuns, selectedEmbeddingRunId, model, canEmbed, upToDate, blocker, error, reused, showAction, onCreate, onResume }: {
   run: EmbeddingRun | null;
   status: string;
   chunkCount: number | null;
+  chunkTokens: number | null;
   inputsPerMinute: number | null;
+  tokensPerMinute: number | null;
   sourceRunNumber: number | null | undefined;
   sourceChunkRuns: ReadonlyArray<{ id: string; runNumber?: number | null }>;
   selectedEmbeddingRunId: string | null;
@@ -607,12 +625,16 @@ function EmbeddingsStage({ run, status, chunkCount, inputsPerMinute, sourceRunNu
   const labels = copy.embeddings;
   // A paused poll keeps the run "processing" on the server, but nothing is being tracked: no spinner.
   const processing = status === "processing" && !isTrackingPaused(error);
-  const quotaMinutes = embeddingQuotaMinutes(chunkCount, inputsPerMinute);
-  const quotaEstimate = quotaMinutes !== null && chunkCount !== null && inputsPerMinute
+  const quotaMinutes = embeddingQuotaMinutes(chunkCount, chunkTokens, inputsPerMinute, tokensPerMinute);
+  const quotaLimits = [
+    inputsPerMinute && inputsPerMinute > 0 ? formatCount(locale, inputsPerMinute, copy.units.chunk) : null,
+    tokensPerMinute && tokensPerMinute > 0 ? formatCount(locale, tokensPerMinute, copy.units.token) : null,
+  ].filter((value): value is string => value !== null);
+  const quotaEstimate = quotaMinutes !== null && chunkCount !== null
     ? {
       chunks: formatCount(locale, chunkCount, copy.units.chunk),
       duration: formatCount(locale, quotaMinutes, copy.units.minute),
-      rate: formatCount(locale, inputsPerMinute, copy.units.chunk),
+      limit: formatList(locale, quotaLimits),
     }
     : null;
   const progressLabel = quotaEstimate ? interpolate(labels.progressEstimate, quotaEstimate) : labels.progress;

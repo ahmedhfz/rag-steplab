@@ -19,7 +19,7 @@ import { UI_COPY } from "@/lib/copy";
 
 const en = UI_COPY.en;
 
-function embeddingsPipeline({ chunkCount = 166, inputsPerMinute = 100 as number | null, ...overrides }: Record<string, unknown> & { chunkCount?: number; inputsPerMinute?: number | null } = {}) {
+function embeddingsPipeline({ chunkCount = 166, inputsPerMinute = 100 as number | null, tokensPerMinute = null as number | null, ...overrides }: Record<string, unknown> & { chunkCount?: number; inputsPerMinute?: number | null; tokensPerMinute?: number | null } = {}) {
   return {
     activeDocument: {
       id: "document-1",
@@ -31,7 +31,13 @@ function embeddingsPipeline({ chunkCount = 166, inputsPerMinute = 100 as number 
     selectedChunkRunId: "chunk-1",
     selectedEmbeddingRunId: null,
     parseResult: null,
-    capabilities: { embeddingModel: "gemini-embedding-2", limits: inputsPerMinute === null ? {} : { embeddingInputsPerMinute: inputsPerMinute } },
+    capabilities: {
+      embeddingModel: "gemini-embedding-2",
+      limits: {
+        ...(inputsPerMinute === null ? {} : { embeddingInputsPerMinute: inputsPerMinute }),
+        ...(tokensPerMinute === null ? {} : { embeddingTokensPerMinute: tokensPerMinute }),
+      },
+    },
     persistenceStatus: "available",
     chunkStatus: "completed",
     chunkRun: null,
@@ -67,10 +73,29 @@ describe("embedding quota and error states", () => {
 
     const notice = screen.getByTestId("embedding-quota-notice");
     expect(notice).toHaveTextContent("Embedding takes about 2 minutes");
-    expect(notice).toHaveTextContent("166 chunks to embed, and the AI provider accepts up to 100 chunks a minute.");
+    expect(notice).toHaveTextContent("166 chunks to embed, and the AI provider accepts at most 100 chunks a minute.");
     expect(notice).toHaveTextContent("you can leave this page");
     // Information, not a failure: it must not be announced as an alert.
     expect(notice).toHaveAttribute("role", "status");
+  });
+
+  it("uses the token limit when it fills first, with the chunk size as an upper bound before the detail loads", () => {
+    // 166 x (512 default chunk size + 12 format tokens) = 86,984 tokens: 3 minutes at 30,000/min.
+    pipeline.value = embeddingsPipeline({ tokensPerMinute: 30_000 });
+    renderEmbeddings();
+
+    const notice = screen.getByTestId("embedding-quota-notice");
+    expect(notice).toHaveTextContent("Embedding takes about 3 minutes");
+    expect(notice).toHaveTextContent("accepts at most 100 chunks and 30,000 tokens a minute.");
+  });
+
+  it("uses the exact chunk tokens once the chunk detail is loaded", () => {
+    // 166 short chunks (44 tokens each) stay under the token limit: the input limit decides.
+    const chunks = Array.from({ length: 166 }, (_, index) => ({ id: `chunk-item-${index}`, ordinal: index, text: "x", tokenCount: 44 }));
+    pipeline.value = embeddingsPipeline({ tokensPerMinute: 30_000, selectedChunkRun: { id: "chunk-1", chunkCount: 166, chunks } });
+    renderEmbeddings();
+
+    expect(screen.getByTestId("embedding-quota-notice")).toHaveTextContent("Embedding takes about 2 minutes");
   });
 
   it.each([
