@@ -410,13 +410,17 @@ def test_sweeper_reconciles_runs_that_were_never_dispatched(monkeypatch, hosted)
 
 
 def test_batch_lease_covers_the_full_provider_retry_envelope():
-    from app.config import Settings, embedding_batch_lease_seconds
-    from app.gemini import MAX_RETRY_DELAY_SECONDS
+    from app.config import Settings, embedding_batch_lease_seconds, pipeline_lease_duration_seconds
+    from app.gemini import EMBEDDING_MAX_RETRY_DELAY_SECONDS
 
-    settings = Settings(gemini_timeout_seconds=60, gemini_max_retries=2, pipeline_lease_grace_seconds=120)
-    attempts = settings.gemini_max_retries + 1
-    worst_case = attempts * settings.gemini_timeout_seconds + (attempts - 1) * MAX_RETRY_DELAY_SECONDS
-    assert embedding_batch_lease_seconds(settings) >= worst_case + settings.pipeline_lease_grace_seconds
+    for max_retries in (0, 2):
+        settings = Settings(gemini_timeout_seconds=60, gemini_max_retries=max_retries, pipeline_lease_grace_seconds=120)
+        attempts = settings.gemini_max_retries + 1
+        # An embedding call may wait out a provider quota window between attempts.
+        worst_case = attempts * settings.gemini_timeout_seconds + (attempts - 1) * EMBEDDING_MAX_RETRY_DELAY_SECONDS
+        assert embedding_batch_lease_seconds(settings) >= worst_case + settings.pipeline_lease_grace_seconds
+        # An experiment's query embedding runs under the experiment lease.
+        assert pipeline_lease_duration_seconds(settings) >= worst_case + settings.pipeline_lease_grace_seconds
 
 
 def test_queued_claims_take_their_lease_expiry_from_the_repository_clock(monkeypatch):

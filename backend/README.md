@@ -189,8 +189,19 @@ devreden çıkarır. Embedding'de fallback yoktur (farklı vektör uzayı). Fall
 çıktısı `configuredModel` yanında `effectiveModel` ve `fallbackModel` ile
 kaydedilir, cacheable değildir ve yapılandırılmış modelin sonucu olarak yeniden
 kullanılmaz; evaluation `judgeModel` alanı skoru gerçekten üreten modeli adlandırır.
-Başarısız run'lar `pipeline_run_failed` log'unda hata kodu, neden tipi, sağlayıcının
-sayısal HTTP kodu ve durum token'ı (`UNAVAILABLE` gibi) ve denenen modellerle görünür.
+Kota hatası (429) aynı modelde, sağlayıcının bildirdiği süre (`Retry-After` header'ı
+ya da Gemini'nin gövdede gönderdiği `RetryInfo.retryDelay`) kadar beklenerek yeniden
+denenir: text çağrılarında en fazla 20 sn, embedding çağrılarında dakikalık kota
+penceresi için en fazla 65 sn. Gemini Free tier embedding kotası batch'teki her
+input'u ayrı istek sayar (`gemini-embedding-2` için dakikada 100 input); büyük
+dokümanlar bu yüzden pencere başına ~96 chunk ilerler. Bildirilen süre bu sınırı
+aşarsa (ör. günlük kota) çağrı beklemeden başarısız olur.
+Her başarısız sağlayıcı isteği `gemini_call_failed` log'unda HTTP kodu, durum
+token'ı (`RESOURCE_EXHAUSTED` gibi), hata sınıfı, quota ID'si ve bekleme süresiyle;
+başarısız run'lar `pipeline_run_failed` log'unda hata kodu, neden tipi, sağlayıcının
+sayısal HTTP kodu ve durum token'ı ve denenen modellerle görünür. Modal log'ları kısa
+süre saklandığı için run'ın `error_message` alanı da sağlayıcı kodunu ve durum
+token'ını taşır (`Gemini embedding failed (provider 429 RESOURCE_EXHAUSTED).`).
 Neden mesajı serbest metin olduğu için (model çıktısı, prompt veya doküman metni
 içerebilir) loglanmaz.
 
@@ -272,8 +283,8 @@ başlamamış run'lar (`pipeline_worker` kuyruğunda diğer kullanıcıların i�
 bekleyenler) execution lease'iyle değil `PIPELINE_QUEUE_TIMEOUT_SECONDS` (varsayılan
 6 sa) ile sınırlanır; ölü kuyruk girdisi Modal call durumu üzerinden ayrıca yakalanır.
 Lease worker başladığında başlar ve her sağlayıcı batch'inden önce, deneme başına
-istek timeout'u + istemcinin en fazla 20 sn backoff'u üzerinden hesaplanan batch
-bütçesiyle yenilenir. Hiç dispatch edilmemiş run'ları da sweeper lease'e göre kapatır.
+istek timeout'u + embedding istemcisinin en fazla 65 sn kota beklemesi üzerinden
+hesaplanan batch bütçesiyle yenilenir. Hiç dispatch edilmemiş run'ları da sweeper lease'e göre kapatır.
 Experiment/evaluation dahil tüm claim lease'leri DB saatiyle hesaplanır. Chunk lease'i API isteği bütçesine (300 sn + tolerans)
 bağlıdır. Lease süreleri ve süre dolumu PostgreSQL `now()` ile hesaplanır.
 Modal sert ölümü (OOM, timeout, preemption) polling'de ve yeni iş kabulünden önce

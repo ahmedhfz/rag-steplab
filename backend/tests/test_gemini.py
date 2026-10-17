@@ -169,6 +169,125 @@ def test_quota_error_honours_retry_after(monkeypatch):
     assert sleeps == [7.0]
 
 
+_PROVIDER_MESSAGE = "You exceeded your current quota. Echo of document text: secret chunk"
+_QUOTA_ID = "EmbedContentRequestsPerMinutePerUserPerProjectPerModel-FreeTier"
+
+
+def _gemini_quota_error(retry_delay: str):
+    """The 429 Gemini returned in production-shaped repro: no Retry-After header, RetryInfo in the body."""
+
+    from google.genai import errors
+
+    return errors.ClientError(
+        429,
+        {
+            "error": {
+                "code": 429,
+                "message": _PROVIDER_MESSAGE,
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                        "violations": [
+                            {
+                                "quotaMetric": "generativelanguage.googleapis.com/embed_content_free_tier_requests",
+                                "quotaId": _QUOTA_ID,
+                                "quotaValue": "100",
+                            }
+                        ],
+                    },
+                    {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry_delay},
+                ],
+            }
+        },
+    )
+
+
+def _embedding_service(outcomes, *, sleeps, monkeypatch):
+    monkeypatch.setattr("app.gemini.time.sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr("app.gemini.random.uniform", lambda _low, _high: 0.0)
+    calls = []
+
+    class Models:
+        def embed_content(self, *, model, contents, config):
+            calls.append(len(contents))
+            outcome = next(outcomes)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return SimpleNamespace(embeddings=[SimpleNamespace(values=[1.0, 0.0, 0.0]) for _ in contents])
+
+    service = GeminiService(
+        Settings(gemini_embedding_dimensions=3, gemini_max_retries=2),
+        client=SimpleNamespace(models=Models()),
+    )
+    return service, calls
+
+
+def test_embedding_quota_error_waits_the_window_named_in_the_error_body(monkeypatch):
+    sleeps = []
+    service, calls = _embedding_service(iter([_gemini_quota_error("58s"), "ok"]), sleeps=sleeps, monkeypatch=monkeypatch)
+
+    values, _metadata = service.embed_documents(["first", "second"])
+
+    assert len(values) == 2
+    assert calls == [2, 2]
+    # The provider's RetryInfo wins over the 1 s exponential guess, beyond the text cap.
+    assert sleeps == [58.0]
+
+
+def test_quota_wait_longer_than_the_budget_fails_at_once_with_the_provider_status(monkeypatch):
+    import pytest
+
+    from app.gemini import GeminiCallFailed
+
+    sleeps = []
+    service, calls = _embedding_service(iter([_gemini_quota_error("3600s")]), sleeps=sleeps, monkeypatch=monkeypatch)
+
+    with pytest.raises(GeminiCallFailed) as error:
+        service.embed_documents(["text"])
+
+    # A daily quota does not reset inside one batch budget: no pointless waits.
+    assert calls == [1]
+    assert sleeps == []
+    assert error.value.code == "gemini_embedding_failed"
+    assert error.value.message == "Gemini embedding failed (provider 429 RESOURCE_EXHAUSTED)."
+    assert _PROVIDER_MESSAGE not in error.value.message
+
+
+def test_text_call_without_fallback_does_not_wait_for_a_quota_beyond_its_cap(monkeypatch):
+    import pytest
+
+    from app.errors import ApiProblem
+
+    sleeps = []
+    service, calls = _service(
+        iter([_gemini_quota_error("45s")]), sleeps=sleeps, monkeypatch=monkeypatch, gemini_text_fallback_models=()
+    )
+
+    with pytest.raises(ApiProblem) as error:
+        service.rerank("prompt")
+
+    assert error.value.code == "gemini_rerank_failed"
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_failed_provider_requests_log_status_class_and_quota_without_message_text(monkeypatch, caplog):
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="app.gemini")
+    service, _calls = _embedding_service(iter([_gemini_quota_error("27s"), "ok"]), sleeps=[], monkeypatch=monkeypatch)
+
+    service.embed_documents(["text"])
+
+    [message] = [record.getMessage() for record in caplog.records if record.getMessage().startswith("gemini_call_failed")]
+    assert message == (
+        "gemini_call_failed action=embedding model=None attempt=1/3 status=429 provider_status=RESOURCE_EXHAUSTED "
+        f"cause_type=ClientError quota_id={_QUOTA_ID} provider_retry_after=27.0 retry_in=27.0"
+    )
+    assert "secret chunk" not in caplog.text
+
+
 def test_invalid_json_and_transport_retries_do_not_multiply_beyond_budget(monkeypatch):
     import pytest
 
