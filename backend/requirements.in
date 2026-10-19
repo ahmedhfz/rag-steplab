@@ -1,17 +1,17 @@
 # API/worker runtime girdileri. Bu dosyayı düzenleyin; requirements.txt üretilmiş
 # hash'li lock'tur. Yeniden üretim: backend/README.md "Python bağımlılık lock'ları".
-fastapi==0.143.0
-pydantic>=2.12,<3
+fastapi==0.143.3
+pydantic>=2.14.1,<3
 # GHSA-mj87-hwqh-73pj, GHSA-pp6c-gr5w-3c5g, GHSA-v9pg-7xvm-68hf ve sonrası düzeltilmiş taban.
 python-multipart>=0.0.31,<1
 uvicorn[standard]>=0.54.0,<1
 SQLAlchemy>=2.0,<3
 psycopg[binary]>=3.3.6,<4
 pgvector>=0.5.0,<1
-supabase>=2.15,<3
-google-genai>=2.29.0,<3
+supabase>=2.33.0,<3
+google-genai>=2.31.0,<3
 tiktoken>=0.8,<1
 # GHSA-42vr-xj54-vc7v (PyJWKClient.get_signing_key_from_jwt DoS) ve GHSA-x33g-cr3x-6449 2.15.0'da düzeltildi.
 PyJWT[crypto]>=2.15.1,<3
 # API, Modal function dispatch için client'ı runtime'da kullanır. Modal sürümünün tek kaynağı burasıdır.
-modal==1.6.1
+modal==1.6.2
