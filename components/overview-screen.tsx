@@ -424,12 +424,17 @@ export function OverviewScreen() {
     createPipeline,
     renamePipeline,
     deletePipeline,
+    refreshPersistence,
   } = pipelineContext;
   const [editing, setEditing] = useState<"create" | "rename" | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [pipelineName, setPipelineName] = useState("");
   const [managementBusy, setManagementBusy] = useState(false);
-  const [managementError, setManagementError] = useState<string | null>(null);
+  /**
+   * A failed create/rename/delete. The provider records the real cause in `persistenceError`; the
+   * error seen when the action started tells a fresh cause from a stale one.
+   */
+  const [managementError, setManagementError] = useState<{ fallback: string; staleError: unknown } | null>(null);
   const [revealedStep, setRevealedStep] = useState<JourneyStepKey | null>(null);
   const managementMenuRef = useRef<HTMLDetailsElement>(null);
 
@@ -469,17 +474,23 @@ export function OverviewScreen() {
     return code ? blocker(preferences.locale, code).message : null;
   }
   const revealedReason = revealedStep ? lockedReason(revealedStep) : null;
+  // The real cause (e.g. a taken pipeline name) when the provider recorded one for this action.
+  const managementCause = managementError && persistenceError && persistenceError !== managementError.staleError ? persistenceError : null;
+  const managementMessage = managementError
+    ? managementCause ? <ApiErrorText error={managementCause} fallback={managementError.fallback} /> : managementError.fallback
+    : null;
 
   async function savePipelineName() {
     const name = pipelineName.trim();
     if (!name || !activeDocumentId || managementBusy) return;
+    const staleError = persistenceError;
     setManagementBusy(true);
     setManagementError(null);
     try {
       const mode = editing;
       const result = mode === "create" ? await createPipeline(name) : mode === "rename" && activePipeline ? await renamePipeline(activePipeline.id, name) : null;
       if (!result) {
-        setManagementError(labels.saveFailed);
+        setManagementError({ fallback: labels.saveFailed, staleError });
         return;
       }
       setEditing(null);
@@ -493,13 +504,14 @@ export function OverviewScreen() {
   async function confirmPipelineDelete() {
     if (!activePipeline || managementBusy) return;
     const name = activePipeline.name;
+    const staleError = persistenceError;
     setManagementBusy(true);
     setManagementError(null);
     try {
       if (await deletePipeline(activePipeline.id)) {
         setConfirmDelete(false);
         toast.success(labels.deleted, { description: name });
-      } else setManagementError(labels.deleteFailed);
+      } else setManagementError({ fallback: labels.deleteFailed, staleError });
     } finally {
       setManagementBusy(false);
     }
@@ -597,7 +609,7 @@ export function OverviewScreen() {
 
               {persistenceStatus === "unavailable" ? (
                 <div className="px-5 pb-5">
-                  <Notice role="alert" title={labels.unavailable} tone="error">{persistenceError ? <ApiErrorText error={persistenceError} fallback={copy.errors.workspaceLoadFailed} /> : null}</Notice>
+                  <Notice action={<Button iconLeading="refresh" onClick={() => void refreshPersistence()} size="sm" variant="secondary">{copy.common.retry}</Button>} role="alert" title={labels.unavailable} tone="error">{persistenceError ? <ApiErrorText error={persistenceError} fallback={copy.errors.workspaceLoadFailed} /> : null}</Notice>
                 </div>
               ) : null}
 
@@ -611,7 +623,7 @@ export function OverviewScreen() {
                     <Button disabled={!pipelineName.trim() || managementBusy} isLoading={managementBusy} onClick={() => void savePipelineName()}>{copy.common.save}</Button>
                     <Button disabled={managementBusy} onClick={() => { setEditing(null); setManagementError(null); }} variant="tertiary">{copy.common.cancel}</Button>
                   </div>
-                  {managementError ? <p className="mt-2 text-sm text-error-primary" role="alert">{managementError}</p> : null}
+                  {managementMessage ? <div className="mt-2 text-sm text-error-primary" data-testid="pipeline-management-error" role="alert">{managementMessage}</div> : null}
                 </TransitionPanel>
               ) : null}
 
@@ -644,7 +656,7 @@ export function OverviewScreen() {
                     size="sm"
                     title={labels.deleteTitle}
                   >
-                    {managementError ? <p className="px-6 pt-4 text-sm text-error-primary" role="alert">{managementError}</p> : null}
+                    {managementMessage ? <div className="px-6 pt-4 text-sm text-error-primary" data-testid="pipeline-management-error" role="alert">{managementMessage}</div> : null}
                     <ModalFooter>
                       <ModalClose asChild><Button disabled={managementBusy} size="lg" variant="secondary">{copy.common.cancel}</Button></ModalClose>
                       <Button disabled={managementBusy} isLoading={managementBusy} onClick={() => void confirmPipelineDelete()} size="lg" variant="destructive">{copy.common.delete}</Button>

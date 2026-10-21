@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { ApiErrorNotice } from "@/components/api-error-message";
+import { ApiErrorNotice, toastApiError } from "@/components/api-error-message";
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { OcrSourceDetails } from "@/components/ocr-source-details";
 import { hasVisibleBlocker, InspectionBand, RunHistory, StageBlockerRow, StageNextAction } from "@/components/pipeline-learning-ui";
@@ -16,7 +16,6 @@ import { Disclosure } from "@/components/ui/disclosure";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Metric, MetricGroup } from "@/components/ui/metric";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, ModalBody, ModalFooter } from "@/components/ui/modal";
-import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
 import { ProgressBar } from "@/components/ui/progress";
@@ -27,6 +26,7 @@ import { StatusBadge, type Status } from "@/components/ui/status-badge";
 import { toast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ThinkingText, TransitionNumber, TransitionPanel, TransitionText } from "@/components/ui/transitions";
+import { isTrackingPaused } from "@/lib/api-errors";
 import { getPipelineAvailability } from "@/lib/blockers";
 import { type AppCopy, interpolate, runName, useCopy } from "@/lib/copy";
 import type { DocumentParseResponse, ParsedElement } from "@/lib/document-parse-types";
@@ -387,7 +387,7 @@ export function ParseScreen() {
   const lifecycleVisible = showLifecycle || isProcessing;
   // Said once: the lifecycle panel names the state while it is open, and the empty state says "not parsed".
   const showStatusBadge = !lifecycleVisible && status !== "idle";
-  const pollTimedOut = parseError?.code === "parse_poll_timeout";
+  const pollTimedOut = isTrackingPaused(parseError);
   // A blocked next stage (incompatible lineage, outage) is never a destination, even from a usable run.
   const canContinue = Boolean(selectedRun && completedCompatibleRun(selectedRun) && !isProcessing) && nextAvailability.allowed;
   const summaryFields = parseResult ? [
@@ -420,6 +420,22 @@ export function ParseScreen() {
     trackedRunId.current = null;
     toast.success(toastTitle, { description: toastDescription });
   }, [finishedRunId, toastTitle, toastDescription]);
+  // A parse seen running in this lineage that ends failed is announced once with its cause; an
+  // old failure shown on load is not (the inline notice already explains it).
+  const watchedParseLineage = useRef<string | null>(null);
+  useEffect(() => {
+    if (running) {
+      watchedParseLineage.current = lineageKey;
+      return;
+    }
+    if (watchedParseLineage.current !== lineageKey) {
+      watchedParseLineage.current = null;
+      return;
+    }
+    if (!failed && !parsed) return;
+    watchedParseLineage.current = null;
+    if (failed) toastApiError(copy, labels.failedToast, parseError, copy.errors.parseFailed);
+  }, [copy, failed, labels.failedToast, lineageKey, parseError, parsed, running]);
 
   function startParse() {
     setStartedHere({ lineageKey, since: Date.now() });
@@ -481,11 +497,8 @@ export function ParseScreen() {
           <div className="mt-5"><PhaseRail failed={failed} phaseIndex={phaseIndex} running={running} /></div>
         </Panel>
       ) : null}
-      {pollTimedOut ? (
-        <Notice action={<Button onClick={() => void resumeParseTracking()} size="sm" variant="secondary">{labels.actions.resumeTracking}</Button>} className="mt-4 items-center" data-testid="parse-poll-timeout" icon="clock" tone="warning">
-          <span className="text-secondary">{labels.pollTimeout}</span>
-        </Notice>
-      ) : parseError ? <ApiErrorNotice className="mt-4" data-testid="parse-error" error={parseError} fallback={copy.errors.parseFailed} /> : null}
+      {/* One notice: a poll timeout is a paused-tracking warning with "Resume tracking"; anything else is the failure. */}
+      <ApiErrorNotice className="mt-4" data-testid={pollTimedOut ? "parse-poll-timeout" : "parse-error"} error={parseError} fallback={copy.errors.parseFailed} onResume={() => void resumeParseTracking()} />
 
       {parseResult ? (
         <div className="mt-10">

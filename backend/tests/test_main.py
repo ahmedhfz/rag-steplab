@@ -309,3 +309,16 @@ def test_async_evaluation_returns_real_queued_case_lifecycle(monkeypatch):
     assert response.status_code == 202
     assert response.json()["status"] == "queued"
     assert response.json()["results"]["caseResults"] == []
+
+
+def test_capabilities_expose_the_embedding_quota_rate_for_duration_estimates(monkeypatch):
+    monkeypatch.setattr(
+        "app.main.get_settings",
+        lambda: Settings(gemini_embedding_inputs_per_minute=100, gemini_embedding_tokens_per_minute=30_000),
+    )
+
+    response = client.get("/capabilities")
+
+    assert response.status_code == 200
+    assert response.json()["limits"]["embeddingInputsPerMinute"] == 100
+    assert response.json()["limits"]["embeddingTokensPerMinute"] == 30_000

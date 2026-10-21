@@ -3,13 +3,13 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 
+import { ApiErrorNotice } from "@/components/api-error-message";
 import { usePreferences } from "@/components/preferences-provider";
 import { OcrSourceDetails } from "@/components/ocr-source-details";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonStyles } from "@/components/ui/button";
 import { TechnicalDetails } from "@/components/ui/disclosure";
-import { Notice } from "@/components/ui/notice";
 import { PreviewCard, PreviewCardContent, PreviewCardTrigger } from "@/components/ui/preview-card";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -43,6 +43,16 @@ type SourceInspectorProps = {
 const PREVIEW_SUPPRESS_MS = 400;
 
 /**
+ * The caught value when it carries a code or message (kept under Technical details); anything
+ * else becomes the localized load failure (`unknown` without a status is already-local copy).
+ */
+function previewLoadError(caught: unknown, fallback: string): unknown {
+  const value = caught && typeof caught === "object" ? caught as { code?: unknown; message?: unknown } : {};
+  const hasCause = (typeof value.code === "string" && value.code !== "") || (typeof value.message === "string" && value.message !== "");
+  return hasCause ? caught : { code: "unknown", message: fallback };
+}
+
+/**
  * Source inspector: a wide sheet that puts the extracted evidence next to the original PDF page.
  * Extracted document text is untrusted data and is rendered as plain text only.
  */
@@ -55,7 +65,8 @@ export function SourceInspector({ documentId, parseResult, pageNumbers = [], sou
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
   const [previewReady, setPreviewReady] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  /** The failed preview request (any caught value); `null` while loading or loaded. */
+  const [error, setError] = useState<unknown>(null);
   const [regionPage, setRegionPage] = useState<number | null>(null);
   const [selectedRegion, setSelectedRegion] = useState<SourceRegion | null>(null);
   const revokeRef = useRef<(() => void) | null>(null);
@@ -84,8 +95,8 @@ export function SourceInspector({ documentId, parseResult, pageNumbers = [], sou
       revokeRef.current?.();
       revokeRef.current = loaded.revoke;
       setSourceUrl(loaded.sourceUrl);
-    } catch {
-      setError(labels.loadFailed);
+    } catch (caught) {
+      setError(previewLoadError(caught, labels.loadFailed));
     } finally {
       setLoading(false);
     }
@@ -177,7 +188,7 @@ export function SourceInspector({ documentId, parseResult, pageNumbers = [], sou
             <div className="order-last flex h-[min(45dvh,420px)] min-h-64 shrink-0 flex-col bg-secondary lg:order-first lg:h-auto lg:min-h-0 lg:flex-1" data-testid="source-inspector-preview">
               {error ? (
                 <div className="p-5">
-                  <Notice action={<Button onClick={() => void loadSource()} size="sm" variant="secondary">{labels.retry}</Button>} tone="error">{error}</Notice>
+                  <ApiErrorNotice error={error} fallback={labels.loadFailed} onRetry={() => void loadSource()} />
                 </div>
               ) : loading || sourceUrl ? (
                 <div className={cn("t-skel h-full", previewReady && "is-revealed")}>

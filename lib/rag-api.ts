@@ -1102,7 +1102,22 @@ export async function createEmbeddingRun(
     timeoutMs: LONG_REQUEST_TIMEOUT_MS,
   });
   const initial = normalizeEmbeddingRun(payload);
-  const run = isRunInFlight(initial.status) ? await waitForEmbeddingRun(initial.id, signal, onProgress, initial) : initial;
+  if (!isRunInFlight(initial.status)) return completedEmbeddingRun(initial);
+  // The accepted run's id first: tracking can resume it after a poll timeout or a reload.
+  onProgress?.(initial);
+  return completedEmbeddingRun(await waitForEmbeddingRun(initial.id, signal, onProgress, initial));
+}
+
+/** Resumes tracking an accepted embedding run; resolves only with a completed run, like createEmbeddingRun. */
+export async function resumeEmbeddingRun(
+  runId: string,
+  signal?: AbortSignal,
+  onProgress?: (run: EmbeddingRun) => void,
+): Promise<EmbeddingRun> {
+  return completedEmbeddingRun(await waitForEmbeddingRun(runId, signal, onProgress));
+}
+
+function completedEmbeddingRun(run: EmbeddingRun): EmbeddingRun {
   if (run.status === "completed") return run;
   const problem = run.error ?? { code: "embedding_run_failed", message: "The embedding run failed." };
   throw new DocumentApiError(problem.code, problem.message);

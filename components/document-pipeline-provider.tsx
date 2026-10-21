@@ -3,8 +3,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 
+import { toastApiError } from "@/components/api-error-message";
 import { useAuthBootstrap } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
+import { toast } from "@/components/ui/toast";
+import { describeApiError, isTrackingPaused } from "@/lib/api-errors";
 import { UI_COPY } from "@/lib/copy";
 import { DocumentApiError } from "@/lib/document-api";
 import { validatePdfFile } from "@/lib/document-file";
@@ -27,6 +30,7 @@ import {
   getParseRun,
   getEmbeddingRun,
   isAbortError,
+  resumeEmbeddingRun,
   listDocumentPipelines,
   listDocuments,
   uploadDocument,
@@ -104,6 +108,10 @@ type DocumentSnapshot = {
   chunkStatus: PipelineOperationStatus;
   embeddingRun: EmbeddingRun | null;
   embeddingStatus: PipelineOperationStatus;
+  /** In-flight embedding run for the selected chunks: loading the document resumes tracking it. */
+  inFlightEmbeddingRunId: string | null;
+  /** Why the newest embedding attempt for the selected chunks failed, while none is usable. */
+  embeddingError: DocumentApiError | null;
   experiments: ExperimentSummary[];
   datasets: EvaluationDatasetSummary[];
   experimentStatus: PipelineOperationStatus;
@@ -215,6 +223,7 @@ export type DocumentPipelineContextValue = {
   reparseActiveDocument: () => Promise<void>;
   /** Restarts browser polling for the in-flight parse after a poll timeout; never creates a run. */
   resumeParseTracking: () => Promise<void>;
+  resumeEmbeddingTracking: () => Promise<void>;
   runChunking: (strategy: ChunkStrategy, config: ChunkConfig) => Promise<ChunkRun | null>;
   runEmbedding: () => Promise<EmbeddingRun | null>;
   runExperiment: (input: Omit<ExperimentRequest, "documentId" | "chunkRunId" | "embeddingRunId">) => Promise<void>;
@@ -252,8 +261,12 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   // Fallback error copy follows the interface locale; async callbacks read the
   // latest copy through a ref so localisation never re-creates lineage callbacks.
   const errorCopyRef = useRef(UI_COPY[preferences.locale].errors);
+  const copyRef = useRef(UI_COPY[preferences.locale]);
+  // Loading paths are declared before embedding tracking; they reach it through this ref.
+  const resumeLoadedEmbeddingRef = useRef<(documentId: string, loaded: DocumentSnapshot) => void>(() => undefined);
   useEffect(() => {
     errorCopyRef.current = UI_COPY[preferences.locale].errors;
+    copyRef.current = UI_COPY[preferences.locale];
   }, [preferences.locale]);
   const [authUserId, setAuthUserId] = useState<string | null>(authoritativeUserId);
   const [parseStatus, setParseStatus] = useState<DocumentParseStatus>("not-started");
@@ -272,6 +285,15 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   const parseStartScopeRef = useRef<{ documentId: string; parseRunId: string | null; pipelineId: string | null; selectionRequest: number } | null>(null);
   const [persistenceStatus, setPersistenceStatus] = useState<PersistenceStatus>("checking");
   const [persistenceError, setPersistenceError] = useState<DocumentApiError | null>(null);
+  // persistenceError is rendered only while the whole workspace is unavailable. A failed action in a
+  // usable workspace that has no inline surface (saving or choosing the lineage, opening a document)
+  // is announced with its cause instead of failing silently.
+  const reportActionFailure = useCallback((error: DocumentApiError, sentence: string) => {
+    setPersistenceError(error);
+    const cause = describeApiError(copyRef.current, error, sentence)?.message;
+    // Toast titles are labels, like the success toasts: no closing period.
+    toast.error(sentence.replace(/\.$/, ""), { description: cause && cause !== sentence ? cause : undefined });
+  }, []);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   const [documents, setDocuments] = useState<PersistedDocument[]>([]);
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
@@ -517,7 +539,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     setChunkError(null);
     setSelectedEmbeddingRun(snapshot.embeddingRun);
     setEmbeddingStatus(snapshot.embeddingStatus);
-    setEmbeddingError(null);
+    setEmbeddingError(snapshot.embeddingError);
     setExperimentHistory(snapshot.experiments);
     setExperimentRun(snapshot.experimentRun);
     setExperimentStatus(snapshot.experimentStatus);
@@ -593,6 +615,13 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
           ? "completed"
           : "not-started";
     const embeddingReady = Boolean(effectiveSelection.selectedChunkRunId && embeddingMatchesLineage && embeddingRun);
+    // Newest first (backend order). A reload must still show an embedding run that keeps working
+    // (and resume tracking it) or why the newest attempt failed, not a plain "Ready".
+    const latestEmbeddingSummary = effectiveSelection.selectedChunkRunId
+      ? detail.embeddingRuns.find((run) => run.upstream.chunkRunId === effectiveSelection.selectedChunkRunId) ?? null
+      : null;
+    const inFlightEmbeddingSummary = latestEmbeddingSummary && isRunInFlight(latestEmbeddingSummary.status) ? latestEmbeddingSummary : null;
+    const failedEmbeddingSummary = !embeddingReady && latestEmbeddingSummary?.status === "failed" ? latestEmbeddingSummary : null;
     // Without a saved pipeline (scratch) the in-use lineage is the selection.
     const flaggedDetail = strictSelection ? detail : withSelectionLineageFlags(detail, effectiveSelection);
     return {
@@ -607,7 +636,16 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       chunkRun: chunkMatchesLineage ? chunkRun ?? null : null,
       chunkStatus: !effectiveSelection.selectedParseRunId ? "locked" : chunkRun ? "completed" : "ready",
       embeddingRun: embeddingMatchesLineage ? embeddingRun ?? null : null,
-      embeddingStatus: !effectiveSelection.selectedChunkRunId ? "locked" : embeddingReady ? "completed" : "ready",
+      embeddingStatus: !effectiveSelection.selectedChunkRunId
+        ? "locked"
+        : inFlightEmbeddingSummary ? "processing" : embeddingReady ? "completed" : failedEmbeddingSummary ? "error" : "ready",
+      inFlightEmbeddingRunId: inFlightEmbeddingSummary?.id ?? null,
+      embeddingError: failedEmbeddingSummary
+        ? new DocumentApiError(
+          failedEmbeddingSummary.error?.code ?? "embedding_run_failed",
+          failedEmbeddingSummary.error?.message ?? errorCopyRef.current.embeddingFailed,
+        )
+        : null,
       experiments: flaggedDetail.experiments,
       datasets: filteredDatasets,
       experimentStatus: selectedExperiment ? "completed" : effectiveSelection.selectedChunkRunId ? "ready" : "locked",
@@ -968,6 +1006,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (loaded && !parseInFlightRef.current && isRunInFlight(loaded.parseStatus) && loaded.inFlightParseRunId) {
         void resumeParseRun(documentId, loaded.inFlightParseRunId, runIdRef.current);
       }
+      if (loaded) resumeLoadedEmbeddingRef.current(documentId, loaded);
     } else if (documentId) {
       rememberActiveDocument(null, authUserId);
     }
@@ -1034,6 +1073,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if (isRunInFlight(loaded.parseStatus) && loaded.inFlightParseRunId) {
         void resumeParseRun(documentId, loaded.inFlightParseRunId, runIdRef.current);
       }
+      resumeLoadedEmbeddingRef.current(documentId, loaded);
     } catch (error) {
       if (isAbortError(error)) return;
       if (selectionToken === selectionRequestRef.current) {
@@ -1055,10 +1095,13 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
           setActiveDocumentId(previousDocumentId);
         }
       }
-      setPersistenceError(asApiError(error, errorCopyRef.current.documentLoadFailed));
+      const loadError = asApiError(error, errorCopyRef.current.documentLoadFailed);
+      // With other documents the workspace stays usable and the selection reverts: say why.
+      if (documents.length > 0) reportActionFailure(loadError, errorCopyRef.current.documentLoadFailed);
+      else setPersistenceError(loadError);
       setPersistenceStatus(documents.length > 0 ? "available" : "unavailable");
     }
-  }, [activeDocumentMetadata, activePipelineId, authUserId, buildDocumentSnapshot, commitDocumentSnapshot, documents, loadThenCommitDocument, pipelines, replaceController, resetLineageState, resumeParseRun]);
+  }, [activeDocumentMetadata, activePipelineId, authUserId, buildDocumentSnapshot, commitDocumentSnapshot, documents, loadThenCommitDocument, pipelines, replaceController, reportActionFailure, resetLineageState, resumeParseRun]);
 
   const deletePersistedDocument = useCallback(async (documentId: string) => {
     const metadata = documents.find((document) => document.id === documentId);
@@ -1342,7 +1385,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
           commitDocumentSnapshot(snapshot, false);
           if (!conflict) {
             if (pipelineMutationIsCurrent(context)) {
-              setPersistenceError(asApiError(error, errorCopyRef.current.pipelineSaveFailed));
+              reportActionFailure(asApiError(error, errorCopyRef.current.pipelineSaveFailed), errorCopyRef.current.pipelineSaveFailed);
             }
             return false;
           }
@@ -1361,7 +1404,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
           return true;
         } catch (reconcileError) {
           if (!isAbortError(reconcileError) && pipelineMutationIsCurrent(context)) {
-            setPersistenceError(asApiError(reconcileError, errorCopyRef.current.pipelineConflict));
+            reportActionFailure(asApiError(reconcileError, errorCopyRef.current.pipelineConflict), errorCopyRef.current.pipelineConflict);
           }
           return false;
         } finally {
@@ -1387,7 +1430,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       if ((pipelineRevisionRef.current.get(deferred.id) ?? deferred.revision) > deferred.revision) return;
       recordPipelineResponse(deferred, context);
     };
-  }, [applyLineageFlags, buildDocumentSnapshot, commitDocumentSnapshot, loadDocumentSnapshot, pipelineMutationIsCurrent, recordPipelineResponse, rememberSelection, replaceController]);
+  }, [applyLineageFlags, buildDocumentSnapshot, commitDocumentSnapshot, loadDocumentSnapshot, pipelineMutationIsCurrent, recordPipelineResponse, rememberSelection, replaceController, reportActionFailure]);
   useEffect(() => {
     persistActivePipelineSelectionRef.current = persistActivePipelineSelection;
   }, [persistActivePipelineSelection]);
@@ -1427,12 +1470,12 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       }
     } catch (error) {
       if (!isAbortError(error)) {
-        setPersistenceError(asApiError(error, errorCopyRef.current.pipelineSelectFailed));
+        reportActionFailure(asApiError(error, errorCopyRef.current.pipelineSelectFailed), errorCopyRef.current.pipelineSelectFailed);
       }
     } finally {
       removeControllerIfCurrent(controllersRef.current, "pipeline-select", controller);
     }
-  }, [applyLineageFlags, authUserId, buildDocumentSnapshot, commitDocumentSnapshot, loadDocumentSnapshot, pipelines, replaceController]);
+  }, [applyLineageFlags, authUserId, buildDocumentSnapshot, commitDocumentSnapshot, loadDocumentSnapshot, pipelines, replaceController, reportActionFailure]);
 
   const createPipeline = useCallback(async (name: string) => {
     const document = activeDocumentRef.current;
@@ -1594,6 +1637,8 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     }
     setSelectedEmbeddingRun(null);
     setEmbeddingStatus(changed === "embedding" ? "ready" : "locked");
+    // The error (or paused tracking) belonged to the previous selection.
+    setEmbeddingError(null);
     setExperimentRun(null);
     setExperimentStatus("ready");
     setEvaluationRun(null);
@@ -1651,9 +1696,9 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
   }, [applyWorkingSelection, hydrateEmbeddingDetail, inspectEmbeddingRun, rememberSelection]);
 
   const rejectPipelineSelection = useCallback((message: string) => {
-    setPersistenceError(new DocumentApiError("incompatible_lineage", message));
+    reportActionFailure(new DocumentApiError("incompatible_lineage", message), message);
     return false;
-  }, []);
+  }, [reportActionFailure]);
 
   const setPipelineParseRun = useCallback(async (runId: string): Promise<boolean> => {
     const document = activeDocumentRef.current;
@@ -1746,26 +1791,49 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     }
   }, [cacheArtifact, captureScope, chunkStatus, commitDocumentSnapshot, replaceController, saveAndLoadLineage]);
 
-  const runEmbedding = useCallback(async (): Promise<EmbeddingRun | null> => {
-    const documentId = activeDocumentRef.current?.id;
-    const { selectedParseRunId: parseRunId, selectedChunkRunId: chunkRunId } = selectedLineageRef.current;
-    if (!documentId || !chunkRunId || embeddingStatus === "processing") return null;
+  // The embedding run being tracked, so a poll timeout or a reload resumes it instead of starting another.
+  const embeddingTrackRef = useRef<{ documentId: string; runId: string; parseRunId: string | null; chunkRunId: string } | null>(null);
+
+  /**
+   * Tracks one embedding run until it is terminal: a new one (`createEmbeddingRun`) or an accepted
+   * one again after a poll timeout or a reload (`resumeEmbeddingRun`). A completed run becomes the
+   * selected lineage; a failure stays on the stage and is announced, since the user may be elsewhere.
+   */
+  const trackEmbedding = useCallback(async (
+    documentId: string,
+    parseRunId: string | null,
+    chunkRunId: string,
+    start: (signal: AbortSignal, onRun: (run: EmbeddingRun) => void) => Promise<EmbeddingRun>,
+    knownRunId?: string,
+  ): Promise<EmbeddingRun | null> => {
     const scope = captureScope();
     const controller = replaceController("embedding");
+    const remember = (runId: string) => {
+      embeddingTrackRef.current = { documentId, runId, parseRunId, chunkRunId };
+    };
+    if (knownRunId) remember(knownRunId);
     setEmbeddingStatus("processing");
     setEmbeddingError(null);
     setExperimentRun(null);
     setEvaluationRun(null);
     try {
-      const result = await createEmbeddingRun(documentId, chunkRunId, controller.signal);
+      const result = await start(controller.signal, (run) => {
+        if (scope.isCurrent() && isRunInFlight(run.status)) remember(run.id);
+      });
       if (!scope.isCurrent()) return null;
+      embeddingTrackRef.current = null;
       const selection = {
         selectedParseRunId: parseRunId,
         selectedChunkRunId: chunkRunId,
         selectedEmbeddingRunId: result.id,
       };
       const saved = await saveAndLoadLineage(documentId, selection, controller.signal);
-      if (!saved) return null;
+      if (!saved) {
+        // The run completed but its lineage was not saved (the save announces why); never leave
+        // the button spinning.
+        if (scope.isCurrent()) setEmbeddingStatus((current) => (current === "processing" ? "ready" : current));
+        return null;
+      }
       saved.applyPipeline();
       if (!scope.isCurrent()) return null;
       commitDocumentSnapshot(saved.snapshot);
@@ -1775,13 +1843,65 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
       return result;
     } catch (error) {
       if (isAbortError(error) || !scope.isCurrent()) return null;
-      setEmbeddingError(asApiError(error, errorCopyRef.current.embeddingFailed));
+      const apiError = asApiError(error, errorCopyRef.current.embeddingFailed);
+      setEmbeddingError(apiError);
+      // Tracking paused, not the run: it stays "processing" until tracking resumes (as Parse does).
+      if (isTrackingPaused(apiError)) return null;
+      embeddingTrackRef.current = null;
       setEmbeddingStatus("error");
+      toastApiError(copyRef.current, copyRef.current.embeddings.failedToast, apiError, errorCopyRef.current.embeddingFailed);
       return null;
     } finally {
       removeControllerIfCurrent(controllersRef.current, "embedding", controller);
     }
-  }, [cacheArtifact, captureScope, commitDocumentSnapshot, embeddingStatus, replaceController, saveAndLoadLineage]);
+  }, [cacheArtifact, captureScope, commitDocumentSnapshot, replaceController, saveAndLoadLineage]);
+
+  const runEmbedding = useCallback(async (): Promise<EmbeddingRun | null> => {
+    const documentId = activeDocumentRef.current?.id;
+    const { selectedParseRunId: parseRunId, selectedChunkRunId: chunkRunId } = selectedLineageRef.current;
+    if (!documentId || !chunkRunId || embeddingStatus === "processing") return null;
+    return trackEmbedding(documentId, parseRunId, chunkRunId, (signal, onRun) => createEmbeddingRun(documentId, chunkRunId, signal, onRun));
+  }, [embeddingStatus, trackEmbedding]);
+
+  /** Resumes the embedding run whose browser tracking paused (or that a reload found in flight). */
+  const resumeEmbeddingTracking = useCallback(async () => {
+    const documentId = activeDocumentRef.current?.id;
+    const tracked = embeddingTrackRef.current;
+    if (!documentId || !tracked || tracked.documentId !== documentId || controllersRef.current.has("embedding")) return;
+    const lineage = selectedLineageRef.current;
+    if (lineage.selectedChunkRunId !== tracked.chunkRunId || lineage.selectedParseRunId !== tracked.parseRunId) {
+      // The selection changed since this run started: its result must never replace the new
+      // lineage. It stays in the run history; tracking it here ends.
+      embeddingTrackRef.current = null;
+      setEmbeddingError(null);
+      setEmbeddingStatus((current) => (current === "processing" ? "ready" : current));
+      return;
+    }
+    await trackEmbedding(
+      documentId,
+      tracked.parseRunId,
+      tracked.chunkRunId,
+      (signal, onRun) => resumeEmbeddingRun(tracked.runId, signal, onRun),
+      tracked.runId,
+    );
+  }, [trackEmbedding]);
+
+  useEffect(() => {
+    resumeLoadedEmbeddingRef.current = (documentId, loaded) => {
+      const runId = loaded.inFlightEmbeddingRunId;
+      const chunkRunId = loaded.selection.selectedChunkRunId;
+      // Loading starts a new scope, so a tracker from before can no longer commit its result:
+      // trackEmbedding replaces (aborts) it instead of leaving the stage stuck in "processing".
+      if (!runId || !chunkRunId) return;
+      void trackEmbedding(
+        documentId,
+        loaded.selection.selectedParseRunId,
+        chunkRunId,
+        (signal, onRun) => resumeEmbeddingRun(runId, signal, onRun),
+        runId,
+      );
+    };
+  }, [trackEmbedding]);
 
   const commitExperimentResult = useCallback((result: ExperimentRun) => {
     setExperimentRun(result);
@@ -2202,7 +2322,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     pipelineSelectionMode: activePipeline ? "saved" : "scratch",
     reparseImpact,
     addDocument, selectPersistedDocument, deletePersistedDocument, selectParseRun, selectChunkRun, selectEmbeddingRun, inspectParseRun, inspectChunkRun, inspectEmbeddingRun,
-    setPipelineParseRun, setPipelineChunkRun, setPipelineEmbeddingRun, reparseActiveDocument, resumeParseTracking, runChunking, runEmbedding,
+    setPipelineParseRun, setPipelineChunkRun, setPipelineEmbeddingRun, reparseActiveDocument, resumeParseTracking, resumeEmbeddingTracking, runChunking, runEmbedding,
     runExperiment, loadExperiment, loadEvaluationDataset, loadEvaluationRun, resumeRunTracking, continueExperiment: continueCurrentExperiment, rerunGeneration: rerunCurrentGeneration,
     createDataset, runEvaluation, refreshPersistence, refreshEvaluationRuns,
     selectPipeline, createPipeline, renamePipeline, deletePipeline,
@@ -2212,7 +2332,7 @@ export function DocumentPipelineProvider({ children }: { children: React.ReactNo
     evaluationRun, evaluationStatus, experimentError, experimentHistory, experimentRun, experimentStatus,
     inspectedLineage, lastReportedParseProgress, parseError, parsePhase, parseProgress, parseResult, parseStatus, effectivePersistenceError, effectivePersistenceStatus,
     pipelines, reparseImpact, selectedChunkRun, selectedChunkRunId, selectedEmbeddingRun, selectedEmbeddingRunId, selectedParseResult, selectedParseRunId, uploadNotice, workspaceStatus,
-    addDocument, deletePersistedDocument, reparseActiveDocument, resumeParseTracking,
+    addDocument, deletePersistedDocument, reparseActiveDocument, resumeParseTracking, resumeEmbeddingTracking,
     continueCurrentExperiment, inspectChunkRun, inspectEmbeddingRun, inspectParseRun, loadEvaluationDataset, loadEvaluationRun, loadExperiment, refreshEvaluationRuns, refreshPersistence, rerunCurrentGeneration,
     runChunking, runEmbedding, runEvaluation, runExperiment, resumeRunTracking,
     createPipeline, deletePipeline, renamePipeline, selectChunkRun, selectEmbeddingRun, selectParseRun, selectPersistedDocument, selectPipeline,
