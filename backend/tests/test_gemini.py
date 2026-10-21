@@ -246,12 +246,32 @@ def test_quota_wait_longer_than_the_budget_fails_at_once_with_the_provider_statu
     with pytest.raises(GeminiCallFailed) as error:
         service.embed_documents(["text"])
 
-    # A daily quota does not reset inside one batch budget: no pointless waits.
+    # A daily quota does not reset inside one batch budget: no pointless waits,
+    # and its own code so the UI does not say "try again in a minute".
     assert calls == [1]
     assert sleeps == []
-    assert error.value.code == "gemini_embedding_failed"
-    assert error.value.message == "Gemini embedding failed (provider 429 RESOURCE_EXHAUSTED)."
+    assert error.value.code == "gemini_quota_exhausted"
+    assert error.value.message == "Gemini embedding quota exhausted (provider 429 RESOURCE_EXHAUSTED)."
     assert _PROVIDER_MESSAGE not in error.value.message
+
+
+def test_exhausted_quota_is_named_even_when_no_retry_budget_is_left(monkeypatch):
+    import pytest
+
+    from app.gemini import GeminiCallFailed
+
+    monkeypatch.setattr("app.gemini.time.sleep", lambda _seconds: None)
+
+    class Models:
+        def embed_content(self, *, model, contents, config):
+            raise _gemini_quota_error("3600s")
+
+    # The classification must not depend on whether a retry was still possible.
+    service = GeminiService(Settings(gemini_embedding_dimensions=3, gemini_max_retries=0), client=SimpleNamespace(models=Models()))
+    with pytest.raises(GeminiCallFailed) as error:
+        service.embed_documents(["text"])
+
+    assert error.value.code == "gemini_quota_exhausted"
 
 
 def test_text_call_without_fallback_does_not_wait_for_a_quota_beyond_its_cap(monkeypatch):
@@ -267,6 +287,7 @@ def test_text_call_without_fallback_does_not_wait_for_a_quota_beyond_its_cap(mon
     with pytest.raises(ApiProblem) as error:
         service.rerank("prompt")
 
+    # A minute-window wait beyond the text cap is still "busy", not an exhausted quota.
     assert error.value.code == "gemini_rerank_failed"
     assert len(calls) == 1
     assert sleeps == []

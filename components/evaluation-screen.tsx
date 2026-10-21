@@ -3,7 +3,7 @@
 import NumberFlow, { NumberFlowGroup, useIsSupported } from "@number-flow/react";
 import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
-import { ApiErrorNotice, ApiErrorText } from "@/components/api-error-message";
+import { ApiErrorNotice, ApiErrorText, toastApiError } from "@/components/api-error-message";
 import { useDocumentPipeline } from "@/components/document-pipeline-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { SourceInspector } from "@/components/source-inspector";
@@ -557,6 +557,8 @@ function EvaluationWorkspace() {
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [pendingCreateFrom, setPendingCreateFrom] = useState<string[] | null>(null);
   const [createdDataset, setCreatedDataset] = useState<{ id: string; name: string; description: string } | null>(null);
+  /** The error of a failed "Create dataset"; shown on the Dataset tab only while it is still the current error. */
+  const [datasetError, setDatasetError] = useState<unknown>(null);
   const tabRefs = useRef<Partial<Record<EvaluationTab, HTMLButtonElement | null>>>({});
 
   // A created dataset becomes the selection and the results view (the next step is running it).
@@ -569,6 +571,10 @@ function EvaluationWorkspace() {
       setSubmitAttempted(false);
       setChosenTab("results");
       setCreatedDataset({ id: created.id, name: created.name, description: `${interpolate(copy.datasetVersion, { version: created.version })} · ${formatCount(locale, created.caseCount, units.question)}` });
+    } else if (evaluationStatus !== "processing" && evaluationError) {
+      // The create request ended without a new dataset: its error belongs to the form.
+      setPendingCreateFrom(null);
+      setDatasetError(evaluationError);
     }
   }
   // Smart default: with a dataset the next step is running it, without one it is creating one.
@@ -646,14 +652,15 @@ function EvaluationWorkspace() {
   const runFinishedMessage = interpolate(copy.runFinished, { name: runLabel });
   const runStoppedMessage = interpolate(copy.runStopped, { name: runLabel });
   const runFinishedDescription = evaluationRun ? formatCount(locale, evaluationRun.results.caseCount ?? completedCases, units.question) : "";
+  const runFailure = evaluationRun?.error ?? null;
   useEffect(() => {
     if (!runId || !runStatus) return;
     const previous = trackedRun.current;
     trackedRun.current = { id: runId, status: runStatus };
     if (previous?.id !== runId || (previous.status !== "running" && previous.status !== "queued")) return;
     if (runStatus === "completed") toast(runFinishedMessage, { description: runFinishedDescription, icon: <AppIcon className="size-5 text-fg-tertiary" name="evaluate" /> });
-    else if (runStatus === "failed") toast.error(runStoppedMessage);
-  }, [runId, runStatus, runFinishedMessage, runStoppedMessage, runFinishedDescription]);
+    else if (runStatus === "failed") toastApiError(allCopy, runStoppedMessage, runFailure, allCopy.errors.evaluationFailed);
+  }, [allCopy, runId, runStatus, runFailure, runFinishedMessage, runStoppedMessage, runFinishedDescription]);
 
   function selectTab(tab: EvaluationTab) {
     setChosenTab(tab);
@@ -771,6 +778,12 @@ function EvaluationWorkspace() {
 
   const runFailed = evaluationRun?.status === "failed";
   const runInFlight = evaluationRun?.status === "queued" || evaluationRun?.status === "running";
+  // A failed "Create dataset" is the form's error; every other evaluation error belongs to Results.
+  const datasetFormError = datasetError && datasetError === evaluationError && activeTab === "dataset" ? datasetError : null;
+  const runError = evaluationError && evaluationError !== datasetError ? evaluationError : null;
+  // An in-flight run this page no longer polls: recovering means resuming its tracking.
+  const trackingLost = runInFlight && !processing;
+  const resumeTracking = () => void resumeRunTracking("evaluation");
 
   return (
     <div className="min-w-0 bg-canvas" data-testid="evaluation-screen">
@@ -870,7 +883,7 @@ function EvaluationWorkspace() {
                 ) : <p className="mt-3 px-1 text-sm text-tertiary">{copy.noDatasets}</p>}
               </aside>
             </div>
-            {evaluationError && activeTab === "dataset" ? <ApiErrorNotice className="mt-4" error={evaluationError} fallback={allCopy.errors.datasetCreateFailed} /> : null}
+            {datasetFormError ? <ApiErrorNotice className="mt-4" error={datasetFormError} fallback={allCopy.errors.datasetCreateFailed} /> : null}
           </TransitionPanel>
         ) : null}
 
@@ -919,10 +932,9 @@ function EvaluationWorkspace() {
               {!canRun ? <span className="sr-only" id="evaluation-disabled-reason">{runAvailability.message}</span> : null}
             </Panel>
             <StageBlocker blocker={showRunBlocker ? runAvailability : null} className="mt-3 px-1" data-testid="evaluation-blocker" />
-            {evaluationError ? (evaluationError.code === "run_poll_timeout"
-              ? <Notice className="mt-4" tone="error">{copy.trackingPaused}</Notice>
-              : <ApiErrorNotice className="mt-4" error={evaluationError} fallback={allCopy.errors.evaluationFailed} />) : null}
-            {runInFlight && !processing ? <Button className="mt-3" iconLeading="refresh" onClick={() => void resumeRunTracking("evaluation")} size="sm" variant="secondary">{copy.resumeTracking}</Button> : null}
+            {/* A poll timeout is a paused-tracking warning with its own resume action; lost tracking retries by resuming. */}
+            {runError ? <ApiErrorNotice className="mt-4" data-testid="evaluation-error" error={runError} fallback={allCopy.errors.evaluationFailed} onResume={resumeTracking} onRetry={trackingLost ? resumeTracking : undefined} /> : null}
+            {trackingLost && !runError ? <Button className="mt-3" iconLeading="refresh" onClick={resumeTracking} size="sm" variant="secondary">{copy.resumeTracking}</Button> : null}
 
             {evaluationRun ? (() => {
               const results = evaluationRun.results;
@@ -1079,11 +1091,11 @@ function EvaluationWorkspace() {
                                 <li className="flex items-start gap-3 px-5 py-4" key={`${item.question}-${index}`}>
                                   <StatusBadge appearance="icon" className="mt-0.5" status="error">{copy.caseLegend.failed}</StatusBadge>
                                   <div className="min-w-0 flex-1">
-                                    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1.5">
-                                      <p className="min-w-0 text-sm font-medium text-primary">{item.question}</p>
-                                      <span className="inline-flex items-center text-xs"><span className="sr-only">{copy.errorCode}: </span><code className="rounded-sm bg-error-primary px-1.5 py-0.5 font-mono text-xs text-error-primary">{item.errorCode ?? "—"}</code></span>
+                                    <p className="min-w-0 text-sm font-medium text-primary">{item.question}</p>
+                                    {/* The cause in words; its code stays under Technical details (said once). */}
+                                    <div className="mt-1 text-sm break-words text-tertiary" data-testid="evaluation-failed-case-cause">
+                                      {item.errorCode || item.errorMessage ? <ApiErrorText error={{ code: item.errorCode, message: item.errorMessage }} fallback={copy.caseFailed} /> : copy.caseFailed}
                                     </div>
-                                    {item.errorCode || item.errorMessage ? <div className="mt-1 text-sm break-words text-tertiary"><ApiErrorText error={{ code: item.errorCode, message: item.errorMessage }} /></div> : null}
                                   </div>
                                 </li>
                               ))}

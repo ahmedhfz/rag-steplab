@@ -2,12 +2,15 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DocumentPipelineProvider, useDocumentPipeline } from "@/components/document-pipeline-provider";
+import { UI_COPY } from "@/lib/copy";
 
 const navigationState = vi.hoisted(() => ({ pathname: "/" }));
+const toastMock = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => navigationState.pathname,
 }));
+vi.mock("@/components/ui/toast", () => ({ toast: toastMock }));
 
 const capabilities = {
   embeddingModel: "gemini",
@@ -184,6 +187,7 @@ function Probe() {
     workspaceStatus,
     reparseImpact,
     runEmbedding,
+    resumeEmbeddingTracking,
     embeddingStatus,
     embeddingError,
   } = useDocumentPipeline();
@@ -215,6 +219,7 @@ function Probe() {
       <button onClick={() => void reparseActiveDocument()} type="button">Reparse document</button>
       <button onClick={() => void resumeParseTracking()} type="button">Resume parse tracking</button>
       <button onClick={() => void runEmbedding()} type="button">Run embedding</button>
+      <button onClick={() => void resumeEmbeddingTracking()} type="button">Resume embedding tracking</button>
       <output data-testid="embedding-status">{embeddingStatus}:{embeddingError?.code ?? "none"}</output>
       <button onClick={() => void selectPersistedDocument("document-new")} type="button">Switch to new</button>
       <button onClick={() => void selectPersistedDocument("document-old")} type="button">Switch to old</button>
@@ -283,6 +288,8 @@ afterEach(() => {
   localStorage.clear();
   navigationState.pathname = "/";
   vi.restoreAllMocks();
+  toastMock.error.mockReset();
+  toastMock.success.mockReset();
 });
 
 describe("Document pipeline committed state", () => {
@@ -464,6 +471,8 @@ describe("Document pipeline committed state", () => {
     await waitFor(() => expect(screen.getByTestId("persistence-error")).toHaveTextContent("incompatible_lineage"));
     expect(screen.getByTestId("selected-embedding")).toHaveTextContent("embedding-new");
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+    // The workspace stays usable, so the rejection is announced instead of failing silently.
+    expect(toastMock.error).toHaveBeenCalledTimes(1);
   });
 
   it("hydrates the latest persisted evaluation result after the history summary loads", async () => {
@@ -1269,9 +1278,9 @@ describe("Document pipeline lineage regressions", () => {
 });
 
 describe("Accepted (202) embedding runs", () => {
-  function setupAcceptedEmbedding() {
+  function setupAcceptedEmbedding({ summaryEmbeddingRuns = [] as Array<Record<string, unknown>>, firstPollTimesOut = false, scratch = false } = {}) {
     localStorage.setItem("rag-steplab-active-document-id:test-user", "document-old");
-    localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
+    if (!scratch) localStorage.setItem("rag-steplab-active-pipeline-id:test-user", "pipeline-1");
     const pipeline = namedPipeline("pipeline-1", { embeddingRunId: null });
     const accepted = {
       id: "embedding-accepted",
@@ -1284,7 +1293,7 @@ describe("Accepted (202) embedding runs", () => {
       embeddingCount: 0,
       upstream: { chunkRunId: "chunk-new" },
     };
-    const state = { completed: false };
+    const state = { completed: false, polls: 0 };
     let resolvePoll!: (payload: unknown) => void;
     const poll = new Promise<unknown>((resolve) => { resolvePoll = resolve; });
     const patchBodies: Array<Record<string, unknown>> = [];
@@ -1293,14 +1302,21 @@ describe("Accepted (202) embedding runs", () => {
       if (url.endsWith("/capabilities")) return respond(capabilities);
       if (url.endsWith("/documents")) return respond({ items: [persistedDocument()] });
       if (url.split("?")[0].endsWith("/documents/document-old/summary")) {
-        const summary = selectableLineageSummary();
+        const base = selectableLineageSummary();
+        // Newest first, as the backend orders runs.
+        const summary = { ...base, embeddingRuns: [...summaryEmbeddingRuns, ...base.embeddingRuns] };
         return respond(state.completed
           ? { ...summary, embeddingRuns: [...summary.embeddingRuns, { id: "embedding-accepted", status: "completed", isCompatible: true, upstream: { chunkRunId: "chunk-new" } }] }
           : summary);
       }
-      if (url.endsWith("/documents/document-old/pipelines")) return respond([pipeline]);
+      if (url.endsWith("/documents/document-old/pipelines")) return respond(scratch ? [] : [pipeline]);
       if (url.endsWith("/documents/document-old/embeddings?async=true") && init?.method === "POST") return respond(accepted, 202);
-      if (url.endsWith("/embedding-runs/embedding-accepted")) return poll.then((payload) => new Response(JSON.stringify(payload), { status: 200 }));
+      if (url.endsWith("/embedding-runs/embedding-accepted")) {
+        state.polls += 1;
+        // The browser's 15-minute tracking deadline, without waiting for it.
+        if (firstPollTimesOut && state.polls === 1) return respond({ error: { code: "run_poll_timeout", message: "Tracking paused." } }, 409);
+        return poll.then((payload) => new Response(JSON.stringify(payload), { status: 200 }));
+      }
       if (url.endsWith("/document-pipelines/pipeline-1") && init?.method === "PATCH") {
         const body = JSON.parse(String(init.body)) as Record<string, unknown>;
         patchBodies.push(body);
@@ -1343,5 +1359,99 @@ describe("Accepted (202) embedding runs", () => {
     await waitFor(() => expect(screen.getByTestId("embedding-status")).toHaveTextContent("error:worker_terminated"), { timeout: 3_000 });
     expect(patchBodies).toHaveLength(0);
     expect(screen.getByTestId("selected-embedding")).toHaveTextContent("none");
+    // The user may have left the page: the failure is also announced, with its localized cause.
+    expect(toastMock.error).toHaveBeenCalledWith(UI_COPY.tr.embeddings.failedToast, { description: UI_COPY.tr.apiErrors.runInterrupted });
+  });
+
+  it("resumes tracking an embedding run that is still working after a reload", async () => {
+    const { accepted, patchBodies, resolvePoll, state } = setupAcceptedEmbedding({
+      summaryEmbeddingRuns: [{ id: "embedding-accepted", status: "running", isCompatible: true, upstream: { chunkRunId: "chunk-new" } }],
+    });
+    renderProbe();
+
+    // No click: loading the document finds the run in flight and tracks it again.
+    await waitFor(() => expect(screen.getByTestId("embedding-status")).toHaveTextContent("processing:none"));
+    await waitFor(() => expect(state.polls).toBeGreaterThan(0), { timeout: 3_000 });
+
+    state.completed = true;
+    resolvePoll({ ...accepted, status: "completed", embeddingCount: 1 });
+    await waitFor(() => expect(patchBodies).toHaveLength(1));
+    expect(patchBodies[0]).toMatchObject({ embeddingRunId: "embedding-accepted" });
+    await waitFor(() => expect(screen.getByTestId("embedding-status")).toHaveTextContent("completed:none"));
+  });
+
+  it("shows why the newest embedding attempt failed after a reload, without announcing it again", async () => {
+    setupAcceptedEmbedding({
+      summaryEmbeddingRuns: [{
+        id: "embedding-failed",
+        status: "failed",
+        isCompatible: false,
+        upstream: { chunkRunId: "chunk-new" },
+        error: { code: "gemini_quota_exhausted", message: "Gemini embedding quota exhausted (provider 429 RESOURCE_EXHAUSTED)." },
+      }],
+    });
+    renderProbe();
+
+    await waitFor(() => expect(screen.getByTestId("embedding-status")).toHaveTextContent("error:gemini_quota_exhausted"));
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
+  it("never resumes a paused run into a lineage the user changed since it started", async () => {
+    const { state } = setupAcceptedEmbedding({ firstPollTimesOut: true, scratch: true });
+    renderProbe();
+    await waitFor(() => expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-new"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Run embedding" }));
+    await waitFor(() => expect(screen.getByTestId("embedding-status")).toHaveTextContent("processing:run_poll_timeout"), { timeout: 3_000 });
+    fireEvent.click(screen.getByRole("button", { name: "Select alternate chunk" }));
+    await waitFor(() => expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-alt"));
+    // The paused notice belonged to the old selection.
+    expect(screen.getByTestId("embedding-status")).toHaveTextContent(":none");
+
+    const pollsBefore = state.polls;
+    fireEvent.click(screen.getByRole("button", { name: "Resume embedding tracking" }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(state.polls).toBe(pollsBefore);
+    expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-alt");
+    expect(screen.getByTestId("selected-embedding")).toHaveTextContent("none");
+  });
+
+  it("restarts tracking when the document is loaded again while its embedding is running", async () => {
+    const { accepted, patchBodies, resolvePoll, state } = setupAcceptedEmbedding({
+      summaryEmbeddingRuns: [{ id: "embedding-accepted", status: "running", isCompatible: true, upstream: { chunkRunId: "chunk-new" } }],
+    });
+    renderProbe();
+    await waitFor(() => expect(state.polls).toBeGreaterThan(0), { timeout: 3_000 });
+
+    // Re-selecting the document starts a new scope; the old tracker could no longer commit.
+    fireEvent.click(screen.getByRole("button", { name: "Switch to old" }));
+    await waitFor(() => expect(state.polls).toBeGreaterThan(1), { timeout: 3_000 });
+
+    state.completed = true;
+    resolvePoll({ ...accepted, status: "completed", embeddingCount: 1 });
+    await waitFor(() => expect(patchBodies).toHaveLength(1));
+    await waitFor(() => expect(screen.getByTestId("embedding-status")).toHaveTextContent("completed:none"));
+  });
+
+  it("keeps a run whose browser tracking paused in progress and resumes the same run", async () => {
+    const { accepted, patchBodies, resolvePoll, state } = setupAcceptedEmbedding({ firstPollTimesOut: true });
+    renderProbe();
+    await waitFor(() => expect(screen.getByTestId("selected-chunk")).toHaveTextContent("chunk-new"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Run embedding" }));
+    await waitFor(() => expect(screen.getByTestId("embedding-status")).toHaveTextContent("processing:run_poll_timeout"), { timeout: 3_000 });
+    // Paused tracking is not a failure: nothing is announced and nothing is recorded.
+    expect(toastMock.error).not.toHaveBeenCalled();
+    expect(patchBodies).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume embedding tracking" }));
+    await waitFor(() => expect(screen.getByTestId("embedding-status")).toHaveTextContent("processing:none"));
+    state.completed = true;
+    resolvePoll({ ...accepted, status: "completed", embeddingCount: 1 });
+    await waitFor(() => expect(patchBodies).toHaveLength(1));
+    expect(patchBodies[0]).toMatchObject({ embeddingRunId: "embedding-accepted" });
+    await waitFor(() => expect(screen.getByTestId("embedding-status")).toHaveTextContent("completed:none"));
+    // One POST: resuming never starts a second run.
+    expect(state.polls).toBeGreaterThan(1);
   });
 });

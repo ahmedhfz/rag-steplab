@@ -94,18 +94,30 @@ class GeminiCallMetadata:
 class GeminiCallFailed(ApiProblem):
     """A provider call that exhausted its retry/fallback budget.
 
-    Public code is the existing ``gemini_<action>_failed`` contract. The
-    message names the provider's HTTP code and status token when known, so a
+    Public code is the existing ``gemini_<action>_failed`` contract, or
+    ``gemini_quota_exhausted`` when the provider's quota resets later than any
+    per-minute window. The message names the provider's HTTP code and status token when known, so a
     failed run row stays diagnosable after the worker logs expire;
     ``models_tried`` is diagnostic data for logs only.
     """
 
-    def __init__(self, action: str, models_tried: Sequence[str] = (), cause: Exception | None = None) -> None:
+    def __init__(
+        self,
+        action: str,
+        models_tried: Sequence[str] = (),
+        cause: Exception | None = None,
+        *,
+        quota_exhausted: bool = False,
+    ) -> None:
         provider = " ".join(
             str(value) for value in (_provider_code(cause), _provider_status(cause)) if value is not None
         )
-        message = f"Gemini {action} failed (provider {provider})." if provider else f"Gemini {action} failed."
-        super().__init__(503, f"gemini_{action}_failed", message)
+        outcome = "quota exhausted" if quota_exhausted else "failed"
+        message = f"Gemini {action} {outcome} (provider {provider})." if provider else f"Gemini {action} {outcome}."
+        # A quota that does not reset within a minute is not "busy, try again
+        # shortly": it gets its own code so the UI can say when to come back.
+        code = "gemini_quota_exhausted" if quota_exhausted else f"gemini_{action}_failed"
+        super().__init__(503, code, message)
         self.models_tried = tuple(models_tried)
 
 
@@ -353,6 +365,9 @@ class GeminiService:
                     or (timed_out and timeouts > MAX_TIMEOUT_RETRIES)
                     or not (transient or unusable_fallback)
                 )
+                hinted = self._retry_after_seconds(exc) if self._status(exc) == 429 else None
+                # Longer than a per-minute window: a daily (or longer) quota, whatever retry budget is left.
+                quota_exhausted = hinted is not None and hinted > EMBEDDING_MAX_RETRY_DELAY_SECONDS
                 if not give_up:
                     if transient:
                         index = min(index + 1, len(chain) - 1)
@@ -361,7 +376,6 @@ class GeminiService:
                         index = min(index, len(chain) - 1)
                 retry_in: float | None = None
                 if not give_up and chain[index] in failed:
-                    hinted = self._retry_after_seconds(exc) if self._status(exc) == 429 else None
                     if hinted is not None and hinted > max_retry_delay:
                         give_up = True
                     else:
@@ -370,7 +384,7 @@ class GeminiService:
                     exc, action=action, model=model, attempt=attempt, attempts=attempts, retry_in=retry_in
                 )
                 if give_up:
-                    raise GeminiCallFailed(action, tried, exc) from exc
+                    raise GeminiCallFailed(action, tried, exc, quota_exhausted=quota_exhausted) from exc
                 if retry_in is not None:
                     time.sleep(retry_in)
                 continue

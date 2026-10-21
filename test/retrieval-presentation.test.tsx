@@ -4,11 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pipeline = vi.hoisted(() => ({ value: null as unknown }));
 const preview = vi.hoisted(() => ({ get: vi.fn() }));
+const toastMock = vi.hoisted(() => Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }));
 
 vi.mock("@/components/document-pipeline-provider", () => ({
   useDocumentPipeline: () => pipeline.value,
 }));
 vi.mock("@/lib/rag-api", () => ({ getDocumentSourcePreviewUrl: preview.get }));
+vi.mock("@/components/ui/toast", () => ({ toast: toastMock }));
 
 import { PreferencesProvider } from "@/components/preferences-provider";
 import { RetrievalScreen } from "@/components/retrieval-screen";
@@ -69,7 +71,13 @@ function renderRetrieval() {
 }
 
 function state() {
-  return pipeline.value as { experimentRun: ExperimentRun | null; experimentStatus: string; experimentError: { code: string; message: string } | null; runExperiment: ReturnType<typeof vi.fn> };
+  return pipeline.value as {
+    experimentRun: ExperimentRun | null;
+    experimentStatus: string;
+    experimentError: { code: string; message: string } | null;
+    runExperiment: ReturnType<typeof vi.fn>;
+    resumeRunTracking: ReturnType<typeof vi.fn>;
+  };
 }
 
 function openAnswer() {
@@ -132,11 +140,21 @@ describe("Playground presentation states", () => {
     expect(state().runExperiment).toHaveBeenCalledWith(expect.objectContaining({ query: "What is the laboratory beacon code?", targetStage: "generation" }));
   });
 
-  it.each([false, true])("reports clipboard success/failure (failure=%s)", async (fails) => {
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockImplementation(() => fails ? Promise.reject(new Error("denied")) : Promise.resolve()) } });
+  it("confirms a copied trace inline", async () => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } });
     renderRetrieval();
     fireEvent.click(screen.getByRole("button", { name: "Copy trace" }));
-    await waitFor(() => expect(screen.getByText(fails ? "Copy failed. Try again." : "Trace copied.")).toBeVisible());
+    await waitFor(() => expect(screen.getByText("Trace copied.")).toBeVisible());
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed trace copy as an error toast, like Parse does", async () => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) } });
+    renderRetrieval();
+    fireEvent.click(screen.getByRole("button", { name: "Copy trace" }));
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith("Copy failed. Try again."));
+    expect(screen.queryByText("Copy failed. Try again.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Trace copied.")).not.toBeInTheDocument();
   });
 
   it("clears clipboard feedback after two seconds", async () => {
@@ -283,11 +301,15 @@ describe("Playground presentation states", () => {
     state().experimentError = { code: "MODAL_TIMEOUT", message: "worker diagnostic detail" };
     renderRetrieval();
 
+    // A failed request names itself in the shared error notice; the raw problem stays in Technical details.
     const error = screen.getByTestId("playground-error");
-    expect(error.querySelector("h2")).toHaveTextContent("Experiment couldn’t be completed");
-    expect(error.querySelector("p")).toHaveTextContent("Try again, or review the technical details.");
-    expect(error.querySelector("p")).not.toHaveTextContent("MODAL_TIMEOUT");
-    expect(error.querySelector("p")).not.toHaveTextContent("worker diagnostic detail");
+    expect(error).toHaveAttribute("data-slot", "notice");
+    expect(error).toHaveAttribute("role", "alert");
+    expect(error).toHaveTextContent("The experiment could not be completed.");
+    const details = within(error).getByTestId("api-error-details");
+    expect(details).toHaveTextContent("Code: MODAL_TIMEOUT");
+    expect(details).toHaveTextContent("Message: worker diagnostic detail");
+    expect(error.textContent?.replace(details.textContent ?? "", "")).not.toMatch(/MODAL_TIMEOUT|worker diagnostic detail/);
   });
 
   it("says a busy model provider is temporary and keeps the raw problem under Technical details", () => {
@@ -296,12 +318,109 @@ describe("Playground presentation states", () => {
     renderRetrieval();
 
     const error = screen.getByTestId("playground-error");
-    expect(within(error).getByTestId("playground-error-message")).toHaveTextContent("The AI model provider is busy right now. This is usually temporary; try again in a minute.");
+    expect(error).toHaveTextContent("The AI model provider is busy right now. This is usually temporary; try again in a minute.");
     const details = within(error).getByTestId("api-error-details");
     expect(within(details).getByText("Technical details")).toBeInTheDocument();
     expect(details).not.toHaveAttribute("open");
     expect(details).toHaveTextContent("Code: gemini_generation_failed");
     expect(details).toHaveTextContent("Message: Gemini generation failed.");
+  });
+
+  it("shows a failed run once, in the shared notice, with its cause and a Try again that reruns it", () => {
+    const failed = buildRun({ answer: "", insufficientContext: false }, { status: "failed", error: { code: "gemini_generation_failed", message: "Gemini generation failed." } });
+    state().experimentRun = failed;
+    state().experimentStatus = "error";
+    state().experimentError = { code: "gemini_generation_failed", message: "Gemini generation failed." };
+    renderRetrieval();
+
+    const notices = screen.getAllByTestId("playground-error");
+    expect(notices).toHaveLength(1);
+    const [error] = notices;
+    expect(error).toHaveAttribute("data-tone", "error");
+    expect(error).toHaveTextContent("Experiment couldn’t be completed");
+    expect(error).toHaveTextContent("The AI model provider is busy right now.");
+    expect(within(error).getAllByTestId("api-error-details")).toHaveLength(1);
+    fireEvent.click(within(error).getByRole("button", { name: "Try again" }));
+    expect(state().runExperiment).toHaveBeenCalledWith(expect.objectContaining({ query: "What is the laboratory beacon code?", targetStage: "generation" }));
+  });
+
+  it("does not point at technical details a failed run never recorded", () => {
+    state().experimentRun = buildRun({ answer: "", insufficientContext: false }, { status: "failed", error: null });
+    state().experimentStatus = "error";
+    renderRetrieval();
+
+    const error = screen.getByTestId("playground-error");
+    expect(error).toHaveTextContent("No cause was recorded for this run. Run the experiment again.");
+    expect(error).not.toHaveTextContent("technical details");
+    expect(within(error).queryByTestId("api-error-details")).not.toBeInTheDocument();
+  });
+
+  it("names a failed request without a second action next to the control that sent it", () => {
+    state().experimentRun = null;
+    state().experimentStatus = "error";
+    state().experimentError = { code: "user_run_limit_reached", message: "Another run is active." };
+    renderRetrieval();
+
+    const error = screen.getByTestId("playground-error");
+    expect(error).toHaveTextContent("Another of your runs is still in progress.");
+    // Not a failed run: "Run experiment" above stays the one recovery.
+    expect(within(error).queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+
+  it("treats a browser poll timeout as paused tracking with one Resume tracking action", () => {
+    state().experimentRun = buildRun({ answer: "", insufficientContext: false }, { status: "running" });
+    state().experimentStatus = "error";
+    state().experimentError = { code: "run_poll_timeout", message: "Browser tracking paused after 15 minutes." };
+    renderRetrieval();
+
+    const paused = screen.getByTestId("playground-tracking-paused");
+    expect(paused).toHaveAttribute("data-tone", "warning");
+    expect(paused).toHaveAttribute("data-error-kind", "tracking-paused");
+    expect(paused).toHaveAttribute("role", "status");
+    expect(paused).not.toHaveTextContent("Experiment couldn’t be completed");
+    expect(screen.queryByTestId("playground-error")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Resume tracking" })).toHaveLength(1);
+    fireEvent.click(within(paused).getByRole("button", { name: "Resume tracking" }));
+    expect(state().resumeRunTracking).toHaveBeenCalledWith("experiment");
+  });
+
+  it("recovers a run that is still working after a non-timeout tracking error by resuming it", () => {
+    state().experimentRun = buildRun({ answer: "", insufficientContext: false }, { status: "running" });
+    state().experimentStatus = "error";
+    state().experimentError = { code: "invalid_response", message: "The status response was malformed." };
+    renderRetrieval();
+
+    const error = screen.getByTestId("playground-error");
+    expect(error).toHaveTextContent("The service returned an unexpected response.");
+    fireEvent.click(within(error).getByRole("button", { name: "Try again" }));
+    expect(state().resumeRunTracking).toHaveBeenCalledWith("experiment");
+    expect(state().runExperiment).not.toHaveBeenCalled();
+  });
+
+  it("keeps Resume tracking for an in-flight run this page is not tracking", () => {
+    state().experimentRun = buildRun({ answer: "", insufficientContext: false }, { status: "running" });
+    state().experimentStatus = "ready";
+    renderRetrieval();
+
+    expect(screen.queryByTestId("playground-error")).not.toBeInTheDocument();
+    fireEvent.click(within(screen.getByTestId("playground-current-actions")).getByRole("button", { name: "Resume tracking" }));
+    expect(state().resumeRunTracking).toHaveBeenCalledWith("experiment");
+  });
+
+  it("announces a tracked run that fails once, with its localized cause", () => {
+    state().experimentRun = buildRun({ answer: "", insufficientContext: false }, { status: "running" });
+    state().experimentStatus = "processing";
+    const view = renderRetrieval();
+
+    state().experimentRun = buildRun({ answer: "", insufficientContext: false }, { status: "failed", error: { code: "gemini_quota_exhausted", message: "Quota exhausted." } });
+    state().experimentStatus = "error";
+    state().experimentError = { code: "gemini_quota_exhausted", message: "Quota exhausted." };
+    view.rerender(<PreferencesProvider><RetrievalScreen /></PreferencesProvider>);
+    view.rerender(<PreferencesProvider><RetrievalScreen /></PreferencesProvider>);
+
+    expect(toastMock.error).toHaveBeenCalledTimes(1);
+    expect(toastMock.error).toHaveBeenCalledWith("Experiment couldn’t be completed", { description: expect.stringContaining("usage quota has run out") });
+    expect(toastMock).not.toHaveBeenCalled();
   });
 
   it("uses the Turkish glossary for stages, history and citations", () => {

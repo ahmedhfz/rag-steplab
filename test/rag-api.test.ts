@@ -515,7 +515,8 @@ describe("RAG API contract normalization", () => {
         "http://127.0.0.1:8000/embedding-runs/embedding-1",
         "http://127.0.0.1:8000/embedding-runs/embedding-1",
       ]);
-      expect(progress).toEqual(["running", "completed"]);
+      // The accepted run is reported first, so tracking can resume it after a poll timeout or a reload.
+      expect(progress).toEqual(["queued", "running", "completed"]);
       vi.useRealTimers();
     });
 
